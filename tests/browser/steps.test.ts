@@ -14,13 +14,14 @@ import { createProject } from '../../src/project/factory';
 import type { Clip, Note } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
 import { defaultUiState, selectSlot, selectTrack, uiStore } from '../../src/state/uiStore';
-import { actFrame, cleanup, fire, frames, key, mount, pointer, pointIn } from './ui-harness';
+import { actFrame, cleanup, fire, frames, key, mount, pointer, pointIn, wait } from './ui-harness';
 
 const KICK = getKitVoiceNames('round-machine')[0];
 const SNARE_VOICE = 2;
 const SNARE = getKitVoiceNames('round-machine')[SNARE_VOICE];
 
 let noteOn: ReturnType<typeof vi.spyOn>;
+let noteOff: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   session.store.replace(createProject({ name: 'Steps test' }));
@@ -28,7 +29,7 @@ beforeEach(() => {
   barClipboard.setState(null);
   // Audition goes through the session; keep the audio engine out of these tests.
   noteOn = vi.spyOn(session, 'noteOn').mockImplementation(() => {});
-  vi.spyOn(session, 'noteOff').mockImplementation(() => {});
+  noteOff = vi.spyOn(session, 'noteOff').mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -82,13 +83,51 @@ describe('empty slot', () => {
     selectSlot('t1', 1);
     const m = mountEditor();
     expect(m.container.textContent).toContain('has no clip in');
-    fire(buttonByText(m.container, '2-bar clip'), new MouseEvent('click', { bubbles: true }));
+    const create = buttonByText(m.container, '2-bar clip');
+    create.focus();
+    fire(create, new MouseEvent('click', { bubbles: true, detail: 0 }));
     const c = clip('t1', 1);
     expect(c?.bars).toBe(2);
     expect(c?.notes).toEqual([]);
     // The editor opens on the new clip, with a page per bar.
     expect(m.container.querySelectorAll('[role="tab"]')).toHaveLength(2);
-    expect(byLabel(m.container, `Step 1, ${KICK}`).getAttribute('aria-label')).toBe(`Step 1, ${KICK}, off`);
+    const step1 = byLabel(m.container, `Step 1, ${KICK}`);
+    expect(step1.getAttribute('aria-label')).toBe(`Step 1, ${KICK}, off`);
+    // Keyboard focus moves into the new clip's steps instead of being lost.
+    expect(document.activeElement).toBe(step1);
+  });
+
+  it('a new melodic clip puts keyboard focus on the note grid', () => {
+    selectTrack('t3');
+    selectSlot('t3', 0);
+    const m = mountEditor();
+    fire(buttonByText(m.container, 'Create a 1-bar clip'), new MouseEvent('click', { bubbles: true, detail: 0 }));
+    expect(clip('t3')?.bars).toBe(1);
+    expect(document.activeElement?.getAttribute('aria-label')).toMatch(/^Note grid, bar 1\./);
+  });
+
+  it('with no slot chosen yet, opens the clip the part plays (else its first clip), not an empty slot', async () => {
+    const scenes = session.store.getState().scenes;
+    selectTrack('t1');
+    cmd.createClip(session.store, 't1', 1, 1);
+    cmd.createClip(session.store, 't1', 2, 1);
+    patchRuntime({ playing: true, tracks: { t1: { playingSlot: 2, queued: null } } });
+    try {
+      const m = mountEditor();
+      await actFrame();
+      expect(m.container.textContent).not.toContain('has no clip in');
+      // It becomes the part's selected slot, so Loops and Record Notes agree.
+      expect(uiStore.getState().selectedSlot.t1).toBe(2);
+      expect(m.container.querySelector('[role="radio"][aria-checked="true"]')?.getAttribute('aria-label')).toMatch(new RegExp(`^${scenes[2].name}: `));
+    } finally {
+      patchRuntime({ playing: false, tracks: {} });
+    }
+    cleanup();
+    // Nothing playing: the first slot that holds a clip.
+    uiStore.setState({ ...defaultUiState(), padMode: 'steps', selectedTrackId: 't1' });
+    mountEditor();
+    await actFrame();
+    expect(uiStore.getState().selectedSlot.t1).toBe(1);
   });
 
   it('links to the part’s other clips', () => {
@@ -98,6 +137,7 @@ describe('empty slot', () => {
     fire(byLabel(m.container, 'Edit '), new MouseEvent('click', { bubbles: true }));
     expect(uiStore.getState().selectedSlot.t1).toBe(2);
     expect(m.container.textContent).not.toContain('has no clip in');
+    expect(document.activeElement?.getAttribute('aria-label')).toBe(`Step 1, ${KICK}, off`);
   });
 });
 
@@ -184,7 +224,7 @@ describe('drum steps', () => {
     expect(notes('t1')[0].velocity).toBeCloseTo(0.7, 5);
   });
 
-  it('pages show the right bar; copy/paste, copy to next bar and clear work on the shown bar', () => {
+  it('pages show the right bar; copy/paste, copy to next bar and clear work on the shown bar', async () => {
     makeClip('t1', 2);
     cmd.toggleStep(session.store, 't1', 0, 16, 0); // bar 2, step 1
     const m = mountEditor();
@@ -212,9 +252,15 @@ describe('drum steps', () => {
     expect(tabs()).toHaveLength(3);
     expect(tabs()[2].getAttribute('aria-selected')).toBe('true');
 
-    // Clear bar 3, then undo brings it back.
-    fire(buttonByText(m.container, 'Clear'), new MouseEvent('click', { bubbles: true }));
+    // Clear bar 3 (from the keyboard), then undo brings it back.
+    const clearBtn = buttonByText(m.container, 'Clear');
+    clearBtn.focus();
+    fire(clearBtn, new MouseEvent('click', { bubbles: true, detail: 0 }));
     expect(notes('t1').filter((n) => n.tick >= 768)).toHaveLength(0);
+    // Clear switched itself off (the bar is empty): focus moves to the step pads.
+    expect(clearBtn.disabled).toBe(true);
+    await frames(2);
+    expect(document.activeElement?.getAttribute('aria-label')).toMatch(new RegExp(`^Step \\d+, ${KICK}, off$`));
     session.undo();
     expect(notes('t1').filter((n) => n.tick >= 768)).toHaveLength(2);
   });
@@ -223,7 +269,7 @@ describe('drum steps', () => {
     makeClip('t1', 1);
     cmd.toggleStep(session.store, 't1', 0, 2, 0);
     const m = mountEditor();
-    fire(buttonByText(m.container, 'Double'), new MouseEvent('click', { bubbles: true }));
+    fire(buttonByText(m.container, /Double$/), new MouseEvent('click', { bubbles: true }));
     expect(clip('t1')?.bars).toBe(2);
     expect(notes('t1').map((n) => n.tick).sort((a, b) => a - b)).toEqual([48, 432]);
 
@@ -369,6 +415,35 @@ describe('melodic pitch lane', () => {
     expect(notes('t3')).toHaveLength(1);
   });
 
+  it('keyboard: moving past step 16 opens the next bar and announces its cell', async () => {
+    const { m } = setup();
+    const cursor = m.container.querySelector<HTMLButtonElement>('button[aria-label^="Note grid"]')!;
+    cursor.focus();
+    key(cursor, 'keydown', { key: 'Enter' });
+    const pitch = notes('t3')[0].pitch;
+    // Bar 2, step 1 holds a softer note of the same pitch.
+    cmd.addNote(session.store, 't3', 0, { tick: 384, pitch, velocity: 0.5, duration: 24 });
+    await actFrame();
+    key(cursor, 'keydown', { key: 'End' });
+    key(cursor, 'keydown', { key: 'ArrowRight' });
+    expect(uiStore.getState().stepPage.t3).toBe(1);
+    const live = m.container.querySelector('[aria-live="polite"]')!;
+    expect(live.textContent).toMatch(/^Bar 2\. .+, step 1: note, 1 step, velocity 50%$/);
+    const grid = m.container.querySelector<HTMLButtonElement>('button[aria-label^="Note grid"]')!;
+    expect(grid.getAttribute('aria-label')).toMatch(/^Note grid, bar 2\. .+, step 1: note, 1 step, velocity 50%$/);
+    expect(document.activeElement).toBe(grid);
+  });
+
+  it('leaving Steps in the middle of drawing a note releases its audition', async () => {
+    const { m, roll, cell } = setup();
+    pointer(roll, 'pointerdown', cell(2, 48));
+    expect(noteOn).toHaveBeenCalledWith('t3', 48, 0.8, 'pad');
+    expect(noteOff).not.toHaveBeenCalled();
+    m.unmount();
+    await wait(200);
+    expect(noteOff).toHaveBeenCalledWith('t3', 48, 'pad');
+  });
+
   it('transpose moves the clip a semitone (Shift: an octave)', () => {
     const { m, roll, cell } = setup();
     press(roll, cell(0, 48));
@@ -409,10 +484,19 @@ describe('undo and playhead', () => {
     session.store.setLock('Recording a performance', () => false);
     try {
       await actFrame();
-      expect(m.container.textContent).toContain('Locked while a performance records');
+      expect(m.container.querySelector('[role="status"]')?.textContent).toContain('Locked while a performance records');
       const step1 = byLabel(m.container, `Step 1, ${KICK}`);
       pointer(step1, 'pointerdown', pointIn(step1));
       expect(notes('t1')).toHaveLength(0);
+      // The notice takes the editing tools' place; name and length cannot change.
+      expect(() => buttonByText(m.container, 'To bar 2')).toThrow();
+      expect(m.container.querySelector<HTMLInputElement>('input[aria-label="Clip name"]')!.readOnly).toBe(true);
+      fire(m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label="2 bars"]')!, new MouseEvent('click', { bubbles: true }));
+      expect(clip('t1')?.bars).toBe(1);
+      // An empty slot of the part says so too, and its create buttons are off.
+      fire(m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label$=": empty"]')!, new MouseEvent('click', { bubbles: true }));
+      expect(m.container.querySelector('[role="status"]')?.textContent).toContain('Stop the take to create a clip');
+      expect(buttonByText(m.container, 'Create a 1-bar clip').disabled).toBe(true);
     } finally {
       session.store.setLock(null);
     }

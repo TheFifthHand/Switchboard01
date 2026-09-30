@@ -419,6 +419,28 @@
   margin-left: auto;
 }
 
+/* The storage note sits in the footer, or at the end of the panel in short windows. */
+.panelNote {
+  display: none;
+}
+@media (max-height: 560px) {
+  .root {
+    height: auto;
+    min-height: 0;
+  }
+  .panel {
+    overflow: visible;
+  }
+  .footerNote {
+    display: none;
+  }
+  .panelNote {
+    display: flex;
+    max-width: none;
+    margin-top: 16px;
+  }
+}
+
 @media (max-width: 760px) {
   .cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));

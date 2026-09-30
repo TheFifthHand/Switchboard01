@@ -67,6 +67,10 @@
     background var(--t-fast) var(--ease),
     box-shadow var(--t-fast) var(--ease);
 }
+.len[aria-disabled='true'] {
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
 .len {
   min-width: 34px;
   justify-content: center;
@@ -191,29 +195,46 @@
     0 0 0 2px var(--shell-hi),
     0 0 0 4px var(--teal);
 }
-/* The lamp lights amber on the bar that is sounding. */
+/* The lamp on the bar that is sounding lights amber and turns into a play arrow (not colour alone). */
 .pageLamp {
   flex: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: rgba(20, 24, 28, 0.18);
-  transition: background 60ms linear;
 }
 .page[data-live] .pageLamp {
+  width: 7px;
+  height: 8px;
+  border-radius: 0;
   background: var(--amber);
-  box-shadow: 0 0 6px var(--amber-glow);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
 }
 
-/* ---------- status ---------- */
+/* ---------- lock notice (replaces the tools during a performance take) ---------- */
+.status:empty {
+  display: none;
+}
 .lock {
-  padding: 3px 8px;
-  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 7px;
   background: var(--coral-wash);
   color: var(--coral-ink);
   font-size: var(--fs-sm);
   font-weight: 600;
   white-space: nowrap;
+}
+.lockDot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 5px var(--coral-glow);
 }
 
 /* ---------- tools ---------- */
@@ -242,10 +263,21 @@
   color: var(--ink-3);
   white-space: nowrap;
 }
+/* − Transpose + reads as one stepper. */
 .transpose {
   display: inline-flex;
   align-items: center;
   gap: 0;
+  margin-left: 4px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.times {
+  margin-right: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 .transposeText {
   font-size: var(--fs-sm);

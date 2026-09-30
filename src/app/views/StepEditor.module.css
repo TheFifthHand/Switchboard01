@@ -11,18 +11,52 @@
   min-height: 0;
 }
 
-/* Very short surfaces (e.g. high browser zoom): scroll rather than squash the lanes. */
+/*
+ * Very short surfaces (e.g. 200 % browser zoom): the whole editor scrolls as
+ * one column and the lanes keep readable sizes instead of being squashed.
+ */
 @media (max-height: 640px) {
-  .body {
+  .editor {
     overflow-y: auto;
     padding-right: 4px;
   }
+  .body {
+    flex: none;
+  }
+  .empty {
+    flex: 1 0 auto;
+  }
 }
 
-/* During a performance take clips are locked: editing surfaces dim (the header says why). */
+/*
+ * During a performance take clips are locked: the lanes dim and the header
+ * says why. (An empty slot says so itself; its links to the part's other
+ * clips keep working.)
+ */
 .editor[data-locked] .body {
-  opacity: 0.55;
+  opacity: 0.5;
   pointer-events: none;
+}
+
+.emptyLock {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 7px;
+  background: var(--coral-wash);
+  color: var(--coral-ink);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.lockDot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 5px var(--coral-glow);
 }
 
 /* ---------- empty slot ---------- */

@@ -17,7 +17,9 @@
 /* A recessed readout window, like the transport's fields. */
 .range {
   flex: 1;
-  min-width: 0;
+  /* Room for the longest range, e.g. "C#3–D#5", also when the display wraps on narrow surfaces. */
+  min-width: 92px;
+  padding: 0 8px;
   height: 32px;
   display: grid;
   place-items: center;

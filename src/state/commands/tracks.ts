@@ -112,7 +112,7 @@ export function setDrumVoice(store: ProjectStore, trackId: Id, slot: number, par
   }, gesture);
 }
 
-export function setArp(store: ProjectStore, trackId: Id, partial: Partial<ArpSettings>): CommandResult {
+export function setArp(store: ProjectStore, trackId: Id, partial: Partial<ArpSettings>, gesture?: string): CommandResult {
   if (!findTrack(store.getState(), trackId)) return NOT_FOUND('part');
   const next: Partial<ArpSettings> = {};
   if (partial.enabled !== undefined) next.enabled = !!partial.enabled;
@@ -135,7 +135,7 @@ export function setArp(store: ProjectStore, trackId: Id, partial: Partial<ArpSet
   }
   return run(store, 'track:Change arpeggiator', (d) => {
     Object.assign(draftTrack(d, trackId).arp, next);
-  });
+  }, gesture);
 }
 
 export function setMacro(store: ProjectStore, trackId: Id, macro: MacroId, value: number, gesture?: string): CommandResult {

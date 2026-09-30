@@ -124,3 +124,14 @@ export function copyClip(project: Project, trackId: Id, slot: number): Clip | nu
   const clip = clipAt(project, trackId, slot);
   return clip ? cloneClip(clip) : null;
 }
+
+/** Remove every clip of a part in one undo step. */
+export function clearTrackClips(store: ProjectStore, trackId: Id): CommandResult {
+  const t = findTrack(store.getState(), trackId);
+  if (!t) return NOT_FOUND('part');
+  if (t.clips.every((c) => c === null)) return refuse('empty', 'This part has no clips.');
+  return run(store, 'clip:Clear all clips', (d) => {
+    const dt = draftTrack(d, trackId);
+    dt.clips = dt.clips.map(() => null);
+  });
+}

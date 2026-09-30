@@ -2,6 +2,10 @@
  * Quick guide coach marks. Teal marks what the guide points at (teal = focus /
  * selection); nothing here dims or blocks the instrument: the ring ignores the
  * pointer and only the callout itself is interactive.
+ *
+ * Two layouts on one set of elements:
+ *  - card:  label + step count / title / text / dots + buttons
+ *  - strip: one slim row (label, dots and count | title over text | buttons)
  */
 .ring {
   position: fixed;
@@ -31,6 +35,15 @@
 .callout {
   position: fixed;
   z-index: 801;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    'label label count'
+    'title title title'
+    'body body body'
+    'missing missing missing'
+    'dots buttons buttons';
+  align-items: center;
   width: 300px;
   max-width: calc(100vw - 24px);
   padding: 13px 16px 12px;
@@ -47,6 +60,8 @@
 .callout[data-ready] {
   visibility: visible;
   animation: calloutIn var(--t-med) var(--ease);
+}
+.callout[data-settled] {
   transition:
     left 180ms var(--ease),
     top 180ms var(--ease);
@@ -88,14 +103,8 @@
   transform: rotate(135deg);
 }
 
-.kicker {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 5px;
-}
 .kickerLabel {
+  grid-area: label;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -104,6 +113,7 @@
   font-weight: 650;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 .kickerLabel::before {
   content: '';
@@ -114,16 +124,25 @@
   box-shadow: 0 0 5px var(--teal-glow);
 }
 .stepCount {
+  grid-area: count;
+  justify-self: end;
   color: var(--ink-3);
   font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.divider {
+  display: none;
 }
 
 .title {
+  grid-area: title;
+  margin-top: 5px;
   font-size: var(--fs-lg);
   font-weight: 650;
   line-height: 1.3;
 }
 .body {
+  grid-area: body;
   margin: 4px 0 0;
   color: var(--ink-2);
   font-size: var(--fs-md);
@@ -131,6 +150,7 @@
 }
 
 .missing {
+  grid-area: missing;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -144,17 +164,12 @@
   font-size: var(--fs-sm);
 }
 
-.footer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 12px;
-}
 .dots {
+  grid-area: dots;
   display: flex;
   align-items: center;
   gap: 5px;
-  margin: 0 auto 0 0;
+  margin: 12px 0 0;
   padding: 0;
   list-style: none;
 }
@@ -177,6 +192,57 @@
   background: var(--teal);
   box-shadow: 0 0 5px var(--teal-glow);
 }
+
+.buttons {
+  grid-area: buttons;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 12px;
+}
 .skip {
   color: var(--ink-2);
+}
+
+/* ---------- strip: one slim row that fits under a toolbar ---------- */
+.callout[data-layout='strip'] {
+  grid-template-columns: auto auto 1px minmax(0, auto) auto;
+  grid-template-areas:
+    'label label divider title buttons'
+    'dots count divider body buttons'
+    'missing missing missing missing missing';
+  column-gap: 12px;
+  row-gap: 3px;
+  width: max-content;
+  max-width: min(760px, calc(100vw - 24px));
+  padding: 8px 10px 8px 14px;
+  border-radius: 10px;
+}
+.callout[data-layout='strip'] .stepCount {
+  justify-self: start;
+}
+.callout[data-layout='strip'] .divider {
+  display: block;
+  grid-area: divider;
+  align-self: stretch;
+  width: 1px;
+  background: var(--line-soft);
+}
+.callout[data-layout='strip'] .title {
+  align-self: end;
+  margin: 0;
+  font-size: var(--fs-md);
+  line-height: 17px;
+}
+.callout[data-layout='strip'] .body {
+  align-self: start;
+  margin: 0;
+  line-height: 18px;
+}
+.callout[data-layout='strip'] .dots {
+  margin: 0;
+}
+.callout[data-layout='strip'] .buttons {
+  align-self: center;
+  margin: 0 0 0 4px;
 }

@@ -118,6 +118,15 @@
     var(--pad-shadow),
     0 0 10px rgba(var(--lc), calc(0.22 * var(--intensity, 1)));
 }
+/* Keep the keyboard focus ring visible on lit pads. */
+.pad[data-state='playing']:focus-visible,
+.pad[data-state='recording']:focus-visible {
+  box-shadow:
+    var(--pad-shadow),
+    0 0 10px rgba(var(--lc), calc(0.22 * var(--intensity, 1))),
+    0 0 0 2px var(--shell-hi),
+    0 0 0 4px var(--teal);
+}
 
 .pad[data-state='queued'] .light {
   animation: queuedPulse 1.1s var(--ease) infinite alternate;

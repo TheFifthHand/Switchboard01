@@ -30,15 +30,17 @@ Key decisions:
 | Milestone | State | Notes |
 |-----------|-------|-------|
 | 0. Plan, brief, instructions, spine | done | PRODUCT_BRIEF.md, CLAUDE.md, docs/ARCHITECTURE.md, contracts |
-| 1. Complete playable slice | in progress | foundation modules being implemented |
-| 2. Approachable instrument | not started | |
-| 3. Sound shaping and patching | not started | |
-| 4. Making and keeping music | not started | |
+| 1. Complete playable slice | done | Jump In → groove → pads → Tone/Space → keyboard → record → WAV verified in e2e |
+| 2. Approachable instrument | done | Drums/Notes/Steps modes, keyboard + Assist, clip/part/scene management, sound browser, arp, record options, library + starters, quick guide, tips |
+| 3. Sound shaping and patching | in progress | engine + effects + macros verified by signal tests; Shape view and cable panel UI being built |
+| 4. Making and keeping music | in progress | recording, replay, autosave, bundles, WAV export done; Arrange view and sampler editor UI being built |
 | 5. Product finish and handoff | not started | |
 
 ## Next action
 
-Implement the foundation modules (see plan step 2), then integrate the Milestone 1 slice.
+Integrate the Shape view, cable panel, Arrange view and sampler editor (workflow in progress), run all
+suites, then Milestone 5: responsive layout (200 % zoom), accessibility pass, evidence capture
+(`node scripts/evidence.mjs`), release package (`npm run package`), final TEST_REPORT.md.
 
 ## Known limitations / environment notes
 

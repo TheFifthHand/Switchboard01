@@ -6,6 +6,7 @@ import { session, useAutosave, useHistory, useProject, useUi } from '../instance
 import { useRuntime } from '../runtime';
 import type { MeterFrame } from '../../audio/contracts';
 import { RecordOptions, recordOptionsCaption } from './RecordOptions';
+import { MOD_ARIA, MOD_KEY, MenuItem, MenuSeparator, MoreIcon, Popover, anchorFromElement } from './ClipMenu';
 import styles from './TransportBar.module.css';
 
 const VIEW_OPTIONS = [
@@ -141,6 +142,99 @@ function RecordGroup() {
   );
 }
 
+/**
+ * Narrow screens (below 1280 px, e.g. 200 % zoom): Undo, Redo, Tips,
+ * Projects and Export move into this menu so every control stays reachable
+ * without squeezing the always-visible transport controls.
+ */
+function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; projectName: string }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const history = useHistory();
+  const tipsEnabled = useUi((s) => s.tipsEnabled);
+  const close = () => setOpen(false);
+  return (
+    <>
+      <Tooltip name="More" tip="Undo, Redo, Tips, your projects and WAV export.">
+        <button
+          ref={btnRef}
+          type="button"
+          className={`${styles.more} ${styles.narrowOnly}`}
+          aria-label="More: undo, redo, tips, projects and export"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <MoreIcon size={16} />
+        </button>
+      </Tooltip>
+      {open && (
+        <Popover anchor={anchorFromElement(btnRef.current)} label="More" align="end" onClose={close} returnFocus={btnRef.current} ignore={btnRef.current}>
+          <MenuItem
+            icon="undo"
+            hint={`${MOD_KEY}Z`}
+            keyShortcut={`${MOD_ARIA}+Z`}
+            disabled={!history.canUndo}
+            disabledReason="Nothing to undo"
+            onSelect={() => {
+              session.undo();
+              close();
+            }}
+          >
+            {history.undoLabel ? `Undo ${history.undoLabel}` : 'Undo'}
+          </MenuItem>
+          <MenuItem
+            icon="redo"
+            hint={`${MOD_KEY}Shift+Z`}
+            keyShortcut={`${MOD_ARIA}+Shift+Z`}
+            disabled={!history.canRedo}
+            disabledReason="Nothing to redo"
+            onSelect={() => {
+              session.redo();
+              close();
+            }}
+          >
+            {history.redoLabel ? `Redo ${history.redoLabel}` : 'Redo'}
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem
+            icon="info"
+            role="menuitemcheckbox"
+            checked={tipsEnabled}
+            hint={tipsEnabled ? 'On' : 'Off'}
+            onSelect={() => {
+              setTipsEnabled(!tipsEnabled);
+              close();
+            }}
+          >
+            Tips
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem
+            icon="folder"
+            hint={props.projectName}
+            onSelect={() => {
+              close();
+              props.onOpenLibrary();
+            }}
+          >
+            Projects…
+          </MenuItem>
+          <MenuItem
+            icon="download"
+            onSelect={() => {
+              close();
+              props.onOpenExport();
+            }}
+          >
+            Export WAV…
+          </MenuItem>
+        </Popover>
+      )}
+    </>
+  );
+}
+
 export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): void }) {
   const view = useUi((s) => s.view);
   const bpm = useProject((p) => p.bpm);
@@ -213,7 +307,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
       <RecordGroup />
 
       <div className={styles.group}>
-        <Knob spec={MASTER_VOLUME_SPEC} value={masterDb} size="sm" onChange={(v, info) => session.setMasterVolume(v, info.gesture)} label="Master" />
+        <Knob spec={MASTER_VOLUME_SPEC} value={masterDb} size="sm" onChange={(v, info) => session.setMasterVolume(v, info.gesture)} label="Master" className={styles.master} />
         <div className={styles.meters}>
           <Meter read={() => readMeterFrame().masterPeakL} label="Master left level" orientation="vertical" length={36} thickness={5} />
           <Meter read={() => readMeterFrame().masterPeakR} label="Master right level" orientation="vertical" length={36} thickness={5} />
@@ -225,7 +319,6 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           pressed={muteAll}
           onClick={() => session.toggleMuteAll()}
           tip={muteAll ? 'Everything is silenced. Press to hear sound again.' : 'Silence everything at once, including echoes and held notes.'}
-          aria-keyshortcuts="Escape"
           className={styles.muteAll}
         >
           {muteAll ? 'MUTED' : 'Mute All'}
@@ -234,8 +327,26 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
 
       <div className={styles.right}>
         <SaveStatus />
-        <IconButton icon="undo" label={history.undoLabel ? `Undo ${history.undoLabel}` : 'Undo'} disabled={!history.canUndo} onClick={() => session.undo()} size="sm" variant="ghost" aria-keyshortcuts="Control+Z" />
-        <IconButton icon="redo" label={history.redoLabel ? `Redo ${history.redoLabel}` : 'Redo'} disabled={!history.canRedo} onClick={() => session.redo()} size="sm" variant="ghost" aria-keyshortcuts="Control+Shift+Z" />
+        <IconButton
+          icon="undo"
+          label={history.undoLabel ? `Undo ${history.undoLabel}` : 'Undo'}
+          disabled={!history.canUndo}
+          onClick={() => session.undo()}
+          size="sm"
+          variant="ghost"
+          aria-keyshortcuts="Control+Z"
+          className={styles.wideOnly}
+        />
+        <IconButton
+          icon="redo"
+          label={history.redoLabel ? `Redo ${history.redoLabel}` : 'Redo'}
+          disabled={!history.canRedo}
+          onClick={() => session.redo()}
+          size="sm"
+          variant="ghost"
+          aria-keyshortcuts="Control+Shift+Z"
+          className={styles.wideOnly}
+        />
         <Switch
           label="Tips"
           hideLabel
@@ -247,7 +358,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           onChange={(on) => setTipsEnabled(on)}
           tip="Explanations like this one appear when you point at or tab to a control."
           detail="Remembered in this browser. Icon buttons still show their names when Tips are off."
-          className={styles.tips}
+          className={`${styles.tips} ${styles.wideOnly}`}
         />
         <Button
           variant="ghost"
@@ -256,13 +367,21 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           onClick={props.onOpenLibrary}
           tip={`Projects: open, rename, duplicate, import and export. Open now: ${projectName}.`}
           aria-label={`Projects (open: ${projectName})`}
-          className={styles.project}
+          className={`${styles.project} ${styles.wideOnly}`}
         >
           <span className={styles.projectName}>{projectName}</span>
         </Button>
-        <Button variant="primary" size="sm" icon="download" onClick={props.onOpenExport} tip="Export a WAV file: your song, a scene or a recorded performance." className={styles.export}>
+        <Button
+          variant="primary"
+          size="sm"
+          icon="download"
+          onClick={props.onOpenExport}
+          tip="Export a WAV file: your song, a scene or a recorded performance."
+          className={`${styles.export} ${styles.wideOnly}`}
+        >
           <span className={styles.exportText}>Export</span>
         </Button>
+        <MoreMenu onOpenLibrary={props.onOpenLibrary} onOpenExport={props.onOpenExport} projectName={projectName} />
       </div>
     </header>
   );

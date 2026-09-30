@@ -183,14 +183,38 @@
   min-height: 0;
 }
 
+/* The pads plus an optional status bar above them, sharing one width. */
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  aspect-ratio: 1.3;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Status bar (part muted / soloed out / replaying): one line with its fix. */
+.stage > .status {
+  flex: none;
+  align-items: center;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.statusLead {
+  font-weight: 620;
+  color: var(--ink);
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-template-rows: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  height: 100%;
-  aspect-ratio: 1.3;
-  max-width: 100%;
+  flex: 1 1 0;
+  width: 100%;
   min-height: 0;
   padding: 10px;
   border-radius: var(--r-lg);
@@ -199,6 +223,14 @@
     inset 0 1px 3px rgba(20, 24, 28, 0.16),
     inset 0 0 0 1px rgba(20, 24, 28, 0.05),
     0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* A lit pad keeps its keyboard focus ring (the Pad's playing glow would replace it). */
+.grid button:focus-visible[data-state='playing'] {
+  box-shadow:
+    var(--pad-shadow),
+    0 0 10px rgba(var(--lc), 0.22),
+    var(--focus-ring);
 }
 
 /* ---------- Part switch (radio keys) ---------- */
@@ -430,11 +462,15 @@
   .gridWrap {
     display: block;
   }
-  .grid {
+  .stage {
     width: 100%;
-    height: 100%;
-    /* Four rows of at least 56 px; the display scrolls when there is no room. */
-    min-height: calc(4 * 56px + 3 * 10px + 20px);
+    height: auto;
+    min-height: 100%;
     aspect-ratio: auto;
+  }
+  .grid {
+    /* Four rows of at least 56 px; the display scrolls when there is no room. */
+    flex: 1 0 auto;
+    min-height: calc(4 * 56px + 3 * 10px + 20px);
   }
 }

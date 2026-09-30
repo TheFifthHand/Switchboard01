@@ -1,7 +1,8 @@
 /**
  * Drums pad mode in real Chromium: layout, pad presses into the session,
- * releases, computer keys, held lighting, voice selection and the chooser
- * shown for a part that is not a drum kit.
+ * releases, computer keys, keyboard operation, held lighting, voice
+ * selection, the first note before audio has started, the notices for a part
+ * that cannot be heard, and the chooser shown for a part that is not a kit.
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -12,15 +13,19 @@ import { getKitVoiceNames } from '../../src/audio/instruments/kits';
 import { kitInfo } from '../../src/content/catalog';
 import { createProject } from '../../src/project/factory';
 import type { Id } from '../../src/project/types';
-import { changeInstrumentSound } from '../../src/state/commands';
+import { changeInstrumentSound, setSolo } from '../../src/state/commands';
 import { drumVoiceFor, selectDrumVoice, selectTrack, setPadMode, uiStore } from '../../src/state/uiStore';
-import { cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
+import { PAD_KEY_VELOCITY } from '../../src/ui/components';
+import { actFrame, cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
 
 type Call = ['on', Id, number, number, string] | ['off', Id, number, string];
 
 let calls: Call[] = [];
 const realNoteOn = session.noteOn;
 const realNoteOff = session.noteOff;
+const realStartAudio = session.startAudio;
+const realStop = session.stop;
+const engineSlot = session as unknown as { engine: unknown };
 
 beforeEach(() => {
   calls = [];
@@ -31,7 +36,11 @@ beforeEach(() => {
   session.noteOff = (trackId, pitch, source) => {
     calls.push(['off', trackId, pitch, source]);
   };
-  session.store.replace(createProject({ name: 'Pads test' }), { resetHistory: true });
+  // Audio never starts here (see the "before audio has started" test for that path).
+  session.startAudio = () => Promise.resolve(false);
+  session.store.replace(createProject({ name: 'Pads test' }), {
+    resetHistory: true,
+  });
   act(() => {
     patchRuntime({ held: {} });
     selectTrack('t1');
@@ -44,8 +53,15 @@ afterEach(() => {
   cleanup();
   session.noteOn = realNoteOn;
   session.noteOff = realNoteOff;
-  act(() => patchRuntime({ held: {} }));
+  session.startAudio = realStartAudio;
+  session.stop = realStop;
+  engineSlot.engine = null;
+  act(() => patchRuntime({ held: {}, replayId: null }));
 });
+
+const click = (el: Element) => fire(el, new MouseEvent('click', { bubbles: true }));
+const buttonWithText = (root: Element, text: string) => [...root.querySelectorAll('button')].find((b) => b.textContent === text) ?? null;
+const trackOf = (trackId: Id) => session.store.getState().tracks.find((t) => t.id === trackId)!;
 
 function setup() {
   const m = mount(h('div', { style: { width: '960px', height: '560px' } }, h(DrumPads)), { width: 1000 });
@@ -193,5 +209,126 @@ describe('Drums pad mode', () => {
     expect(notes.textContent).toBe('Play Drums on Notes pads');
     fire(notes, new MouseEvent('click', { bubbles: true }));
     expect(uiStore.getState().padMode).toBe('notes');
+  });
+  it('is one tab stop; arrow keys move between pads and Space plays the focused pad (not the transport shortcut)', () => {
+    act(() => selectDrumVoice('t1', 5));
+    const { m, pad } = setup();
+    const stops = [...m.container.querySelectorAll<HTMLButtonElement>('button[id^="drum-pad-"]')].filter((b) => b.tabIndex === 0);
+    expect(stops.map((b) => b.id)).toEqual(['drum-pad-5']);
+
+    act(() => pad(5)!.focus());
+    key(pad(5)!, 'keydown', { key: 'ArrowUp', code: 'ArrowUp' });
+    expect(document.activeElement).toBe(pad(9));
+    key(pad(9)!, 'keydown', { key: 'ArrowRight', code: 'ArrowRight' });
+    expect(document.activeElement).toBe(pad(10));
+    expect(pad(10)!.tabIndex).toBe(0);
+    expect(pad(5)!.tabIndex).toBe(-1);
+
+    const down = key(pad(10)!, 'keydown', { key: ' ', code: 'Space' });
+    // Handled by the pad, so the app's Space = Play/Stop shortcut ignores it.
+    expect(down.defaultPrevented).toBe(true);
+    expect(calls).toEqual([['on', 't1', 10, PAD_KEY_VELOCITY, 'pad']]);
+    expect(drumVoiceFor(uiStore.getState(), 't1')).toBe(10);
+    key(pad(10)!, 'keyup', { key: ' ', code: 'Space' });
+    expect(calls[1]).toEqual(['off', 't1', 10, 'pad']);
+  });
+
+  it('releases a held pad when the pads go away', () => {
+    const { m, pad } = setup();
+    const p6 = pad(6)!;
+    pointer(p6, 'pointerdown', pointIn(p6));
+    m.unmount();
+    expect(calls.map((c) => c.slice(0, 3))).toEqual([
+      ['on', 't1', 6],
+      ['off', 't1', 6],
+    ]);
+  });
+
+  it('a pad struck before audio has started goes straight to the session, which keeps the note', () => {
+    // The session buffers a note pressed before the engine exists and plays it when audio is ready
+    // (tested in e2e/firstnote.spec.ts); the pad itself just reports press and release once.
+    const { pad } = setup();
+    const p3 = pad(3)!;
+    pointer(p3, 'pointerdown', pointIn(p3));
+    pointer(p3, 'pointerup', pointIn(p3));
+    expect(calls.map((c) => c.slice(0, 3))).toEqual([
+      ['on', 't1', 3],
+      ['off', 't1', 3],
+    ]);
+  });
+
+  it('says when the part cannot be heard and offers the fix', () => {
+    session.setMute('t1', true);
+    const { m } = setup();
+    expect(m.container.textContent).toContain('Drums is muted');
+    click(buttonWithText(m.container, 'Unmute')!);
+    expect(trackOf('t1').mute).toBe(false);
+    expect(m.container.textContent).not.toContain('is muted');
+
+    act(() => void session.accepted(setSolo(session.store, 't3', true)));
+    expect(m.container.textContent).toContain('Drums is silent');
+    expect(m.container.textContent).toContain('another part is soloed');
+    click(buttonWithText(m.container, 'Solo Drums too')!);
+    expect(trackOf('t1').solo).toBe(true);
+    expect(m.container.textContent).not.toContain('is silent');
+    // Both fixes are ordinary undoable edits.
+    act(() => session.undo());
+    expect(trackOf('t1').solo).toBe(false);
+  });
+
+  it('pauses the pads and keys while a performance replays, with a way to stop it', () => {
+    let stops = 0;
+    session.stop = () => {
+      stops += 1;
+    };
+    const { m, pad } = setup();
+    act(() => patchRuntime({ replayId: 'perf-1' }));
+    expect(m.container.textContent).toContain('Replaying a performance');
+    expect(pad(0)!.disabled).toBe(true);
+    key(window, 'keydown', { code: 'KeyZ', key: 'z' });
+    key(window, 'keyup', { code: 'KeyZ', key: 'z' });
+    expect(calls).toEqual([]);
+    click(buttonWithText(m.container, 'Stop replay')!);
+    expect(stops).toBe(1);
+    act(() => patchRuntime({ replayId: null }));
+    expect(pad(0)!.disabled).toBe(false);
+    expect(m.container.textContent).not.toContain('Replaying');
+  });
+
+  it('choosing a drum part in the chooser puts keyboard focus on the pads', async () => {
+    act(() => {
+      selectTrack('t3');
+      selectDrumVoice('t1', 4);
+    });
+    const { m, pad } = setup();
+    const drums = m.container.querySelector<HTMLButtonElement>('button[aria-label^="Play Drums"]')!;
+    act(() => drums.focus());
+    click(drums);
+    await actFrame();
+    expect(document.activeElement).toBe(pad(4));
+  });
+  it('arrow keys in the part switch change the part and keep keyboard focus there', () => {
+    const { m, pad } = setup();
+    const drums = m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label^="Drums"]')!;
+    act(() => drums.focus());
+    key(drums, 'keydown', { key: 'ArrowDown', code: 'ArrowDown' });
+    expect(uiStore.getState().selectedTrackId).toBe('t2');
+    const percussion = m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label^="Percussion"]')!;
+    expect(percussion.getAttribute('aria-checked')).toBe('true');
+    expect(document.activeElement).toBe(percussion);
+    expect(pad(0)!.textContent).toContain(getKitVoiceNames(kitOf('t2'))[0]);
+  });
+
+  it('a key held while the part changes is released on the part it played', () => {
+    const { m } = setup();
+    key(window, 'keydown', { code: 'KeyZ', key: 'z' });
+    fire(m.container.querySelector('[role="radio"][aria-label^="Percussion"]')!, new MouseEvent('click', { bubbles: true }));
+    key(window, 'keyup', { code: 'KeyZ', key: 'z' });
+    expect(calls.map((c) => c.slice(0, 3))).toEqual([
+      ['on', 't1', 0],
+      ['off', 't1', 0],
+    ]);
+    // The readout belongs to the part shown.
+    expect(m.container.textContent).toContain('None yet');
   });
 });

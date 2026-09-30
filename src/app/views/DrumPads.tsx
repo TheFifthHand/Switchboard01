@@ -8,19 +8,24 @@
  * (runtime `held`), and selects its voice for step editing (teal ring).
  *
  * If the selected part is not a drum kit, a chooser lists the project's
- * drum-kit parts, so there is always a way forward.
+ * drum-kit parts, so there is always a way forward. If the part cannot be
+ * heard (muted, another part soloed) or a performance is replaying, the
+ * display says so and offers the fix.
  *
  * Also exports the pieces the Notes pads share: the pad order, grid arrow
- * navigation, the part list, the part switch, the chooser and the hit readout.
+ * navigation and tab stop, live note playing, the part list, the part switch,
+ * the status notice, the chooser and the hit readout.
  */
-import { memo, useCallback, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Button, Pad, Tooltip, drumKeyHint, useComputerKeyboard, useKeyCapLabels, type PadPressEvent } from '../../ui/components';
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent } from 'react';
+import { Button, Notice, Pad, Tooltip, drumKeyHint, useComputerKeyboard, useKeyCapLabels, type PadPressEvent } from '../../ui/components';
 import { getKitVoiceNames } from '../../audio/instruments/kits';
 import { kitInfo } from '../../content/catalog';
 import type { Id, InstrumentKind, Project } from '../../project/types';
+import { setSolo } from '../../state/commands';
 import { drumVoiceFor, selectDrumVoice, selectTrack, setPadMode } from '../../state/uiStore';
 import { session, useProject, useUi } from '../instance';
 import { useRuntime } from '../runtime';
+import type { NoteSource } from '../session';
 import { INSTRUMENT_LABEL, soundName } from '../labels';
 import styles from './DrumPads.module.css';
 
@@ -76,6 +81,58 @@ export function padGridKeyDown(prefix: string) {
   };
 }
 
+/** Marks a pad grid, so focus can be moved into it (e.g. after the chooser). */
+export const PAD_GRID_ATTR = 'data-pad-grid';
+
+/**
+ * One tab stop per pad grid (roving tabindex): Tab enters the grid on the
+ * last focused pad, or on `home` (e.g. the selected drum voice) when the
+ * grid does not have focus; arrow keys move inside it. The Pad component
+ * takes no tabIndex, so the attribute is set on its rendered buttons.
+ */
+export function useRovingPads(prefix: string, home: number) {
+  const gridRef = useRef<HTMLDivElement>(null);
+  const current = useRef(home);
+  const lastHome = useRef(home);
+  const apply = useCallback(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    for (const el of grid.querySelectorAll<HTMLElement>(`[id^="${prefix}"]`)) el.tabIndex = el.id === `${prefix}${current.current}` ? 0 : -1;
+  }, [prefix]);
+  // After every render: pads never gain a second tab stop, and the stop follows `home` while focus is elsewhere.
+  useLayoutEffect(() => {
+    if (home !== lastHome.current) {
+      lastHome.current = home;
+      if (!gridRef.current?.contains(document.activeElement)) current.current = home;
+    }
+    apply();
+  });
+  const onFocus = useCallback(
+    (e: FocusEvent<HTMLElement>) => {
+      const id = (e.target as HTMLElement).id;
+      if (!id.startsWith(prefix)) return;
+      const index = Number(id.slice(prefix.length));
+      if (!Number.isInteger(index) || index === current.current) return;
+      current.current = index;
+      apply();
+    },
+    [prefix, apply],
+  );
+  return { gridRef, onFocus };
+}
+
+/**
+ * Play a live note through the session; returns its release. A note played
+ * before audio has started (after "Just look around") starts audio, but the
+ * session cannot sound it until the engine exists, so it is played as soon as
+ * audio is ready (and released at once if the pad was already let go).
+ */
+export function playLive(trackId: Id, pitch: number, velocity: number, source: NoteSource): () => void {
+  // The session keeps a note pressed before audio is ready and plays it once it is.
+  session.noteOn(trackId, pitch, velocity, source);
+  return () => session.noteOff(trackId, pitch, source);
+}
+
 export interface PartInfo {
   id: Id;
   /** Position on the console, 1-based. */
@@ -115,6 +172,73 @@ export function useParts(): PartInfo[] {
 }
 
 const article = (word: string) => (/^[aeiou]/i.test(word) ? 'an' : 'a');
+
+type Silence = 'audible' | 'muted' | 'soloed-out';
+
+function silenceOf(p: Project, trackId: Id): Silence {
+  const t = p.tracks.find((x) => x.id === trackId);
+  if (!t) return 'audible';
+  if (t.mute) return 'muted';
+  return !t.solo && p.tracks.some((x) => x.solo) ? 'soloed-out' : 'audible';
+}
+
+/** True while a recorded performance replays (live notes are paused then). */
+export function useReplaying(): boolean {
+  return useRuntime((s) => s.replayId !== null);
+}
+
+/**
+ * Why the pads would make no sound right now, with the fix: the part is
+ * muted, another part is soloed, or a performance is replaying. Shown as a
+ * one-line bar above the pads.
+ */
+export function PartStatus(props: { part: PartInfo }) {
+  const { part } = props;
+  const replaying = useReplaying();
+  const silence = useProject((p) => silenceOf(p, part.id));
+  if (replaying) {
+    return (
+      <Notice className={styles.status} tone="info" action={{ label: 'Stop replay', onAction: () => session.stop() }}>
+        <strong className={styles.statusLead}>Replaying a performance.</strong> The pads are paused until it stops.
+      </Notice>
+    );
+  }
+  if (silence === 'muted') {
+    return (
+      <Notice
+        className={styles.status}
+        tone="warning"
+        action={{
+          label: 'Unmute',
+          onAction: () => session.setMute(part.id, false),
+        }}
+      >
+        <strong className={styles.statusLead}>{part.name} is muted.</strong> The pads light up but make no sound.
+      </Notice>
+    );
+  }
+  if (silence === 'soloed-out') {
+    return (
+      <Notice
+        className={styles.status}
+        tone="warning"
+        action={{
+          label: `Solo ${part.name} too`,
+          onAction: () => session.accepted(setSolo(session.store, part.id, true)),
+        }}
+      >
+        <strong className={styles.statusLead}>{part.name} is silent:</strong> another part is soloed, and only soloed parts are heard.
+      </Notice>
+    );
+  }
+  return null;
+}
+
+/** Move focus to the tab stop of the pad grid rendered inside `host` (after React has rendered it). */
+function focusPadsIn(host: HTMLElement | null): void {
+  if (!host) return;
+  requestAnimationFrame(() => host.querySelector<HTMLElement>(`[${PAD_GRID_ATTR}] [tabindex="0"]`)?.focus());
+}
 
 /**
  * Choose which part the pads play: a radio group of part keys (teal lamp =
@@ -196,8 +320,15 @@ export function PartChooser(props: { mode: 'drums' | 'notes'; current: PartInfo 
       ? 'No part in this project uses a drum kit yet. Give a part a drum kit to play it here.'
       : 'Every part in this project is a drum kit. Give a part a synth or sampler to play notes here.';
   const titleId = `${mode}-chooser-title`;
+  const rootRef = useRef<HTMLDivElement>(null);
+  // After a choice the pads replace this card: keep keyboard focus on the instrument.
+  const choose = (action: () => void) => {
+    const host = rootRef.current?.parentElement ?? null;
+    action();
+    focusPadsIn(host);
+  };
   return (
-    <div className={styles.chooser}>
+    <div ref={rootRef} className={styles.chooser}>
       <section className={styles.chooserCard} aria-labelledby={titleId}>
         <p className={styles.eyebrow}>{drums ? 'Drum pads' : 'Note pads'}</p>
         <h3 id={titleId} className={styles.chooserTitle}>
@@ -209,7 +340,7 @@ export function PartChooser(props: { mode: 'drums' | 'notes'; current: PartInfo 
         {options.length > 0 && (
           <div className={styles.chooserList} role="group" aria-label={drums ? 'Drum parts' : 'Melodic parts'}>
             {options.map((p) => (
-              <button key={p.id} type="button" className={styles.chooserOption} onClick={() => selectTrack(p.id)} aria-label={`Play ${p.name} (part ${p.number}, ${p.sound})`}>
+              <button key={p.id} type="button" className={styles.chooserOption} onClick={() => choose(() => selectTrack(p.id))} aria-label={`Play ${p.name} (part ${p.number}, ${p.sound})`}>
                 <span className={`${styles.partNum} mono`} aria-hidden="true">
                   {p.number}
                 </span>
@@ -226,7 +357,7 @@ export function PartChooser(props: { mode: 'drums' | 'notes'; current: PartInfo 
         {current && (
           <div className={styles.chooserAlt}>
             <span className={styles.chooserOr}>or</span>
-            <Button size="sm" variant="secondary" onClick={() => setPadMode(drums ? 'notes' : 'drums')}>
+            <Button size="sm" variant="secondary" onClick={() => choose(() => setPadMode(drums ? 'notes' : 'drums'))}>
               Play {current.name} on {drums ? 'Notes' : 'Drums'} pads
             </Button>
           </div>
@@ -266,17 +397,23 @@ export function HitReadout(props: { hit: Hit | null; label: string }) {
 
 const DRUM_PAD_ID = 'drum-pad-';
 
-const DrumPad = memo(function DrumPad(props: { trackId: Id; voice: number; name: string; keyHint?: string; selected: boolean; onHit(voice: number, velocity: number): void }) {
-  const { trackId, voice, name, keyHint, selected, onHit } = props;
+const DrumPad = memo(function DrumPad(props: { trackId: Id; voice: number; name: string; keyHint?: string; selected: boolean; disabled: boolean; onHit(voice: number, velocity: number): void }) {
+  const { trackId, voice, name, keyHint, selected, disabled, onHit } = props;
   const lit = useRuntime((s) => s.held[trackId]?.includes(voice) ?? false);
+  const release = useRef<(() => void) | null>(null);
   const onPress = useCallback(
     (e: PadPressEvent) => {
-      session.noteOn(trackId, voice, e.velocity, 'pad');
+      release.current?.();
+      release.current = playLive(trackId, voice, e.velocity, 'pad');
       onHit(voice, e.velocity);
     },
     [trackId, voice, onHit],
   );
-  const onRelease = useCallback(() => session.noteOff(trackId, voice, 'pad'), [trackId, voice]);
+  const onRelease = useCallback(() => {
+    const r = release.current;
+    release.current = null;
+    r?.();
+  }, []);
   const spoken = `${name}, pad ${voice + 1}${keyHint ? `, key ${keyHint}` : ''}${selected ? ', selected for step editing' : ''}`;
   return (
     <Pad
@@ -284,6 +421,7 @@ const DrumPad = memo(function DrumPad(props: { trackId: Id; voice: number; name:
       state={lit ? 'playing' : 'ready'}
       caption={null}
       selected={selected}
+      disabled={disabled}
       label={name}
       keyHint={keyHint}
       onPress={onPress}
@@ -305,27 +443,38 @@ function DrumKit(props: { part: PartInfo; drumParts: readonly PartInfo[] }) {
   const padMode = useUi((s) => s.padMode);
   const selectedVoice = useUi((s) => drumVoiceFor(s, trackId));
   const capLabels = useKeyCapLabels();
-  const [hit, setHit] = useState<{ voice: number; velocity: number } | null>(null);
+  const replaying = useReplaying();
+  // The last strike, remembered with its part (the readout only shows this part's).
+  const [hit, setHit] = useState<{ trackId: Id; voice: number; velocity: number } | null>(null);
+  const shownHit = hit && hit.trackId === trackId ? hit : null;
+  const { gridRef, onFocus } = useRovingPads(DRUM_PAD_ID, selectedVoice);
 
   // Striking a pad also chooses its sound for step editing (like hardware).
   const onHit = useCallback(
     (voice: number, velocity: number) => {
       selectDrumVoice(trackId, voice);
-      setHit({ voice, velocity });
+      setHit({ trackId, voice, velocity });
     },
     [trackId],
   );
 
-  // Computer keys play the pads in Drums mode (this component is keyed by
-  // part, so held keys are released before another part is shown).
+  // Computer keys play the pads in Drums mode. Each held key keeps the release
+  // of the note it started, so switching parts while holding a key cannot
+  // leave a note stuck on the previous part (pads do the same).
+  const keyReleases = useRef(new Map<number, () => void>());
   useComputerKeyboard({
-    enabled: padMode === 'drums',
+    enabled: padMode === 'drums' && !replaying,
     layout: 'drums',
     onNoteOn: (voice, velocity) => {
-      session.noteOn(trackId, voice, velocity, 'computer');
+      keyReleases.current.get(voice)?.();
+      keyReleases.current.set(voice, playLive(trackId, voice, velocity, 'computer'));
       onHit(voice, velocity);
     },
-    onNoteOff: (voice) => session.noteOff(trackId, voice, 'computer'),
+    onNoteOff: (voice) => {
+      const r = keyReleases.current.get(voice);
+      keyReleases.current.delete(voice);
+      r?.();
+    },
   });
 
   const keyFor = (voice: number) => drumKeyHint(voice, capLabels);
@@ -363,7 +512,17 @@ function DrumKit(props: { part: PartInfo; drumParts: readonly PartInfo[] }) {
           </div>
 
           <div className={styles.block}>
-            <HitReadout label="Last hit" hit={hit ? { name: names[hit.voice] ?? `Pad ${hit.voice + 1}`, velocity: hit.velocity } : null} />
+            <HitReadout
+              label="Last hit"
+              hit={
+                shownHit
+                  ? {
+                      name: names[shownHit.voice] ?? `Pad ${shownHit.voice + 1}`,
+                      velocity: shownHit.velocity,
+                    }
+                  : null
+              }
+            />
           </div>
 
           <div className={styles.foot}>
@@ -375,10 +534,30 @@ function DrumKit(props: { part: PartInfo; drumParts: readonly PartInfo[] }) {
         </div>
 
         <div className={styles.gridWrap}>
-          <div className={styles.grid} role="group" aria-label={`${kitName} pads for ${part.name}, 4 by 4. Arrow keys move between pads.`} onKeyDown={onDrumGridKey}>
-            {PAD_ORDER.map((voice) => (
-              <DrumPad key={voice} trackId={trackId} voice={voice} name={names[voice] ?? `Pad ${voice + 1}`} keyHint={keyFor(voice)} selected={voice === selectedVoice} onHit={onHit} />
-            ))}
+          <div className={styles.stage}>
+            <PartStatus part={part} />
+            <div
+              ref={gridRef}
+              className={styles.grid}
+              role="group"
+              aria-label={`${kitName} pads for ${part.name}, 4 by 4. Arrow keys move between pads.`}
+              onKeyDown={onDrumGridKey}
+              onFocus={onFocus}
+              {...{ [PAD_GRID_ATTR]: '' }}
+            >
+              {PAD_ORDER.map((voice) => (
+                <DrumPad
+                  key={voice}
+                  trackId={trackId}
+                  voice={voice}
+                  name={names[voice] ?? `Pad ${voice + 1}`}
+                  keyHint={keyFor(voice)}
+                  selected={voice === selectedVoice}
+                  disabled={replaying}
+                  onHit={onHit}
+                />
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -392,5 +571,6 @@ export function DrumPads() {
   const part = parts.find((p) => p.id === trackId);
   const drumParts = useMemo(() => parts.filter((p) => p.kind === 'drums'), [parts]);
   if (!part || part.kind !== 'drums') return <PartChooser mode="drums" current={part} options={drumParts} />;
-  return <DrumKit key={part.id} part={part} drumParts={drumParts} />;
+  // Not keyed by part: the part switch keeps keyboard focus when it changes the part.
+  return <DrumKit part={part} drumParts={drumParts} />;
 }

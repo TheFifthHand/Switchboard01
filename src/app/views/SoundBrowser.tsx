@@ -7,7 +7,13 @@
  * dialog open so sounds can be compared. Preview plays a short chord on the
  * part with its *current* sound through the normal note path (drums: kick,
  * snare and hat together; bass: the key's root; poly: a triad in the project
- * key; sampler: the recording at its original pitch).
+ * key; sampler: the recording at its original pitch). A part whose
+ * arpeggiator is on plays the chord as an arpeggio, like the keyboard does.
+ *
+ * Preview is off while a take records this part (a performance, or Record
+ * Notes into it), so auditioning never ends up in the recording. With the
+ * arpeggiator latched and the transport stopped, the end of a preview also
+ * ends the latched pattern, so nothing keeps playing on its own.
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Button, Dialog, Notice, SegmentedControl, Switch } from '../../ui/components';
@@ -18,7 +24,7 @@ import type { Id, Instrument, InstrumentKind, Project, SampleMeta, TrackRole } f
 import { changeInstrumentSound } from '../../state/commands';
 import { shallowEqual } from '../../state/store';
 import { session, useProject } from '../instance';
-import { notify, useRuntime } from '../runtime';
+import { notify, runtimeStore, useRuntime } from '../runtime';
 import { INSTRUMENT_LABEL, soundName } from '../labels';
 import styles from './SoundBrowser.module.css';
 
@@ -135,6 +141,17 @@ export function previewNotesFor(p: Project, trackId: Id): { notes: PreviewNote[]
   }
 }
 
+/** True when the part's arpeggiator keeps playing released notes (Latch on). */
+export function hasLatchedArp(p: Project, trackId: Id): boolean {
+  const t = p.tracks.find((x) => x.id === trackId);
+  return !!t && t.instrument.kind !== 'drums' && t.arp.enabled && t.arp.latch;
+}
+
+/** True while a recording would capture notes played on this part. */
+export function isRecordingPart(s: { recording: string; recordTarget: { trackId: Id } | null }, trackId: Id): boolean {
+  return s.recording === 'performance' || (s.recording === 'notes' && s.recordTarget?.trackId === trackId);
+}
+
 /** Plays and releases preview notes on a part; releases on stop/unmount so nothing hangs. */
 function usePreview(trackId: Id) {
   const held = useRef<{ trackId: Id; pitches: number[]; timer: number } | null>(null);
@@ -145,6 +162,10 @@ function usePreview(trackId: Id) {
     held.current = null;
     window.clearTimeout(h.timer);
     for (const pitch of h.pitches) session.noteOff(h.trackId, pitch, 'pad');
+    // A latched arpeggio would keep playing the preview on the idle clock with no
+    // visible Stop. While the transport is stopped, Stop only ends latched
+    // arpeggios, so the preview ends like any other.
+    if (hasLatchedArp(session.store.getState(), h.trackId) && !runtimeStore.getState().playing) session.stop();
   }, []);
   useEffect(() => {
     alive.current = true;
@@ -155,6 +176,8 @@ function usePreview(trackId: Id) {
   }, [stop]);
   const play = useCallback(async () => {
     stop();
+    // Auditioning must never be captured by a take on this part.
+    if (isRecordingPart(runtimeStore.getState(), trackId)) return;
     // Must run inside the click: this is what may start browser audio.
     const ok = await session.startAudio();
     if (!ok || !alive.current) return;
@@ -228,6 +251,8 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
         soundId: soundIdOf(t.instrument),
         sound: soundName(p, t.instrument),
         hasNotes: t.clips.some((c) => !!c && c.notes.length > 0),
+        arp: t.instrument.kind !== 'drums' && t.arp.enabled,
+        latched: hasLatchedArp(p, trackId),
       };
     },
     shallowEqual,
@@ -235,6 +260,9 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
   const samples = useProject((p) => p.samples);
   const keyName = useProject((p) => keyLabel(p.root, p.scale));
   const takeLocked = useRuntime((s) => s.recording === 'performance');
+  const recordingNotesHere = useRuntime((s) => s.recording === 'notes' && s.recordTarget?.trackId === trackId);
+  const playing = useRuntime((s) => s.playing);
+  const previewOff = takeLocked || recordingNotesHere;
   const [tab, setTab] = useState<InstrumentKind>(info?.kind ?? 'poly');
   const [autoPreview, setAutoPreview] = useState(true);
   const [active, setActive] = useState<string | null>(null);
@@ -260,7 +288,7 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
     if (keyOf(entry) !== currentKey) {
       if (!session.accepted(changeInstrumentSound(session.store, trackId, entry.kind, entry.id))) return;
     }
-    if (autoPreview) void preview();
+    if (autoPreview && !previewOff) void preview();
   };
 
   const onListKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -289,7 +317,7 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
     const res = await session.importSample(file, trackId);
     setImporting(null);
     setImportResult(res);
-    if (res.ok && autoPreview) void preview();
+    if (res.ok && autoPreview && !isRecordingPart(runtimeStore.getState(), trackId)) void preview();
   };
 
   const crossToDrums = info.hasNotes && info.kind !== 'drums' && tab === 'drums';
@@ -302,7 +330,8 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
         : info.kind === 'poly'
           ? `a chord in ${keyName}`
           : 'the recording at its original pitch';
-  const canPreview = !(info.kind === 'sampler' && !info.soundId);
+  const canPreview = !(info.kind === 'sampler' && !info.soundId) && !previewOff;
+  const previewTip = `Plays ${previewWhat} on ${info.name} with its current sound (${info.sound})${info.arp ? ', through its arpeggiator' : ''}.`;
 
   return (
     <Dialog
@@ -311,7 +340,7 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
       title={`Sound for ${info.name}`}
       description={
         <>
-          Choosing a sound changes <strong>{info.name}</strong> right away; Undo brings the previous one back. Compare them with Preview or by playing the keyboard.
+          Choosing a sound changes <strong>{info.name}</strong> right away, and Undo brings the previous one back. Use Preview to compare them; close this window to play them on the keyboard.
         </>
       }
       size="lg"
@@ -331,7 +360,7 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
             onChange={setAutoPreview}
             tip="Plays a short example each time you choose a sound."
           />
-          <Button icon="play" onClick={() => void preview()} disabled={!canPreview} tip={`Plays ${previewWhat} on ${info.name} with its current sound (${info.sound}).`}>
+          <Button icon="play" onClick={() => void preview()} disabled={!canPreview} tip={previewTip}>
             Preview
           </Button>
           <Button variant="primary" onClick={onClose}>
@@ -358,17 +387,27 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
       <div id={panelId} role="tabpanel" aria-label={TABS.find((t) => t.value === tab)?.label} className={styles.panel}>
         {takeLocked && (
           <Notice tone="warning" className={styles.notice}>
-            A performance is recording, so sound choices are locked until you stop. Preview still works.
+            A performance is recording, so sound choices are locked until you stop. Preview is off too, so it does not end up in the take.
+          </Notice>
+        )}
+        {recordingNotesHere && (
+          <Notice tone="warning" className={styles.notice}>
+            Record Notes is recording into {info.name}, so Preview is off: it would be recorded into the clip. You can still choose a sound.
+          </Notice>
+        )}
+        {info.latched && playing && !previewOff && (
+          <Notice tone="info" className={styles.notice}>
+            The arpeggiator on {info.name} has Latch on: while the music plays, a preview keeps arpeggiating until you press Stop or play other keys.
           </Notice>
         )}
         {crossToDrums && (
           <Notice tone="info" className={styles.notice}>
-            {info.name}'s clips hold melody notes. A drum kit plays only drum hits, so they stay silent until you add drum steps. Undo switches back.
+            The clips on {info.name} hold melody notes. A drum kit plays only drum hits, so they stay silent until you add drum steps. Undo switches back.
           </Notice>
         )}
         {crossFromDrums && (
           <Notice tone="info" className={styles.notice}>
-            {info.name}'s clips hold drum hits, which a {tab === 'sampler' ? 'sampler' : 'synth'} would play as very low notes. Write new notes after switching; Undo switches back.
+            The clips on {info.name} hold drum hits, which a {tab === 'sampler' ? 'sampler' : 'synth'} would play as very low notes. Write new notes after switching; Undo switches back.
           </Notice>
         )}
 

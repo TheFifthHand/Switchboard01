@@ -141,6 +141,26 @@
   align-items: center;
 }
 
+/*
+ * Master: a compact stack (dial, name, value) that fits the 58 px strip.
+ * At the kit's small size it is 72 px tall, so the dial's top and the dB
+ * value were cut off at the strip's edges. Same width, so nothing shifts.
+ */
+.bar .master[data-size] {
+  --dial: 26px;
+}
+.master [role='slider'] {
+  padding: 0;
+}
+.master [role='slider'] > :nth-child(2) {
+  margin-top: 2px;
+  line-height: 13px;
+}
+.master [role='slider'] > :nth-child(3) {
+  height: 12px;
+  line-height: 12px;
+}
+
 .muteAll {
   min-width: 90px;
 }
@@ -193,6 +213,8 @@
 }
 .saveBusy .saveDot {
   background: var(--amber);
+  /* Movement tells "saving" from "saved" when only the lamp is shown. */
+  animation: recBlink 0.9s ease-in-out infinite;
 }
 .saveError {
   color: var(--coral-ink);
@@ -224,6 +246,55 @@
 
 .tips {
   flex: none;
+}
+
+/* The More key replaces Undo, Redo, Tips, Projects and Export below 1280 px. */
+.more {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, var(--shell-hi), var(--shell));
+  box-shadow: var(--shadow-raised);
+  color: var(--ink-2);
+}
+.more:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.more[aria-expanded='true'] {
+  border-color: var(--teal);
+  box-shadow: var(--shadow-pressed);
+  color: var(--ink);
+}
+@media (min-width: 1280px) {
+  .right .narrowOnly {
+    display: none;
+  }
+}
+@media (max-width: 1279px) {
+  .right .wideOnly {
+    display: none;
+  }
+}
+/* A failed save spells out "Not saved"; on narrower screens the More key makes room for it. */
+@media (max-width: 1439px) {
+  .right:has(.saveError) .wideOnly {
+    display: none;
+  }
+  .right:has(.saveError) .narrowOnly {
+    display: grid;
+  }
+}
+/* Smallest supported width (1024 px, also 200 % zoom): the bar.beat readout gives way. */
+@media (max-width: 1079px) {
+  .position {
+    display: none;
+  }
 }
 
 /* Narrow desktop: hide secondary text, keep every control reachable. */

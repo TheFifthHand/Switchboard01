@@ -13,13 +13,15 @@ import { createProject } from '../../src/project/factory';
 import type { Id } from '../../src/project/types';
 import { setAssist, setKey } from '../../src/state/commands';
 import { selectTrack, setNotesOctave, setPadMode, uiStore } from '../../src/state/uiStore';
-import { cleanup, fire, mount, pointer, pointIn } from './ui-harness';
+import { PAD_KEY_VELOCITY } from '../../src/ui/components';
+import { actFrame, cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
 
 type Call = ['on', Id, number, number, string] | ['off', Id, number, string];
 
 let calls: Call[] = [];
 const realNoteOn = session.noteOn;
 const realNoteOff = session.noteOff;
+const realStartAudio = session.startAudio;
 
 beforeEach(() => {
   calls = [];
@@ -30,7 +32,11 @@ beforeEach(() => {
   session.noteOff = (trackId, pitch, source) => {
     calls.push(['off', trackId, pitch, source]);
   };
-  session.store.replace(createProject({ name: 'Notes test' }), { resetHistory: true });
+  // Audio never starts here (the Drums tests cover a note played while it starts).
+  session.startAudio = () => Promise.resolve(false);
+  session.store.replace(createProject({ name: 'Notes test' }), {
+    resetHistory: true,
+  });
   session.accepted(setKey(session.store, 9, 'minor')); // A minor
   session.accepted(setAssist(session.store, true));
   act(() => {
@@ -45,7 +51,8 @@ afterEach(() => {
   cleanup();
   session.noteOn = realNoteOn;
   session.noteOff = realNoteOff;
-  act(() => patchRuntime({ held: {} }));
+  session.startAudio = realStartAudio;
+  act(() => patchRuntime({ held: {}, replayId: null }));
 });
 
 function setup() {
@@ -199,5 +206,60 @@ describe('Notes pad mode', () => {
     expect(uiStore.getState().selectedTrackId).toBe('t5');
     expect(pad(0)).not.toBeNull();
     expect(calls).toEqual([]);
+  });
+  it('is one tab stop (bottom-left); arrow keys move and Space plays the focused note', () => {
+    const { m, pad } = setup();
+    const expected = scaleDegreesInRange(9, 'minor', 48, 16);
+    const stops = [...m.container.querySelectorAll<HTMLButtonElement>('button[id^="note-pad-"]')].filter((b) => b.tabIndex === 0);
+    expect(stops.map((b) => b.id)).toEqual(['note-pad-0']);
+    act(() => pad(0)!.focus());
+    key(pad(0)!, 'keydown', { key: 'ArrowUp', code: 'ArrowUp' });
+    key(pad(4)!, 'keydown', { key: 'End', code: 'End' });
+    expect(document.activeElement).toBe(pad(7));
+    expect(pad(7)!.tabIndex).toBe(0);
+    expect(pad(0)!.tabIndex).toBe(-1);
+    const down = key(pad(7)!, 'keydown', { key: 'Enter', code: 'Enter' });
+    expect(down.defaultPrevented).toBe(true);
+    key(pad(7)!, 'keyup', { key: 'Enter', code: 'Enter' });
+    expect(calls).toEqual([
+      ['on', 't3', expected[7], PAD_KEY_VELOCITY, 'pad'],
+      ['off', 't3', expected[7], 'pad'],
+    ]);
+  });
+
+  it('says when the part is muted and unmutes it', () => {
+    session.setMute('t3', true);
+    const { m, click } = setup();
+    expect(m.container.textContent).toContain('Bass is muted');
+    click([...m.container.querySelectorAll('button')].find((b) => b.textContent === 'Unmute')!);
+    expect(session.store.getState().tracks.find((t) => t.id === 't3')!.mute).toBe(false);
+    expect(m.container.textContent).not.toContain('is muted');
+  });
+
+  it('pauses the pads while a performance replays', () => {
+    const { m, pad } = setup();
+    act(() => patchRuntime({ replayId: 'perf-1' }));
+    expect(m.container.textContent).toContain('Replaying a performance');
+    expect(pad(0)!.disabled).toBe(true);
+    act(() => patchRuntime({ replayId: null }));
+    expect(pad(0)!.disabled).toBe(false);
+  });
+
+  it('choosing a part in the chooser puts keyboard focus on the note pads', async () => {
+    act(() => selectTrack('t1'));
+    const { m, pad, click } = setup();
+    const lead = m.container.querySelector<HTMLButtonElement>('button[aria-label^="Play Lead"]')!;
+    act(() => lead.focus());
+    click(lead);
+    await actFrame();
+    expect(document.activeElement).toBe(pad(0));
+  });
+  it('arrow keys in the part switch change the part and keep keyboard focus there', () => {
+    const { m } = setup();
+    const bass = m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label^="Bass"]')!;
+    act(() => bass.focus());
+    key(bass, 'keydown', { key: 'ArrowRight', code: 'ArrowRight' });
+    expect(uiStore.getState().selectedTrackId).toBe('t4');
+    expect(document.activeElement).toBe(m.container.querySelector('[role="radio"][aria-label^="Chords"]'));
   });
 });

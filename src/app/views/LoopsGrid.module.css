@@ -70,20 +70,20 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* M, S and '⋯'. On narrow screens the '⋯' wraps to its own line instead of spilling into the next column. */
 .headerTools {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-}
-.toolSpacer {
-  flex: 1;
+  gap: 3px 4px;
 }
 .headerMore {
   display: grid;
   place-items: center;
-  width: 24px;
+  width: 22px;
   height: 20px;
   flex: none;
+  margin-left: auto;
   padding: 0;
   border: 1px solid transparent;
   border-radius: 4px;

@@ -103,6 +103,29 @@ describe('Arpeggiator', () => {
     expect(document.activeElement).toBe(summary);
   });
 
+  it('the computer keyboard keeps playing while focus is in the settings panel', () => {
+    const played: string[] = [];
+    const realOn = session.noteOn;
+    const realOff = session.noteOff;
+    session.noteOn = (trackId, pitch) => void played.push(`on ${trackId} ${pitch}`);
+    session.noteOff = (trackId, pitch) => void played.push(`off ${trackId} ${pitch}`);
+    try {
+      const m = mount(h('div', { style: { width: '1340px', height: '100px' } }, h(KeyboardStrip)), { width: 1366 });
+      click(m.container.querySelector<HTMLButtonElement>('button[aria-label^="Arpeggiator settings"]')!);
+      const rate = byRole(dialog()!, 'radio', '1/8');
+      act(() => rate.focus());
+      key(rate, 'keydown', { key: 'a', code: 'KeyA' });
+      key(rate, 'keyup', { key: 'a', code: 'KeyA' });
+      // A = the lowest key (C4 at the default octave).
+      expect(played).toEqual(['on t4 60', 'off t4 60']);
+      // The panel stays open while playing.
+      expect(dialog()).not.toBeNull();
+    } finally {
+      session.noteOn = realOn;
+      session.noteOff = realOff;
+    }
+  });
+
   it('drum parts get an explanation instead of arp controls', () => {
     const m = mount(h(ArpStrip, { trackId: 't1' }));
     expect(m.container.querySelector('[role="switch"]')).toBeNull();
@@ -157,6 +180,35 @@ describe('Transport strip', () => {
     expect(uiStore.getState().tipsEnabled).toBe(false);
     click(sw);
     expect(uiStore.getState().tipsEnabled).toBe(true);
+  });
+
+  it('the More menu (narrow screens) reaches Undo, Tips, Projects and Export', () => {
+    const opened: string[] = [];
+    const m = mount(h(TipsProvider, { enabled: true, children: h(TransportBar, { onOpenLibrary: () => opened.push('library'), onOpenExport: () => opened.push('export') }) }), { width: 1024 });
+    const more = m.container.querySelector<HTMLButtonElement>('button[aria-label^="More:"]')!;
+    click(more);
+    const menu = document.querySelector<HTMLElement>('[role="menu"][aria-label="More"]')!;
+    const item = (text: string) => [...menu.querySelectorAll<HTMLElement>('[role^="menuitem"]')].find((b) => b.textContent?.includes(text))!;
+    // Nothing to undo yet: offered, but disabled with the reason.
+    expect(item('Undo').getAttribute('aria-disabled')).toBe('true');
+    expect(item('Undo').textContent).toContain('Nothing to undo');
+    const tips = item('Tips');
+    expect(tips.getAttribute('aria-checked')).toBe('true');
+    click(tips);
+    expect(uiStore.getState().tipsEnabled).toBe(false);
+    expect(document.querySelector('[role="menu"][aria-label="More"]')).toBeNull();
+    click(more);
+    click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.includes('Export WAV'))!);
+    click(more);
+    click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.includes('Projects'))!);
+    expect(opened).toEqual(['export', 'library']);
+    // An edit makes Undo available from the menu.
+    act(() => void session.setBpm(131));
+    click(more);
+    const undo = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.includes('Undo'))!;
+    expect(undo.getAttribute('aria-disabled')).toBeNull();
+    click(undo);
+    expect(session.store.getState().bpm).toBe(124);
   });
 
   it('shows the recording state in text next to the two record buttons', () => {

@@ -127,7 +127,8 @@ export function setNoteDuration(store: ProjectStore, trackId: Id, slot: number, 
   const found = findNote(store.getState(), trackId, slot, noteId);
   if (!found) return NOT_FOUND('note');
   if (!isFiniteNumber(ticks)) return refuse('invalid', 'Length must be a number.');
-  const v = clamp(ticks, VALIDATION_LIMITS.minNoteTicks, clipTicks(found.clip));
+  // A note ends at the clip's end at the latest (the loop point).
+  const v = clamp(ticks, VALIDATION_LIMITS.minNoteTicks, Math.max(VALIDATION_LIMITS.minNoteTicks, clipTicks(found.clip) - found.note.tick));
   return run(store, 'notes:Change note length', (d) => {
     const n = draftClip(d, trackId, slot).notes.find((x) => x.id === noteId);
     if (n) n.duration = v;

@@ -83,6 +83,7 @@ const StepPad = memo(function StepPad(props: { step: number; velocity: number; v
       data-step={step}
       data-ph-step={step}
       tabIndex={tabbable ? 0 : -1}
+      data-steps-entry={tabbable ? '' : undefined}
       aria-pressed={on}
       aria-label={`Step ${step + 1}, ${voiceName}, ${on ? `on, velocity ${percent(velocity)}` : 'off'}`}
       onPointerDown={onPointerDown}
@@ -208,9 +209,7 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
       <div ref={laneRef} className={`${grid.cols} ${styles.lane}`} role="group" aria-label={`${voiceName} steps, bar ${page + 1}. Arrow keys move, Space toggles, Up and Down change velocity.`} onKeyDown={onLaneKey}>
         <div className={styles.laneLabel}>
           <span className={styles.laneName}>{voiceName}</span>
-          <span className={styles.laneMeta}>
-            {laneHits === 0 ? 'No hits' : `${laneHits} hit${laneHits === 1 ? '' : 's'}`} · bar {page + 1}
-          </span>
+          <span className={styles.laneMeta}>{laneHits === 0 ? `Bar ${page + 1}: no hits yet. Click a pad.` : `${laneHits} hit${laneHits === 1 ? '' : 's'} · bar ${page + 1}`}</span>
         </div>
         {STEP_INDICES.map((s) => (
           <StepPad key={s} step={s} velocity={lane[s] ?? -1} voiceName={voiceName} tabbable={s === focusStep} onToggle={onToggle} onFocusStep={setFocusStep} />

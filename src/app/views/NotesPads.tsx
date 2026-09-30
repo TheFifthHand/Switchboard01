@@ -16,9 +16,9 @@ import { IconButton, Pad, type PadPressEvent } from '../../ui/components';
 import { isInScale, keyLabel, noteName, pitchClass, scaleDegreesInRange } from '../../music/scales';
 import type { Id, ScaleId } from '../../project/types';
 import { OCTAVE_RANGE, setNotesOctave } from '../../state/uiStore';
-import { session, useProject, useUi } from '../instance';
+import { useProject, useUi } from '../instance';
 import { useRuntime } from '../runtime';
-import { HitReadout, PAD_ORDER, PartChooser, PartSwitch, padGridKeyDown, useParts, type PartInfo } from './DrumPads';
+import { HitReadout, PAD_GRID_ATTR, PAD_ORDER, PartChooser, PartStatus, PartSwitch, padGridKeyDown, playLive, useParts, useReplaying, useRovingPads, type PartInfo } from './DrumPads';
 import shared from './DrumPads.module.css';
 import styles from './NotesPads.module.css';
 
@@ -44,29 +44,39 @@ export function highestFullOctave(root: number, scale: ScaleId, assist: boolean)
 const NOTE_PAD_ID = 'note-pad-';
 const onNoteGridKey = padGridKeyDown(NOTE_PAD_ID);
 
-const NotePad = memo(function NotePad(props: { trackId: Id; index: number; pitch: number; isRoot: boolean; inKey: boolean; onHit(pitch: number, velocity: number): void }) {
-  const { trackId, index, pitch, isRoot, inKey, onHit } = props;
+const NotePad = memo(function NotePad(props: { trackId: Id; index: number; pitch: number; isRoot: boolean; inKey: boolean; disabled: boolean; onHit(pitch: number, velocity: number): void }) {
+  const { trackId, index, pitch, isRoot, inKey, disabled, onHit } = props;
   const lit = useRuntime((s) => s.held[trackId]?.includes(pitch) ?? false);
-  // The pitch sounding under this pad: released as struck, even if the octave moves meanwhile.
-  const sounding = useRef<number | null>(null);
+  // Releases the pitch sounding under this pad as struck, even if the octave moves meanwhile.
+  const release = useRef<(() => void) | null>(null);
   const onPress = useCallback(
     (e: PadPressEvent) => {
-      sounding.current = pitch;
-      session.noteOn(trackId, pitch, e.velocity, 'pad');
+      release.current?.();
+      release.current = playLive(trackId, pitch, e.velocity, 'pad');
       onHit(pitch, e.velocity);
     },
     [trackId, pitch, onHit],
   );
   const onRelease = useCallback(() => {
-    const p = sounding.current;
-    sounding.current = null;
-    if (p !== null) session.noteOff(trackId, p, 'pad');
-  }, [trackId]);
+    const r = release.current;
+    release.current = null;
+    r?.();
+  }, []);
   const name = noteName(pitch);
   const spoken = `${name}${isRoot ? ', root note' : ''}${inKey ? '' : ', outside the key'}`;
   return (
     <div className={styles.cell} data-root={isRoot || undefined} data-outside={!inKey || undefined}>
-      <Pad id={`${NOTE_PAD_ID}${index}`} state={lit ? 'playing' : 'ready'} caption={null} label={name} onPress={onPress} onRelease={onRelease} ariaLabel={spoken} className={styles.pad} />
+      <Pad
+        id={`${NOTE_PAD_ID}${index}`}
+        state={lit ? 'playing' : 'ready'}
+        caption={null}
+        label={name}
+        disabled={disabled}
+        onPress={onPress}
+        onRelease={onRelease}
+        ariaLabel={spoken}
+        className={styles.pad}
+      />
       {isRoot && (
         <span className={styles.rootMark} aria-hidden="true">
           Root
@@ -83,8 +93,12 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
   const scale = useProject((p) => p.scale);
   const assist = useProject((p) => p.assist);
   const storedOctave = useUi((s) => s.notesOctave);
-  const [hit, setHit] = useState<{ pitch: number; velocity: number } | null>(null);
-  const onHit = useCallback((pitch: number, velocity: number) => setHit({ pitch, velocity }), []);
+  const replaying = useReplaying();
+  // The last note struck, remembered with its part (the readout only shows this part's).
+  const [hit, setHit] = useState<{ trackId: Id; pitch: number; velocity: number } | null>(null);
+  const onHit = useCallback((pitch: number, velocity: number) => setHit({ trackId, pitch, velocity }), [trackId]);
+  const shownHit = hit && hit.trackId === trackId ? hit : null;
+  const { gridRef, onFocus } = useRovingPads(NOTE_PAD_ID, 0);
 
   const top = useMemo(() => highestFullOctave(root, scale, assist), [root, scale, assist]);
   const octave = Math.min(storedOctave, top);
@@ -95,11 +109,7 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
   const key = keyLabel(root, scale);
   const chromaticScale = scale === 'chromatic';
 
-  const explain = assist
-    ? chromaticScale
-      ? 'Musical Assist: the Chromatic scale includes every semitone.'
-      : `Musical Assist: pads play only notes in ${key}.`
-    : 'Chromatic: every semitone.';
+  const explain = assist ? (chromaticScale ? 'Musical Assist: the Chromatic scale includes every semitone.' : `Musical Assist: pads play only notes in ${key}.`) : 'Chromatic: every semitone.';
   const detail = assist || chromaticScale ? 'Root notes are marked ROOT.' : `Shaded pads are outside ${key}. Root notes are marked ROOT.`;
 
   const canDown = octave > OCTAVE_RANGE.min;
@@ -121,7 +131,15 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
           <div className={shared.block}>
             <p className={shared.eyebrow}>Range</p>
             <div className={styles.rangeRow}>
-              <IconButton icon="octaveDown" label="Pads octave down" size="sm" variant="secondary" disabled={!canDown} onClick={() => setNotesOctave(octave - 1)} tip="Move all 16 pads one octave lower." />
+              <IconButton
+                icon="octaveDown"
+                label="Pads octave down"
+                size="sm"
+                variant="secondary"
+                disabled={!canDown}
+                onClick={() => setNotesOctave(octave - 1)}
+                tip="Move all 16 pads one octave lower."
+              />
               <output className={`${styles.range} mono`} aria-label={`Pads play ${noteName(low)} to ${noteName(high)}`}>
                 {rangeText}
               </output>
@@ -135,7 +153,7 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
           </div>
 
           <div className={shared.block}>
-            <HitReadout label="Last note" hit={hit ? { name: noteName(hit.pitch), velocity: hit.velocity } : null} />
+            <HitReadout label="Last note" hit={shownHit ? { name: noteName(shownHit.pitch), velocity: shownHit.velocity } : null} />
           </div>
 
           <div className={shared.foot}>
@@ -145,22 +163,34 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
         </div>
 
         <div className={shared.gridWrap}>
-          <div className={shared.grid} role="group" aria-label={`Note pads for ${part.name}, ${rangeText}, 4 by 4, lowest note bottom-left. Arrow keys move between pads.`} onKeyDown={onNoteGridKey}>
-            {PAD_ORDER.map((index) => {
-              const pitch = pitches[index];
-              if (pitch === undefined) return <div key={index} className={styles.cell} />;
-              return (
-                <NotePad
-                  key={index}
-                  trackId={trackId}
-                  index={index}
-                  pitch={pitch}
-                  isRoot={pitchClass(pitch) === pitchClass(root)}
-                  inKey={assist || chromaticScale || isInScale(pitch, root, scale)}
-                  onHit={onHit}
-                />
-              );
-            })}
+          <div className={shared.stage}>
+            <PartStatus part={part} />
+            <div
+              ref={gridRef}
+              className={shared.grid}
+              role="group"
+              aria-label={`Note pads for ${part.name}, ${rangeText}, 4 by 4, lowest note bottom-left. Arrow keys move between pads.`}
+              onKeyDown={onNoteGridKey}
+              onFocus={onFocus}
+              {...{ [PAD_GRID_ATTR]: '' }}
+            >
+              {PAD_ORDER.map((index) => {
+                const pitch = pitches[index];
+                if (pitch === undefined) return <div key={index} className={styles.cell} />;
+                return (
+                  <NotePad
+                    key={index}
+                    trackId={trackId}
+                    index={index}
+                    pitch={pitch}
+                    isRoot={pitchClass(pitch) === pitchClass(root)}
+                    inKey={assist || chromaticScale || isInScale(pitch, root, scale)}
+                    disabled={replaying}
+                    onHit={onHit}
+                  />
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
@@ -174,5 +204,6 @@ export function NotesPads() {
   const part = parts.find((p) => p.id === trackId);
   const melodicParts = useMemo(() => parts.filter((p) => p.kind !== 'drums'), [parts]);
   if (!part || part.kind === 'drums') return <PartChooser mode="notes" current={part} options={melodicParts} />;
-  return <NoteLayout key={part.id} part={part} melodicParts={melodicParts} />;
+  // Not keyed by part: the part switch keeps keyboard focus when it changes the part.
+  return <NoteLayout part={part} melodicParts={melodicParts} />;
 }

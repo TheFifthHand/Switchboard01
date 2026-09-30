@@ -88,6 +88,8 @@ export function App({ boot }: { boot: BootInfo }) {
   // Project library (transport project button → My projects; Welcome → Starters) and the quick guide.
   const [library, setLibrary] = useState<{ tab: LibraryTab; fromWelcome: boolean } | null>(null);
   const [guide, setGuide] = useState(false);
+  // Each replay starts from step 1, even when the guide is still open.
+  const [guideRun, setGuideRun] = useState(0);
   // The guide is offered once, after the first Jump In (or first starter picked from Welcome).
   const offerGuide = () => {
     if (!uiStore.getState().guideDone) setGuide(true);
@@ -97,6 +99,8 @@ export function App({ boot }: { boot: BootInfo }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || isTypingTarget(e.target)) return;
+      // Shortcuts belong to an open modal dialog while it is showing.
+      if (document.querySelector('[aria-modal="true"]')) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
@@ -148,7 +152,7 @@ export function App({ boot }: { boot: BootInfo }) {
     <TipsProvider enabled={tips} onEnabledChange={(on) => setTipsEnabled(on)}>
       <ToastProvider>
         {/* Before the instrument in the DOM so Tab reaches the guide first; it never blocks the pads. */}
-        <Guide open={guide} onClose={() => setGuide(false)} />
+        <Guide key={guideRun} open={guide} onClose={() => setGuide(false)} />
         <div className={styles.app} inert={welcome ? true : undefined}>
           <TransportBar onOpenLibrary={() => setLibrary({ tab: 'projects', fromWelcome: false })} onOpenExport={() => { setExportSource(undefined); setExportOpen(true); }} />
           <div className={styles.bannerSlot}>
@@ -183,6 +187,7 @@ export function App({ boot }: { boot: BootInfo }) {
           onShowGuide={() => {
             setLibrary(null);
             setWelcome(false);
+            setGuideRun((n) => n + 1);
             setGuide(true);
           }}
         />

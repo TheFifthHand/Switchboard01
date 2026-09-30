@@ -4,13 +4,17 @@
  *
  * - Non-modal: a teal ring marks the control (it ignores the pointer) and only
  *   the small callout takes pointer events, so playing never stops for it.
- *   The callout is placed beside the control, not over the pads.
+ * - The callout sits beside its control and slides along it to the spot that
+ *   covers the fewest other controls, and it never covers the transport; step
+ *   1 uses a slim strip that fits in the band under the transport, so part
+ *   headers and pad tabs stay usable.
  * - "Next" / "Skip guide", step dots with "1 of 3" in text, and Escape skips.
  * - Finishing or skipping is remembered (uiStore guideDone); the Library can
  *   replay it.
  * - Anchors are found by role/name (the Space-key Play button, #pad-surface,
- *   the "<part> macros" group). If one is not on screen (another view), the
- *   callout says where it lives and offers to show the Play view.
+ *   the "<part> macros" group). A control scrolled off screen (200 % zoom) is
+ *   scrolled into view when its step starts. If one is not on screen (another
+ *   view), the callout says where it lives and offers to show the Play view.
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Button, isTypingTarget } from '../../ui/components';
@@ -42,6 +46,7 @@ export interface GuidePlacement {
 
 interface StepContext {
   playing: boolean;
+  armed: boolean;
   padMode: PadMode;
   partName: string;
 }
@@ -51,19 +56,31 @@ interface StepDef {
   title: string;
   body(ctx: StepContext): string;
   find(): HTMLElement | null;
-  /** Preferred sides, in order; the first that fits the viewport wins. */
+  /** Where the control is when it is not on screen although the Play view is showing. */
+  missingHint: string;
+  /** Preferred sides, in order. */
   sides: GuideSide[];
   align: GuideAlign;
+  /** 'strip' = one slim row (for a control in a crowded bar), 'card' = a small panel. */
+  layout: 'card' | 'strip';
 }
 
 /** Callout ↔ control distance (leaves room for the arrow). */
 const GAP = 14;
 /** Minimum distance from the viewport edge. */
 const MARGIN = 12;
-/** Arrow never closer than this to a callout corner. */
-const ARROW_INSET = 22;
 /** Ring padding around the control. */
 const RING_PAD = 5;
+/** Controls the callout should rather not cover. */
+const INTERACTIVE = 'button, [role="slider"], [role="tab"], [role="radio"], [role="switch"], input, select, textarea, a[href]';
+/**
+ * Regions the callout should stay off, weighted per covered pixel: the
+ * transport must stay reachable at all times, and the keyboard strip is played.
+ */
+const ZONES: readonly { selector: string; weight: number }[] = [
+  { selector: 'header[aria-label="Transport"]', weight: 40 },
+  { selector: 'main ~ footer', weight: 3 },
+];
 
 const PAD_TEXT: Record<PadMode, string> = {
   loops: 'Each column is a part, each row a variation. Lit pads are playing — tap another and it joins on the next bar. The buttons on the right launch a whole row.',
@@ -87,21 +104,27 @@ export const GUIDE_STEPS: readonly StepDef[] = [
   {
     id: 'play',
     title: 'Play and stop',
-    body: ({ playing }) =>
+    body: ({ playing, armed }) =>
       playing
-        ? 'The groove is playing. Press Stop — or the Space bar — to pause it, and Play to start again.'
-        : 'Press Play — or the Space bar — to start the lit clips. Press it again to stop.',
+        ? 'The groove is playing. Stop it here or with the Space bar.'
+        : armed
+          ? 'Resume the groove here or with the Space bar.'
+          : 'Starts and stops playback (Space bar too). Tap a pad to begin.',
     find: findPlayButton,
+    missingHint: 'Play sits in the strip along the top of the screen.',
     sides: ['bottom', 'top', 'right', 'left'],
     align: 'start',
+    layout: 'strip',
   },
   {
     id: 'pads',
     title: 'The pads',
     body: ({ padMode }) => PAD_TEXT[padMode] ?? PAD_TEXT.loops,
     find: () => document.getElementById('pad-surface'),
+    missingHint: 'The pads fill the middle of the Play view.',
     sides: ['right', 'left', 'bottom', 'top', 'over'],
     align: 'end',
+    layout: 'card',
   },
   {
     id: 'sound',
@@ -109,45 +132,131 @@ export const GUIDE_STEPS: readonly StepDef[] = [
     body: ({ partName }) =>
       `These six knobs shape ${partName ? `${partName}, the selected part` : 'the selected part'}. Turn Tone for a brighter or darker sound and Space for more room around it. Tap another part's name or pads to shape that part.`,
     find: () => document.querySelector<HTMLElement>('[role="group"][aria-label$=" macros"]'),
+    missingHint: 'Select a part (tap its name above the pads) to show its sound controls.',
     sides: ['bottom', 'left', 'top', 'right', 'over'],
     align: 'start',
+    layout: 'card',
   },
 ];
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
 
-/**
- * Where the callout goes for an anchor rect: the first preferred side where it
- * fits inside the viewport, aligned along that side, kept on screen; 'over'
- * (inside the anchor, near its bottom) when no side fits.
- */
-export function placeCallout(a: GuideRect, size: { w: number; h: number }, sides: readonly GuideSide[], align: GuideAlign, viewport: { w: number; h: number }): GuidePlacement {
-  const clampX = (x: number) => clamp(x, MARGIN, viewport.w - MARGIN - size.w);
-  const clampY = (y: number) => clamp(y, MARGIN, viewport.h - MARGIN - size.h);
-  const alongX = () => (align === 'start' ? a.left - 10 : align === 'end' ? a.right + 10 - size.w : a.left + (a.width - size.w) / 2);
-  const alongY = () => (align === 'start' ? a.top : align === 'end' ? a.bottom - size.h : a.top + (a.height - size.h) / 2);
-  for (const side of sides) {
-    if (side === 'bottom' || side === 'top') {
-      const y = side === 'bottom' ? a.bottom + GAP : a.top - GAP - size.h;
-      if (y < MARGIN || y + size.h > viewport.h - MARGIN) continue;
-      const x = clampX(alongX());
-      return { x, y, side, arrow: clamp(a.left + a.width / 2 - x, ARROW_INSET, size.w - ARROW_INSET) };
-    }
-    if (side === 'right' || side === 'left') {
-      const x = side === 'right' ? a.right + GAP : a.left - GAP - size.w;
-      if (x < MARGIN || x + size.w > viewport.w - MARGIN) continue;
-      const y = clampY(alongY());
-      return { x, y, side, arrow: clamp(a.top + a.height / 2 - y, ARROW_INSET, size.h - ARROW_INSET) };
-    }
-    if (side === 'over') break;
-  }
-  return { x: clampX(a.left + (a.width - size.w) / 2), y: clampY(a.bottom - size.h - 16), side: 'over', arrow: null };
+export interface PlaceOptions {
+  /** How much a callout at this rect would get in the way (e.g. area of controls it covers); lower is better. */
+  cost?: (r: { left: number; top: number; right: number; bottom: number }) => number;
+  /** Closest the arrow may sit to a callout corner (px). */
+  arrowInset?: number;
 }
 
-function visibleRect(el: HTMLElement | null): DOMRect | null {
+/**
+ * Where the callout goes for an anchor rect. Each preferred side where the
+ * callout fits is tried; along that side the callout may slide as long as its
+ * arrow still points at the anchor. The spot with the lowest `cost` wins (ties
+ * go to the earlier side, then to the requested alignment). 'over' (inside the
+ * anchor, near its bottom) is the fallback when no side fits.
+ */
+export function placeCallout(
+  a: GuideRect,
+  size: { w: number; h: number },
+  sides: readonly GuideSide[],
+  align: GuideAlign,
+  viewport: { w: number; h: number },
+  opts: PlaceOptions = {},
+): GuidePlacement {
+  const inset = opts.arrowInset ?? 22;
+  const cost = opts.cost;
+  const minX = MARGIN;
+  const maxX = viewport.w - MARGIN - size.w;
+  const minY = MARGIN;
+  const maxY = viewport.h - MARGIN - size.h;
+  const alignedX = clamp(align === 'start' ? a.left - 10 : align === 'end' ? a.right + 10 - size.w : a.left + (a.width - size.w) / 2, minX, maxX);
+  const alignedY = clamp(align === 'start' ? a.top : align === 'end' ? a.bottom - size.h : a.top + (a.height - size.h) / 2, minY, maxY);
+
+  let best: (GuidePlacement & { score: number; dist: number }) | null = null;
+  const consider = (p: GuidePlacement, dist: number) => {
+    const score = cost ? cost({ left: p.x, top: p.y, right: p.x + size.w, bottom: p.y + size.h }) : 0;
+    // Strictly better only: earlier sides and the requested alignment win ties.
+    if (!best || score < best.score - 1 || (Math.abs(score - best.score) <= 1 && dist < best.dist && p.side === best.side)) best = { ...p, score, dist };
+  };
+
+  for (const side of sides) {
+    if (side === 'over') break;
+    if (side === 'bottom' || side === 'top') {
+      const y = side === 'bottom' ? a.bottom + GAP : a.top - GAP - size.h;
+      if (y < minY || y > maxY) continue;
+      const arrowFor = (x: number) => clamp(a.left + a.width / 2 - x, inset, size.w - inset);
+      // Slide range: the arrow must stay over the anchor.
+      const lo = Math.max(minX, a.left + 6 - (size.w - inset));
+      const hi = Math.min(maxX, a.right - 6 - inset);
+      const xs = new Set<number>([alignedX]);
+      if (cost && lo <= hi) for (let x = lo; x <= hi; x += 8) xs.add(Math.round(x));
+      if (cost && lo <= hi) xs.add(Math.round(hi));
+      for (const x of xs) if (x >= minX - 0.5 && x <= Math.max(minX, maxX) + 0.5) consider({ x, y, side, arrow: arrowFor(x) }, Math.abs(x - alignedX));
+    } else {
+      const x = side === 'right' ? a.right + GAP : a.left - GAP - size.w;
+      if (x < minX || x > maxX) continue;
+      const arrowFor = (y: number) => clamp(a.top + a.height / 2 - y, inset, size.h - inset);
+      const lo = Math.max(minY, a.top + 6 - (size.h - inset));
+      const hi = Math.min(maxY, a.bottom - 6 - inset);
+      const ys = new Set<number>([alignedY]);
+      if (cost && lo <= hi) for (let y = lo; y <= hi; y += 8) ys.add(Math.round(y));
+      if (cost && lo <= hi) ys.add(Math.round(hi));
+      for (const y of ys) if (y >= minY - 0.5 && y <= Math.max(minY, maxY) + 0.5) consider({ x, y, side, arrow: arrowFor(y) }, Math.abs(y - alignedY));
+    }
+    // Without a cost function the first side that fits is taken.
+    if (best && !cost) break;
+  }
+  if (best) {
+    const { x, y, side, arrow } = best as GuidePlacement;
+    return { x, y, side, arrow };
+  }
+  return { x: clamp(a.left + (a.width - size.w) / 2, minX, maxX), y: clamp(a.bottom - size.h - 16, minY, maxY), side: 'over', arrow: null };
+}
+
+/** The anchor's rect while any of it is inside the viewport (null when hidden or scrolled away). */
+function visibleRect(el: HTMLElement | null, vw: number, vh: number): DOMRect | null {
   if (!el || !el.isConnected) return null;
   const r = el.getBoundingClientRect();
-  return r.width > 0 && r.height > 0 ? r : null;
+  if (r.width <= 0 || r.height <= 0) return null;
+  return r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh ? r : null;
+}
+
+/** True when less than half of the anchor (or of the viewport, for a bigger anchor) is on screen. */
+function mostlyOffScreen(el: HTMLElement, vw: number, vh: number): boolean {
+  const r = el.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) return false;
+  const w = Math.min(r.right, vw) - Math.max(r.left, 0);
+  const h = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+  if (w <= 0 || h <= 0) return true;
+  return w * h < 0.5 * Math.min(r.width * r.height, vw * vh);
+}
+
+function viewportSize(): { w: number; h: number } {
+  return { w: document.documentElement.clientWidth || window.innerWidth, h: document.documentElement.clientHeight || window.innerHeight };
+}
+
+/** Area of on-screen controls (outside the guide and the anchor) a rect would cover, plus weighted no-go zones. */
+function coverCost(anchor: HTMLElement, guide: HTMLElement | null): (r: { left: number; top: number; right: number; bottom: number }) => number {
+  const rects: { r: DOMRect; weight: number }[] = [];
+  for (const el of document.querySelectorAll<HTMLElement>(INTERACTIVE)) {
+    if (anchor.contains(el) || guide?.contains(el) || el.closest('[inert]')) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) rects.push({ r, weight: 1 });
+  }
+  for (const z of ZONES) {
+    const el = document.querySelector<HTMLElement>(z.selector);
+    const r = el?.getBoundingClientRect();
+    if (r && r.width > 0 && r.height > 0) rects.push({ r, weight: z.weight });
+  }
+  return (c) => {
+    let area = 0;
+    for (const { r, weight } of rects) {
+      const w = Math.min(c.right, r.right) - Math.max(c.left, r.left);
+      const h = Math.min(c.bottom, r.bottom) - Math.max(c.top, r.top);
+      if (w > 0 && h > 0) area += w * h * weight;
+    }
+    return area;
+  };
 }
 
 interface Layout extends GuidePlacement {
@@ -176,6 +285,8 @@ function GuideCoach({ onClose }: { onClose(): void }) {
   const [step, setStep] = useState(0);
   const [layout, setLayout] = useState<Layout | null>(null);
   const [missing, setMissing] = useState(false);
+  // Moves between steps glide; the very first placement does not fly in from the corner.
+  const [settled, setSettled] = useState(false);
   const calloutRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   useEffect(() => {
@@ -185,13 +296,14 @@ function GuideCoach({ onClose }: { onClose(): void }) {
   const bodyId = useId();
 
   const playing = useRuntime((s) => s.playing);
+  const armed = useRuntime((s) => Object.values(s.tracks).some((t) => t.playingSlot !== null));
   const padMode = useUi((s) => s.padMode);
   const view = useUi((s) => s.view);
   const trackId = useUi((s) => s.selectedTrackId);
   const partName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
 
   const def = GUIDE_STEPS[step];
-  const body = def.body({ playing, padMode, partName });
+  const body = def.body({ playing, armed, padMode, partName });
   const last = step === GUIDE_STEPS.length - 1;
 
   const finish = useCallback(() => {
@@ -208,40 +320,73 @@ function GuideCoach({ onClose }: { onClose(): void }) {
     setView('play');
   }, []);
 
-  const measure = useCallback(() => {
-    const el = calloutRef.current;
-    if (!el) return;
-    const vw = document.documentElement.clientWidth || window.innerWidth;
-    const vh = document.documentElement.clientHeight || window.innerHeight;
-    const size = { w: el.offsetWidth, h: el.offsetHeight };
-    const r = visibleRect(GUIDE_STEPS[step].find());
-    let next: Layout;
-    if (r) {
-      const p = placeCallout(r, size, GUIDE_STEPS[step].sides, GUIDE_STEPS[step].align, { w: vw, h: vh });
-      const left = Math.max(2, r.left - RING_PAD);
-      const top = Math.max(2, r.top - RING_PAD);
-      const ring = { left, top, width: Math.min(vw - 2, r.right + RING_PAD) - left, height: Math.min(vh - 2, r.bottom + RING_PAD) - top };
-      next = { ...p, ring };
-    } else {
-      next = { x: clamp((vw - size.w) / 2, MARGIN, vw - MARGIN - size.w), y: clamp(vh - size.h - 124, MARGIN, vh - MARGIN - size.h), side: 'over', arrow: null, ring: null };
-    }
-    setMissing(!r);
-    setLayout((prev) => (sameLayout(prev, next) ? prev : next));
-  }, [step]);
+  /** Inputs of the last placement: the periodic check skips the (costlier) placement when nothing moved. */
+  const lastInputs = useRef('');
+  const measure = useCallback(
+    (force = true) => {
+      const el = calloutRef.current;
+      if (!el) return;
+      const { w: vw, h: vh } = viewportSize();
+      const size = { w: el.offsetWidth, h: el.offsetHeight };
+      const s = GUIDE_STEPS[step];
+      const anchor = s.find();
+      const r = visibleRect(anchor, vw, vh);
+      const inputs = [step, vw, vh, size.w, size.h, r ? [r.left, r.top, r.width, r.height].map(Math.round).join(',') : '-'].join('|');
+      if (!force && inputs === lastInputs.current) return;
+      lastInputs.current = inputs;
+      let next: Layout;
+      if (anchor && r) {
+        const p = placeCallout(r, size, s.sides, s.align, { w: vw, h: vh }, { cost: coverCost(anchor, el), arrowInset: s.layout === 'strip' ? 16 : 22 });
+        const left = Math.max(2, r.left - RING_PAD);
+        const top = Math.max(2, r.top - RING_PAD);
+        const ring = { left, top, width: Math.min(vw - 2, r.right + RING_PAD) - left, height: Math.min(vh - 2, r.bottom + RING_PAD) - top };
+        next = { ...p, ring };
+      } else {
+        next = { x: clamp((vw - size.w) / 2, MARGIN, vw - MARGIN - size.w), y: clamp(vh - size.h - 124, MARGIN, vh - MARGIN - size.h), side: 'over', arrow: null, ring: null };
+      }
+      setMissing(!r);
+      setLayout((prev) => (sameLayout(prev, next) ? prev : next));
+    },
+    [step],
+  );
+
+  // Bring the control on screen when its step starts (the page scrolls at 200 % zoom or in small windows).
+  useLayoutEffect(() => {
+    const anchor = GUIDE_STEPS[step].find();
+    const { w, h } = viewportSize();
+    if (anchor && mostlyOffScreen(anchor, w, h)) anchor.scrollIntoView({ block: 'center', inline: 'center' });
+  }, [step, view]);
 
   // Place before paint whenever the step, its text or the view changes.
   useLayoutEffect(() => {
     measure();
   }, [measure, body, view, padMode, missing]);
 
-  // Follow layout changes (window size, banners, panels) without per-frame work.
   useEffect(() => {
-    const onResize = () => measure();
-    window.addEventListener('resize', onResize);
-    const timer = window.setInterval(measure, 400);
+    if (!layout || settled) return;
+    const id = requestAnimationFrame(() => setSettled(true));
+    return () => cancelAnimationFrame(id);
+  }, [layout, settled]);
+
+  // Follow layout changes (window size, scrolling, banners, panels) without per-frame work at rest:
+  // the periodic check only re-places the callout when the control, the window or the callout moved.
+  useEffect(() => {
+    let raf = 0;
+    const onMove = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        measure(false);
+      });
+    };
+    window.addEventListener('resize', onMove);
+    window.addEventListener('scroll', onMove, { capture: true, passive: true });
+    const timer = window.setInterval(() => measure(false), 400);
     return () => {
-      window.removeEventListener('resize', onResize);
+      window.removeEventListener('resize', onMove);
+      window.removeEventListener('scroll', onMove, { capture: true });
       window.clearInterval(timer);
+      cancelAnimationFrame(raf);
     };
   }, [measure]);
 
@@ -279,17 +424,23 @@ function GuideCoach({ onClose }: { onClose(): void }) {
         aria-label={`Quick guide, step ${step + 1} of ${GUIDE_STEPS.length}: ${def.title}`}
         aria-describedby={bodyId}
         data-guide-step={def.id}
+        data-layout={missing ? 'card' : def.layout}
         data-side={layout?.side ?? 'over'}
         data-ready={layout ? true : undefined}
+        data-settled={settled || undefined}
         style={{ left: layout?.x ?? 0, top: layout?.y ?? 0 }}
       >
         {arrowStyle && <span className={styles.arrow} style={arrowStyle} aria-hidden="true" />}
-        <div className={styles.kicker}>
-          <span className={styles.kickerLabel}>Quick guide</span>
-          <span className={`${styles.stepCount} mono`}>
-            {step + 1} of {GUIDE_STEPS.length}
-          </span>
-        </div>
+        <span className={styles.kickerLabel}>Quick guide</span>
+        <span className={`${styles.stepCount} mono`}>
+          {step + 1} of {GUIDE_STEPS.length}
+        </span>
+        <ol className={styles.dots} aria-hidden="true">
+          {GUIDE_STEPS.map((s, i) => (
+            <li key={s.id} className={styles.dot} data-state={i < step ? 'done' : i === step ? 'current' : 'next'} />
+          ))}
+        </ol>
+        <span className={styles.divider} aria-hidden="true" />
         <div id={titleId} className={styles.title}>
           {def.title}
         </div>
@@ -298,18 +449,19 @@ function GuideCoach({ onClose }: { onClose(): void }) {
         </p>
         {missing && (
           <div className={styles.missing}>
-            <span>This is on the Play view.</span>
-            <Button size="sm" variant="secondary" onClick={() => setView('play')}>
-              Show the Play view
-            </Button>
+            {view === 'play' ? (
+              <span>{def.missingHint}</span>
+            ) : (
+              <>
+                <span>This is on the Play view.</span>
+                <Button size="sm" variant="secondary" onClick={() => setView('play')}>
+                  Show the Play view
+                </Button>
+              </>
+            )}
           </div>
         )}
-        <div className={styles.footer}>
-          <ol className={styles.dots} aria-hidden="true">
-            {GUIDE_STEPS.map((s, i) => (
-              <li key={s.id} className={styles.dot} data-state={i < step ? 'done' : i === step ? 'current' : 'next'} />
-            ))}
-          </ol>
+        <div className={styles.buttons}>
           {!last && (
             <Button size="sm" variant="ghost" onClick={finish} aria-keyshortcuts="Escape" className={styles.skip}>
               Skip guide

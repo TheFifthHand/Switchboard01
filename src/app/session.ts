@@ -124,6 +124,9 @@ export class Session {
   private previewOnly = false;
   private replayingId: Id | null = null;
   private loadedSampleIds = new Set<Id>();
+  /** Keys pressed before the engine existed: played as soon as audio is ready. */
+  private pendingKeys = new Map<string, { released: boolean }>();
+  private auditionCounter = 0;
   private sampleLoads = new Map<Id, Promise<void>>();
 
   constructor(initial: Project) {
@@ -198,7 +201,8 @@ export class Session {
     selectTrack('t4');
     if (!(await audio)) return;
     this.transport!.launchScene(JUMP_IN_SCENE_ROW);
-    this.play();
+    this.selectRow(JUMP_IN_SCENE_ROW);
+    await this.play();
   }
 
   /** Start a new project from a starter (current project is saved first). */
@@ -236,6 +240,12 @@ export class Session {
     const res = await importBundle(file, { newId: true });
     if (!res.ok) return { ok: false, message: res.error };
     try {
+      const names = new Set((await library.listProjects()).map((x) => x.name));
+      if (names.has(res.project.name)) res.project.name = `${res.project.name} (imported)`.slice(0, 60);
+    } catch {
+      /* the library list is only used to avoid duplicate names */
+    }
+    try {
       for (const s of res.samples) await db.putSample(s.meta, s.blob);
       await library.addToLibrary(res.project);
     } catch (e) {
@@ -252,6 +262,11 @@ export class Session {
     const project = this.store.getState();
     const blob = await exportBundle(project, async (id) => (await db.getSample(id))?.blob ?? null);
     return { blob, filename: bundleFileName(project) };
+  }
+
+  /** True while the open project is the unsaved Jump In preview shown before any choice. */
+  get isPreview(): boolean {
+    return this.previewOnly;
   }
 
   /* ------------------------------------------------------------------ */
@@ -377,6 +392,19 @@ export class Session {
       if (musicChanged(p, prev)) this.transport.invalidate();
     }
     if (p.samples !== prev.samples) void this.loadProjectSamples(p);
+    if (p.tracks !== prev.tracks) this.stopPartsWithoutClip(p);
+  }
+
+  /** A part whose playing (or armed) clip was deleted stops, so undo does not silently resume it. */
+  private stopPartsWithoutClip(p: Project): void {
+    if (!this.sequencer || !this.transport || this.replayingId) return;
+    const rt = runtimeStore.getState().tracks;
+    for (const t of p.tracks) {
+      const slot = rt[t.id]?.playingSlot;
+      if (slot === null || slot === undefined || t.clips[slot]) continue;
+      this.transport.stopTrack(t.id);
+      setTrackRuntime(t.id, { playingSlot: null, queued: null });
+    }
   }
 
   /** Decode every sample the project uses into the bank (once per id). */
@@ -423,6 +451,7 @@ export class Session {
   async play(): Promise<void> {
     if (!(await this.startAudio())) return;
     if (this.replayingId) this.endReplay();
+    this.armDefaultSceneIfIdle();
     this.transport!.start({ mode: { kind: 'live' }, countInBars: 0 });
     patchRuntime({ playing: true, mode: 'live', stalled: null, songBlock: null });
     this.refreshLauncherRuntime();
@@ -457,6 +486,31 @@ export class Session {
     this.transport!.start({ mode: { kind: 'song', fromBlock } });
     patchRuntime({ playing: true, mode: 'song', songBlock: fromBlock, stalled: null });
     this.refreshLauncherRuntime();
+  }
+
+  /**
+   * Play with nothing armed would only run the bar counter. Arm a scene so
+   * Play is always audible: a starter's core groove row, else the row with
+   * the most clips.
+   */
+  private armDefaultSceneIfIdle(): void {
+    const seq = this.sequencer;
+    const p = this.store.getState();
+    if (!seq || !this.transport) return;
+    if (p.tracks.some((t) => {
+      const st = seq.getTrackState(t.id);
+      return st.playing !== null || (st.queued !== null && st.queued.slot !== null);
+    })) return;
+    const counts = p.scenes.map((_, row) => p.tracks.filter((t) => t.clips[row]).length);
+    const row = p.starterId && counts[JUMP_IN_SCENE_ROW] > 0 ? JUMP_IN_SCENE_ROW : counts.indexOf(Math.max(...counts));
+    if (row < 0 || counts[row] === 0) return;
+    this.transport.launchScene(row);
+    this.selectRow(row);
+  }
+
+  /** Point every part's edit slot at the row just launched (Steps, Record Notes, Variation follow it). */
+  private selectRow(row: number): void {
+    for (const t of this.store.getState().tracks) if (t.clips[row]) selectSlot(t.id, row);
   }
 
   /** Resume after a stall: restart from the bar where playback stopped, same clips. */
@@ -529,6 +583,7 @@ export class Session {
     if (!(await this.startAudio())) return;
     const wasPlaying = this.transport!.playing;
     const results = this.transport!.launchScene(row);
+    this.selectRow(row);
     this.recordEvent({ t: this.currentTick(), type: 'scene', row, atTick: results[0]?.atTick ?? 0 });
     if (!wasPlaying) await this.play();
     else this.applyLaunchResults(results);
@@ -643,11 +698,24 @@ export class Session {
    */
   noteOn(trackId: Id, rawPitch: number, velocity: number, source: NoteSource): void {
     if (this.replayingId) return;
-    void this.startAudio();
+    const key = `${source}:${trackId}:${rawPitch}`;
+    if (!this.engine) {
+      // The first touch also starts audio: keep that note and play it once the engine is ready.
+      if (this.pendingKeys.has(key)) return;
+      const pending = { released: false };
+      this.pendingKeys.set(key, pending);
+      void this.startAudio().then((ok) => {
+        if (this.pendingKeys.get(key) !== pending) return;
+        this.pendingKeys.delete(key);
+        if (!ok || !this.engine) return;
+        this.noteOn(trackId, rawPitch, velocity, source);
+        if (pending.released) setTimeout(() => this.noteOff(trackId, rawPitch, source), 180);
+      });
+      return;
+    }
     const p = this.store.getState();
     const track = p.tracks.find((t) => t.id === trackId);
-    if (!track || !this.engine) return;
-    const key = `${source}:${trackId}:${rawPitch}`;
+    if (!track) return;
     if (this.held.has(key)) this.noteOff(trackId, rawPitch, source);
     const drums = track.instrument.kind === 'drums';
     const pitch = !drums && p.assist ? snapToScale(rawPitch, p.root, p.scale) : rawPitch;
@@ -673,6 +741,8 @@ export class Session {
 
   noteOff(trackId: Id, rawPitch: number, source: NoteSource): void {
     const key = `${source}:${trackId}:${rawPitch}`;
+    const pending = this.pendingKeys.get(key);
+    if (pending) pending.released = true;
     const note = this.held.get(key);
     if (!note) return;
     this.held.delete(key);
@@ -684,8 +754,25 @@ export class Session {
     this.publishHeld(trackId);
   }
 
+  /**
+   * Preview a note on a part (editors, sound browser): plays exactly `pitch`
+   * (no Musical Assist, no arpeggiator) and is never recorded.
+   */
+  audition(trackId: Id, pitch: number, velocity = 0.8, ms = 320): void {
+    const play = () => {
+      if (!this.engine) return;
+      this.auditionCounter += 1;
+      const key = `audition:${trackId}:${pitch}:${this.auditionCounter}`;
+      this.engine.liveNoteOn(trackId, pitch, Math.max(0.05, Math.min(1, velocity)), key);
+      setTimeout(() => this.engine?.liveNoteOff(trackId, key), Math.max(40, ms));
+    };
+    if (this.engine) play();
+    else void this.startAudio().then((ok) => ok && play());
+  }
+
   /** Release every held note (window blur, pointer cancel, input change, Stop, Mute All). */
   releaseAllNotes(): void {
+    for (const p of this.pendingKeys.values()) p.released = true;
     const keys = [...this.held.keys()];
     for (const key of keys) {
       const n = this.held.get(key)!;

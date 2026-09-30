@@ -6,14 +6,19 @@
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { page } from 'vitest/browser';
+import '../../src/ui/theme.css';
+import { App } from '../../src/app/App';
 import { session } from '../../src/app/instance';
+import { runtimeStore } from '../../src/app/runtime';
 import { Library, type LibraryProps, type LibraryTab } from '../../src/app/views/Library';
 import { BLANK_STARTER, STARTERS } from '../../src/content/starters';
-import { deleteDb, saveProject } from '../../src/persistence/db';
+import { closeDb, deleteDb, saveProject } from '../../src/persistence/db';
 import * as library from '../../src/persistence/library';
 import { createProject } from '../../src/project/factory';
 import type { Project } from '../../src/project/types';
-import { cleanup, mount, wait } from './ui-harness';
+import { setGuideDone, setView, uiStore } from '../../src/state/uiStore';
+import { cleanup, key, mount, wait } from './ui-harness';
 
 let loaded: string[] = [];
 let closed = 0;
@@ -26,6 +31,7 @@ function project(name: string, updatedAt: number): Project {
 }
 
 beforeEach(async () => {
+  await page.viewport(1366, 768);
   loaded = [];
   closed = 0;
   guides = 0;
@@ -117,6 +123,9 @@ describe('Project library', () => {
     });
     // Storage is explained in the dialog.
     expect(dialog().textContent).toContain(library.LIBRARY_STORAGE_NOTE);
+    // Focus starts on the selected tab.
+    expect(document.activeElement?.getAttribute('role')).toBe('tab');
+    expect(document.activeElement?.textContent).toContain('Starters');
     // Tabs switch to My projects.
     await click(dialog().querySelector<HTMLButtonElement>('[role="tab"]:not([aria-selected="true"])'), 'My projects tab');
     await until(() => dialog().textContent?.includes('No saved projects yet'), 'empty project list');
@@ -135,12 +144,14 @@ describe('Project library', () => {
 
     const now = session.store.getState();
     expect(now.starterId).toBe('techno');
+    expect(runtimeStore.getState().notice?.text).toBe(`Started “${now.name}”. “Old Song” is still in My projects. Tap a pad or a scene to hear it.`);
     expect(now.id).not.toBe(old.id);
     const stored = await library.listProjects();
     expect(stored.map((p) => p.id).sort()).toEqual([old.id, now.id].sort());
 
     m.unmount();
     open('projects');
+    expect(document.activeElement?.textContent).toContain('My projects');
     await until(() => rowNames('Saved projects').length === 2, 'two saved projects');
     const names = rowNames('Saved projects');
     expect(names[0]).toBe(now.name); // the open project comes first
@@ -314,9 +325,68 @@ describe('Project library', () => {
     await until(() => loaded.length > 0, 'import loaded');
     expect(loaded).toEqual(['import']);
     const imported = session.store.getState();
-    expect(imported.name).toBe('Round Trip');
+    // The original is still in the library, so the imported copy is named apart.
+    expect(imported.name).toBe('Round Trip (imported)');
     expect(imported.id).not.toBe(a.id);
     expect(await library.listProjects()).toHaveLength(2);
+  });
+
+  it('keeps Escape working after the focused control goes away (message dismissed, row restored)', async () => {
+    const a = project('Alpha', Date.now() - 1000);
+    const b = project('Beta', Date.now() - 5000);
+    await saveProject(a);
+    await saveProject(b);
+    await library.deleteProject(b.id);
+    session.store.replace(a, { resetHistory: true });
+    open('projects');
+    await until(() => buttonNamed('Restore Beta'), 'trash row');
+    await click(buttonNamed('Restore Beta'));
+    await until(() => rowNames('Saved projects').includes('Beta'), 'restored');
+    expect(dialog().contains(document.activeElement)).toBe(true);
+    await click(buttonNamed('Dismiss message'));
+    expect(dialog().contains(document.activeElement)).toBe(true);
+    // Even with focus lost to the page, Escape closes the library.
+    (document.activeElement as HTMLElement).blur();
+    await act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
+    expect(closed).toBe(1);
+  });
+
+  it('explains a storage failure and asks before replacing a project it cannot keep', async () => {
+    session.store.replace(project('Unsaved Jam', Date.now()), { resetHistory: true });
+    // Make IndexedDB unavailable (as in some private windows).
+    await closeDb();
+    const own = Object.getOwnPropertyDescriptor(window, 'indexedDB');
+    Object.defineProperty(window, 'indexedDB', { configurable: true, get: () => undefined });
+    try {
+      open('starters');
+      const notice = await until(() => dialog().querySelector<HTMLElement>('[role="alert"]'), 'storage notice');
+      expect(notice.textContent).toContain('Browser storage is not working right now');
+      expect(notice.textContent).toContain('not available');
+      expect(dialog().textContent).toContain('cannot be kept in this browser right now');
+
+      await click(buttonNamed(/^Start Garage/));
+      const confirm = dialog().querySelector<HTMLElement>('[role="group"][aria-label="Start Garage?"]')!;
+      expect(confirm.textContent).toContain('will be lost unless you export it first');
+      expect(buttonNamed('Export it first', confirm)).not.toBeNull();
+      expect(loaded).toEqual([]);
+      expect(session.store.getState().name).toBe('Unsaved Jam');
+
+      await click(buttonNamed('Replace it', confirm));
+      await until(() => loaded.length > 0, 'starter loaded');
+      expect(session.store.getState().starterId).toBe('garage');
+      // The message keeps the storage warning and does not claim the old project was kept.
+      const toast = runtimeStore.getState().notice!;
+      expect(toast.tone).toBe('warn');
+      expect(toast.text).toContain('Started “Garage Starter”.');
+      expect(toast.text).toContain('Could not save to browser storage');
+      expect(toast.text).not.toContain('still in My projects');
+    } finally {
+      if (own) Object.defineProperty(window, 'indexedDB', own);
+      else delete (window as { indexedDB?: unknown }).indexedDB;
+    }
+    expect(typeof indexedDB).toBe('object');
   });
 
   it('replays the quick guide from the dialog', async () => {
@@ -325,3 +395,128 @@ describe('Project library', () => {
     expect(guides).toBe(1);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Wiring in the app: Welcome card, transport project button, guide    */
+/* ------------------------------------------------------------------ */
+
+function libraryDialog(): HTMLElement | null {
+  for (const d of document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]')) {
+    const title = document.getElementById(d.getAttribute('aria-labelledby') ?? '');
+    if (title?.textContent === 'Project library') return d;
+  }
+  return null;
+}
+
+function selectedTab(): string {
+  return libraryDialog()?.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim() ?? '';
+}
+
+function welcomeOpen(): boolean {
+  return document.getElementById('welcome-title') !== null;
+}
+
+describe('Project library in the app', () => {
+  beforeEach(() => {
+    act(() => {
+      setGuideDone(false);
+      setView('play');
+    });
+  });
+
+  it('opens on Starters from the Welcome card and on My projects from the transport; starting offers the guide once', async () => {
+    const boot = await session.boot();
+    mount(h(App, { boot }));
+    expect(welcomeOpen()).toBe(true);
+
+    // Welcome → "Other starters & projects": the library opens over the Welcome card, on Starters.
+    await click(buttonNamed('Other starters & projects'), 'Other starters link');
+    expect(libraryDialog()).not.toBeNull();
+    expect(selectedTab()).toContain('Starters');
+    // Closing it goes back to the Welcome card.
+    await click(buttonNamed('Close the project library'));
+    expect(libraryDialog()).toBeNull();
+    expect(welcomeOpen()).toBe(true);
+
+    // Picking a starter loads it, closes both and offers the quick guide (never finished yet).
+    await click(buttonNamed('Other starters & projects'), 'Other starters link');
+    await click(buttonNamed(/^Start Techno/), 'Techno card');
+    await until(() => !libraryDialog() && !welcomeOpen(), 'library and welcome closed');
+    expect(session.store.getState().starterId).toBe('techno');
+    const guide = await until(() => document.querySelector<HTMLElement>('[data-guide-step]'), 'quick guide');
+    expect(guide.dataset.guideStep).toBe('play');
+    await click(buttonNamed('Next', guide));
+    expect(document.querySelector<HTMLElement>('[data-guide-step]')?.dataset.guideStep).toBe('pads');
+
+    // The transport's project button opens the library on My projects, with the open project marked.
+    await click(buttonNamed(/^Projects \(open: Techno Starter\)$/), 'transport project button');
+    expect(selectedTab()).toContain('My projects');
+    const openRow = await until(() => libraryDialog()?.querySelector<HTMLElement>('li[aria-current="true"]'), 'open project row');
+    expect(openRow.textContent).toContain('Techno Starter');
+    expect(openRow.textContent).toContain('Open now');
+
+    // "Show the quick guide again" closes the library and restarts the guide from step 1.
+    await click(buttonNamed('Show the quick guide again'));
+    expect(libraryDialog()).toBeNull();
+    expect(document.querySelector<HTMLElement>('[data-guide-step]')?.dataset.guideStep).toBe('play');
+    await click(buttonNamed('Skip guide'));
+    expect(uiStore.getState().guideDone).toBe(true);
+
+    // Once done, a starter picked from the Welcome card's library does not bring the guide back.
+    cleanup();
+    mount(h(App, { boot }));
+    await click(buttonNamed('Other starters & projects'), 'Other starters link');
+    await click(buttonNamed(/^Start House/), 'House card');
+    await until(() => !libraryDialog() && !welcomeOpen(), 'library and welcome closed');
+    expect(session.store.getState().starterId).toBe('house');
+    await act(async () => {
+      await wait(50);
+    });
+    expect(document.querySelector('[data-guide-step]')).toBeNull();
+  });
+
+  it('keeps Space from starting playback behind the open library', async () => {
+    const boot = await session.boot();
+    mount(h(App, { boot }));
+    await click(buttonNamed('Just look around'));
+    const realToggle = session.togglePlay;
+    let toggles = 0;
+    session.togglePlay = async () => {
+      toggles += 1;
+    };
+    try {
+      const space = (target: EventTarget) => key(target, 'keydown', { key: ' ', code: 'Space' });
+      // Without the library, Space on the page is Play/Stop.
+      space(document.body);
+      expect(toggles).toBe(1);
+
+      await click(buttonNamed(/^Projects \(open:/), 'transport project button');
+      const panel = libraryDialog()!.querySelector<HTMLElement>('[role="tabpanel"]')!;
+      panel.focus();
+      space(panel);
+      (document.activeElement as HTMLElement | null)?.blur();
+      space(document.body);
+      expect(toggles).toBe(1);
+      // A focused control still gets Space (it presses the control, not Play).
+      const tab = dialogTab('Starters');
+      let reached = 0;
+      tab.addEventListener('keydown', () => void (reached += 1));
+      tab.focus();
+      expect(space(tab).defaultPrevented).toBe(false);
+      expect(reached).toBe(1);
+      expect(toggles).toBe(1);
+
+      await click(buttonNamed('Close the project library'));
+      space(document.body);
+      expect(toggles).toBe(2);
+    } finally {
+      session.togglePlay = realToggle;
+    }
+  });
+});
+
+function dialogTab(name: string): HTMLButtonElement {
+  const tab = [...(libraryDialog()?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])].find((t) => t.textContent?.includes(name));
+  if (!tab) throw new Error(`${name} tab not found`);
+  return tab;
+}

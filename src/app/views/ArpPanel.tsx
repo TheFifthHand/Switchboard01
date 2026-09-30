@@ -123,7 +123,8 @@ export function ArpSettings({ trackId }: { trackId: Id }) {
         checked={arp.latch}
         onChange={(on) => update(trackId, { latch: on })}
         size="sm"
-        tip="Keeps the pattern going after you let go of the keys. Press new keys to change it; Stop ends it."
+        tip="Keeps the pattern going after you let go of the keys. Press new keys to change it; switch Latch off to end it."
+        detail="Stopping playback also ends a latched pattern."
       />
       <p className={styles.tip}>
         Hold keys and the arpeggiator plays them one at a time, in time with the beat — it keeps time even while playback is stopped.{' '}
@@ -140,13 +141,15 @@ export function ArpStrip({ trackId, stripRef }: { trackId: Id; stripRef?: RefObj
   const name = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
+  // Selecting a drum part closes the settings, so they do not pop up again later on their own.
+  if (isDrums && open) setOpen(false);
   if (!arp) return null;
 
   if (isDrums) {
     return (
       <div className={styles.strip} role="group" aria-label="Arpeggiator">
         <span className={styles.stripTitle}>Arpeggiator</span>
-        <p className={styles.stripNote}>For melodic parts. {name} is a drum kit — select Bass, Chords or Lead to use it.</p>
+        <p className={styles.stripNote}>For melodic parts. {name} plays a drum kit: select a synth or sampler part to use it.</p>
       </div>
     );
   }

@@ -424,6 +424,19 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
     }
   };
 
+  // Leaving Steps mid-press (switching view, part or clip) must not leave an auditioned note hanging.
+  useEffect(
+    () => () => {
+      const d = drag.current;
+      drag.current = null;
+      if (!d) return;
+      if (d.kind === 'draw' || d.kind === 'key') d.sound.release();
+      else if (d.kind === 'body') d.sound?.release();
+      session.store.endGesture();
+    },
+    [],
+  );
+
   const onPointerEnd = (e: PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.pointerId !== e.pointerId) return;
@@ -441,9 +454,9 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
   /* ---------- keyboard ---------- */
 
   // Reads this render's props (not the ref), so labels never lag an edit behind.
-  const describe = (step: number, pitch: number): string => {
+  const describe = (step: number, pitch: number, onPage = page): string => {
     const notes = clip.notes;
-    const tick = a + step * TICKS_PER_STEP;
+    const tick = pageStartTick(onPage) + step * TICKS_PER_STEP;
     const name = noteName(pitch);
     const n = notesStartingAt(notes, tick, pitch)[0];
     if (n) return `${name}, step ${step + 1}: note, ${stepsLabel(n.duration)}, velocity ${percent(n.velocity)}`;
@@ -451,12 +464,12 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
     return `${name}, step ${step + 1}: empty`;
   };
 
-  const moveCursor = (step: number, rowIndex: number) => {
+  const moveCursor = (step: number, rowIndex: number, onPage = page) => {
     const r = cur.current.rows;
     const ri = Math.min(r.length - 1, Math.max(0, rowIndex));
     const pitch = r[ri]?.pitch ?? cursorPitch;
     setCursor({ step, pitch });
-    setAnnounce(describe(step, pitch));
+    setAnnounce(`${onPage !== page ? `Bar ${onPage + 1}. ` : ''}${describe(step, pitch, onPage)}`);
   };
 
   /** The note under the cursor: one starting on the cell, else one held through it. */
@@ -506,10 +519,10 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
         const next = step + dir;
         if (next > 15 && page < c.clip.bars - 1) {
           setStepPage(c.trackId, page + 1);
-          moveCursor(0, cursorRow);
+          moveCursor(0, cursorRow, page + 1);
         } else if (next < 0 && page > 0) {
           setStepPage(c.trackId, page - 1);
-          moveCursor(15, cursorRow);
+          moveCursor(15, cursorRow, page - 1);
         } else moveCursor(Math.min(15, Math.max(0, next)), cursorRow);
         break;
       }
@@ -617,6 +630,7 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
           <button
             ref={cursorRef}
             type="button"
+            data-steps-entry=""
             className={styles.cursor}
             style={{ gridRow: cursorRow + 1, gridColumn: stepColumn(cursor.step) }}
             aria-label={`Note grid, bar ${page + 1}. ${describe(cursor.step, cursorPitch)}`}

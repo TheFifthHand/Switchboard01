@@ -13,7 +13,7 @@ import { LoopsGrid } from '../../src/app/views/LoopsGrid';
 import { getStarter } from '../../src/content/starters';
 import type { Clip, Id } from '../../src/project/types';
 import { selectSlot, selectTrack, setClipboard, setPadMode, slotFor, uiStore } from '../../src/state/uiStore';
-import { cleanup, fire, key, mount } from './ui-harness';
+import { cleanup, fire, key, mount, pointer } from './ui-harness';
 
 beforeEach(() => {
   session.store.replace(getStarter('house')!.build(), { resetHistory: true });
@@ -76,15 +76,31 @@ describe('Clip pad menu', () => {
   it('right-click opens the clip menu at the pad and selects it without launching', () => {
     setup();
     const { full } = slotsOf('t3');
-    rightClick(pad('t3', full));
+    const launched: [Id, number][] = [];
+    const realPress = session.pressClip;
+    session.pressClip = async (trackId, slot) => {
+      launched.push([trackId, slot]);
+    };
+    try {
+      // A primary press launches (so the spy is live)...
+      pointer(pad('t2', 0), 'pointerdown');
+      pointer(pad('t2', 0), 'pointerup');
+      expect(launched).toEqual([['t2', 0]]);
+      // ...a real right-click (secondary pointerdown, then contextmenu) only opens the menu.
+      pointer(pad('t3', full), 'pointerdown', { button: 2, buttons: 2 });
+      pointer(pad('t3', full), 'pointerup', { button: 2 });
+      rightClick(pad('t3', full));
+      expect(launched).toEqual([['t2', 0]]);
+    } finally {
+      session.pressClip = realPress;
+    }
     const m = menu()!;
     expect(m).not.toBeNull();
     expect(m.getAttribute('aria-label')).toContain(clips('t3')[full]!.name);
     expect(uiStore.getState().selectedTrackId).toBe('t3');
     expect(slotFor(uiStore.getState(), 't3')).toBe(full);
-    // Focus moved into the menu (first item), nothing started playing.
+    // Focus moved into the menu (first item).
     expect(m.contains(document.activeElement)).toBe(true);
-    expect(runtimeStore.getState().playing).toBe(false);
   });
 
   it('Duplicate copies the clip into the next empty slot of the part, and Undo removes it', () => {
@@ -244,10 +260,13 @@ describe('Clip pad menu', () => {
     key(first, 'keydown', { key: 'ArrowDown' });
     expect((document.activeElement as HTMLElement).textContent).toContain('Rename');
     key(document.activeElement!, 'keydown', { key: 'ArrowDown' });
-    // Into the length row, then Right along it.
-    expect(document.activeElement!.getAttribute('aria-label')).toBe('Length 1 bar');
-    key(document.activeElement!, 'keydown', { key: 'ArrowRight' });
-    expect(document.activeElement!.getAttribute('aria-label')).toBe('Length 2 bars');
+    // Into the length row at the clip's current length, then Left along it.
+    const bars = clips('t3')[full]!.bars;
+    expect(document.activeElement!.getAttribute('aria-label')).toBe(`Length ${bars} bar${bars === 1 ? '' : 's'}`);
+    if (bars > 1) {
+      key(document.activeElement!, 'keydown', { key: 'ArrowLeft' });
+      expect(document.activeElement!.getAttribute('aria-label')).toBe(`Length ${bars - 1} bar${bars - 1 === 1 ? '' : 's'}`);
+    }
     key(document.activeElement!, 'keydown', { key: 'ArrowDown' });
     expect((document.activeElement as HTMLElement).textContent).toContain('Duplicate');
     key(document.activeElement!, 'keydown', { key: 'Escape' });

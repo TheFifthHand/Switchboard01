@@ -69,9 +69,7 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
       </MenuItem>
       <MenuItem
         icon="play"
-        hint="next bar"
-        disabled={info.parts === 0}
-        disabledReason="No clips in this row"
+        hint={info.parts === 0 ? 'stops all parts' : 'next bar'}
         onSelect={() => {
           void session.launchScene(row);
           onClose();
@@ -82,9 +80,7 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
       <MenuSeparator />
       <MenuItem
         icon="plus"
-        hint={`${DEFAULT_BLOCK_REPEATS}× at the end`}
-        disabled={info.parts === 0}
-        disabledReason="No clips in this row"
+        hint={info.parts === 0 ? 'a silent section' : `${DEFAULT_BLOCK_REPEATS}× at the end`}
         onSelect={() => {
           if (session.accepted(addBlock(session.store, info.id))) notify(`Added ${info.name} (${DEFAULT_BLOCK_REPEATS}×) to the end of the song. Arrange it in the Arrange view.`, 'info', 'undo');
           onClose();

@@ -7,6 +7,8 @@
  * outside press or a window resize, and giving focus back to where it came
  * from. As role="menu" it moves focus with the arrow keys (Left/Right move
  * within a row of keys such as the clip length), Home/End jump, Tab closes.
+ * As role="dialog" (a settings panel) it is not modal: keys other than
+ * Escape pass through, so the computer keyboard still plays notes.
  *
  * Clip actions (rename, length, duplicate, copy/paste, clear, delete, new
  * clip) are all undoable project commands; destructive ones show a toast with
@@ -189,10 +191,9 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
       onCloseRef.current();
       return;
     }
-    if (role !== 'menu') {
-      e.stopPropagation();
-      return;
-    }
+    // A panel (arpeggiator, recording options, rename) is not modal: other keys keep
+    // working, so computer-key notes, Space and Ctrl+Z still reach the instrument.
+    if (role !== 'menu') return;
     if (e.key === 'Tab') {
       e.preventDefault();
       e.stopPropagation();
@@ -247,6 +248,11 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
       default:
         e.stopPropagation();
         return;
+    }
+    // Entering a row of keys from above or below lands on its checked key.
+    if (next && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && next.dataset.row) {
+      const row = next.dataset.row;
+      next = items.find((x) => x.dataset.row === row && x.getAttribute('aria-checked') === 'true') ?? next;
     }
     e.preventDefault();
     e.stopPropagation();
@@ -462,6 +468,8 @@ export function MoreIcon({ size = 14 }: { size?: number }) {
 
 /** Platform label for the command key. */
 export const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl+';
+/** The same key for aria-keyshortcuts. */
+export const MOD_ARIA = MOD_KEY === '⌘' ? 'Meta' : 'Control';
 
 /* ------------------------------------------------------------------ */
 /* Clip actions (menu items and pad shortcuts)                          */
@@ -640,7 +648,7 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
         <MenuItem
           icon="paste"
           hint={`${MOD_KEY}V`}
-          keyShortcut="Control+V"
+          keyShortcut={`${MOD_ARIA}+V`}
           disabled={!clipboardName}
           disabledReason="Copy a clip first"
           onSelect={() => act(() => clipActions.paste(trackId, slot))}
@@ -675,13 +683,13 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
       >
         Duplicate
       </MenuItem>
-      <MenuItem icon="copy" hint={`${MOD_KEY}C`} keyShortcut="Control+C" onSelect={() => act(() => clipActions.copy(trackId, slot))}>
+      <MenuItem icon="copy" hint={`${MOD_KEY}C`} keyShortcut={`${MOD_ARIA}+C`} onSelect={() => act(() => clipActions.copy(trackId, slot))}>
         Copy
       </MenuItem>
       <MenuItem
         icon="paste"
         hint={`${MOD_KEY}V`}
-        keyShortcut="Control+V"
+        keyShortcut={`${MOD_ARIA}+V`}
         disabled={!clipboardName}
         disabledReason="Copy a clip first"
         onSelect={() => act(() => clipActions.paste(trackId, slot))}

@@ -127,7 +127,7 @@ const ClipPad = memo(function ClipPad(props: { trackId: Id; trackName: string; s
         sublabel={clip ? barsLabel(clip.bars) : undefined}
         caption={caption}
         onPress={onPress}
-        ariaLabel={`${trackName}, ${sceneName}: ${clip ? clip.name : 'empty slot'}. ${stateWord}.`}
+        ariaLabel={`${trackName}, ${sceneName}: ${clip ? clip.name : 'empty slot'}. ${stateWord}.${selected ? ' Selected.' : ''}`}
         id={padId}
       />
       {selected && (
@@ -196,7 +196,6 @@ function TrackHeader(props: { col: ColumnSummary; index: number; onMenu: OpenMen
             S
           </button>
         </Tooltip>
-        <span className={styles.toolSpacer} />
         <Tooltip name="Part options" tip="Rename this part, change its sound, or lock it against Variation." detail="Right-click the header, or press F2 to rename.">
           <button
             type="button"

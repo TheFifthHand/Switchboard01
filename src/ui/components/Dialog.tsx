@@ -32,7 +32,7 @@ const FOCUSABLE =
   'a[href], area[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), iframe, [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
 
 function focusables(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => !el.hasAttribute('hidden') && el.getClientRects().length > 0);
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.tabIndex >= 0 && !el.hasAttribute('hidden') && el.getClientRects().length > 0);
 }
 
 /** Open dialogs, innermost last: only the top one traps focus and handles Escape. */
@@ -49,8 +49,10 @@ function DialogFrame({ onClose, title, description, children, actions, size = 'm
   const ref = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
+  const dismissibleRef = useRef(dismissible);
   useEffect(() => {
     onCloseRef.current = onClose;
+    dismissibleRef.current = dismissible;
   });
 
   // Focus in on open, restore on close.
@@ -78,7 +80,21 @@ function DialogFrame({ onClose, title, description, children, actions, size = 'm
       if (t && !dialog.contains(t)) (focusables(dialog)[0] ?? dialog).focus({ preventScroll: true });
     };
     document.addEventListener('focusin', onFocusIn);
-    return () => document.removeEventListener('focusin', onFocusIn);
+    // Escape still closes when focus has left the dialog (e.g. the focused element was removed).
+    const onDocKey = (e: globalThis.KeyboardEvent) => {
+      const dialog = ref.current;
+      if (e.key !== 'Escape' || e.defaultPrevented || !dialog || stack[stack.length - 1] !== dialog) return;
+      if (dialog.contains(document.activeElement)) return;
+      if (dismissibleRef.current) {
+        e.preventDefault();
+        onCloseRef.current();
+      }
+    };
+    document.addEventListener('keydown', onDocKey);
+    return () => {
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('keydown', onDocKey);
+    };
   }, []);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {

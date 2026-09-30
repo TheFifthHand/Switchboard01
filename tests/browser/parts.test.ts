@@ -15,12 +15,13 @@ import { SoundBrowser, previewNotesFor } from '../../src/app/views/SoundBrowser'
 import { KITS, SYNTH_PRESETS } from '../../src/content/catalog';
 import { getStarter } from '../../src/content/starters';
 import type { Id, Instrument } from '../../src/project/types';
+import { setArp } from '../../src/state/commands';
 import { selectTrack, setPadMode, uiStore } from '../../src/state/uiStore';
 import { cleanup, fire, key, mount, wait } from './ui-harness';
 
-type Call = ['on', Id, number, number, string] | ['off', Id, number, string];
+type Call = ['on', Id, number, number, string] | ['off', Id, number, string] | ['stop'];
 let calls: Call[] = [];
-const real = { noteOn: session.noteOn, noteOff: session.noteOff, startAudio: session.startAudio };
+const real = { noteOn: session.noteOn, noteOff: session.noteOff, startAudio: session.startAudio, stop: session.stop };
 
 beforeEach(() => {
   calls = [];
@@ -32,9 +33,12 @@ beforeEach(() => {
     calls.push(['off', trackId, pitch, source]);
   };
   session.startAudio = () => Promise.resolve(true);
+  session.stop = () => {
+    calls.push(['stop']);
+  };
   session.store.replace(getStarter('house')!.build(), { resetHistory: true });
   act(() => {
-    patchRuntime({ held: {}, notice: null, recording: 'off' });
+    patchRuntime({ held: {}, notice: null, recording: 'off', recordTarget: null, playing: false });
     setPadMode('loops');
     selectTrack('t1');
   });
@@ -45,6 +49,8 @@ afterEach(() => {
   session.noteOn = real.noteOn;
   session.noteOff = real.noteOff;
   session.startAudio = real.startAudio;
+  session.stop = real.stop;
+  act(() => patchRuntime({ recording: 'off', recordTarget: null, playing: false }));
 });
 
 const track = (id: Id) => session.store.getState().tracks.find((t) => t.id === id)!;
@@ -233,6 +239,53 @@ describe('Part menu', () => {
     expect(calls.filter((c) => c[0] === 'off')).toHaveLength(3);
   });
 
+  it('Preview is off while Record Notes records into this part, so auditioning never lands in the clip', async () => {
+    act(() => patchRuntime({ recording: 'notes', recordTarget: { trackId: 't4', slot: 0 } }));
+    mount(h(SoundBrowser, { open: true, trackId: 't4', onClose: () => {} }));
+    const btn = [...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Preview')!;
+    expect(btn.disabled).toBe(true);
+    expect(dialog()!.textContent).toMatch(/Record Notes is recording into Chords, so Preview is off/);
+    // Choosing still works, but "Preview on choose" stays quiet.
+    const target = SYNTH_PRESETS.find((p) => p.kind === 'poly' && p.id !== soundIdOf(track('t4').instrument))!;
+    click(option(target.name));
+    await act(async () => {
+      await wait(0);
+    });
+    expect(soundIdOf(track('t4').instrument)).toBe(target.id);
+    expect(calls.filter((c) => c[0] === 'on')).toHaveLength(0);
+    // Recording into another part leaves Preview available here.
+    act(() => patchRuntime({ recordTarget: { trackId: 't3', slot: 0 } }));
+    expect(btn.disabled).toBe(false);
+  });
+
+  it('a latched arpeggio started by Preview ends with it while the transport is stopped', async () => {
+    session.accepted(setArp(session.store, 't4', { enabled: true, latch: true }));
+    const m = mount(h(SoundBrowser, { open: true, trackId: 't4', onClose: () => {} }));
+    expect(dialog()!.textContent).not.toMatch(/Latch on/);
+    const btn = [...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Preview')!;
+    click(btn);
+    await act(async () => {
+      await wait(0);
+    });
+    expect(calls.filter((c) => c[0] === 'on')).toHaveLength(3);
+    m.rerender(h(SoundBrowser, { open: false, trackId: 't4', onClose: () => {} }));
+    // The notes are released, then Stop drops the latched pattern (it only ends latched arpeggios while stopped).
+    expect(calls.slice(-4).map((c) => c[0])).toEqual(['off', 'off', 'off', 'stop']);
+
+    // While the music plays, Stop would stop the song: the pattern keeps going and the dialog says so.
+    calls = [];
+    act(() => patchRuntime({ playing: true }));
+    m.rerender(h(SoundBrowser, { open: true, trackId: 't4', onClose: () => {} }));
+    expect(dialog()!.textContent).toMatch(/Latch on: while the music plays, a preview keeps arpeggiating/);
+    click([...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Preview')!);
+    await act(async () => {
+      await wait(0);
+    });
+    m.rerender(h(SoundBrowser, { open: false, trackId: 't4', onClose: () => {} }));
+    expect(calls.filter((c) => c[0] === 'off')).toHaveLength(3);
+    expect(calls.some((c) => c[0] === 'stop')).toBe(false);
+  });
+
   it('sound choices are refused (and explained) while a performance is recording', () => {
     act(() => patchRuntime({ recording: 'performance' }));
     session.store.setLock('Recording a performance: sound choices are locked.', () => false);
@@ -242,6 +295,9 @@ describe('Part menu', () => {
       const before = track('t4').instrument;
       click(option(SYNTH_PRESETS.find((p) => p.kind === 'poly' && p.id !== soundIdOf(before))!.name));
       expect(track('t4').instrument).toBe(before);
+      // Preview is off during the take, so auditioning is not recorded into it.
+      expect([...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Preview')!.disabled).toBe(true);
+      expect(calls.filter((c) => c[0] === 'on')).toHaveLength(0);
     } finally {
       session.store.setLock(null);
       act(() => patchRuntime({ recording: 'off' }));

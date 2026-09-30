@@ -20,7 +20,7 @@ test('Jump In → groove → switch clips → Tone/Space → keyboard → record
   expect(level.peak).toBeLessThanOrEqual(CEILING + 1e-3);
 
   // 3. Several pads are lit and say so in text.
-  const playingPads = page.getByRole('button', { name: /Playing\.$/ });
+  const playingPads = page.getByRole('button', { name: /Playing\.( Selected\.)?$/ });
   await expect(playingPads).toHaveCount(4);
   await expect(page.getByRole('button', { name: /^Bass, Groove: .*Playing\./ })).toBeVisible();
 

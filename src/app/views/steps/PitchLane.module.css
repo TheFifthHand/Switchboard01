@@ -244,3 +244,14 @@
   flex: none;
   height: clamp(44px, 6.4vh, 92px);
 }
+
+/* Short surfaces (high zoom): a roll of about a dozen rows; the editor scrolls (see StepEditor.module.css). */
+@media (max-height: 640px) {
+  .melodic {
+    height: auto;
+  }
+  .scroller {
+    flex: none;
+    height: calc(12 * var(--row-h, 18px));
+  }
+}

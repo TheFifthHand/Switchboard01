@@ -24,7 +24,7 @@ import { StorageError } from '../../persistence/db';
 import { BUNDLE_EXTENSION } from '../../persistence/bundle';
 import { renameProject as renameProjectCmd } from '../../state/commands';
 import { session, useProject } from '../instance';
-import { notify } from '../runtime';
+import { notify, runtimeStore } from '../runtime';
 import { downloadBlob } from '../download';
 import styles from './Library.module.css';
 
@@ -47,6 +47,10 @@ const TAB_OPTIONS = [
 ] as const;
 
 const NAME_MAX = 80;
+/** Elements where Space does their own job (press, toggle, type). */
+const SPACE_CONTROLS = 'button, input, select, textarea, a[href], [role="tab"], [role="radio"], [role="switch"], [role="checkbox"], [role="slider"], [contenteditable="true"]';
+/** A freshly loaded project has no clips running: a pad or scene tap starts playback with it. */
+const HEAR_IT = 'Tap a pad or a scene to hear it.';
 
 type Message = { tone: 'error' | 'success' | 'info'; text: string; action?: { label: string; onAction(): void } };
 
@@ -99,6 +103,20 @@ export function timeAgo(ts: number, now: number = Date.now()): string {
 
 const quote = (name: string) => `“${name}”`;
 
+/** Id of the latest toast, to tell whether a session call raised its own warning. */
+const lastNoticeId = () => runtimeStore.getState().notice?.id ?? 0;
+
+/**
+ * Say what was loaded. A warning the load raised itself (storage full, a
+ * migrated or partly damaged project) is kept in the same message instead of
+ * being replaced, and then nothing is claimed about what was saved.
+ */
+function announceLoaded(text: string, noticeBefore: number, extra = ''): void {
+  const n = runtimeStore.getState().notice;
+  if (n && n.id !== noticeBefore && n.tone !== 'info') notify(`${text} ${n.text}`, n.tone);
+  else notify(`${text}${extra ? ` ${extra}` : ''} ${HEAR_IT}`);
+}
+
 function cleanName(name: string): string {
   return name.replace(/\s+/g, ' ').trim().slice(0, NAME_MAX);
 }
@@ -131,6 +149,11 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
   /** Element id to focus once the row UI has re-rendered (returning focus after a confirmation). */
   const focusAfter = useRef<string | null>(null);
   const panelId = useId();
+  /** Focus starts on the selected tab (the dialog would otherwise pick the first tab button). */
+  const initialFocus = useRef<HTMLElement | null>(null);
+  const tabsRef = useCallback((el: HTMLDivElement | null) => {
+    initialFocus.current = el?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ?? null;
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -158,6 +181,30 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
       alive.current = false;
     };
   }, [refresh]);
+
+  // If a control that had focus disappears, focus falls to the page; Escape must still close the dialog.
+  // While the dialog is open, Space on something that is not a control (the list, the page) must not
+  // reach the instrument's Space = Play/Stop shortcut behind it; it still scrolls the list.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const active = document.activeElement;
+      const lost = !active || active === document.body;
+      if (e.key === 'Escape' && lost) {
+        e.preventDefault();
+        onCloseRef.current();
+      } else if (e.code === 'Space' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const t = e.target instanceof Element ? e.target : null;
+        if (!t || !t.closest(SPACE_CONTROLS)) e.stopPropagation();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
 
   useEffect(() => {
     const id = focusAfter.current;
@@ -195,10 +242,11 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
     run(`start:${def.id}`, 'Starting the project', async () => {
       const previous = session.store.getState().name;
       const keptPrevious = stored;
+      const before = lastNoticeId();
       await session.newFromStarter(def.id);
-      if (!alive.current) return;
+      // The project is on screen now, even if the dialog was closed meanwhile.
       const name = session.store.getState().name;
-      notify(`Started ${quote(name)}.${keptPrevious ? ` ${quote(previous)} is still in My projects.` : ''} Press Play or tap a pad to hear it.`);
+      announceLoaded(`Started ${quote(name)}.`, before, keptPrevious ? `${quote(previous)} is still in My projects.` : '');
       onLoaded('starter');
     });
 
@@ -226,12 +274,12 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
     if (!file) return;
     void run('import', 'Importing the project file', async () => {
       const res = await session.importProjectFile(file);
-      if (!alive.current) return;
       if (!res.ok) {
-        setMessage({ tone: 'error', text: res.message });
+        if (alive.current) setMessage({ tone: 'error', text: res.message });
+        else notify(res.message, 'error');
         return;
       }
-      notify(`${res.message} Press Play or tap a pad to hear it.`);
+      notify(`${res.message} ${HEAR_IT}`);
       onLoaded('import');
     });
   };
@@ -240,9 +288,9 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
 
   const openProject = (p: ProjectSummary) =>
     run(`open:${p.id}`, `Opening ${quote(p.name)}`, async () => {
+      const before = lastNoticeId();
       await session.openProject(p.id);
-      if (!alive.current) return;
-      notify(`Opened ${quote(session.store.getState().name)}. Press Play or tap a pad to hear it.`);
+      announceLoaded(`Opened ${quote(session.store.getState().name)}.`, before);
       onLoaded('open');
     });
 
@@ -288,7 +336,10 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
   const restore = (t: { id: string; name: string }) =>
     run(`restore:${t.id}`, 'Restoring the project', async () => {
       await library.restoreProject(t.id);
-      if (alive.current) setMessage({ tone: 'success', text: `${quote(t.name)} is back in My projects.` });
+      if (!alive.current) return;
+      // The Restore button leaves with its row: keep focus in the dialog.
+      focusAfter.current = panelId;
+      setMessage({ tone: 'success', text: `${quote(t.name)} is back in My projects.` });
     });
 
   const remove = (p: ProjectSummary) =>
@@ -351,9 +402,10 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
       size="lg"
       className={styles.dialog}
       closeLabel="Close the project library"
+      initialFocusRef={initialFocus}
       actions={
         <div className={styles.footer}>
-          <p className={styles.storageNote}>
+          <p className={`${styles.storageNote} ${styles.footerNote}`}>
             <Icon name="info" size={14} className={styles.noteIcon} />
             <span>{library.LIBRARY_STORAGE_NOTE}</span>
           </p>
@@ -370,9 +422,9 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
       }
     >
       <div className={styles.root} onKeyDown={onRootKeyDown}>
-        <div className={styles.tabRow}>
+        <div className={styles.tabRow} ref={tabsRef}>
           <SegmentedControl<LibraryTab> label="Library sections" kind="tabs" options={TAB_OPTIONS} value={tab} onChange={(v) => setTab(v)} controls={panelId} size="sm" />
-          {tab === 'projects' && projects && !listError && (
+          {tab === 'projects' && projectCount > 0 && !listError && (
             <span className={styles.count}>
               {projectCount === 1 ? '1 project' : `${projectCount} projects`} in this browser
             </span>
@@ -390,7 +442,15 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
               </Notice>
             )}
             {message && (
-              <Notice tone={message.tone} action={message.action} onDismiss={() => setMessage(null)} dismissLabel="Dismiss message">
+              <Notice
+                tone={message.tone}
+                action={message.action}
+                onDismiss={() => {
+                  setMessage(null);
+                  focusAfter.current = panelId;
+                }}
+                dismissLabel="Dismiss message"
+              >
                 {message.text}
               </Notice>
             )}
@@ -401,9 +461,9 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
           {tab === 'starters' ? (
             <StartersPanel
               currentName={currentName}
+              loaded={projects !== null}
               stored={stored}
               storageDown={storageDown}
-              loading={projects === null}
               busy={busy}
               confirm={confirmStart}
               onPick={pickStarter}
@@ -422,7 +482,7 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
                 <p className={styles.previewNote}>
                   <Icon name="info" size={14} className={styles.noteIcon} />
                   <span>
-                    {quote(currentName)} on screen is a preview and is not kept in this browser. Start a project from Starters to keep your work, or export it as a file.
+                    {quote(currentName)} on screen is a preview: changes to it are not saved. Start a project from Starters to have your work saved automatically, or export this one as a file to keep it.
                   </span>
                 </p>
               )}
@@ -493,6 +553,11 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
               </section>
             </>
           )}
+          {/* Short windows (e.g. 200 % zoom): the note moves here so the footer stays one row. */}
+          <p className={`${styles.storageNote} ${styles.panelNote}`}>
+            <Icon name="info" size={14} className={styles.noteIcon} />
+            <span>{library.LIBRARY_STORAGE_NOTE}</span>
+          </p>
         </div>
       </div>
     </Dialog>
@@ -505,9 +570,10 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
 
 function StartersPanel(props: {
   currentName: string;
+  /** The project list has been read (until then it is unknown whether the open project is stored). */
+  loaded: boolean;
   stored: boolean;
   storageDown: boolean;
-  loading: boolean;
   busy: string | null;
   confirm: StarterDef | null;
   onPick(def: StarterDef): void;
@@ -515,17 +581,17 @@ function StartersPanel(props: {
   onCancelConfirm(): void;
   onExport(): void;
 }) {
-  const { currentName, stored, storageDown, loading, busy, confirm } = props;
+  const { currentName, loaded, stored, storageDown, busy, confirm } = props;
   const confirmRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (confirm) confirmRef.current?.focus();
   }, [confirm]);
 
   let intro: string;
-  if (storageDown) intro = `Starting a project replaces ${quote(currentName)} on screen, and it cannot be kept in this browser right now.`;
-  else if (loading) intro = 'Pick a starting point. Nothing plays until you press Play or tap a pad.';
+  if (!loaded) intro = 'Pick a starting point.';
+  else if (storageDown) intro = `Starting a project replaces ${quote(currentName)} on screen, and it cannot be kept in this browser right now.`;
   else if (stored) intro = `Pick a starting point. Your current project ${quote(currentName)} stays in My projects.`;
-  else intro = 'Pick a starting point. Nothing plays until you press Play or tap a pad.';
+  else intro = `Pick a starting point. It loads without playing: ${HEAR_IT.toLowerCase()}`;
 
   const cards: StarterDef[] = [...STARTERS, BLANK_STARTER];
   return (

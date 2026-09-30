@@ -20,6 +20,7 @@ const SCALE_OPTIONS = SCALE_ORDER.map((id) => ({ value: id, label: SCALES[id].na
 export function KeyboardStrip(props: { children?: React.ReactNode }) {
   const trackId = useUi((s) => s.selectedTrackId);
   const padMode = useUi((s) => s.padMode);
+  const view = useUi((s) => s.view);
   const octave = useUi((s) => s.keyboardOctave);
   const trackName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
   const isDrums = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind === 'drums');
@@ -30,11 +31,15 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   const capLabels = useKeyCapLabels();
 
   const baseNote = (octave + 1) * 12;
+  // Drum pads own the computer keys only while they are on screen with a kit selected.
+  const drumPadsOwnKeys = padMode === 'drums' && view === 'play' && isDrums;
   const mask = useMemo(() => (assist ? scaleMask(root, scale) : undefined), [assist, root, scale]);
   const stripRef = useRef<HTMLElement>(null);
   // One legend per white key: the computer key, except on C keys (and the root), which show their note name.
   // Two stacked legends would run into the scale dots on a keyboard this short.
   const keyLabels = useMemo(() => {
+    // When the drum pads own the keys, the keyboard shows no computer-key legends.
+    if (drumPadsOwnKeys) return {};
     const all = noteKeyLabels(baseNote, capLabels);
     const out: Record<number, string> = {};
     for (const [midi, label] of Object.entries(all)) {
@@ -43,7 +48,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
       out[Number(midi)] = label;
     }
     return out;
-  }, [baseNote, capLabels, isDrums, root]);
+  }, [baseNote, capLabels, isDrums, root, drumPadsOwnKeys]);
   const active = useMemo(() => {
     if (!held || isDrums) return new Set<number>();
     return new Set(held);
@@ -57,7 +62,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
 
   // Computer keys: notes layout except in Drums pad mode (handled by the drum pads).
   useComputerKeyboard({
-    enabled: padMode !== 'drums',
+    enabled: !drumPadsOwnKeys,
     layout: 'notes',
     onNoteOn: (index, velocity) => session.noteOn(trackId, toPitch(baseNote + index), velocity, 'computer'),
     onNoteOff: (index) => session.noteOff(trackId, toPitch(baseNote + index), 'computer'),

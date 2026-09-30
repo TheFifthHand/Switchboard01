@@ -21,8 +21,8 @@ export interface WelcomeProps {
 export function Welcome({ lastProject, storageError, onClose, onBrowse, onJumpedIn }: WelcomeProps) {
   const jumpRef = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
-  // The reopened project may have been renamed in the library meanwhile.
-  const lastName = useProject((p) => (lastProject && p.id === lastProject.id ? p.name : null)) ?? lastProject?.name;
+  // Continue resumes the loaded project; the library may have renamed or switched it meanwhile.
+  const openName = useProject((p) => p.name);
   useEffect(() => {
     jumpRef.current?.focus();
   }, []);
@@ -61,7 +61,7 @@ export function Welcome({ lastProject, storageError, onClose, onBrowse, onJumped
         </p>
         {lastProject && (
           <Button variant="secondary" onClick={continueLast} className={styles.secondary}>
-            Continue “{lastName}”
+            Continue “{openName}”
           </Button>
         )}
         <div className={styles.links}>
