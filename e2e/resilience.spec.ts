@@ -14,12 +14,12 @@ const stats = (page: Page) => page.evaluate(() => (window as any).__switchboard.
 
 test('reopens and plays a built-in starter with the network unavailable', async ({ page, context }) => {
   await openFresh(page);
-  // Wait until the service worker controls the page and has precached the app.
-  await page.evaluate(async () => {
-    await navigator.serviceWorker.ready;
-    if (!navigator.serviceWorker.controller) await new Promise((r) => navigator.serviceWorker.addEventListener('controllerchange', r, { once: true }));
-  });
-  await page.waitForTimeout(500);
+  // First visit: the service worker installs (precaching every asset) and activates.
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  // A later visit is served by the service worker.
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+  // The app reports that it is ready to work offline.
   await context.setOffline(true);
   await page.reload();
   await expect(page.getByRole('button', { name: 'Jump In' })).toBeVisible();
