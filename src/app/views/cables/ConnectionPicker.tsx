@@ -34,7 +34,10 @@ export interface ConnectionPickerProps {
 interface Option {
   id: string;
   ref: PortRef;
+  /** Full name ("Bass Filter Cutoff mod"). */
   label: string;
+  /** Name within its group ("Filter Cutoff mod"). */
+  short: string;
 }
 
 interface Group {
@@ -66,7 +69,12 @@ export function ConnectionPicker(props: ConnectionPickerProps) {
     const labelOf = (m: ModuleInfo | undefined) => (!m ? 'Other' : m.trackId === trackId ? 'This part' : !m.trackId ? 'Shared' : (tracks.find((t) => t.id === m.trackId)?.name ?? 'Other part'));
     const keyed: { key: string; label: string; opt: Option }[] = refs.map((r, i) => {
       const m = modules.find((x) => x.id === r.module);
-      return { key: orderKey(m), label: labelOf(m), opt: { id: `${baseId}-o${i}`, ref: r, label: endpointName(modules, r, dir === 'out' ? 'in' : 'out', tracks, trackId) } };
+      const otherDir = dir === 'out' ? 'in' : 'out';
+      return {
+        key: orderKey(m),
+        label: labelOf(m),
+        opt: { id: `${baseId}-o${i}`, ref: r, label: endpointName(modules, r, otherDir, tracks, trackId), short: endpointName(modules, r, otherDir, tracks, m?.trackId ?? trackId) },
+      };
     });
     keyed.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
     const out: Group[] = [];
@@ -127,15 +135,18 @@ export function ConnectionPicker(props: ConnectionPickerProps) {
       if (!t || rootRef.current?.contains(t) || anchor?.contains(t)) return;
       onClose(false);
     };
-    const onScroll = (e: Event) => {
+    // The picker is placed next to its socket; if the page or the patch area moves, it closes.
+    const onMoved = (e: Event) => {
       if (rootRef.current && e.target instanceof Node && rootRef.current.contains(e.target)) return;
       onClose(false);
     };
     document.addEventListener('pointerdown', onDown, true);
-    window.addEventListener('resize', onScroll);
+    window.addEventListener('resize', onMoved);
+    window.addEventListener('scroll', onMoved, true);
     return () => {
       document.removeEventListener('pointerdown', onDown, true);
-      window.removeEventListener('resize', onScroll);
+      window.removeEventListener('resize', onMoved);
+      window.removeEventListener('scroll', onMoved, true);
     };
   }, [anchor, onClose]);
 
@@ -230,6 +241,7 @@ export function ConnectionPicker(props: ConnectionPickerProps) {
                     key={o.id}
                     id={o.id}
                     role="option"
+                    aria-label={o.label}
                     aria-selected={i === active}
                     className={styles.pickerOption}
                     data-kind={connectionKindOf(modules, { from: dir === 'out' ? self : o.ref })}
@@ -240,7 +252,7 @@ export function ConnectionPicker(props: ConnectionPickerProps) {
                     }}
                   >
                     <span className={styles.pickerDot} aria-hidden="true" />
-                    {o.label}
+                    {o.short}
                   </div>
                 );
               })}

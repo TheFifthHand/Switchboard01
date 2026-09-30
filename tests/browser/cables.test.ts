@@ -5,16 +5,18 @@
  * restore confirmation and the performance-take lock. Every check reads the
  * real project through session.store.
  */
-import { createElement as h } from 'react';
+import { Profiler, act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import '../../src/ui/theme.css';
 import { session } from '../../src/app/instance';
 import { CablePanel, CablesDrawer } from '../../src/app/views/cables';
+import { lfoDepth } from '../../src/app/views/cables/model';
 import { createProject } from '../../src/project/factory';
 import type { Connection } from '../../src/project/types';
+import * as cmd from '../../src/state/commands';
 import { setCablesOpen, uiStore } from '../../src/state/uiStore';
-import { actFrame, cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
+import { actFrame, cleanup, fire, key, mount, nextFrame, pointer, pointIn } from './ui-harness';
 
 type Pt = { clientX: number; clientY: number };
 
@@ -38,11 +40,19 @@ function setup(trackId = 't3') {
     if (!el) throw new Error(`No plug ${connectionId}:${end}`);
     return { el, at: pointIn(el) };
   };
-  /** A point in empty panel: below the Drive block, above the LFO row gap. */
+  /** A visible point in empty panel (bottom right, away from every socket). */
   const empty = (): Pt => {
-    const stage = root.querySelector<HTMLElement>('[aria-describedby]')!;
+    const stage = root.querySelector<HTMLElement>('[data-cable-stage]')!;
     const r = stage.getBoundingClientRect();
-    return { clientX: r.left + r.width * 0.5, clientY: r.bottom - 6 };
+    const v = stage.parentElement!.getBoundingClientRect();
+    const jacks = [...stage.querySelectorAll('[data-socket-key] > span:first-child')].map((j) => pointIn(j));
+    const bottom = Math.min(r.bottom, v.bottom) - 8;
+    for (let x = Math.min(r.right, v.right) - 16; x > Math.max(r.left, v.left); x -= 12) {
+      const p = { clientX: x, clientY: bottom };
+      const clear = jacks.every((j) => Math.hypot(j.clientX - p.clientX, j.clientY - p.clientY) > 40);
+      if (clear && document.elementFromPoint(p.clientX, p.clientY) === stage) return p;
+    }
+    throw new Error('No empty panel point in view');
   };
   return { m, root, sock, jack, plug, empty };
 }
@@ -61,6 +71,18 @@ function click(target: Element, at: Pt): void {
 }
 
 const alerts = () => [...document.querySelectorAll('[role="alert"]')].map((e) => e.textContent ?? '');
+
+/** Real browser input (CDP): real focus changes and default actions, unlike dispatched events. */
+async function real(fn: () => Promise<void>): Promise<void> {
+  const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+  g.IS_REACT_ACT_ENVIRONMENT = false;
+  try {
+    await fn();
+    await nextFrame();
+  } finally {
+    g.IS_REACT_ACT_ENVIRONMENT = true;
+  }
+}
 
 beforeEach(async () => {
   await page.viewport(1600, 1000);
@@ -110,8 +132,35 @@ describe('Cable panel layout', () => {
     fire(sw, new MouseEvent('click', { bubbles: true }));
     expect(drive().bypass).toBe(true);
     expect(root.querySelector('[data-module="t3:drive"]')!.getAttribute('aria-label')).toContain('bypassed');
+    // The state is also written on the switch, not only shown by its lamp.
+    expect(sw.getAttribute('aria-checked')).toBe('false');
+    expect(sw.textContent).toContain('Bypassed');
+
+    // The effect's name selects it, shared with its card in the effects rack.
+    const name = root.querySelector<HTMLButtonElement>('[data-module="t3:drive"] button[aria-pressed]')!;
+    fire(name, new MouseEvent('click', { bubbles: true }));
+    expect(uiStore.getState().selectedModuleId).toBe('t3:drive');
+    expect(root.querySelector('[data-module="t3:drive"]')!.hasAttribute('data-selected')).toBe(true);
+    // Blocks without a rack card have a plain title, not a button that does nothing elsewhere.
+    expect(root.querySelector('[data-module="master"] button[aria-pressed]')).toBeNull();
     fire(sw, new MouseEvent('click', { bubbles: true }));
     expect(drive().bypass).toBe(false);
+  });
+});
+
+describe('LFO depth', () => {
+  it('shows the depth the LFO really runs at, which follows the Motion macro', () => {
+    const { root } = setup('t3');
+    const block = () => root.querySelector<HTMLElement>('[data-module="t3:lfo"]')!;
+    const shown = () => /Depth (\d+)%/.exec(block().textContent ?? '')?.[1];
+    const actual = () => String(Math.round(lfoDepth(session.store.getState(), 't3:lfo')!.depth * 100));
+    act(() => void cmd.setMacro(session.store, 't3', 'motion', 0));
+    expect(shown()).toBe('0');
+    expect(block().querySelector('[data-still]')).not.toBeNull(); // no movement: neutral, not teal
+    act(() => void cmd.setMacro(session.store, 't3', 'motion', 1));
+    expect(Number(actual())).toBeGreaterThan(0);
+    expect(shown()).toBe(actual());
+    expect(block().querySelector('[data-still]')).toBeNull();
   });
 });
 
@@ -226,6 +275,71 @@ describe('Patching with the pointer', () => {
     fire(unplug, new MouseEvent('click', { bubbles: true }));
     expect(conns().some((x) => x.id === c.id)).toBe(false);
   });
+
+  it('a cable clicked with the real pointer is unplugged by Delete; Escape clears the selection', async () => {
+    const { root, plug } = setup('t3');
+    const c = find('t3:lfo', 'out', 't3:filter', 'cutoff')!;
+    // A real click (not a dispatched event), so the browser moves focus as it would for a user.
+    const hit = plug(c.id, 'to');
+    await real(() => userEvent.click(hit.el, { force: true }));
+    expect(root.querySelector('[aria-label="Selected cable"]')?.textContent).toContain('LFO Mod Out → Filter Cutoff mod');
+    await real(() => userEvent.keyboard('{Escape}'));
+    expect(root.querySelector('[aria-label="Selected cable"]')).toBeNull();
+    expect(conns().some((x) => x.id === c.id)).toBe(true);
+
+    await real(() => userEvent.click(hit.el, { force: true }));
+    await real(() => userEvent.keyboard('{Delete}'));
+    expect(conns().some((x) => x.id === c.id)).toBe(false);
+    expect(root.querySelector('[aria-label="Selected cable"]')).toBeNull();
+    session.undo();
+    expect(conns().some((x) => x.id === c.id)).toBe(true);
+  });
+});
+
+describe('Routing across parts and fitting the space', () => {
+  it('opens the Other parts strip and patches this part into another part’s Channel In', () => {
+    const { root, sock, jack } = setup('t3');
+    const toggle = [...root.querySelectorAll('button')].find((b) => b.textContent?.startsWith('Other parts'))!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(root.querySelector(`button[data-socket-key="${k('in', 't5:ch', 'in')}"]`)).toBeNull();
+    fire(toggle, new MouseEvent('click', { bubbles: true }));
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    const lead = k('in', 't5:ch', 'in');
+    expect(sock(lead).getAttribute('aria-label')).toContain('Lead Channel In');
+    const from = k('out', 't3:filter', 'out');
+    sock(lead).scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    drag(sock(from), jack(from), jack(lead));
+    expect(find('t3:filter', 'out', 't5:ch', 'in')).toBeDefined();
+    // Collapsed again, the cable ends at a labelled edge stub.
+    fire(toggle, new MouseEvent('click', { bubbles: true }));
+    expect(root.textContent).toContain('To Lead · Channel');
+  });
+
+  it('uses the compact layout in a short region so the patch fits without vertical scrolling', async () => {
+    const m = mount(h(CablePanel, { trackId: 't3', height: 262 }), { width: 1000 });
+    await actFrame();
+    await actFrame();
+    const stage = m.container.querySelector<HTMLElement>('[data-cable-stage]')!;
+    const viewport = stage.parentElement!;
+    expect(stage.dataset.compact).toBe('true');
+    expect(stage.offsetHeight).toBeLessThanOrEqual(viewport.clientHeight);
+    expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth); // wide chains scroll sideways
+  });
+
+  it('does not re-render while module knobs move elsewhere', () => {
+    let commits = 0;
+    mount(h(Profiler, { id: 'cables', onRender: () => void (commits += 1) }, h(CablePanel, { trackId: 't3', height: 340 })), { width: 1500 });
+    commits = 0;
+    for (let i = 0; i < 20; i++) {
+      act(() => void cmd.setModuleParam(session.store, 't3:filter', 'cutoff', 400 + i * 50, 'drag-test'));
+      act(() => void cmd.setModuleParam(session.store, 't3:ch', 'level', -i / 2, 'drag-test-2'));
+    }
+    expect(session.store.getState().patch.modules.find((m) => m.id === 't3:filter')!.params.cutoff).toBe(1350);
+    expect(commits).toBe(0);
+    // A routing change does render.
+    act(() => void cmd.setBypass(session.store, 't3:filter', true));
+    expect(commits).toBeGreaterThan(0);
+  });
 });
 
 describe('Keyboard connection picker', () => {
@@ -245,7 +359,7 @@ describe('Keyboard connection picker', () => {
     expect(dialog.textContent).toContain('Connect LFO Mod Out to…');
     const list = dialog.querySelector<HTMLElement>('[role="listbox"]')!;
     expect(document.activeElement).toBe(list);
-    const options = [...list.querySelectorAll('[role="option"]')].map((o) => o.textContent);
+    const options = [...list.querySelectorAll('[role="option"]')].map((o) => o.getAttribute('aria-label'));
     expect(options).toContain('Channel Pan mod');
     expect(options).not.toContain('Filter Cutoff mod'); // already connected
     expect(options.some((o) => o?.includes('Channel In'))).toBe(false); // audio inputs are not offered
@@ -253,7 +367,7 @@ describe('Keyboard connection picker', () => {
     // Move to "Channel Pan mod" and press Enter.
     for (let i = 0; i < 40; i++) {
       const active = document.getElementById(list.getAttribute('aria-activedescendant')!);
-      if (active?.textContent === 'Channel Pan mod') break;
+      if (active?.getAttribute('aria-label') === 'Channel Pan mod') break;
       key(list, 'keydown', { key: 'ArrowDown' });
     }
     key(list, 'keydown', { key: 'Enter' });
@@ -294,6 +408,40 @@ describe('No path to the output', () => {
     expect(find('t3:lfo', 'out', 't3:filter', 'cutoff')).toBeDefined();
   });
 
+  it('Restore Connection plugs a link broken mid-chain back in and keeps an effect the user added', () => {
+    const { root, plug, empty } = setup('t3');
+    let chorus = '';
+    act(() => {
+      chorus = cmd.insertEffect(session.store, 't3', 'chorus').moduleId!;
+    });
+    expect(find('t3:filter', 'out', chorus, 'in')).toBeDefined();
+    const link = find('t3:drive', 'out', 't3:filter', 'in')!;
+    const p = plug(link.id, 'to');
+    const x = (id: string) => parseFloat(root.querySelector<HTMLElement>(`[data-module="${id}"]`)!.style.left);
+    const order = () => ['t3:inst', 't3:drive', 't3:filter', chorus, 't3:ch'].map(x);
+    const before = order();
+    drag(p.el, p.at, empty());
+    expect(find('t3:drive', 'out', 't3:filter', 'in')).toBeUndefined();
+    // Pulling one cable does not reshuffle the blocks.
+    expect(order()).toEqual(before);
+    expect(root.textContent).toContain('This part has no path to the output.');
+    expect(alerts().some((t) => t.includes('Restore Connection adds Drive Out → Filter In'))).toBe(true);
+
+    const count = conns().length;
+    const restore = [...root.querySelectorAll('button')].find((b) => b.textContent === 'Restore Connection')!;
+    fire(restore, new MouseEvent('click', { bubbles: true }));
+    // Exactly the missing link comes back; the added Chorus and its cables stay.
+    expect(find('t3:drive', 'out', 't3:filter', 'in')).toBeDefined();
+    expect(conns().length).toBe(count + 1);
+    expect(find('t3:filter', 'out', chorus, 'in')).toBeDefined();
+    expect(find(chorus, 'out', 't3:ch', 'in')).toBeDefined();
+    expect(root.textContent).not.toContain('This part has no path to the output.');
+    // One undo step takes it out again.
+    session.undo();
+    expect(find('t3:drive', 'out', 't3:filter', 'in')).toBeUndefined();
+    expect(session.store.getState().patch.modules.some((m) => m.id === chorus)).toBe(true);
+  });
+
   it('restores the part’s default cables after confirmation', () => {
     const { root, plug, empty } = setup('t3');
     const link = find('t3:drive', 'out', 't3:filter', 'in')!;
@@ -311,6 +459,14 @@ describe('No path to the output', () => {
     fire(part, new MouseEvent('click', { bubbles: true }));
     expect(find('t3:drive', 'out', 't3:filter', 'in')).toBeDefined();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+    // "Restore all parts" also mends another part's routing.
+    const lead = find('t5:ch', 'out', 'master', 'in')!;
+    act(() => void cmd.disconnect(session.store, lead.id));
+    fire(open, new MouseEvent('click', { bubbles: true }));
+    const all = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent === 'Restore all parts')!;
+    fire(all, new MouseEvent('click', { bubbles: true }));
+    expect(find('t5:ch', 'out', 'master', 'in')).toBeDefined();
   });
 });
 
@@ -323,6 +479,13 @@ describe('Performance take lock', () => {
       expect(root.textContent).toContain(message);
       const before = JSON.stringify(conns());
       const lfo = k('out', 't3:lfo', 'out');
+      // The panel itself refuses to pick up a plug (not just the command behind it).
+      pointer(sock(lfo), 'pointerdown', jack(lfo));
+      pointer(sock(lfo), 'pointermove', { clientX: jack(lfo).clientX + 60, clientY: jack(lfo).clientY - 40 });
+      expect(root.querySelector('[data-dragging]')).toBeNull();
+      expect(sock(k('in', 't3:inst', 'pitch')).dataset.compat).toBeUndefined();
+      pointer(sock(lfo), 'pointerup', jack(k('in', 't3:inst', 'pitch')));
+      expect(sock(lfo).dataset.armed).toBeUndefined();
       drag(sock(lfo), jack(lfo), jack(k('in', 't3:inst', 'pitch')));
       expect(JSON.stringify(conns())).toBe(before);
       expect(sock(lfo).getAttribute('aria-disabled')).toBe('true');

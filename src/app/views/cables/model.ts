@@ -10,7 +10,9 @@
 import { MASTER_ID, moduleId as mid } from '../../../project/factory';
 import { validateConnection } from '../../../project/graph';
 import { MODULE_DEFS, type PortDef } from '../../../project/modules';
-import type { Connection, Id, ModuleType, Patch, PortKind, PortRef } from '../../../project/types';
+import { LFO_PARAMS, clampParam, readParam, specById } from '../../../project/params';
+import { macroTargetValue } from '../../../project/resolve';
+import { MACRO_IDS, type Connection, type Id, type MacroId, type ModuleType, type Patch, type PortKind, type PortRef, type Project } from '../../../project/types';
 
 /* ------------------------------------------------------------------ */
 /* Inputs                                                              */
@@ -166,13 +168,58 @@ export interface PanelLayout {
   midY: number;
   /** Top of the LFO row. */
   lfoTop: number;
+  /** Number of horizontal gaps between the columns (for squeezing a slightly too wide layout). */
+  hGaps: number;
+  /** Measurements the layout was made with. */
+  geom: Geometry;
 }
 
-export const GEOM = {
-  padX: 32,
+/** Block and row measurements (px). The compact set fits patch areas down to ~190 px tall. */
+export interface Geometry {
+  compact: boolean;
+  padX: number;
+  /** Band above the main row for stub labels. */
+  top: number;
+  rowH: number;
+  gapX: number;
+  modGap: number;
+  lfoH: number;
+  lfoGap: number;
+  bottom: number;
+  returnTop: number;
+  returnH: number;
+  returnGap: number;
+  returnSockY: number;
+  audioY: number;
+  channelOut: Record<string, number>;
+  /** Channel mod inputs (x as a fraction of the width), kept clear of the Send B label. */
+  channelModX: [number, number];
+  masterInY: number;
+  lfoSockY: number;
+  stripTop: number;
+  stripRowH: number;
+  stripGap: number;
+  stripRows: number;
+  widths: Record<BlockVariant, number>;
+  socketR: number;
+  plugLen: number;
+}
+
+const WIDTHS: Record<BlockVariant, number> = { source: 170, effect: 136, channel: 160, return: 212, master: 150, lfo: 208, other: 176 };
+
+/**
+ * Spare height in the patch area widens the gap above the LFO row by up to
+ * this much, so cables into the modulation inputs run through the gap instead
+ * of across the LFO blocks.
+ */
+export const MAX_EXTRA_MOD_GAP = 30;
+
+export const GEOM: Geometry = {
+  compact: false,
+  padX: 24,
   top: 24,
   rowH: 132,
-  gapX: 62,
+  gapX: 58,
   modGap: 28,
   lfoH: 52,
   lfoGap: 28,
@@ -182,15 +229,42 @@ export const GEOM = {
   returnGap: 14,
   returnSockY: 42,
   audioY: 72,
-  channelOut: { out: 38, sendA: 72, sendB: 98 } as Record<string, number>,
+  channelOut: { out: 38, sendA: 72, sendB: 98 },
+  channelModX: [0.27, 0.69],
   masterInY: 38,
   lfoSockY: 38,
+  stripTop: 24,
   stripRowH: 28,
   stripGap: 4,
-  widths: { source: 170, effect: 136, channel: 160, return: 212, master: 150, lfo: 176, other: 176 } as Record<BlockVariant, number>,
+  stripRows: 7,
+  widths: WIDTHS,
   socketR: 9,
   plugLen: 17,
-} as const;
+};
+
+export const GEOM_COMPACT: Geometry = {
+  ...GEOM,
+  compact: true,
+  top: 14,
+  rowH: 112,
+  modGap: 22,
+  lfoH: 42,
+  bottom: 2,
+  returnTop: 44,
+  returnH: 50,
+  returnGap: 10,
+  returnSockY: 36,
+  audioY: 60,
+  channelOut: { out: 32, sendA: 56, sendB: 79 },
+  channelModX: [0.19, 0.58],
+  masterInY: 32,
+  lfoSockY: 32,
+  stripTop: 20,
+  stripRowH: 28,
+  stripGap: 4,
+  stripRows: 4,
+  widths: { ...WIDTHS, channel: 172 },
+};
 
 function variantOf(m: ModuleInfo, viewTrackId: Id): BlockVariant {
   if (m.type === 'master') return 'master';
@@ -208,7 +282,7 @@ function spread(n: number, w: number): number[] {
   return Array.from({ length: n }, (_, i) => Math.round((w * (i + 1)) / (n + 1)));
 }
 
-function blockSockets(m: ModuleInfo, variant: BlockVariant, x: number, y: number, w: number, h: number): SocketGeom[] {
+function blockSockets(g: Geometry, m: ModuleInfo, variant: BlockVariant, x: number, y: number, w: number, h: number): SocketGeom[] {
   const ports = MODULE_DEFS[m.type].ports;
   const out: SocketGeom[] = [];
   const add = (p: PortDef, side: Side, rx: number, ry: number) =>
@@ -218,57 +292,82 @@ function blockSockets(m: ModuleInfo, variant: BlockVariant, x: number, y: number
   const modIns = ports.filter((p) => p.direction === 'in' && p.kind === 'mod');
   const outs = ports.filter((p) => p.direction === 'out');
 
-  const rowY = variant === 'return' ? GEOM.returnSockY : variant === 'lfo' ? GEOM.lfoSockY : variant === 'master' ? GEOM.masterInY : GEOM.audioY;
+  const rowY = variant === 'return' ? g.returnSockY : variant === 'lfo' ? g.lfoSockY : variant === 'master' ? g.masterInY : g.audioY;
   audioIns.forEach((p, i) => add(p, 'left', 0, audioIns.length === 1 ? rowY : rowY + i * 30));
   outs.forEach((p, i) => {
     let ry = rowY + i * 30;
-    if (variant === 'channel' && GEOM.channelOut[p.id] !== undefined) ry = GEOM.channelOut[p.id];
+    if (variant === 'channel' && g.channelOut[p.id] !== undefined) ry = g.channelOut[p.id];
     add(p, 'right', w, ry);
   });
-  const xs = spread(modIns.length, w);
+  const xs = variant === 'channel' && modIns.length === 2 ? g.channelModX.map((f) => Math.round(w * f)) : spread(modIns.length, w);
   modIns.forEach((p, i) => add(p, 'bottom', xs[i], h));
   return out;
 }
 
 /**
  * Order of the part's audio modules: the instrument first, the channel last,
- * effects by their depth along the audio connections (longest path), so a
- * linear chain reads left to right and branches stay in signal order.
- * Effects that nothing feeds and that feed nothing sit just before the channel.
+ * effects at their place in the signal path, so a linear chain reads left to
+ * right and branches stay in signal order.
+ *
+ * An effect's place is its distance from the instrument (longest path). An
+ * effect the instrument no longer reaches keeps its place by its distance to
+ * the channel instead, so pulling one cable out of a chain does not reshuffle
+ * the blocks. Ties keep the patch's module order. Effects with no cables at
+ * all sit just before the channel.
  */
 function mainOrder(mods: readonly ModuleInfo[], connections: readonly Connection[], trackId: Id): ModuleInfo[] {
   const inst = mods.find((m) => m.id === mid.inst(trackId) && m.type === 'instrument');
   const ch = mods.find((m) => m.id === mid.channel(trackId) && m.type === 'channel');
   const ids = new Set(mods.map((m) => m.id));
-  const byId = new Map(mods.map((m) => [m.id, m]));
   const preds = new Map<Id, Id[]>();
   const succs = new Map<Id, Id[]>();
+  /** Modules with an audio cable leaving the part (to the Master Out, a return or another part). */
+  const exits = new Set<Id>();
   for (const c of connections) {
-    if (!ids.has(c.from.module) || !ids.has(c.to.module) || c.from.module === c.to.module) continue;
-    const fromM = byId.get(c.from.module)!;
+    if (!ids.has(c.from.module) || c.from.module === c.to.module) continue;
+    const fromM = mods.find((m) => m.id === c.from.module);
     if (portOf(fromM, c.from.port, 'out')?.kind !== 'audio') continue;
+    if (!ids.has(c.to.module)) {
+      exits.add(c.from.module);
+      continue;
+    }
     (preds.get(c.to.module) ?? preds.set(c.to.module, []).get(c.to.module)!).push(c.from.module);
     (succs.get(c.from.module) ?? succs.set(c.from.module, []).get(c.from.module)!).push(c.to.module);
   }
-  const depth = new Map<Id, number>();
-  const visiting = new Set<Id>();
-  const depthOf = (id: Id): number => {
-    const known = depth.get(id);
-    if (known !== undefined) return known;
-    if (visiting.has(id)) return 0; // defensive: patches are acyclic
-    visiting.add(id);
-    const ps = (preds.get(id) ?? []).filter((p) => p !== ch?.id);
-    let d: number;
-    if (id === inst?.id) d = 0;
-    else if (ps.length) d = Math.max(...ps.map(depthOf)) + 1;
-    else d = (succs.get(id)?.length ?? 0) > 0 ? 0.5 : Number.POSITIVE_INFINITY;
-    visiting.delete(id);
-    depth.set(id, d);
-    return d;
+  // Longest distance from the instrument / to the channel (or out of the part); undefined when not connected that way.
+  const memo = (walk: (id: Id, self: (id: Id) => number | undefined) => number | undefined) => {
+    const known = new Map<Id, number | undefined>();
+    const self = (id: Id): number | undefined => {
+      if (known.has(id)) return known.get(id);
+      known.set(id, undefined); // defensive: patches are acyclic
+      const v = walk(id, self);
+      known.set(id, v);
+      return v;
+    };
+    return self;
   };
+  const maxOf = (vals: (number | undefined)[]) => vals.reduce<number | undefined>((a, v) => (v === undefined ? a : a === undefined ? v : Math.max(a, v)), undefined);
+  const fwd = memo((id, self) => {
+    if (id === inst?.id) return 0;
+    const d = maxOf((preds.get(id) ?? []).filter((p) => p !== ch?.id).map(self));
+    return d === undefined ? undefined : d + 1;
+  });
+  const back = memo((id, self) => {
+    if (id === ch?.id) return 0;
+    const d = maxOf([...(succs.get(id) ?? []).filter((s) => s !== inst?.id).map(self), exits.has(id) ? 0 : undefined]);
+    return d === undefined ? undefined : d + 1;
+  });
+
   const effects = mods.filter((m) => m !== inst && m !== ch);
+  const chPos = (maxOf(effects.flatMap((m) => [fwd(m.id), back(m.id)])) ?? 0) + 1;
+  const pos = (id: Id): number => {
+    const f = fwd(id);
+    if (f !== undefined) return f;
+    const b = back(id);
+    return b !== undefined ? chPos - b : chPos - 0.5;
+  };
   const index = new Map(mods.map((m, i) => [m.id, i]));
-  const sorted = [...effects].sort((a, b) => depthOf(a.id) - depthOf(b.id) || index.get(a.id)! - index.get(b.id)!);
+  const sorted = [...effects].sort((a, b) => pos(a.id) - pos(b.id) || index.get(a.id)! - index.get(b.id)!);
   return [...(inst ? [inst] : []), ...sorted, ...(ch ? [ch] : [])];
 }
 
@@ -278,9 +377,21 @@ export interface LayoutInput {
   trackId: Id;
   tracks: readonly TrackInfo[];
   otherParts: boolean;
+  /** Use the compact measurements (short patch areas). */
+  compact?: boolean;
+  /** Height of the patch area: spare room (if any) widens the gap above the LFO row. */
+  fitHeight?: number;
+  /** Horizontal gap between columns (default: the geometry's). */
+  gapX?: number;
 }
 
-export function computeLayout({ modules, connections, trackId, tracks, otherParts }: LayoutInput): PanelLayout {
+/** Narrowest column gap: two plugs (17 px each) plus a short visible cable. */
+export const MIN_GAP_X = 44;
+
+export function computeLayout({ modules, connections, trackId, tracks, otherParts, compact = false, fitHeight = 0, gapX }: LayoutInput): PanelLayout {
+  const base = compact ? GEOM_COMPACT : GEOM;
+  const g: Geometry = gapX === undefined ? base : { ...base, gapX };
+  let hGaps = 0;
   const own = modules.filter((m) => m.trackId === trackId);
   const lfos = own.filter((m) => m.type === 'lfo');
   const main = mainOrder(own.filter((m) => m.type !== 'lfo'), connections, trackId);
@@ -289,77 +400,103 @@ export function computeLayout({ modules, connections, trackId, tracks, otherPart
 
   const blocks: BlockGeom[] = [];
   const place = (m: ModuleInfo, variant: BlockVariant, x: number, y: number, w: number, h: number) => {
-    blocks.push({ id: m.id, type: m.type, variant, trackId: m.trackId, x, y, w, h, sockets: blockSockets(m, variant, x, y, w, h) });
+    blocks.push({ id: m.id, type: m.type, variant, trackId: m.trackId, x, y, w, h, sockets: blockSockets(g, m, variant, x, y, w, h) });
   };
 
-  const rowTop = GEOM.top;
-  let x: number = GEOM.padX;
+  const rowTop = g.top;
+  let x: number = g.padX;
   for (const m of main) {
     const v = variantOf(m, trackId);
-    const w = GEOM.widths[v];
-    place(m, v, x, rowTop, w, GEOM.rowH);
-    x += w + GEOM.gapX;
+    const w = g.widths[v];
+    place(m, v, x, rowTop, w, g.rowH);
+    x += w + g.gapX;
+    hGaps++;
   }
 
   // LFO row under the chain, left aligned.
-  const lfoTop = rowTop + GEOM.rowH + GEOM.modGap;
-  let lx: number = GEOM.padX;
+  const lfoTop = rowTop + g.rowH + g.modGap;
+  let lx: number = g.padX;
   for (const m of lfos) {
-    place(m, 'lfo', lx, lfoTop, GEOM.widths.lfo, GEOM.lfoH);
-    lx += GEOM.widths.lfo + GEOM.lfoGap;
+    place(m, 'lfo', lx, lfoTop, g.widths.lfo, g.lfoH);
+    lx += g.widths.lfo + g.lfoGap;
   }
-  const lfoRight = lfos.length ? lx - GEOM.lfoGap : 0;
+  const lfoRight = lfos.length ? lx - g.lfoGap : 0;
 
   // Shared returns stacked in a column, below the Channel → Master line.
   let returnsBottom = 0;
   if (shared.length) {
-    const colBottom = rowTop + GEOM.returnTop + shared.length * (GEOM.returnH + GEOM.returnGap) - GEOM.returnGap;
+    const colBottom = rowTop + g.returnTop + shared.length * (g.returnH + g.returnGap) - g.returnGap;
     // Keep the column clear of the LFO row when the two would overlap.
-    if (colBottom > lfoTop && lfoRight > 0) x = Math.max(x, lfoRight + GEOM.gapX);
-    let ry: number = rowTop + GEOM.returnTop;
+    if (colBottom > lfoTop && lfoRight > 0) x = Math.max(x, lfoRight + g.gapX);
+    let ry: number = rowTop + g.returnTop;
     for (const m of shared) {
-      place(m, 'return', x, ry, GEOM.widths.return, GEOM.returnH);
-      ry += GEOM.returnH + GEOM.returnGap;
+      place(m, 'return', x, ry, g.widths.return, g.returnH);
+      ry += g.returnH + g.returnGap;
     }
-    returnsBottom = ry - GEOM.returnGap;
-    x += GEOM.widths.return + GEOM.gapX;
+    returnsBottom = ry - g.returnGap;
+    x += g.widths.return + g.gapX;
+    hGaps++;
   }
   if (master) {
-    place(master, 'master', x, rowTop, GEOM.widths.master, GEOM.rowH);
-    x += GEOM.widths.master + GEOM.gapX;
+    place(master, 'master', x, rowTop, g.widths.master, g.rowH);
+    x += g.widths.master + g.gapX;
+    hGaps++;
   }
 
   let strip: PanelLayout['strip'] = null;
   let stripBottom = 0;
   if (otherParts) {
-    const w = GEOM.widths.other;
-    let sy: number = rowTop;
-    for (const t of tracks) {
-      if (t.id === trackId) continue;
-      const ch = modules.find((m) => m.id === mid.channel(t.id) && m.type === 'channel');
-      if (!ch) continue;
-      const ry = Math.round(GEOM.stripRowH / 2);
+    const w = g.widths.other;
+    const others = tracks.filter((t) => t.id !== trackId && modules.some((m) => m.id === mid.channel(t.id) && m.type === 'channel'));
+    const x0 = x;
+    others.forEach((t, i) => {
+      const col = Math.floor(i / g.stripRows);
+      const row = i % g.stripRows;
+      const bx = x0 + col * (w + 16);
+      const by = g.stripTop + row * (g.stripRowH + g.stripGap);
+      const chId = mid.channel(t.id);
+      const ry = Math.round(g.stripRowH / 2);
       blocks.push({
-        id: ch.id,
+        id: chId,
         type: 'channel',
         variant: 'other',
         trackId: t.id,
-        x,
-        y: sy,
+        x: bx,
+        y: by,
         w,
-        h: GEOM.stripRowH,
-        sockets: [{ key: socketKey(ch.id, 'in', 'in'), module: ch.id, port: 'in', dir: 'in', kind: 'audio', side: 'left', x, y: sy + ry, rx: 0, ry, label: 'Channel In', tip: `${t.name}'s mixer input. Sound patched here is heard through ${t.name}'s channel.`, variant: 'other', strip: true }],
+        h: g.stripRowH,
+        sockets: [{ key: socketKey(chId, 'in', 'in'), module: chId, port: 'in', dir: 'in', kind: 'audio', side: 'left', x: bx, y: by + ry, rx: 0, ry, label: 'Channel In', tip: `${t.name}'s mixer input. Sound patched here is heard through ${t.name}'s channel.`, variant: 'other', strip: true }],
       });
-      sy += GEOM.stripRowH + GEOM.stripGap;
-    }
-    strip = { x, y: rowTop, w };
-    stripBottom = sy - GEOM.stripGap;
-    x += w + GEOM.gapX;
+      stripBottom = Math.max(stripBottom, by + g.stripRowH);
+    });
+    const cols = Math.max(1, Math.ceil(others.length / g.stripRows));
+    const stripW = cols * w + (cols - 1) * 16;
+    strip = { x: x0, y: g.stripTop, w: stripW };
+    x += stripW + g.gapX;
+    hGaps++;
   }
 
-  const width = Math.max(x - GEOM.gapX + GEOM.padX, GEOM.padX * 2);
-  const lowest = Math.max(rowTop + GEOM.rowH, lfos.length ? lfoTop + GEOM.lfoH : 0, returnsBottom, stripBottom);
-  const height = lowest + GEOM.bottom + (lfos.length ? 0 : 12);
+  const width = Math.max(x - g.gapX + g.padX, g.padX * 2);
+  const lowest = Math.max(rowTop + g.rowH, lfos.length ? lfoTop + g.lfoH : 0, returnsBottom, stripBottom);
+  let height = lowest + g.bottom + (lfos.length ? 0 : 12);
+
+  // Use spare height for a wider modulation gap: move the LFO row down.
+  let lfoRowTop = lfoTop;
+  if (lfos.length && fitHeight > height) {
+    const lfoBottom = lfoTop + g.lfoH;
+    // Keep a little air under the LFO row so it never looks cut off at the edge.
+    const reserve = Math.max(0, 8 - g.bottom);
+    const extra = Math.min(MAX_EXTRA_MOD_GAP, fitHeight - height - reserve + Math.max(0, lowest - lfoBottom));
+    if (extra > 0) {
+      lfoRowTop = lfoTop + extra;
+      for (const b of blocks) {
+        if (b.variant !== 'lfo') continue;
+        b.y += extra;
+        for (const s of b.sockets) s.y += extra;
+      }
+      height = Math.max(lowest, lfoBottom + extra) + g.bottom;
+    }
+  }
 
   const sockets = new Map<string, SocketGeom>();
   const order: string[] = [];
@@ -375,12 +512,32 @@ export function computeLayout({ modules, connections, trackId, tracks, otherPart
     blocks,
     sockets,
     order,
-    stubTopY: 4,
-    stubBottomY: height - 4,
+    stubTopY: compact ? 0 : 4,
+    stubBottomY: height - (compact ? 0 : 4),
     strip,
-    midY: rowTop + GEOM.rowH / 2 + 10,
-    lfoTop,
+    midY: rowTop + g.rowH / 2 + 10,
+    lfoTop: lfoRowTop,
+    hGaps: Math.max(0, hGaps - 1),
+    geom: g,
   };
+}
+
+/**
+ * The layout for a patch area of the given size: compact measurements when
+ * the regular ones are too tall, and slightly narrower column gaps when the
+ * patch is just a little too wide (so no scrollbar appears for a few pixels).
+ * A patch that is still wider scrolls sideways.
+ */
+export function fitLayout(input: Omit<LayoutInput, 'compact' | 'fitHeight' | 'gapX'>, fit: { width: number; height: number }): PanelLayout {
+  const make = (compact: boolean, gapX?: number) => computeLayout({ ...input, compact, fitHeight: fit.height, gapX });
+  let layout = make(false);
+  const compact = fit.height > 0 && fit.height < layout.height;
+  if (compact) layout = make(true);
+  if (fit.width > 0 && layout.width > fit.width && layout.hGaps > 0) {
+    const gapX = layout.geom.gapX - Math.ceil((layout.width - fit.width) / layout.hGaps);
+    if (gapX >= MIN_GAP_X) layout = make(compact, gapX);
+  }
+  return layout;
 }
 
 /* ------------------------------------------------------------------ */
@@ -473,6 +630,11 @@ export function fanAngles(base: number, desired: readonly number[]): number[] {
   const out = new Array<number>(n);
   order.forEach((o, k) => (out[o.i] = base + vals[k]));
   return out;
+}
+
+/** A single plug's direction: the socket's edge normal, bent a little toward where its cable goes. */
+export function bentAngle(s: Pick<SocketGeom, 'x' | 'y' | 'side'>, toward: Point): number {
+  return fanAngles(SIDE_ANGLE[s.side], [Math.atan2(toward.y - s.y, toward.x - s.x)])[0];
 }
 
 const dirOf = (angle: number): Point => ({ x: Math.cos(angle), y: Math.sin(angle) });
@@ -680,34 +842,101 @@ export function socketInDirection(layout: PanelLayout, fromKey: string, dir: 'le
 
 export type RepairPlan = { kind: 'connect'; from: PortRef; to: PortRef } | { kind: 'restore' };
 
+export function samePlan(a: RepairPlan | null, b: RepairPlan | null): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.kind !== b.kind) return false;
+  if (a.kind === 'restore' || b.kind === 'restore') return true;
+  return a.from.module === b.from.module && a.from.port === b.from.port && a.to.module === b.to.module && a.to.port === b.to.port;
+}
+
 /**
- * The smallest fix that makes a silent part heard again: when the sound
- * still reaches the part's Channel, plug the Channel back into the Master
- * Out; otherwise restore the part's default cables.
+ * The smallest fix that makes a silent part heard again: one cable from
+ * where the part's sound stops to where the rest of its chain still reaches
+ * the Master Out (a broken link anywhere in the chain is plugged back, and
+ * everything else the user patched stays). Only the part's own Channel may
+ * go straight to the Master Out, so a fix never skips the part's mixer.
+ * When no single cable can do it, the part's default cables are restored.
+ *
+ * Like `hasPathToMaster`, only primary ("out") audio outputs count: a part
+ * heard only through a send is still reported as silent.
  */
 export function repairPlan(patch: Patch, trackId: Id): RepairPlan {
   const inst = mid.inst(trackId);
   const ch = mid.channel(trackId);
-  const audioOut = (c: Connection) => {
-    if (c.from.port !== 'out') return false;
-    const m = patch.modules.find((x) => x.id === c.from.module);
-    const n = patch.modules.find((x) => x.id === c.to.module);
-    return !!m && !!n && MODULE_DEFS[m.type].ports.some((p) => p.id === 'out' && p.direction === 'out' && p.kind === 'audio') && MODULE_DEFS[n.type].ports.some((p) => p.id === c.to.port && p.direction === 'in' && p.kind === 'audio');
-  };
-  const seen = new Set<Id>([inst]);
-  const stack = [inst];
-  while (stack.length) {
-    const cur = stack.pop()!;
-    for (const c of patch.connections) {
-      if (c.from.module !== cur || !audioOut(c) || seen.has(c.to.module)) continue;
-      seen.add(c.to.module);
-      stack.push(c.to.module);
+  const byId = new Map(patch.modules.map((m) => [m.id, m]));
+  const port = (id: Id, portId: string, dir: SocketDir) => portOf(byId.get(id), portId, dir);
+  const hasOut = (id: Id) => port(id, 'out', 'out')?.kind === 'audio';
+  const hasIn = (id: Id) => port(id, 'in', 'in')?.kind === 'audio';
+  const links = patch.connections.filter((c) => c.from.port === 'out' && hasOut(c.from.module) && port(c.to.module, c.to.port, 'in')?.kind === 'audio');
+
+  // How far the sound gets from the instrument, and what still reaches the Master Out (with distance).
+  const depth = new Map<Id, number>([[inst, 0]]);
+  for (const queue = [inst]; queue.length; ) {
+    const cur = queue.shift()!;
+    for (const c of links) {
+      if (c.from.module !== cur || depth.has(c.to.module)) continue;
+      depth.set(c.to.module, depth.get(cur)! + 1);
+      queue.push(c.to.module);
     }
   }
-  const from = { module: ch, port: 'out' };
-  const to = { module: MASTER_ID, port: 'in' };
-  if (seen.has(ch) && validateConnection(patch, from, to).ok) return { kind: 'connect', from, to };
+  const toMaster = new Map<Id, number>([[MASTER_ID, 0]]);
+  for (const queue = [MASTER_ID as Id]; queue.length; ) {
+    const cur = queue.shift()!;
+    for (const c of links) {
+      if (c.to.module !== cur || toMaster.has(c.from.module)) continue;
+      toMaster.set(c.from.module, toMaster.get(cur)! + 1);
+      queue.push(c.from.module);
+    }
+  }
+  const own = (id: Id) => byId.get(id)?.trackId === trackId;
+  const feeds = (id: Id) => links.some((c) => c.from.module === id);
+  const fed = (id: Id) => links.some((c) => c.to.module === id);
+
+  // Sources: where the sound currently stops first (dead ends), deepest first.
+  const froms = [...depth.keys()].filter((id) => own(id) && hasOut(id)).sort((a, b) => Number(feeds(a)) - Number(feeds(b)) || depth.get(b)! - depth.get(a)!);
+  // Destinations: the part's modules that still reach the Master Out; unfed inputs first, earliest in the chain first.
+  const tos = [...toMaster.keys()].filter((id) => id !== inst && own(id) && hasIn(id)).sort((a, b) => Number(fed(a)) - Number(fed(b)) || toMaster.get(b)! - toMaster.get(a)!);
+
+  for (const fromId of froms) {
+    const targets = fromId === ch ? [...tos, MASTER_ID] : tos;
+    for (const toId of targets) {
+      if (toId === fromId) continue;
+      const from = { module: fromId, port: 'out' };
+      const to = { module: toId, port: 'in' };
+      if (validateConnection(patch, from, to).ok) return { kind: 'connect', from, to };
+    }
+  }
   return { kind: 'restore' };
+}
+
+/* ------------------------------------------------------------------ */
+/* LFO depth                                                           */
+/* ------------------------------------------------------------------ */
+
+const LFO_DEPTH = specById(LFO_PARAMS, 'depth')!;
+
+/**
+ * The depth an LFO really runs at (after macros) and the macro that sets it,
+ * if any. A cable from an LFO at depth 0 moves nothing, so the panel says so.
+ */
+export function lfoDepth(p: Project, moduleIdStr: Id): { depth: number; macro: MacroId | null; trackId: Id | null } | null {
+  const m = p.patch.modules.find((x) => x.id === moduleIdStr);
+  if (!m || m.type !== 'lfo') return null;
+  let depth = readParam(LFO_PARAMS, m.params, 'depth');
+  let macro: MacroId | null = null;
+  let owner: Id | null = null;
+  // Same order as the engine's macro resolution: the last mapping wins.
+  for (const t of p.tracks) {
+    for (const id of MACRO_IDS) {
+      for (const target of t.macroMap[id] ?? []) {
+        if (target.module !== moduleIdStr || target.param !== 'depth') continue;
+        depth = clampParam(LFO_DEPTH, macroTargetValue(target, t.macros[id]));
+        macro = id;
+        owner = t.id;
+      }
+    }
+  }
+  return { depth, macro, trackId: owner };
 }
 
 /** Number of cables that touch a part's own modules. */

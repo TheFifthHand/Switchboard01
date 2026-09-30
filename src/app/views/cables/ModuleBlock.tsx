@@ -8,12 +8,13 @@ import { memo, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as Re
 import { Switch, Tooltip } from '../../../ui/components';
 import { LFO_DIVISIONS, LFO_PARAMS, LFO_WAVES, readParam } from '../../../project/params';
 import { MODULE_DEFS } from '../../../project/modules';
-import type { Id } from '../../../project/types';
+import type { Id, Project } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { selectModule } from '../../../state/uiStore';
 import { session, useProject } from '../../instance';
 import { soundName } from '../../labels';
-import type { BlockGeom, SocketGeom } from './model';
+import { MACRO_SPECS } from '../../macros';
+import { lfoDepth, type BlockGeom, type SocketGeom } from './model';
 import styles from './CablePanel.module.css';
 
 export interface SocketUi {
@@ -33,43 +34,43 @@ export interface SocketHandlers {
   focus(key: string): void;
 }
 
-export interface SocketText {
-  /** Full accessible name, e.g. "Filter Out, audio output, 1 cable: to Channel In". */
-  aria: string;
-}
+const SOCKET_DETAIL = {
+  audio: 'Amber socket: audio. Drag or click to patch; Enter lists what fits.',
+  mod: 'Teal socket: modulation. Drag or click to patch; Enter lists what fits.',
+} as const;
 
 function Socket(props: { s: SocketGeom; ui: SocketUi; handlers: SocketHandlers; aria: string; count: number }) {
   const { s, ui, handlers, aria, count } = props;
   const compat = ui.compat ? (ui.compat.has(s.key) ? 'yes' : 'no') : undefined;
   const anchor = ui.anchorKey === s.key;
   return (
-    <Tooltip tip={s.tip} detail={s.kind === 'mod' ? 'Teal socket: modulation. Drag or click to patch; Enter lists what fits.' : 'Amber socket: audio. Drag or click to patch; Enter lists what fits.'}>
-    <button
-      type="button"
-      className={styles.socket}
-      data-socket-key={s.key}
-      data-kind={s.kind}
-      data-side={s.side}
-      data-dir={s.dir}
-      data-compat={anchor ? undefined : compat}
-      data-anchor={anchor || undefined}
-      data-armed={(anchor && ui.armed) || undefined}
-      data-hover={ui.hoverKey === s.key || undefined}
-      data-used={count > 0 || undefined}
-      aria-label={aria}
-      aria-disabled={ui.locked || undefined}
-      aria-keyshortcuts="Enter"
-      tabIndex={ui.focusKey === s.key ? 0 : -1}
-      style={{ left: s.rx, top: s.ry }}
-      onPointerDown={(e) => handlers.down(e, s.key)}
-      onKeyDown={(e) => handlers.keyDown(e, s.key)}
-      onFocus={() => handlers.focus(s.key)}
-    >
-      <span className={styles.jack} aria-hidden="true" />
-      <span className={styles.socketLabel} aria-hidden="true">
-        {s.label}
-      </span>
-    </button>
+    <Tooltip tip={s.tip} detail={SOCKET_DETAIL[s.kind]}>
+      <button
+        type="button"
+        className={styles.socket}
+        data-socket-key={s.key}
+        data-kind={s.kind}
+        data-side={s.side}
+        data-dir={s.dir}
+        data-compat={anchor ? undefined : compat}
+        data-anchor={anchor || undefined}
+        data-armed={(anchor && ui.armed) || undefined}
+        data-hover={ui.hoverKey === s.key || undefined}
+        data-used={count > 0 || undefined}
+        aria-label={aria}
+        aria-disabled={ui.locked || undefined}
+        aria-keyshortcuts="Enter"
+        tabIndex={ui.focusKey === s.key ? 0 : -1}
+        style={{ left: s.rx, top: s.ry }}
+        onPointerDown={(e) => handlers.down(e, s.key)}
+        onKeyDown={(e) => handlers.keyDown(e, s.key)}
+        onFocus={() => handlers.focus(s.key)}
+      >
+        <span className={styles.jack} aria-hidden="true" />
+        <span className={styles.socketLabel} aria-hidden="true">
+          {s.label}
+        </span>
+      </button>
     </Tooltip>
   );
 }
@@ -96,9 +97,43 @@ function LfoCaption({ moduleId }: { moduleId: Id }) {
   return <span className={styles.caption}>{text}</span>;
 }
 
-const CAPTION: Partial<Record<BlockGeom['type'], string>> = {
-  master: 'Limiter · −1 dBFS ceiling',
-};
+/** "24%|Motion|Chords" — one string, so the chip re-renders only when what it shows changes. */
+function depthKey(p: Project, moduleId: Id): string {
+  const d = lfoDepth(p, moduleId);
+  if (!d) return '';
+  const owner = d.trackId ? (p.tracks.find((t) => t.id === d.trackId)?.name ?? '') : '';
+  return `${Math.round(d.depth * 100)}|${d.macro ? MACRO_SPECS[d.macro].label : ''}|${owner}`;
+}
+
+/**
+ * How far the LFO really swings (after macros). At 0% its cables move
+ * nothing, which is the usual reason a fresh LFO cable seems to do nothing.
+ */
+function LfoDepth({ moduleId, trackId }: { moduleId: Id; trackId?: Id }) {
+  const key = useProject((p) => depthKey(p, moduleId));
+  const ownName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const [pct, macro, owner] = key.split('|');
+  const by = macro ? `${owner && owner !== ownName ? `${owner}’s ` : ''}${macro} macro` : '';
+  const still = pct === '0';
+  const tip = still
+    ? `Depth is 0%, so this LFO moves nothing yet. ${by ? `Turn up the ${by} to fade the movement in.` : 'Raise its Depth in the effects rack.'}`
+    : `How far this LFO swings the settings it is cabled to.${by ? ` Set by the ${by}.` : ''}`;
+  return (
+    <Tooltip name="LFO depth" tip={tip} detail="A cable's own Amount scales this further.">
+      <span className={`${styles.legend} mono`} data-kind="mod" data-still={still || undefined}>
+        Depth {pct}%
+      </span>
+    </Tooltip>
+  );
+}
+
+const MASTER_CAPTION = (
+  <span className={styles.caption}>
+    Limiter
+    <br />
+    −1 dBFS ceiling
+  </span>
+);
 
 const TITLE_TIP: Partial<Record<BlockGeom['type'], string>> = {
   instrument: 'The sound source of this part. Its Out is where the sound starts.',
@@ -151,6 +186,8 @@ export const ModuleBlock = memo(function ModuleBlock(props: ModuleBlockProps) {
       label={switchLabel}
       hideLabel
       checked={!bypass}
+      // An insert effect says what Off means for the sound; the state is text, not just the lamp.
+      offText={geom.variant === 'effect' ? 'Bypassed' : 'Off'}
       disabled={ui.locked}
       tip={switchTip}
       onChange={(on) => session.accepted(cmd.setBypass(session.store, geom.id, !on))}
@@ -162,8 +199,8 @@ export const ModuleBlock = memo(function ModuleBlock(props: ModuleBlockProps) {
       <InstrumentCaption trackId={geom.trackId} />
     ) : geom.type === 'lfo' ? (
       <LfoCaption moduleId={geom.id} />
-    ) : CAPTION[geom.type] ? (
-      <span className={styles.caption}>{CAPTION[geom.type]}</span>
+    ) : geom.type === 'master' ? (
+      MASTER_CAPTION
     ) : null;
   const sub = !switchInHead && bypassSwitch ? bypassSwitch : caption;
 
@@ -180,22 +217,30 @@ export const ModuleBlock = memo(function ModuleBlock(props: ModuleBlockProps) {
       style={{ left: geom.x, top: geom.y, width: geom.w, height: geom.h }}
     >
       <div className={styles.blockHead}>
-        <Tooltip name={name} tip={tip} detail={selected ? 'Selected. Click again to clear the selection.' : 'Click to select it here and in the effects rack.'}>
-          <button type="button" className={styles.blockName} aria-pressed={selected} onClick={() => selectModule(selected ? null : geom.id)}>
-            {name}
-          </button>
-        </Tooltip>
-        <span className={`${styles.legend} mono`} data-kind={geom.type === 'lfo' ? 'mod' : undefined} aria-hidden="true">
-          {def.short}
-        </span>
+        {/* Insert effects are selectable: the selection is shared with their card in the Shape view's effects rack. */}
+        {geom.variant === 'effect' ? (
+          <Tooltip name={name} tip={tip} detail={selected ? 'Selected here and in the effects rack. Click again to clear it.' : 'Click to select it here and in the effects rack.'}>
+            <button type="button" className={styles.blockName} aria-pressed={selected} onClick={() => selectModule(selected ? null : geom.id)}>
+              {name}
+            </button>
+          </Tooltip>
+        ) : (
+          <Tooltip name={name} tip={tip}>
+            <span className={styles.blockName} data-static="">
+              {name}
+            </span>
+          </Tooltip>
+        )}
+        {geom.type === 'lfo' ? (
+          <LfoDepth moduleId={geom.id} trackId={geom.trackId} />
+        ) : (
+          <span className={`${styles.legend} mono`} aria-hidden="true">
+            {def.short}
+          </span>
+        )}
         {switchInHead && bypassSwitch}
       </div>
       {sub && <div className={styles.blockSub}>{sub}</div>}
-      {canBypass && bypass && geom.variant === 'effect' && (
-        <span className={styles.bypassNote} aria-hidden="true">
-          Bypassed
-        </span>
-      )}
       {sockets}
     </div>
   );

@@ -68,18 +68,18 @@ function MappingRow(props: { trackId: Id; macro: MacroId; index: number; row: Ro
       <div className={styles.info}>
         <span className={styles.target}>{label}</span>
         <span className={`${styles.meta} mono`}>
-          <span>
-            {target.curve === 'exp' ? 'exp' : 'lin'}
-            <span className="visually-hidden">{target.curve === 'exp' ? 'onential curve,' : 'ear curve,'}</span>
-          </span>
+          <span aria-hidden="true">{target.curve === 'exp' ? 'exp' : 'lin'}</span>
           {partial && (
-            <span>
-              <span className="visually-hidden">over {macroName} </span>
-              {pct(from)}–{pct(to)}
-              <span className="visually-hidden">,</span>
+            <span aria-hidden="true">
+              {macroName} {Math.round(from * 100)}–{pct(to)}
             </span>
           )}
-          <span className={styles.now}>now {fmt(now)}</span>
+          <span className={styles.now} aria-hidden="true">
+            now {fmt(now)}
+          </span>
+          <span className="visually-hidden">
+            {`${target.curve === 'exp' ? 'Exponential' : 'Linear'} curve${partial ? `, over ${macroName} ${pct(from)} to ${pct(to)}` : ''}, now ${fmt(now)}.`}
+          </span>
         </span>
       </div>
       {spec ? (

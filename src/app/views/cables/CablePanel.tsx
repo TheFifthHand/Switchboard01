@@ -17,7 +17,7 @@
  * performance take is recording.
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { Button, Dialog, Icon, IconButton, NumberField } from '../../../ui/components';
+import { Button, Dialog, Icon, IconButton, NumberField, useElementSize } from '../../../ui/components';
 import { isTypingTarget } from '../../../ui/hooks/useComputerKeyboard';
 import { compatibleSources, compatibleTargets, describePathProblem } from '../../../project/graph';
 import type { Connection, Id, PortKind, PortRef, Project } from '../../../project/types';
@@ -29,20 +29,21 @@ import { CableArtLayer, CableHitLayer, LiveCable, StubLabels, type CableLayerHan
 import { ConnectionPicker } from './ConnectionPicker';
 import { ModuleBlock, type SocketHandlers, type SocketUi } from './ModuleBlock';
 import {
-  GEOM,
   SIDE_ANGLE,
+  bentAngle,
   cableName,
   cablePath,
   computeCables,
-  computeLayout,
   connectionKindOf,
   endpointName,
+  fitLayout,
   livePath,
   moduleInfos,
   moduleName,
   plugBack,
   repairPlan,
   sameModuleInfos,
+  samePlan,
   sameTracks,
   socketInDirection,
   socketKey,
@@ -93,14 +94,11 @@ interface Gesture {
   key: string;
   grab: PlugGrab | null;
   fixed: FixedEnd;
-  /** Direction of the socket that completes the cable. */
-  want: SocketDir;
   kind: PortKind;
   compat: Set<string>;
   hover: string | null;
   last: Point;
   started: boolean;
-  el: Element;
   cleanup: () => void;
 }
 
@@ -135,7 +133,8 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
   const lock = useStore(session.store.info, (s) => s.lock);
   const selectedModuleId = useUi((s) => s.selectedModuleId);
   const repair = useProject(
-    useCallback((p: Project) => (describePathProblem(p.patch, trackId) ? repairPlan(p.patch, trackId).kind : null), [trackId]),
+    useCallback((p: Project) => (describePathProblem(p.patch, trackId) ? repairPlan(p.patch, trackId) : null), [trackId]),
+    samePlan,
   );
   const locked = lock !== null;
   const partIndex = tracks.findIndex((t) => t.id === trackId);
@@ -161,11 +160,18 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
   const casingRef = useRef<SVGPathElement>(null);
   const coreRef = useRef<SVGPathElement>(null);
   const freePlugRef = useRef<SVGGElement>(null);
-  const liveRefs = useMemo<LiveRefs>(() => ({ shadow: shadowRef, casing: casingRef, core: coreRef, freePlug: freePlugRef }), []);
+  const fixedPlugRef = useRef<SVGGElement>(null);
+  const liveRefs = useMemo<LiveRefs>(() => ({ shadow: shadowRef, casing: casingRef, core: coreRef, freePlug: freePlugRef, fixedPlug: fixedPlugRef }), []);
   const hintId = useId();
   const listId = useId();
 
-  const layout = useMemo(() => computeLayout({ modules, connections, trackId, tracks, otherParts }), [modules, connections, trackId, tracks, otherParts]);
+  // Short patch areas (a low Shape view region) get the compact measurements so nothing scrolls vertically;
+  // a patch a few pixels too wide gets slightly narrower gaps instead of a scrollbar.
+  const avail = useElementSize(scrollerRef);
+  const layout = useMemo(
+    () => fitLayout({ modules, connections, trackId, tracks, otherParts }, avail),
+    [modules, connections, trackId, tracks, otherParts, avail],
+  );
   const cableSet = useMemo(() => computeCables({ layout, connections, modules, tracks, trackId }), [layout, connections, modules, tracks, trackId]);
 
   // Selection and armed sockets that no longer exist are dropped.
@@ -274,7 +280,7 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
     const plan = repairPlan(session.store.getState().patch, trackId);
     if (plan.kind === 'connect') {
       const r = cmd.connect(session.store, plan.from, plan.to);
-      if (r.ok) setStatus(`Restored ${nameOf(plan)}. Ctrl+Z undoes it.`);
+      if (r.ok) setStatus(`Connected ${nameOf(plan)}: ${partName} is heard again. Ctrl+Z undoes it.`);
       else notify(r.message, 'warn');
       return;
     }
@@ -324,23 +330,28 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
 
   const drawLive = (g: Gesture) => {
     const hover = g.hover ? layout.sockets.get(g.hover) : undefined;
+    const target = hover ?? g.last;
+    // A new cable's own plug bends toward where it is going; a moved cable keeps its fixed plug as it was.
+    const fixed = g.fixed.socket && !g.grab ? { ...g.fixed, angle: bentAngle(g.fixed.socket, target) } : g.fixed;
+    if (fixed.socket && !g.grab) fixed.point = plugBack(fixed.socket, fixed.angle);
     let d: string;
     let fx: number;
     let fy: number;
     let fa: number;
     if (hover) {
-      fa = SIDE_ANGLE[hover.side];
-      d = cablePath(g.fixed.point, g.fixed.angle, plugBack(hover, fa), fa);
+      fa = bentAngle(hover, fixed.socket ?? fixed.point);
+      d = cablePath(fixed.point, fixed.angle, plugBack(hover, fa), fa);
       fx = hover.x;
       fy = hover.y;
     } else {
       const p = g.last;
-      if (g.fixed.socket) d = livePath(g.fixed.socket, g.fixed.angle, p);
-      else d = cablePath(g.fixed.point, g.fixed.angle, p, Math.atan2(g.fixed.point.y - p.y, g.fixed.point.x - p.x));
-      fa = Math.atan2(g.fixed.point.y - p.y, g.fixed.point.x - p.x);
-      fx = p.x - Math.cos(fa) * 0;
+      if (fixed.socket) d = livePath(fixed.socket, fixed.angle, p);
+      else d = cablePath(fixed.point, fixed.angle, p, Math.atan2(fixed.point.y - p.y, fixed.point.x - p.x));
+      fa = Math.atan2(fixed.point.y - p.y, fixed.point.x - p.x);
+      fx = p.x;
       fy = p.y;
     }
+    if (fixed.socket) fixedPlugRef.current?.setAttribute('transform', `translate(${fixed.socket.x} ${fixed.socket.y}) rotate(${((fixed.angle * 180) / Math.PI).toFixed(1)})`);
     shadowRef.current?.setAttribute('d', d);
     casingRef.current?.setAttribute('d', d);
     coreRef.current?.setAttribute('d', d);
@@ -424,7 +435,6 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
     endGesture();
     const patch = session.store.getState().patch;
     let fixed: FixedEnd;
-    let want: SocketDir;
     let kind: PortKind;
     let compat: Set<string>;
     if (grab) {
@@ -443,13 +453,10 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
         const a = stub?.anchor ?? { x: 0, y: 0 };
         fixed = { socket: null, point: a, angle: stub?.align === 'center' ? (a.y < layout.midY ? Math.PI / 2 : -Math.PI / 2) : Math.PI };
       }
-      if (grab.end === 'to') {
-        want = 'in';
-        compat = compatKeys(compatibleTargets(patch, c.from, { ignoreConnectionId: c.id }), 'in');
-      } else {
-        want = 'out';
-        compat = compatKeys(compatibleSources(patch, c.to, { ignoreConnectionId: c.id }), 'out');
-      }
+      compat =
+        grab.end === 'to'
+          ? compatKeys(compatibleTargets(patch, c.from, { ignoreConnectionId: c.id }), 'in')
+          : compatKeys(compatibleSources(patch, c.to, { ignoreConnectionId: c.id }), 'out');
     } else {
       const s = layout.sockets.get(key);
       if (!s) return;
@@ -465,7 +472,6 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
       kind = s.kind;
       const angle = SIDE_ANGLE[s.side];
       fixed = { socket: s, point: plugBack(s, angle), angle };
-      want = s.dir === 'out' ? 'in' : 'out';
       compat = s.dir === 'out' ? compatKeys(compatibleTargets(patch, refOf(s)), 'in') : compatKeys(compatibleSources(patch, refOf(s)), 'out');
     }
     const el = e.currentTarget;
@@ -514,18 +520,25 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
       if (g.started) dropCable(g);
       else if (armed && pressed && armed.key !== pressed.key && armed.dir !== pressed.dir) clickSocket(pressed.key);
       else if (g.grab) {
+        const c = session.store.getState().patch.connections.find((x) => x.id === g.grab!.connectionId);
         setArm(null);
         setSelectedId(g.grab.connectionId);
-        setStatus(`Selected ${nameOf(session.store.getState().patch.connections.find((c) => c.id === g.grab!.connectionId) ?? { from: { module: '', port: '' }, to: { module: '', port: '' } })}.`);
+        if (c) setStatus(`Selected ${nameOf(c)}.`);
       } else clickSocket(g.key);
     };
     const onCancel = (ev: PointerEvent) => {
       if (ev.pointerId !== pointerId) return;
       endGesture();
     };
+    // Leaving the window mid-drag drops nothing: the plug goes back where it was.
+    const onBlur = () => {
+      if (gesture.current?.started) setStatus('Cancelled.');
+      endGesture();
+    };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('blur', onBlur);
     gesture.current = {
       pointerId,
       startX: e.clientX,
@@ -533,17 +546,16 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
       key,
       grab,
       fixed,
-      want,
       kind,
       compat,
       hover: null,
       last: stagePoint(e.clientX, e.clientY),
       started: false,
-      el,
       cleanup: () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('pointercancel', onCancel);
+        window.removeEventListener('blur', onBlur);
         try {
           if (el.hasPointerCapture(pointerId)) el.releasePointerCapture(pointerId);
         } catch {
@@ -697,7 +709,7 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
     const sc = scrollerRef.current;
     if (!sc) return;
     const stageLeft = stageRef.current?.offsetLeft ?? 0;
-    const right = stageLeft + layout.strip.x + layout.strip.w + GEOM.padX;
+    const right = stageLeft + layout.strip.x + layout.strip.w + layout.geom.padX;
     if (right > sc.scrollLeft + sc.clientWidth) sc.scrollTo({ left: right - sc.clientWidth, behavior: 'smooth' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [otherParts]);
@@ -780,6 +792,8 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
       data-armed={arm ? true : undefined}
       data-dragging={drag ? true : undefined}
       onKeyDown={onRootKeyDown}
+      // Clicking a cable or empty panel keeps keyboard focus here, so Delete and Escape reach the panel.
+      tabIndex={-1}
       role="region"
       aria-label={`Cables for ${partName}`}
     >
@@ -826,7 +840,11 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
             <Button
               size="sm"
               onClick={restoreConnection}
-              tip={repair === 'connect' ? `Plugs ${possessive(partName)} Channel Out back into the Master Out.` : `Nothing from ${partName} reaches the Master Out. This puts ${possessive(partName)} default cables back.`}
+              tip={
+                repair.kind === 'connect'
+                  ? `Adds one cable, ${nameOf(repair)}, so ${partName} is heard again. Everything else stays as you patched it.`
+                  : `No single cable can reconnect ${partName}, so this puts its default cables back. Effects and LFOs you added to it are removed.`
+              }
               detail="Ctrl+Z undoes it."
             >
               Restore Connection
@@ -856,69 +874,71 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
       </div>
 
       <div className={styles.viewportWrap}>
-      <div className={styles.viewport} ref={scrollerRef}>
-        <div
-          id={`${listId}-stage`}
-          ref={stageRef}
-          className={styles.stage}
-          style={{ width: layout.width, height: layout.height }}
-          onPointerDown={onStagePointerDown}
-          aria-describedby={hintId}
-        >
-          <CableHitLayer layout={layout} set={cableSet} hiddenId={drag?.movingId ?? null} handlers={cableHandlers} />
-          {layout.strip && (
-            <span className={styles.stripTitle} style={{ left: layout.strip.x, top: layout.strip.y - 22 }} aria-hidden="true">
-              Other parts · Channel In
-            </span>
-          )}
-          {layout.blocks.map((b) => {
-            const m = modules.find((x) => x.id === b.id);
-            const t = b.variant === 'other' ? tracks.findIndex((x) => x.id === b.trackId) : -1;
-            return (
-              <ModuleBlock
-                key={`${b.variant}:${b.id}`}
-                geom={b}
-                name={blockNames[b.id]}
-                partLabel={t >= 0 ? `${t + 1} ${tracks[t].name}` : undefined}
-                bypass={m?.bypass ?? false}
-                selected={selectedModuleId === b.id}
-                ui={ui}
-                handlers={socketHandlers}
-                socketAria={socketAria}
-                socketCount={socketCount}
-              />
-            );
-          })}
-          <CableArtLayer layout={layout} set={cableSet} selectedId={selectedId} hiddenId={drag?.movingId ?? null} handlers={cableHandlers} editable={!locked} />
-          <StubLabels set={cableSet} />
-          {drag && <LiveCable layout={layout} kind={drag.kind} fixed={{ socket: drag.fixed.socket, angle: drag.fixed.angle }} refs={liveRefs} />}
-          {refusal && refusalSocket && (
-            <div
-              className={styles.refusal}
-              role="alert"
-              data-below={refusalSocket.y < 90 || undefined}
-              style={{ left: Math.max(130, Math.min(layout.width - 130, refusalSocket.x)), top: refusalSocket.y }}
-            >
-              <Icon name="warning" size={14} />
-              <span>{refusal.text}</span>
-            </div>
-          )}
-        </div>
-      </div>
-      {locked && (
-        <div className={styles.lockVeil} role="status">
-          <div className={styles.lockCard}>
-            <Icon name="lock" size={16} />
-            <p>{lock}</p>
+        <div className={styles.viewport} ref={scrollerRef}>
+          <div
+            id={`${listId}-stage`}
+            ref={stageRef}
+            className={styles.stage}
+            data-cable-stage=""
+            data-compact={layout.geom.compact || undefined}
+            style={{ width: layout.width, height: layout.height }}
+            onPointerDown={onStagePointerDown}
+            aria-describedby={hintId}
+          >
+            <CableHitLayer layout={layout} set={cableSet} hiddenId={drag?.movingId ?? null} handlers={cableHandlers} />
+            {layout.strip && (
+              <span className={styles.stripTitle} style={{ left: layout.strip.x, top: Math.max(0, layout.strip.y - 20) }} aria-hidden="true">
+                Other parts · Channel In
+              </span>
+            )}
+            {layout.blocks.map((b) => {
+              const m = modules.find((x) => x.id === b.id);
+              const t = b.variant === 'other' ? tracks.findIndex((x) => x.id === b.trackId) : -1;
+              return (
+                <ModuleBlock
+                  key={`${b.variant}:${b.id}`}
+                  geom={b}
+                  name={blockNames[b.id]}
+                  partLabel={t >= 0 ? `${t + 1} ${tracks[t].name}` : undefined}
+                  bypass={m?.bypass ?? false}
+                  selected={selectedModuleId === b.id}
+                  ui={ui}
+                  handlers={socketHandlers}
+                  socketAria={socketAria}
+                  socketCount={socketCount}
+                />
+              );
+            })}
+            <CableArtLayer layout={layout} set={cableSet} selectedId={selectedId} hiddenId={drag?.movingId ?? null} handlers={cableHandlers} editable={!locked} />
+            <StubLabels set={cableSet} />
+            {drag && <LiveCable layout={layout} kind={drag.kind} fixed={{ socket: drag.fixed.socket, angle: drag.fixed.angle }} refs={liveRefs} />}
+            {refusal && refusalSocket && (
+              <div
+                className={styles.refusal}
+                role="alert"
+                data-below={refusalSocket.y < 90 || undefined}
+                style={{ left: Math.max(130, Math.min(layout.width - 130, refusalSocket.x)), top: refusalSocket.y }}
+              >
+                <Icon name="warning" size={14} />
+                <span>{refusal.text}</span>
+              </div>
+            )}
           </div>
         </div>
-      )}
+        {locked && (
+          <div className={styles.lockVeil} role="status">
+            <div className={styles.lockCard}>
+              <Icon name="lock" size={16} />
+              <p>{lock}</p>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="visually-hidden">
         {repair && !locked && (
           <p role="alert">
-            This part has no path to the output. {repair === 'connect' ? `${possessive(partName)} Channel is not plugged into the Master Out.` : `No sound from ${partName} reaches the Master Out.`}
+            This part has no path to the output. {repair.kind === 'connect' ? `Restore Connection adds ${nameOf(repair)}.` : `Restore Connection puts ${possessive(partName)} default cables back.`}
           </p>
         )}
         <h3 id={`${listId}-h`}>Cables of {partName}</h3>
@@ -947,7 +967,7 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
         open={restoreOpen}
         onClose={() => setRestoreOpen(false)}
         title="Restore default cables?"
-        description="Puts the factory cables back. Knob settings on the modules are kept, and Ctrl+Z undoes it."
+        description="Puts the factory cables back. Modules keep their knob settings, bypassed ones are switched back on, and Ctrl+Z undoes it."
         actions={
           <Button variant="ghost" onClick={() => setRestoreOpen(false)}>
             Cancel
@@ -959,7 +979,9 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
             <Button variant="primary" icon="undo" onClick={restorePart}>
               Restore {possessive(partName)} cables
             </Button>
-            <p>Instrument → Drive → Filter → Channel → Master Out, Send A to the Reverb, Send B to the Delay, and the LFO to the filter. Effects and LFOs you added to {partName} are removed.</p>
+            <p>
+              Instrument → Drive → Filter → Channel → Master Out, Send A to the Reverb, Send B to the Delay, and the LFO to the filter. Effects and LFOs you added to {partName} and its cables to other parts are removed.
+            </p>
           </div>
           <div className={styles.restoreChoice}>
             <Button variant="danger" icon="undo" onClick={restoreAll}>

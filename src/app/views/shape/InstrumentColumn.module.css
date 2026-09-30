@@ -1,4 +1,7 @@
 .scroll {
+  /* Positioned so visually hidden text and other absolute children are clipped by the scroller
+     instead of stretching the page. */
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 10px;

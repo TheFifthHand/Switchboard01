@@ -174,6 +174,7 @@ export interface LiveRefs {
   casing: Ref<SVGPathElement>;
   core: Ref<SVGPathElement>;
   freePlug: Ref<SVGGElement>;
+  fixedPlug: Ref<SVGGElement>;
 }
 
 export function LiveCable(props: { layout: PanelLayout; kind: PortKind; fixed: { socket: SocketGeom | null; angle: number }; refs: LiveRefs }) {
@@ -185,7 +186,7 @@ export function LiveCable(props: { layout: PanelLayout; kind: PortKind; fixed: {
         <path ref={refs.casing} className={styles.cableCasing} d="" />
         <path ref={refs.core} className={styles.cableCore} d="" />
       </g>
-      {fixed.socket && <Plug socket={fixed.socket} angle={fixed.angle} kind={kind} />}
+      {fixed.socket && <Plug socket={fixed.socket} angle={fixed.angle} kind={kind} gRef={refs.fixedPlug} />}
       <g ref={refs.freePlug} className={styles.freePlug} data-kind={kind}>
         <Plug socket={{ x: 0, y: 0, key: '' }} angle={0} kind={kind} />
       </g>

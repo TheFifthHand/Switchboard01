@@ -9,11 +9,11 @@
  */
 import { memo, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Button, IconButton, Notice, Panel, Switch, Tooltip } from '../../../ui/components';
-import { DELAY_ID, REVERB_ID, moduleId as mid } from '../../../project/factory';
-import { describePathProblem, findModule, inputPortDef, trackChain } from '../../../project/graph';
+import { DELAY_ID, MASTER_ID, REVERB_ID, moduleId as mid } from '../../../project/factory';
+import { connectionKind, describePathProblem, findModule, inputPortDef, trackChain } from '../../../project/graph';
 import { INSERTABLE_EFFECTS, MODULE_DEFS, PATCH_LIMITS } from '../../../project/modules';
 import { MODULE_PARAMS } from '../../../project/params';
-import type { Id, ModuleType } from '../../../project/types';
+import type { Id, ModuleType, Patch } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { shallowEqual } from '../../../state/store';
 import { selectModule, setCablesOpen } from '../../../state/uiStore';
@@ -147,12 +147,41 @@ interface CardInfo {
   name: string;
 }
 
-const EffectCard = memo(function EffectCard(props: { trackId: Id; moduleId: Id; index: number; count: number; movable: boolean }) {
-  const { trackId, moduleId, index, count, movable } = props;
+/** True when an audio path runs from the part's instrument through `id` to the master output. */
+function onAudiblePath(patch: Patch, trackId: Id, id: Id): boolean {
+  const audio = patch.connections.filter((c) => connectionKind(patch, c) === 'audio');
+  const walk = (start: Id, forward: boolean): Set<Id> => {
+    const seen = new Set<Id>([start]);
+    const stack = [start];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      for (const c of audio) {
+        const [a, b] = forward ? [c.from.module, c.to.module] : [c.to.module, c.from.module];
+        if (a === cur && !seen.has(b)) {
+          seen.add(b);
+          stack.push(b);
+        }
+      }
+    }
+    return seen;
+  };
+  return walk(mid.inst(trackId), true).has(id) && walk(MASTER_ID, false).has(id);
+}
+
+/**
+ * Where a card sits: 'chain' = at `index` of a linear chain of `count` effects (movable);
+ * 'custom' = the part's routing is not a simple chain; 'outside' = not part of the part's linear chain.
+ */
+type CardMode = 'chain' | 'custom' | 'outside';
+
+const EffectCard = memo(function EffectCard(props: { trackId: Id; moduleId: Id; mode: CardMode; index?: number; count?: number }) {
+  const { trackId, moduleId, mode, index = 0, count = 1 } = props;
+  const inChain = mode === 'chain';
   const info = useProject<CardInfo | null>((p) => {
     const m = findModule(p.patch, moduleId);
     return m ? { type: m.type, bypass: m.bypass, name: moduleName(p, m, trackId) } : null;
   }, shallowEqual);
+  const silent = useProject((p) => !inChain && !onAudiblePath(p.patch, trackId, moduleId));
   const selected = useUi((s) => s.selectedModuleId === moduleId);
   if (!info) return null;
   const { name, bypass } = info;
@@ -166,24 +195,29 @@ const EffectCard = memo(function EffectCard(props: { trackId: Id; moduleId: Id; 
     const r = cmd.removeEffect(session.store, moduleId);
     if (!session.accepted(r)) return;
     if (selected) selectModule(null);
-    notify(`Removed ${name}. The sound now flows straight past it.`, 'info', 'undo');
+    notify(silent ? `Removed ${name}.` : `Removed ${name}. The sound now flows straight past it.`, 'info', 'undo');
   };
 
+  const status = silent ? 'not heard: no path from the instrument to the output' : mode === 'outside' ? 'patched outside the chain' : null;
+  const label = [name, inChain ? `effect ${index + 1} of ${count}` : null, status, bypass ? 'bypassed' : null].filter(Boolean).join(', ');
   return (
-    <article
-      id={`rack-card-${moduleId}`}
-      className={styles.card}
-      data-bypassed={bypass || undefined}
-      data-selected={selected || undefined}
-      aria-label={`${name}, effect ${index + 1} of ${count}${bypass ? ', bypassed' : ''}`}
-    >
+    <article id={`rack-card-${moduleId}`} className={styles.card} data-bypassed={bypass || undefined} data-selected={selected || undefined} aria-label={label}>
       <header className={styles.cardHead}>
         <Tooltip tip={selected ? `${name} is selected: it is highlighted in the cable panel too.` : `Select ${name}: it is highlighted in the cable panel too.`}>
           <button type="button" className={styles.cardName} aria-pressed={selected} onClick={() => selectModule(selected ? null : moduleId)}>
-            <span className={`${styles.slot} mono`}>{index + 1}</span>
+            {inChain && <span className={`${styles.slot} mono`}>{index + 1}</span>}
             <span className={styles.cardTitle}>{name}</span>
           </button>
         </Tooltip>
+        {silent ? (
+          <span className={styles.cardState} data-tone="attention" aria-hidden="true">
+            Not heard
+          </span>
+        ) : bypass ? (
+          <span className={styles.cardState} aria-hidden="true">
+            Bypassed
+          </span>
+        ) : null}
       </header>
       <div className={styles.cardKnobs}>
         {MODULE_PARAMS[info.type].map((spec) => (
@@ -202,7 +236,7 @@ const EffectCard = memo(function EffectCard(props: { trackId: Id; moduleId: Id; 
           onChange={(on) => session.accepted(cmd.setBypass(session.store, moduleId, !on))}
         />
         <span className={styles.footTools}>
-          {movable && (
+          {inChain && (
             <>
               <IconButton
                 id={leftId}
@@ -396,17 +430,20 @@ function FlowLine(props: { trackId: Id; chain: readonly Id[] }) {
     (p) => chain.map((id) => (id === mid.inst(trackId) ? 'Instrument' : id === mid.channel(trackId) ? 'Channel' : moduleName(p, findModule(p.patch, id), trackId))),
     sameItems,
   );
+  const off = useProject<boolean[]>((p) => chain.map((id) => findModule(p.patch, id)?.bypass ?? false), sameItems);
+  const steps = [...names.map((name, i) => ({ name, off: off[i] ?? false, end: i === 0 || i === names.length - 1 })), { name: 'Master', off: false, end: true }];
   return (
     <ol className={styles.flow} aria-label="Signal flow">
-      {[...names, 'Master'].map((n, i) => (
+      {steps.map((step, i) => (
         <li key={i} className={styles.flowItem}>
           {i > 0 && (
             <span className={styles.flowArrow} aria-hidden="true">
               →
             </span>
           )}
-          <span className={styles.flowChip} data-end={i === 0 || i >= names.length - 1 || undefined}>
-            {n}
+          <span className={styles.flowChip} data-end={step.end || undefined} data-off={step.off || undefined}>
+            {step.name}
+            {step.off && <span className={styles.flowOff}> off</span>}
           </span>
         </li>
       ))}
@@ -421,6 +458,8 @@ export function EffectsRack(props: { trackId: Id; className?: string }) {
   const noPath = useProject((p) => describePathProblem(p.patch, trackId) !== null);
   const linear = chain !== null;
   const effects = linear ? chain.slice(1, -1) : partEffects;
+  // Effects of this part that a linear chain does not pass through (their cables were removed).
+  const offPath = linear ? partEffects.filter((id) => !chain.includes(id)) : [];
   const restore = () => {
     if (session.accepted(cmd.restoreTrackPatch(session.store, trackId))) notify('Restored this part’s default routing.', 'info', 'undo');
   };
@@ -457,10 +496,23 @@ export function EffectsRack(props: { trackId: Id; className?: string }) {
         <div className={styles.cards} role="list" aria-label={linear ? 'Insert effects in signal order' : 'Effects of this part'}>
           {effects.map((id, i) => (
             <div key={id} role="listitem" className={styles.cardCell}>
-              <EffectCard trackId={trackId} moduleId={id} index={i} count={effects.length} movable={linear} />
+              <EffectCard trackId={trackId} moduleId={id} mode={linear ? 'chain' : 'custom'} index={i} count={effects.length} />
             </div>
           ))}
         </div>
+      )}
+      {offPath.length > 0 && (
+        <section className={styles.group} aria-label="Outside the chain">
+          <h3 className={styles.groupTitle}>Outside the chain</h3>
+          <p className={styles.hint}>Effects of this part that are not between its instrument and channel. The cable panel shows where they are patched; one with no path to the output is not heard.</p>
+          <div className={styles.cards} role="list" aria-label="Effects outside the chain">
+            {offPath.map((id) => (
+              <div key={id} role="listitem" className={styles.cardCell}>
+                <EffectCard trackId={trackId} moduleId={id} mode="outside" />
+              </div>
+            ))}
+          </div>
+        </section>
       )}
       <section className={styles.group} aria-label="Mix">
         <h3 className={styles.groupTitle}>Mix</h3>

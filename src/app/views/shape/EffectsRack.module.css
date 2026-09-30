@@ -1,4 +1,7 @@
 .scroll {
+  /* Positioned so visually hidden text and other absolute children are clipped by the scroller
+     instead of stretching the page. */
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -112,6 +115,24 @@
   box-shadow: inset 0 0 0 1px var(--line);
 }
 
+/* A bypassed effect passes the sound through untouched: no signal colour, and it says so. */
+.flowChip[data-off] {
+  background: transparent;
+  color: var(--ink-3);
+  box-shadow: inset 0 0 0 1px var(--line);
+  text-decoration: line-through;
+  text-decoration-color: var(--line-strong);
+}
+
+.flowOff {
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
 .custom {
   display: flex;
   align-items: center;
@@ -140,7 +161,8 @@
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(244px, 1fr));
+  /* Wide enough for four small knobs whose values never touch ("Low-pass" next to "20.0 kHz"). */
+  grid-template-columns: repeat(auto-fill, minmax(262px, 1fr));
   gap: 8px;
 }
 
@@ -228,10 +250,28 @@
 
 .cardKnobs {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(54px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
   justify-items: center;
-  gap: 4px 4px;
+  gap: 4px;
   transition: opacity var(--t-fast) var(--ease);
+}
+
+.cardState {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.cardState[data-tone='attention'] {
+  background: var(--coral-wash);
+  box-shadow: none;
+  color: var(--coral-ink);
 }
 
 .cardFoot {

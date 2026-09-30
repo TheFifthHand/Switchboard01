@@ -5,13 +5,13 @@
  *   Envelope and Output sections (anything else lands in "More").
  * - Drum kits: kit-wide parameters plus a 16-voice table with tune, decay,
  *   level and pan per voice and an audition button.
- * - Samplers: the sampler editor (waveform, trim, playback).
+ * - Samplers: the sampler editor (recording, waveform trim, playback, tempo).
  * Parameters a macro moves are read-only and badged with the macro name.
  */
-import { memo, useEffect, useMemo, useRef, type KeyboardEvent, type PointerEvent } from 'react';
-import { Icon, Knob, Panel, Select, Tooltip, type SelectOption } from '../../../ui/components';
+import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { Button, Icon, Knob, Panel, Tooltip } from '../../../ui/components';
 import { getKitVoiceNames } from '../../../audio/instruments/kits';
-import { KITS, SYNTH_PRESETS, kitInfo, presetInfo } from '../../../content/catalog';
+import { kitInfo } from '../../../content/catalog';
 import { moduleId } from '../../../project/factory';
 import { DRUM_VOICE_PARAM_SPECS, INSTRUMENT_PARAMS, specById, type ParamSpec } from '../../../project/params';
 import type { DrumVoiceSettings, Id, InstrumentKind } from '../../../project/types';
@@ -20,7 +20,8 @@ import { drumVoiceFor, selectDrumVoice } from '../../../state/uiStore';
 import { session, useProject, useUi } from '../../instance';
 import { INSTRUMENT_LABEL, soundName } from '../../labels';
 import { useRuntime } from '../../runtime';
-import { SamplerEditor } from './__devStubs'; // DEVSTUB
+import { SamplerEditor } from '../sampler/SamplerEditor';
+import { SoundBrowser } from '../SoundBrowser';
 import { ParamKnob } from './ParamKnob';
 import styles from './InstrumentColumn.module.css';
 
@@ -29,7 +30,9 @@ interface Section {
   params: readonly string[];
 }
 
-const SYNTH_SECTIONS: Record<'bass' | 'poly' | 'drums', readonly Section[]> = {
+type SectionKind = 'bass' | 'poly' | 'drums';
+
+const SYNTH_SECTIONS: Record<SectionKind, readonly Section[]> = {
   bass: [
     { title: 'Oscillator', params: ['wave', 'octave', 'sub', 'glide'] },
     { title: 'Filter', params: ['cutoff', 'resonance', 'envAmount', 'filterDecay'] },
@@ -37,7 +40,8 @@ const SYNTH_SECTIONS: Record<'bass' | 'poly' | 'drums', readonly Section[]> = {
     { title: 'Output', params: ['drive', 'velocity', 'level'] },
   ],
   poly: [
-    { title: 'Oscillators', params: ['osc1Wave', 'osc2Wave', 'osc2Semi', 'detune', 'osc2Level', 'noise', 'width'] },
+    { title: 'Oscillators', params: ['osc1Wave', 'osc2Wave', 'osc2Semi', 'detune', 'osc2Level'] },
+    { title: 'Noise & width', params: ['noise', 'width'] },
     { title: 'Filter', params: ['cutoff', 'resonance', 'filterEnv', 'filterDecay'] },
     { title: 'Envelope', params: ['attack', 'decay', 'sustain', 'release'] },
     { title: 'Output', params: ['velocity', 'level'] },
@@ -46,7 +50,7 @@ const SYNTH_SECTIONS: Record<'bass' | 'poly' | 'drums', readonly Section[]> = {
 };
 
 /** Sections with every registry parameter placed exactly once (unlisted ones go to "More"). */
-function sectionsFor(kind: 'bass' | 'poly' | 'drums'): { title: string; specs: ParamSpec[] }[] {
+function sectionsFor(kind: SectionKind): { title: string; specs: ParamSpec[] }[] {
   const all = INSTRUMENT_PARAMS[kind];
   const used = new Set<string>();
   const out = SYNTH_SECTIONS[kind].map((s) => ({
@@ -63,12 +67,13 @@ function sectionsFor(kind: 'bass' | 'poly' | 'drums'): { title: string; specs: P
   return out.filter((s) => s.specs.length > 0);
 }
 
-const SECTIONS = { bass: sectionsFor('bass'), poly: sectionsFor('poly'), drums: sectionsFor('drums') };
+const SECTIONS: Record<SectionKind, { title: string; specs: ParamSpec[] }[]> = {
+  bass: sectionsFor('bass'),
+  poly: sectionsFor('poly'),
+  drums: sectionsFor('drums'),
+};
 
-const SYNTH_OPTIONS: SelectOption[] = SYNTH_PRESETS.map((p) => ({ value: p.id, label: p.name, group: INSTRUMENT_LABEL[p.kind] }));
-const KIT_OPTIONS: SelectOption[] = KITS.map((k) => ({ value: k.id, label: k.name }));
-
-function ParamSections(props: { trackId: Id; kind: 'bass' | 'poly' | 'drums' }) {
+function ParamSections(props: { trackId: Id; kind: SectionKind }) {
   const { trackId, kind } = props;
   const inst = moduleId.inst(trackId);
   return (
@@ -94,6 +99,11 @@ function ParamSections(props: { trackId: Id; kind: 'bass' | 'poly' | 'drums' }) 
 const VOICE_KEYS = ['tune', 'decay', 'level', 'pan'] as const;
 type VoiceKey = (typeof VOICE_KEYS)[number];
 const VOICE_LABEL: Record<VoiceKey, string> = { tune: 'Tune', decay: 'Decay', level: 'Level', pan: 'Pan' };
+/** Voice specs as the table shows them: level reads as a percentage of the designed volume (1 = 100%). */
+const VOICE_SPECS: Record<VoiceKey, ParamSpec> = {
+  ...DRUM_VOICE_PARAM_SPECS,
+  level: { ...DRUM_VOICE_PARAM_SPECS.level, unit: '%' },
+};
 
 function Audition(props: { trackId: Id; voice: number; name: string }) {
   const { trackId, voice, name } = props;
@@ -179,11 +189,11 @@ const VoiceRow = memo(function VoiceRow(props: { trackId: Id; index: number; nam
         <td key={k} className={styles.cellKnob}>
           <Knob
             className={styles.mini}
-            spec={DRUM_VOICE_PARAM_SPECS[k]}
+            spec={VOICE_SPECS[k]}
             value={voice[k]}
             size="sm"
             label={`${name} ${VOICE_LABEL[k].toLowerCase()}`}
-            tip={`${DRUM_VOICE_PARAM_SPECS[k].tip} (${name})`}
+            tip={`${VOICE_SPECS[k].tip} (${name})`}
             onChange={(v, info) => session.accepted(cmd.setDrumVoice(session.store, trackId, index, { [k]: v }, info.gesture))}
           />
         </td>
@@ -243,28 +253,24 @@ function sameHeader(a: Header | null, b: Header | null): boolean {
   return a === b || (!!a && !!b && a.kind === b.kind && a.sound === b.sound && a.soundId === b.soundId);
 }
 
-function SoundPicker(props: { trackId: Id; kind: InstrumentKind; soundId: string }) {
-  const { trackId, kind, soundId } = props;
-  if (kind === 'sampler') return null;
-  const drums = kind === 'drums';
+function ChangeSound(props: { trackId: Id; sound: string }) {
+  const { trackId, sound } = props;
+  const [open, setOpen] = useState(false);
   return (
-    <Select
-      label={drums ? 'Drum kit' : 'Synth sound'}
-      hideLabel
-      size="sm"
-      width={150}
-      value={soundId}
-      options={drums ? KIT_OPTIONS : SYNTH_OPTIONS}
-      tip={
-        drums
-          ? 'Swap this part’s drum kit. Patterns stay; voice settings go back to the kit’s design.'
-          : 'Swap this part’s synth sound. Clips stay; the sound’s settings and macro mappings are loaded.'
-      }
-      onChange={(id) => {
-        const nextKind: InstrumentKind = drums ? 'drums' : (presetInfo(id)?.kind ?? kind);
-        session.accepted(cmd.changeInstrumentSound(session.store, trackId, nextKind, id));
-      }}
-    />
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        iconRight="chevronDown"
+        aria-haspopup="dialog"
+        aria-label={`Sound: ${sound}. Change sound`}
+        onClick={() => setOpen(true)}
+        tip="Choose a different drum kit, synth preset or recording for this part. Undo brings the old one back."
+      >
+        {sound}
+      </Button>
+      <SoundBrowser open={open} trackId={trackId} onClose={() => setOpen(false)} />
+    </>
   );
 }
 
@@ -282,11 +288,11 @@ export function InstrumentColumn(props: { trackId: Id; className?: string }) {
   return (
     <Panel
       title="Instrument"
-      subtitle={<span className={styles.kind}>{kind === 'sampler' ? `${INSTRUMENT_LABEL[kind]} · ${header.sound}` : INSTRUMENT_LABEL[kind]}</span>}
+      subtitle={<span className={styles.kind}>{INSTRUMENT_LABEL[kind]}</span>}
       className={className}
       bodyClassName={styles.scroll}
       dense
-      actions={<SoundPicker trackId={trackId} kind={kind} soundId={header.soundId} />}
+      actions={<ChangeSound trackId={trackId} sound={header.sound} />}
     >
       {kind === 'sampler' ? (
         <SamplerEditor trackId={trackId} />

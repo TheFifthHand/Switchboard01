@@ -1,0 +1,192 @@
+/* The waveform "screen": a recessed tray on the working surface. */
+.wave {
+  /* Canvas colours (read by the drawing code). */
+  --wave-signal: #f2b24f;
+  --wave-signal-edge: #d0851a;
+  --wave-ghost: rgba(232, 162, 58, 0.26);
+  --wave-idle: rgba(108, 115, 123, 0.42);
+  --wave-grid: rgba(38, 41, 45, 0.075);
+  --wave-window: rgba(255, 255, 255, 0.55);
+  --wave-ramp: rgba(38, 41, 45, 0.62);
+
+  position: relative;
+  height: clamp(108px, 30cqi, 172px);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, #d8dce0 0%, #e0e3e6 100%);
+  box-shadow:
+    inset 0 1px 3px rgba(20, 24, 28, 0.16),
+    inset 0 0 0 1px rgba(20, 24, 28, 0.07),
+    0 1px 0 rgba(255, 255, 255, 0.75);
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.wave[data-empty] {
+  cursor: default;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+/* Outside the trim region: hatched, so it reads as "not played" without colour. */
+.shade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(135deg, rgba(38, 41, 45, 0.075) 0 1.5px, transparent 1.5px 6px);
+  pointer-events: none;
+}
+
+.shade:first-of-type {
+  border-radius: var(--r-md) 0 0 var(--r-md);
+}
+
+.shade + .shade {
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+}
+
+/* Loop mode: a bracket under the repeating region. */
+.loop {
+  position: absolute;
+  bottom: 4px;
+  height: 7px;
+  border: 1.5px solid var(--amber);
+  border-top: 0;
+  border-radius: 0 0 4px 4px;
+  pointer-events: none;
+}
+
+.loopLabel {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  padding: 0 5px;
+  transform: translateX(-50%);
+  border-radius: 3px;
+  background: #fbf3e4;
+  box-shadow: 0 0 0 1px rgba(227, 155, 47, 0.45);
+  color: var(--amber-ink);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  line-height: 15px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.message {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 10px 18px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* ---------- trim handles (teal = selection) ---------- */
+
+.handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  width: 22px;
+  margin-left: -11px;
+  border-radius: 6px;
+  outline: none;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.handle:focus-visible {
+  box-shadow: none;
+}
+
+.line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 10px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--teal);
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.6);
+  transition:
+    width var(--t-fast) var(--ease),
+    left var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+
+.flag {
+  position: absolute;
+  top: 5px;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 19px;
+  background: var(--teal);
+  box-shadow: 0 1px 2px rgba(13, 84, 80, 0.35);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.handle[data-handle='start'] .flag {
+  left: 10px;
+  border-radius: 1px 5px 5px 1px;
+}
+
+.handle[data-handle='end'] .flag {
+  right: 10px;
+  border-radius: 5px 1px 1px 5px;
+}
+
+.handle:hover .line,
+.handle[data-dragging] .line,
+.handle:focus-visible .line {
+  left: 9.5px;
+  width: 3px;
+  box-shadow: 0 0 0 3px var(--teal-glow);
+}
+
+.handle:focus-visible .flag {
+  box-shadow:
+    0 0 0 2px var(--shell-hi),
+    0 0 0 4px var(--teal);
+}
+
+.handle[data-dragging] {
+  z-index: 2;
+}
+
+/* A macro moves this point: read-only, shown grey and dashed. */
+.handle[data-readonly] {
+  cursor: default;
+}
+
+.handle[data-readonly] .line {
+  background: repeating-linear-gradient(180deg, var(--ink-3) 0 4px, transparent 4px 7px);
+  box-shadow: none;
+}
+
+.handle[data-readonly] .flag {
+  background: var(--ink-3);
+}
+
+.wave[data-empty] .handle {
+  display: none;
+}

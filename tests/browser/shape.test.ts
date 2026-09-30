@@ -310,21 +310,36 @@ describe('Shape view', () => {
     expect(m.container.querySelector('[role="region"][aria-label^="Cables for"]')).toBeNull();
   });
 
-  it('the sound picker swaps the part’s kit or synth preset', () => {
+  it('Change sound… opens the sound browser and swaps the part’s kit (undoable)', () => {
     const m = setup('t1');
-    const inst = panel(m.container, 'Instrument');
-    const pick = inst.querySelector<HTMLSelectElement>('select')!;
     const kit = track('t1').instrument;
-    const other = [...pick.options].map((o) => o.value).find((v) => kit.kind === 'drums' && v !== kit.kitId)!;
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(pick, other);
-      pick.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+    if (kit.kind !== 'drums') throw new Error('t1 should be a drum kit');
+    const inst = panel(m.container, 'Instrument');
+    click(button(inst, /Change sound$/));
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog).not.toBeNull();
+    const other = [...dialog.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.getAttribute('aria-selected') === 'false')!;
+    const otherName = other.querySelector('span span:nth-child(2)')?.textContent ?? '';
+    click(other);
     const after = track('t1').instrument;
-    expect(after.kind === 'drums' && after.kitId).toBe(other);
+    expect(after.kind === 'drums' && after.kitId).not.toBe(kit.kitId);
+    expect(panel(m.container, 'Instrument').textContent).toContain(otherName);
     act(() => session.undo());
     const back = track('t1').instrument;
-    expect(back.kind === 'drums' && back.kitId).toBe(kit.kind === 'drums' ? kit.kitId : '');
+    expect(back.kind === 'drums' && back.kitId).toBe(kit.kitId);
+  });
+
+  it('sampler parts show the sampler editor (or the sampler’s own knobs until that module exists)', () => {
+    const hasEditor = Object.keys(import.meta.glob('../../src/app/views/sampler/SamplerEditor.tsx')).length > 0;
+    const m = setup('t8');
+    expect(track('t8').instrument.kind).toBe('sampler');
+    const inst = panel(m.container, 'Instrument');
+    expect(inst.textContent).toContain('Sampler');
+    if (hasEditor) return; // the editor module has its own tests
+    const gain = slider(inst, 'Gain');
+    key(gain, 'keydown', { key: 'ArrowUp' });
+    expect(track('t8').instrument.params.gain).toBeGreaterThan(0);
+    expect(inst.textContent).toMatch(/change speed and pitch together/);
   });
 
   it('channel, returns and LFO knobs edit their modules; Add LFO opens the cable panel', () => {

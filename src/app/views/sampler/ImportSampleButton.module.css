@@ -1,0 +1,193 @@
+/* ---------- compact button variant ---------- */
+
+.inline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.inlineRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.inlineRow .status {
+  flex: 1 1 150px;
+}
+
+.fine {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+
+/* ---------- status line (limits → decoding → result) ---------- */
+
+.status {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 20px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+}
+
+.status:empty {
+  display: none;
+}
+
+.statusText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.statusIcon {
+  flex: none;
+}
+
+.status[data-tone='ok'] .statusIcon {
+  color: var(--teal-ink);
+}
+
+.status[data-tone='error'] {
+  color: var(--coral-ink);
+}
+
+.status[data-tone='error'] .statusIcon {
+  color: var(--coral);
+}
+
+.spinner {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(38, 41, 45, 0.18);
+  border-top-color: var(--ink-2);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.dismiss {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: -4px -4px -4px auto;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+}
+
+.dismiss:hover {
+  background: rgba(38, 41, 45, 0.07);
+  color: var(--ink);
+}
+
+/* ---------- drop zone variant ---------- */
+
+.zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 14px 14px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--r-lg);
+  background: rgba(255, 255, 255, 0.35);
+  text-align: center;
+  transition:
+    border-color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+
+/* A file is over the zone: teal = the target that will receive it. */
+.zone[data-over] {
+  border-color: var(--teal);
+  border-style: solid;
+  background: var(--teal-wash);
+  box-shadow: 0 0 0 3px var(--teal-wash);
+}
+
+.zone[data-disabled] {
+  border-color: var(--line);
+}
+
+.zoneIcon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--surface-hi);
+  box-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.1),
+    0 1px 2px rgba(20, 24, 28, 0.1);
+  color: var(--ink-2);
+}
+
+.zone[data-over] .zoneIcon {
+  color: var(--teal-ink);
+}
+
+.zoneTitle {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-md);
+  font-weight: 620;
+}
+
+.limits {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 2px 0 0;
+  padding: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  list-style: none;
+  text-align: left;
+}
+
+.facts li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.factIcon {
+  flex: none;
+  margin-top: 2px;
+}
+
+.zone .status {
+  flex: none;
+  justify-content: center;
+  width: 100%;
+  text-align: left;
+}

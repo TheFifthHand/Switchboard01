@@ -64,7 +64,13 @@ const PartButton = memo(function PartButton(props: { id: Id; index: number; sele
       </span>
       <span className={styles.partState} aria-hidden="true">
         {info.mute && <span className={styles.muted}>M</span>}
-        <span className={styles.lamp} data-on={playing || undefined} />
+        {playing ? (
+          <span className={styles.playing}>
+            <Icon name="play" size={9} />
+          </span>
+        ) : (
+          <span className={styles.lamp} />
+        )}
       </span>
     </button>
   );
