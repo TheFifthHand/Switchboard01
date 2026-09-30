@@ -4,8 +4,23 @@
   height: 100vh;
   height: 100dvh;
   min-height: 560px;
-  min-width: 1024px;
   background: var(--shell-lo);
+}
+
+/*
+ * Narrow windows (below 1024 CSS px — e.g. 200 % browser zoom on a 1920 x 1080
+ * screen) and very short ones: panels reflow and the page scrolls vertically
+ * instead of squeezing every control.
+ */
+@media (max-width: 1023px) {
+  .app {
+    height: auto;
+    min-height: 100dvh;
+    grid-template-rows: auto auto auto auto;
+  }
+  .main {
+    min-height: 520px;
+  }
 }
 
 .bannerSlot {

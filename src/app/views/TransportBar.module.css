@@ -346,3 +346,16 @@
     display: none;
   }
 }
+
+/* Below 1024 px (200 % zoom): the strip wraps onto two rows; every control stays full size. */
+@media (max-width: 1023px) {
+  .bar {
+    flex-wrap: wrap;
+    height: auto;
+    row-gap: 6px;
+    padding: 6px 12px;
+  }
+  .right {
+    margin-left: auto;
+  }
+}

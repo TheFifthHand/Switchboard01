@@ -120,3 +120,14 @@
   justify-content: center;
   padding-top: 2px;
 }
+
+/* Below 1024 px the part panel sits under the pads at full width: one row of six macros. */
+@media (max-width: 1023px) {
+  .panel {
+    height: auto;
+    overflow: visible;
+  }
+  .macros {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}

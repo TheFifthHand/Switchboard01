@@ -40,3 +40,16 @@
     grid-template-columns: minmax(0, 1fr) 272px;
   }
 }
+
+@media (max-width: 1023px) {
+  .view {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+  .surface {
+    min-height: 500px;
+  }
+  .side {
+    min-height: 0;
+  }
+}
