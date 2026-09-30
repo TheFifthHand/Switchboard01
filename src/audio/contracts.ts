@@ -118,7 +118,12 @@ export interface EngineOptions {
   seed: number;
   /** Create per-track meters (off for offline renders). */
   meters: boolean;
+  /** Instrument construction; defaults to createInstrumentEngine from src/audio/instruments/index.ts. */
+  instrumentFactory?: InstrumentFactory;
 }
+
+/** Creates a ready engine (worklets loaded) on a context. `AudioEngine.create` has this shape. */
+export type EngineFactory = (ctx: BaseAudioContext, opts: EngineOptions) => Promise<AudioEngineApi>;
 
 export interface AudioEngineApi {
   readonly ctx: BaseAudioContext;

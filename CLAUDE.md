@@ -12,6 +12,7 @@ npm run typecheck      # tsc --noEmit
 npm test               # Vitest unit tests (Node)
 npm run build          # typecheck + production build into dist/
 npm run serve          # serve dist/ on http://127.0.0.1:4173 (loopback only)
+npm run test:browser   # Vitest in real headless Chromium (audio rendering tests)
 npm run test:e2e       # Playwright (Chromium) against dist/ — run `npm run build` first
 npm run package        # build the downloadable release zip into release/
 ```
