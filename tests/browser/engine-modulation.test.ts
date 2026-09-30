@@ -196,11 +196,15 @@ describe('LFO', () => {
     const p = tremoloProject(120, 4);
     const tri = clone(p);
     moduleParams(tri, 't3:lfo').wave = 1; // Triangle
+    const tri60 = clone(tri);
+    tri60.bpm = 60;
     const h = await harness(3.2, p);
     h.engine.scheduleNote('t3', { pitch: TONE, velocity: 0.4, time: 0.01 });
     h.at(0.6, () => h.engine.setProject(tri));
     // At 1.0 s the phase is 0 again; from here one cycle lasts 1 s (60 BPM).
     h.at(0.9, () => h.engine.tempoChanged(60, 1.0));
+    // The store reports the same tempo a moment later: it must not move the change to 0.95 s.
+    h.at(0.95, () => h.engine.setProject(tri60));
     const { L } = await h.render();
     const e = env(L, 0.05, 3.15);
     // Sine before 0.6, triangle after: minima stay on phase 0.75.
@@ -243,6 +247,138 @@ describe('LFO', () => {
     expect(spread).toBeLessThan(0.005);
     const levels = Array.from({ length: 16 }, (_, k) => env(a, k * step + LATENCY + 0.002, (k + 1) * step + LATENCY - 0.002)[0].v);
     expect(new Set(levels.map((v) => v.toFixed(3))).size).toBeGreaterThan(8);
+  });
+
+  it('an LFO patched in while the transport runs starts on the transport phase (tempo changes included)', async () => {
+    const withLfo = tremoloProject(120, 4);
+    const without = clone(withLfo);
+    without.patch.modules = without.patch.modules.filter((m) => m.id !== 't3:lfo');
+    without.patch.connections = without.patch.connections.filter((c) => c.from.module !== 't3:lfo');
+    const h = await harness(2.6, without);
+    h.engine.scheduleNote('t3', { pitch: TONE, velocity: 0.4, time: 0.01 });
+    h.at(0.05, () => h.engine.transportStarted(0.1, 0, 120));
+    // Tick 96 (one beat) at 0.6 s; from there 60 BPM, one 1/4 cycle per second.
+    h.at(0.5, () => h.engine.tempoChanged(60, 0.6));
+    h.at(0.9, () => h.engine.setProject(withLfo));
+    const { L } = await h.render();
+    const e = env(L, 0.95, 2.55);
+    // Phase 0 at 0.6 s: sine minima at 1.35 and 2.35 s.
+    for (const tk of [1.35, 2.35].map((t) => t + LATENCY)) {
+      const m = argMin(e, tk - 0.2, tk + 0.2);
+      expect(Math.abs(m.t - tk)).toBeLessThan(0.002);
+    }
+    expect(modulation(env(L, 1.1, 2.1), 1).depth).toBeCloseTo(0.5, 1);
+  });
+
+  it('a wave change just before a scheduled transport start keeps the start phase', async () => {
+    const p = tremoloProject(120, 4);
+    const tri = clone(p);
+    moduleParams(tri, 't3:lfo').wave = 1; // Triangle: minimum at phase 0.75, like the sine
+    const h = await harness(1.7, p);
+    h.engine.scheduleNote('t3', { pitch: TONE, velocity: 0.4, time: 0.01 });
+    // At 0.3 s the transport is at tick 48 (phase 0.5); the wave changes in between.
+    h.at(0.2, () => h.engine.transportStarted(0.3, 48, 120));
+    h.at(0.25, () => h.engine.setProject(tri));
+    const { L } = await h.render();
+    const e = env(L, 0.35, 1.65);
+    for (const tk of [0.425, 0.925, 1.425].map((t) => t + LATENCY)) {
+      const m = argMin(e, tk - 0.12, tk + 0.12);
+      expect(Math.abs(m.t - tk)).toBeLessThan(0.002);
+    }
+    // Only one source drives the output: depth 0.5 around the base level.
+    const all = env(L, 0.1, 1.65);
+    expect(Math.max(...all.map((x) => x.v))).toBeLessThan(0.4 * 1.5 * 1.01);
+    expect(Math.min(...all.map((x) => x.v))).toBeGreaterThan(0.4 * 0.5 * 0.97);
+  });
+
+  it('changing the cable amount while the cable is still fading in lands on the new amount', async () => {
+    const p = coreProject(120);
+    const lfo = moduleParams(p, 't3:lfo');
+    lfo.division = 4; // 1/4 = 0.5 s
+    p.tracks[2].macros = { ...p.tracks[2].macros, motion: 0.625 }; // depth 0.5
+    const wired = clone(p);
+    const cable = conn('t3:lfo', 'out', 't3:ch', 'level', 1);
+    wired.patch.connections.push(cable);
+    const half = clone(wired);
+    half.patch.connections[half.patch.connections.length - 1].amount = 0.5;
+    const h = await harness(2.2, p);
+    h.engine.scheduleNote('t3', { pitch: TONE, velocity: 0.4, time: 0.01 });
+    h.at(0.3, () => h.engine.setProject(wired));
+    h.at(0.305, () => h.engine.setProject(half)); // within the 20 ms connection fade-in
+    const { L } = await h.render();
+    expect(modulation(env(L, 0.5, 2.0), 2).depth).toBeCloseTo(0.25, 1);
+  });
+
+  it('several cables into channel Level are clamped: gain stays within 0..2, never inverted', async () => {
+    const p = coreProject(120);
+    p.patch.connections.push(conn('t3:lfo', 'out', 't3:ch', 'level', 1), conn('t4:lfo', 'out', 't3:ch', 'level', 1));
+    // Depth 0.8 on both (1-bar sines from t = 0): unclamped gain would be 1 + 1.6 sin.
+    p.tracks[2].macros = { ...p.tracks[2].macros, motion: 1 };
+    p.tracks[3].macros = { ...p.tracks[3].macros, motion: 1 };
+    const h = await harness(2.1, p);
+    h.engine.scheduleNote('t3', { pitch: TONE, velocity: 0.2, time: 0.01 });
+    const { L } = await h.render();
+    const e = env(L, 0.05, 2.05);
+    // Plateau at 2 x 0.2 around the crest (unclamped: up to 2.6 x 0.2).
+    expect(Math.max(...e.map((x) => x.v))).toBeLessThan(0.4 * 1.005);
+    expect(argMin(env(L, 0.35, 0.65), 0.35, 0.65).v).toBeGreaterThan(0.4 * 0.99);
+    // Silent around the trough (unclamped: an inverted signal up to 0.6 x 0.2).
+    expect(Math.max(...env(L, 1.3, 1.7).map((x) => x.v))).toBeLessThan(1e-4);
+  });
+
+  it('channel pan places the part; an LFO on Pan swings it left and right', async () => {
+    const hard = coreProject(120);
+    moduleParams(hard, 't3:ch').pan = 1;
+    const h1 = await harness(0.5, hard);
+    h1.engine.scheduleNote('t3', { pitch: TONE, velocity: 0.2, time: 0.01 });
+    const r1 = await h1.render();
+    // Stereo source panned hard right: everything in R (equal-power stereo pan).
+    expect(toneAmp(r1.L, TONE_HZ, 0.1, 0.45)).toBeLessThan(1e-4);
+    expect(toneAmp(r1.R, TONE_HZ, 0.1, 0.45)).toBeCloseTo(0.4, 3);
+
+    const swing = coreProject(120);
+    swing.patch.connections.push(conn('t3:lfo', 'out', 't3:ch', 'pan', 1));
+    const lfo = moduleParams(swing, 't3:lfo');
+    lfo.division = 2; // 1 bar = 2 s
+    lfo.wave = 4; // Square: +0.8 for the first second, -0.8 for the next
+    swing.tracks[2].macros = { ...swing.tracks[2].macros, motion: 1 };
+    const h2 = await harness(2.05, swing);
+    h2.engine.scheduleNote('t3', { pitch: TONE, velocity: 0.2, time: 0.01 });
+    const { L, R } = await h2.render();
+    const near = 0.2 * Math.cos(0.4 * Math.PI);
+    const far = 0.2 * (1 + Math.sin(0.4 * Math.PI));
+    expect(toneAmp(L, TONE_HZ, 0.1, 0.9)).toBeCloseTo(near, 3);
+    expect(toneAmp(R, TONE_HZ, 0.1, 0.9)).toBeCloseTo(far, 3);
+    expect(toneAmp(L, TONE_HZ, 1.1, 1.9)).toBeCloseTo(far, 3);
+    expect(toneAmp(R, TONE_HZ, 1.1, 1.9)).toBeCloseTo(near, 3);
+  });
+
+  it('LFO -> instrument cutoff sweeps the instrument filter (3600 cents per full-scale signal)', async () => {
+    const base = coreProject(120);
+    const p = clone(base);
+    p.patch.connections.push(conn('t3:lfo', 'out', 't3:inst', 'cutoff', 1));
+    const lfo = moduleParams(p, 't3:lfo');
+    lfo.division = 2; // 1 bar = 2 s
+    lfo.wave = 4; // Square: +0.8 then -0.8 -> 16 kHz x 2^(+/-2.4)
+    p.tracks[2].macros = { ...p.tracks[2].macros, motion: 1 };
+    const hz = 6000;
+    const run = async (proj: Project): Promise<Float32Array> => {
+      const h = await harness(2.05, proj);
+      h.engine.scheduleNote('t3', { pitch: pitchForHz(hz), velocity: 0.3, time: 0.01 });
+      return (await h.render()).L;
+    };
+    const plain = await run(base);
+    const swept = await run(p);
+    // Unmodulated (16 kHz low-pass) the tone passes at about its own level, all the time.
+    const ref = toneAmp(plain, hz, 0.1, 0.9);
+    expect(ref / 0.3).toBeGreaterThan(0.95);
+    expect(toneAmp(plain, hz, 1.1, 1.9) / ref).toBeCloseTo(1, 3);
+    // Open half: the cutoff is pushed to Nyquist, where the low-pass passes everything.
+    expect(toneAmp(swept, hz, 0.1, 0.9)).toBeCloseTo(0.3, 2);
+    // Closed half: cutoff ~3 kHz, one octave below the tone (12 dB/oct low-pass).
+    const closed = toneAmp(swept, hz, 1.1, 1.9) / 0.3;
+    expect(closed).toBeLessThan(0.35);
+    expect(closed).toBeGreaterThan(0.15);
   });
 
   it('LFO -> instrument pitch bends by +/-200 cents per full-scale signal', async () => {

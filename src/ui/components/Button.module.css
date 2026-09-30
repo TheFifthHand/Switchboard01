@@ -1,0 +1,227 @@
+.button {
+  --h: 36px;
+  --px: 14px;
+  --led: var(--amber);
+  --led-glow: var(--amber-glow);
+  --tone-ink: var(--amber-ink);
+  --tone-wash: var(--amber-wash);
+  --btn-bg: linear-gradient(180deg, #fdfdfc 0%, #f1f2f3 55%, #e9ebed 100%);
+  --btn-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.13),
+    inset 0 1px 0 #ffffff,
+    0 1px 1.5px rgba(20, 24, 28, 0.13),
+    0 2px 5px rgba(20, 24, 28, 0.05);
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: var(--h);
+  min-width: var(--h);
+  margin: 0;
+  padding: 0 var(--px);
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--btn-bg);
+  box-shadow: var(--btn-shadow);
+  color: var(--ink);
+  font-size: var(--fs-md);
+  font-weight: 560;
+  line-height: 1;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    box-shadow var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    transform 50ms linear;
+}
+
+.button[data-size='sm'] {
+  --h: 32px;
+  --px: 11px;
+  gap: 6px;
+  font-size: var(--fs-sm);
+}
+
+.button[data-size='lg'] {
+  --h: 44px;
+  --px: 20px;
+  gap: 9px;
+  font-size: var(--fs-lg);
+}
+
+.button[data-block] {
+  display: flex;
+  width: 100%;
+}
+
+.iconOnly {
+  width: var(--h);
+  padding: 0;
+}
+
+.button[data-tone='teal'] {
+  --led: var(--teal);
+  --led-glow: var(--teal-glow);
+  --tone-ink: var(--teal-ink);
+  --tone-wash: var(--teal-wash);
+}
+
+.button[data-tone='coral'] {
+  --led: var(--coral);
+  --led-glow: var(--coral-glow);
+  --tone-ink: var(--coral-ink);
+  --tone-wash: var(--coral-wash);
+}
+
+.button:hover:not(:disabled) {
+  --btn-bg: linear-gradient(180deg, #ffffff 0%, #f5f6f7 55%, #eceef0 100%);
+}
+
+.button:active:not(:disabled),
+.button[data-on] {
+  --btn-bg: linear-gradient(180deg, #e6e9eb 0%, #eef0f1 60%, #f1f2f3 100%);
+  --btn-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.16),
+    inset 0 1px 2.5px rgba(20, 24, 28, 0.16),
+    0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.button:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+.button:focus-visible {
+  box-shadow: var(--btn-shadow), 0 0 0 2px var(--shell-hi), 0 0 0 4px var(--teal);
+}
+
+.button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.icon {
+  flex: none;
+}
+
+.text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- primary: graphite key ---------- */
+.button[data-variant='primary'] {
+  --btn-bg: linear-gradient(180deg, #41464d 0%, #30343a 55%, #282b30 100%);
+  --btn-shadow:
+    0 0 0 1px #1c1f22,
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 1px 2px rgba(20, 24, 28, 0.3),
+    0 3px 8px rgba(20, 24, 28, 0.12);
+  color: #f7f6f2;
+}
+
+.button[data-variant='primary']:hover:not(:disabled) {
+  --btn-bg: linear-gradient(180deg, #4a5058 0%, #373b42 55%, #2d3136 100%);
+}
+
+.button[data-variant='primary']:active:not(:disabled),
+.button[data-variant='primary'][data-on] {
+  --btn-bg: linear-gradient(180deg, #25282c 0%, #2e3237 100%);
+  --btn-shadow:
+    0 0 0 1px #1c1f22,
+    inset 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* ---------- ghost: flat, for low-emphasis actions ---------- */
+.button[data-variant='ghost'] {
+  --btn-bg: transparent;
+  --btn-shadow: none;
+  color: var(--ink-2);
+}
+
+.button[data-variant='ghost']:hover:not(:disabled) {
+  --btn-bg: rgba(20, 24, 28, 0.06);
+  color: var(--ink);
+}
+
+.button[data-variant='ghost']:active:not(:disabled) {
+  --btn-bg: rgba(20, 24, 28, 0.1);
+  --btn-shadow: none;
+}
+
+.button[data-variant='ghost'][data-on] {
+  --btn-bg: var(--tone-wash);
+  --btn-shadow: inset 0 0 0 1px color-mix(in srgb, var(--led) 35%, transparent);
+  color: var(--tone-ink);
+}
+
+/* ---------- transport: squarer hardware key ---------- */
+.button[data-variant='transport'] {
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.button[data-variant='transport'][data-on] .icon {
+  color: var(--led);
+}
+
+/* ---------- danger: coral legend, coral key when engaged ---------- */
+.button[data-variant='danger'] {
+  color: var(--coral-ink);
+}
+
+.button[data-variant='danger']:hover:not(:disabled) {
+  --btn-bg: linear-gradient(180deg, #fffaf8 0%, #fbeeea 100%);
+}
+
+.button[data-variant='danger'][data-on] {
+  --btn-bg: linear-gradient(180deg, #e46d55 0%, #d65a42 60%, #cf533b 100%);
+  --btn-shadow:
+    0 0 0 1px #b2432e,
+    inset 0 1px 2px rgba(120, 30, 14, 0.35),
+    0 0 10px var(--coral-glow);
+  color: #fff8f5;
+}
+
+.button[data-variant='danger'][data-on] .led {
+  background: #fff3ee;
+  box-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
+}
+
+/* ---------- toggles: icon tint when on ---------- */
+.iconOnly[data-on] .icon {
+  color: var(--led);
+}
+
+.iconOnly[data-variant='danger'][data-on] .icon,
+.iconOnly[data-variant='primary'][data-on] .icon {
+  color: inherit;
+}
+
+/* LED */
+.led {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #b7bcc1;
+  box-shadow: inset 0 1px 1px rgba(20, 24, 28, 0.3);
+  transition:
+    background var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+
+.button[data-variant='primary'] .led {
+  background: #5d636b;
+}
+
+.button[data-on] .led {
+  background: var(--led);
+  box-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.08),
+    0 0 6px var(--led-glow);
+}

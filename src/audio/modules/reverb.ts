@@ -9,12 +9,15 @@
  * part gets the same wide room whatever its pan.
  *
  * Size (decay) changes regenerate the IR. Live, regeneration is debounced
- * (120 ms after the last change); offline it happens immediately and is
- * scheduled at the requested time. The switch crossfades the convolvers'
- * INPUTS over ~60 ms: the new convolver takes new sound while the old one's
- * tail rings out naturally, so there is neither a click nor a dip in the
- * reverb wash. At most two older convolvers ring out at once; beyond that the
- * oldest is faded out.
+ * (120 ms after the last change). Offline, the IR is built immediately and
+ * the same debounce is applied on the timeline: the switch lands 120 ms after
+ * the change, and a further change before that replaces the pending switch.
+ * A recorded knob drag therefore builds one room per pause, not one per step
+ * (each 10 s room holds several MB), and exports switch when playback does.
+ * The switch crossfades the convolvers' INPUTS over ~60 ms: the new convolver
+ * takes new sound while the old one's tail rings out naturally, so there is
+ * neither a click nor a dip in the reverb wash. At most two older convolvers
+ * ring out at once; beyond that the oldest is faded out.
  */
 import { REVERB_PARAMS, readParam } from '../../project/params';
 import { subSeed } from '../../project/rng';
@@ -39,7 +42,9 @@ interface Slot {
   inGain: GainNode;
   conv: ConvolverNode;
   outGain: GainNode;
-  /** Context time this slot took over the input (-Infinity for the first). */
+  /** Context time of the Size change that asked for this room (-Infinity for the first). */
+  requestAt: number;
+  /** Context time this slot takes over the input (-Infinity for the first). */
   switchAt: number;
   /** Context time after which it is silent and can be released. */
   retireAt: number;
@@ -95,7 +100,7 @@ export class ReverbModule extends EffectModule {
     this.ctl.map(clamp01Curve(), wetGate.gain);
 
     this.pre = this.makePre();
-    this.current = this.makeSlot(decay, 1, -Infinity);
+    this.current = this.makeSlot(decay, 1, -Infinity, -Infinity);
   }
 
   private makePre(): DelayNode {
@@ -123,7 +128,7 @@ export class ReverbModule extends EffectModule {
     return buf;
   }
 
-  private makeSlot(decay: number, gain: number, switchAt: number): Slot {
+  private makeSlot(decay: number, gain: number, switchAt: number, requestAt: number): Slot {
     const buffer = this.bufferFor(decay);
     const inGain = this.own(new GainNode(this.ctx, { gain, channelCount: 1, channelCountMode: 'explicit' }));
     const conv = this.own(new ConvolverNode(this.ctx, { buffer, disableNormalization: true }));
@@ -132,7 +137,7 @@ export class ReverbModule extends EffectModule {
     inGain.connect(conv);
     conv.connect(outGain);
     outGain.connect(this.convSum);
-    return { decay, buffer, inGain, conv, outGain, switchAt, retireAt: Infinity, timer: null, forced: false };
+    return { decay, buffer, inGain, conv, outGain, requestAt, switchAt, retireAt: Infinity, timer: null, forced: false };
   }
 
   private releaseSlot(s: Slot): void {
@@ -171,25 +176,53 @@ export class ReverbModule extends EffectModule {
     }, ms);
   }
 
-  /** Switch to an IR for `decay` at context time `at`, crossfading the inputs. */
-  private switchTo(decay: number, at: number): void {
-    const now = this.ctx.currentTime;
-    this.reap(now);
+  /**
+   * Switch to an IR for `decay` at context time `at` (requested at
+   * `requestAt`), crossfading the inputs.
+   */
+  private switchTo(decay: number, at: number, requestAt: number): void {
+    this.reap(this.ctx.currentTime);
     if (decay === this.current.decay) return;
     const old = this.current;
-    const next = this.makeSlot(decay, 0, at);
+    const next = this.makeSlot(decay, 0, at, requestAt);
     next.inGain.gain.setTargetAtTime(1, at, XFADE_TAU);
     old.inGain.gain.setTargetAtTime(0, at, XFADE_TAU);
     this.retired.push(old);
     this.current = next;
     this.scheduleRetire(old, at + 8 * XFADE_TAU + old.buffer.duration + 0.05);
-    // Bound CPU during rapid size changes: fade the oldest ringing rooms out early.
+    // Bound CPU during rapid size changes: fade the oldest ringing rooms out
+    // early. The fade starts when the new room takes over, never before: a
+    // victim may still be the room in use until then (switches scheduled
+    // ahead on an offline timeline).
     const ringing = this.retired.filter((r) => !r.forced);
     while (ringing.length > MAX_RINGING) {
       const victim = ringing.shift() as Slot;
       victim.forced = true;
-      victim.outGain.gain.setTargetAtTime(0, now, FADE_TAU);
-      this.scheduleRetire(victim, now + 8 * FADE_TAU);
+      victim.outGain.gain.setTargetAtTime(0, at, FADE_TAU);
+      this.scheduleRetire(victim, at + 8 * FADE_TAU);
+    }
+  }
+
+  /**
+   * Undo the newest switches while `undo(current)` holds. Only switches that
+   * have not started may be undone; the previous room keeps the input.
+   */
+  private undoSwitches(undo: (s: Slot) => boolean): void {
+    while (this.retired.length > 0 && undo(this.current)) {
+      const prev = this.retired[this.retired.length - 1];
+      // Never the case for the room a switch replaced (only older rooms are
+      // forced out), but a forced room must not be revived.
+      if (prev.forced) break;
+      const cancelled = this.current;
+      this.retired.pop();
+      // Remove only prev's fade-out at the cancelled switch; its own fade-in
+      // (an earlier switch that may itself still be pending) stays.
+      prev.inGain.gain.cancelScheduledValues(cancelled.switchAt);
+      if (prev.timer !== null) this.stopTimer(prev.timer);
+      prev.timer = null;
+      prev.retireAt = Infinity;
+      this.releaseSlot(cancelled);
+      this.current = prev;
     }
   }
 
@@ -207,29 +240,26 @@ export class ReverbModule extends EffectModule {
     if (decay === this.requestedDecay) return;
     this.requestedDecay = decay;
     if (this.env.offline) {
-      this.switchTo(decay, t);
+      // The debounce on the timeline: a switch still pending at `t` is
+      // replaced (it has not started, since t >= now).
+      this.undoSwitches((s) => s.switchAt > t);
+      this.switchTo(decay, t + REVERB_REGEN_DEBOUNCE_MS / 1000, t);
       return;
     }
     if (this.debounce !== null) this.stopTimer(this.debounce);
     this.debounce = this.startTimer(() => {
       this.debounce = null;
-      this.switchTo(this.requestedDecay, this.ctx.currentTime);
+      const now = this.ctx.currentTime;
+      this.switchTo(this.requestedDecay, now, now);
     }, REVERB_REGEN_DEBOUNCE_MS);
   }
 
   protected afterCancel(time: number): void {
-    // Undo IR switches scheduled at or after `time` that have not started yet.
+    // Size changes requested at or after `time` are cancelled with the
+    // automation that asked for them (their switches have not started: a
+    // switch never precedes its request).
     const limit = Math.max(time, this.ctx.currentTime);
-    while (this.current.switchAt >= limit && this.retired.length > 0 && !this.retired[this.retired.length - 1].forced) {
-      const cancelled = this.current;
-      const prev = this.retired.pop() as Slot;
-      prev.inGain.gain.cancelScheduledValues(limit);
-      if (prev.timer !== null) this.stopTimer(prev.timer);
-      prev.timer = null;
-      prev.retireAt = Infinity;
-      this.releaseSlot(cancelled);
-      this.current = prev;
-    }
+    this.undoSwitches((s) => s.requestAt >= limit);
     this.requestedDecay = this.current.decay;
   }
 
@@ -242,7 +272,7 @@ export class ReverbModule extends EffectModule {
     this.forgetParams([oldPre.delayTime]);
     this.pre = this.makePre();
     this.retired = [];
-    this.current = this.makeSlot(this.current.decay, 1, -Infinity);
+    this.current = this.makeSlot(this.current.decay, 1, -Infinity, -Infinity);
     const now = this.ctx.currentTime;
     for (const s of oldSlots) {
       if (s.timer !== null) this.stopTimer(s.timer);

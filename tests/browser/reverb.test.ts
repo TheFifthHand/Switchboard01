@@ -4,9 +4,9 @@
  * click-free and audible, flush removes the tail, and renders are seeded.
  */
 import { describe, expect, it } from 'vitest';
-import { ReverbModule } from '../../src/audio/modules/reverb';
+import { REVERB_REGEN_DEBOUNCE_MS, ReverbModule } from '../../src/audio/modules/reverb';
 import type { ParamValues } from '../../src/project/types';
-import { correlation, energy, frames, impulses, maxCurvature, noise, peak, render, sine } from './fx-helpers';
+import { correlation, energy, frames, impulses, maxCurvature, noise, peak, render, rms, sine } from './fx-helpers';
 
 const BURST_END = 0.1;
 
@@ -134,6 +134,75 @@ describe('ReverbModule', () => {
     expect(peak(L, frames(0.305), frames(1.0)).value).toBeLessThan(1e-7);
     expect(peak(R, frames(0.305), frames(1.0)).value).toBeLessThan(1e-7);
     expect(energy(L, frames(1.1))).toBeGreaterThan(0.1);
+  });
+
+  it('Size changes scheduled ahead keep the room sounding until each switch', async () => {
+    // Three switches more than the debounce apart, all scheduled at time 0, as
+    // an offline render schedules a chunk ahead. The room in use must never be
+    // faded out before the switch that replaces it.
+    const x = noise(1.2, 0.3, 5, 0, 1.2);
+    const { L } = await render({
+      seconds: 1.2,
+      input: x,
+      create: (env) => new ReverbModule(env, 'r', { decay: 1, predelay: 0, mix: 1 }),
+      setup: (m) => {
+        m.setParams({ decay: 2, predelay: 0, mix: 1 }, 0.3);
+        m.setParams({ decay: 4, predelay: 0, mix: 1 }, 0.5);
+        m.setParams({ decay: 6, predelay: 0, mix: 1 }, 0.7);
+      },
+    });
+    const steady = rms(L, frames(0.1), frames(0.3));
+    expect(steady).toBeGreaterThan(0.02);
+    for (let t = 0.1; t < 1.15; t += 0.025) {
+      expect(rms(L, frames(t), frames(t + 0.025)), `window at ${t.toFixed(3)} s`).toBeGreaterThan(steady * 0.5);
+    }
+  });
+
+  it('offline, a burst of Size changes switches once, one debounce after the last change', async () => {
+    const x = noise(1.5, 0.4, 5, 0, 1.5);
+    const make = (changes: [number, number][]) =>
+      render({
+        seconds: 1.5,
+        input: x,
+        create: (env) => new ReverbModule(env, 'r', { decay: 0.8, predelay: 0, mix: 1 }),
+        setup: (m) => {
+          for (const [decay, time] of changes) m.setParams({ decay, predelay: 0, mix: 1 }, time);
+        },
+      });
+    const burst = await make([
+      [2, 0.5],
+      [3.5, 0.55],
+      [5, 0.6],
+    ]);
+    const single = await make([[5, 0.6]]);
+    const none = await make([]);
+    // The drag builds one room: identical to a single change to its final value.
+    let worst = 0;
+    for (let i = 0; i < burst.L.length; i++) worst = Math.max(worst, Math.abs(burst.L[i] - single.L[i]));
+    expect(worst).toBe(0);
+    // That switch starts 120 ms after the change, as the live debounce does.
+    const firstDiff = single.L.findIndex((v, i) => v !== none.L[i]);
+    expect(Math.abs(firstDiff - frames(0.6 + REVERB_REGEN_DEBOUNCE_MS / 1000))).toBeLessThanOrEqual(128);
+  });
+
+  it('cancelAfter keeps a Size change requested before the cancel time', async () => {
+    const make = (cancel: boolean) =>
+      render({
+        seconds: 1,
+        input: noise(1, 0.5, 5, 0.05, BURST_END),
+        env: { seed: 99 },
+        create: (env) => new ReverbModule(env, 'r', { decay: 0.4, mix: 1 }),
+        setup: (m) => {
+          m.setParams({ decay: 8, mix: 1 }, 0.1);
+          // The switch itself (at 0.22 s) is still pending, but its request is older.
+          if (cancel) m.cancelAfter?.(0.15);
+        },
+      });
+    const kept = await make(true);
+    const plain = await make(false);
+    let worst = 0;
+    for (let i = 0; i < kept.L.length; i++) worst = Math.max(worst, Math.abs(kept.L[i] - plain.L[i]));
+    expect(worst).toBe(0);
   });
 
   it('cancelAfter undoes a scheduled Size change', async () => {

@@ -232,15 +232,20 @@ export async function harness(seconds: number, project: Project, factory: Instru
     ctx,
     engine,
     at(time, fn) {
-      void ctx.suspend(time).then(() => {
-        try {
-          fn();
-        } catch (err) {
-          errors.push(err);
-        } finally {
-          void ctx.resume();
-        }
-      });
+      ctx.suspend(time).then(
+        () => {
+          try {
+            fn();
+          } catch (err) {
+            errors.push(err);
+          } finally {
+            void ctx.resume();
+          }
+        },
+        // A suspend that cannot be scheduled (same render quantum as another,
+        // or already past) must fail the test, not silently skip the step.
+        (err: unknown) => errors.push(new Error(`at(${time}) was not scheduled: ${String(err)}`)),
+      );
     },
     async render() {
       const buf = await ctx.startRendering();

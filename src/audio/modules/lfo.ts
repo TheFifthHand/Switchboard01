@@ -101,11 +101,20 @@ interface PhaseAnchor {
   bpm: number;
   /** Transport tick at `time`, or null while the transport is stopped (free running). */
   tick: number | null;
+  /**
+   * True when the phase jumps here (transport start, division change while
+   * running): a new source must start at this anchor.
+   */
+  restart: boolean;
 }
 
 interface LfoVoice {
   src: AudioBufferSourceNode;
   fade: GainNode;
+  /** Context time the source starts. */
+  start: number;
+  /** Context time the source is scheduled to stop (Infinity until stopped). */
+  stop: number;
 }
 
 export class LfoModule implements ModuleNode {
@@ -115,7 +124,6 @@ export class LfoModule implements ModuleNode {
   private readonly out: GainNode;
   private readonly tables = new Map<number, AudioBuffer>();
   private readonly voices = new Set<LfoVoice>();
-  private voice: LfoVoice | null = null;
   private anchors: PhaseAnchor[] = [];
   private wave: number;
   private division: number;
@@ -136,9 +144,9 @@ export class LfoModule implements ModuleNode {
     this.out.gain.value = this.depth;
     const now = this.ctx.currentTime;
     const bpm = clampParam(BPM_SPEC, env.getBpm());
-    const anchor: PhaseAnchor = { time: now, phase: 0, cps: this.cycleRate(bpm), bpm, tick: null };
+    const anchor: PhaseAnchor = { time: now, phase: 0, cps: this.cycleRate(bpm), bpm, tick: null, restart: true };
     this.anchors = [anchor];
-    this.startVoice(now, 0);
+    this.restartFrom(now);
   }
 
   input(_port: string): AudioNode | undefined {
@@ -193,10 +201,30 @@ export class LfoModule implements ModuleNode {
     return a.tick === null ? null : a.tick + ((time - a.time) * a.bpm * PPQ) / 60;
   }
 
-  private pushAnchor(anchor: PhaseAnchor): void {
-    // A new anchor supersedes anything scheduled at or after its time.
-    const kept = this.anchors.filter((a) => a.time < anchor.time);
-    kept.push(anchor);
+  /**
+   * Insert an anchor. It supersedes every anchor at or after its time, except
+   * (with `keepRestarts`) later restart anchors: a transport start that is
+   * already scheduled stays in place and is re-derived from its own tick
+   * with the current division (and, for a tempo change, the new tempo).
+   */
+  private pushAnchor(anchor: PhaseAnchor, keepRestarts: boolean, tempoChange = false): void {
+    const kept: PhaseAnchor[] = [];
+    const later: PhaseAnchor[] = [];
+    for (const a of this.anchors) {
+      if (a.time < anchor.time) kept.push(a);
+      else if (a.time === anchor.time) {
+        // Same instant as a restart (e.g. a tempo event at the transport start): stay a restart.
+        if (keepRestarts && a.restart) anchor.restart = true;
+      } else if (keepRestarts && a.restart) {
+        const bpm = tempoChange ? anchor.bpm : a.bpm;
+        // Like the sequencer's tempo map: a tempo change before the start
+        // re-times the stretch in between, which moves the tick reached there.
+        const tick = a.tick === null ? null : a.tick + ((a.time - anchor.time) * (bpm - a.bpm) * PPQ) / 60;
+        const phase = tick === null ? a.phase : frac(tick / (this.beats() * PPQ));
+        later.push({ ...a, bpm, tick, cps: this.cycleRate(bpm), phase });
+      }
+    }
+    kept.push(anchor, ...later);
     // Keep the anchor in force now and everything after it.
     const now = this.ctx.currentTime;
     let first = 0;
@@ -204,9 +232,48 @@ export class LfoModule implements ModuleNode {
     this.anchors = kept.slice(first);
   }
 
-  /** Start a new source at `time`/`phase`, crossfading from the current one. */
-  private startVoice(time: number, phase: number): void {
+  private hasRestartAfter(time: number): boolean {
+    return this.anchors.some((a) => a.restart && a.time > time);
+  }
+
+  /**
+   * (Re)build the sources from `time` on: one starting at `time` with the
+   * modelled phase, then one at every later restart anchor, each crossfading
+   * from the previous one. Sources that were scheduled to start at/after
+   * `time` are cancelled before they sound.
+   */
+  private restartFrom(time: number): void {
+    const points = [time];
+    for (const a of this.anchors) if (a.restart && a.time > time) points.push(a.time);
+    for (const t of points) this.spawn(t, this.phaseAt(t));
+  }
+
+  private spawn(time: number, phase: number): void {
     const ctx = this.ctx;
+    let audible = false;
+    for (const v of this.voices) {
+      if (v.start >= time) {
+        // Never heard: silence it and end it no later than its start.
+        v.fade.gain.cancelScheduledValues(0);
+        v.fade.gain.value = 0;
+        if (v.stop > v.start) {
+          v.stop = v.start;
+          v.src.stop(v.start);
+        }
+      } else if (v.stop > time) {
+        audible = true;
+        // setTargetAtTime starts from whatever value the fade has at `time`,
+        // so overlapping restarts stay continuous.
+        v.fade.gain.cancelScheduledValues(time);
+        v.fade.gain.setTargetAtTime(0, time, XFADE_TAU);
+        const stop = time + XFADE_STOP;
+        if (stop < v.stop) {
+          v.stop = stop;
+          v.src.stop(stop);
+        }
+      }
+    }
+
     const buf = this.table(this.wave);
     const src = ctx.createBufferSource();
     src.buffer = buf;
@@ -218,24 +285,16 @@ export class LfoModule implements ModuleNode {
     const fade = ctx.createGain();
     src.connect(fade);
     fade.connect(this.out);
-    const voice: LfoVoice = { src, fade };
+    const voice: LfoVoice = { src, fade, start: time, stop: Infinity };
     src.onended = () => this.releaseVoice(voice);
     this.voices.add(voice);
-
-    const old = this.voice;
-    if (old) {
-      // setTargetAtTime starts from whatever value each fade has at `time`,
-      // so overlapping restarts stay continuous.
+    if (audible) {
       fade.gain.value = 0;
       fade.gain.setTargetAtTime(1, time, XFADE_TAU);
-      old.fade.gain.cancelScheduledValues(time);
-      old.fade.gain.setTargetAtTime(0, time, XFADE_TAU);
-      old.src.stop(time + XFADE_STOP);
     } else {
       fade.gain.value = 1;
     }
     src.start(time, phase * buf.duration);
-    this.voice = voice;
   }
 
   private releaseVoice(v: LfoVoice): void {
@@ -245,13 +304,15 @@ export class LfoModule implements ModuleNode {
     this.voices.delete(v);
   }
 
-  /** Set the playback rate of the current source from `time` on (phase-continuous). */
+  /** Re-apply the anchors' playback rates from `time` on to every live source (phase-continuous). */
   private applyRate(time: number): void {
-    if (!this.voice) return;
-    const p = this.voice.src.playbackRate;
-    p.cancelScheduledValues(time);
-    for (const a of this.anchors) {
-      if (a.time >= time) p.setValueAtTime(this.playbackRate(a.cps), a.time);
+    for (const v of this.voices) {
+      if (v.stop <= time) continue;
+      const p = v.src.playbackRate;
+      p.cancelScheduledValues(time);
+      for (const a of this.anchors) {
+        if (a.time >= time) p.setValueAtTime(this.playbackRate(a.cps), a.time);
+      }
     }
   }
 
@@ -283,9 +344,11 @@ export class LfoModule implements ModuleNode {
         phase = frac(tick / (this.beats() * PPQ));
         restart = true;
       }
-      this.pushAnchor({ time: t, phase, cps: this.cycleRate(before.bpm), bpm: before.bpm, tick });
+      this.pushAnchor({ time: t, phase, cps: this.cycleRate(before.bpm), bpm: before.bpm, tick, restart: tick !== null }, true);
+      // Scheduled restarts were re-derived for the new cycle length: rebuild their sources.
+      if (this.hasRestartAfter(t)) restart = true;
     }
-    if (restart) this.startVoice(t, phase);
+    if (restart) this.restartFrom(t);
     else this.applyRate(t);
   }
 
@@ -299,8 +362,10 @@ export class LfoModule implements ModuleNode {
     const t = Math.max(Number.isFinite(time) ? time : 0, this.ctx.currentTime);
     const a = this.anchorAt(t);
     if (a.bpm === b && this.anchors[this.anchors.length - 1] === a) return;
-    this.pushAnchor({ time: t, phase: this.phaseAt(t), cps: this.cycleRate(b), bpm: b, tick: this.tickAt(t) });
-    this.applyRate(t);
+    this.pushAnchor({ time: t, phase: this.phaseAt(t), cps: this.cycleRate(b), bpm: b, tick: this.tickAt(t), restart: false }, true, true);
+    // A scheduled restart moved with the new tempo: rebuild its source too.
+    if (this.hasRestartAfter(t)) this.restartFrom(t);
+    else this.applyRate(t);
   }
 
   /** Align the cycle to the transport: phase = (tick / cycle ticks) mod 1 at `time`. */
@@ -316,8 +381,8 @@ export class LfoModule implements ModuleNode {
       t = now;
     }
     const phase = frac(tk / (this.beats() * PPQ));
-    this.pushAnchor({ time: t, phase, cps: this.cycleRate(b), bpm: b, tick: tk });
-    this.startVoice(t, phase);
+    this.pushAnchor({ time: t, phase, cps: this.cycleRate(b), bpm: b, tick: tk, restart: true }, false);
+    this.restartFrom(t);
   }
 
   /** Transport stopped: keep running freely from the current phase. */
@@ -326,8 +391,11 @@ export class LfoModule implements ModuleNode {
     const t = Math.max(Number.isFinite(time) ? time : 0, this.ctx.currentTime);
     const a = this.anchorAt(t);
     if (a.tick === null && this.anchors[this.anchors.length - 1] === a) return;
-    this.pushAnchor({ time: t, phase: this.phaseAt(t), cps: a.cps, bpm: a.bpm, tick: null });
-    this.applyRate(t);
+    // A transport start still pending after `t` is called off with the stop.
+    const pending = this.hasRestartAfter(t);
+    this.pushAnchor({ time: t, phase: this.phaseAt(t), cps: a.cps, bpm: a.bpm, tick: null, restart: false }, false);
+    if (pending) this.restartFrom(t);
+    else this.applyRate(t);
   }
 
   /**
@@ -358,7 +426,6 @@ export class LfoModule implements ModuleNode {
       }
       this.releaseVoice(v);
     }
-    this.voice = null;
     this.out.disconnect();
     this.tables.clear();
   }

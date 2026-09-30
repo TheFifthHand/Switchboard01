@@ -1,0 +1,179 @@
+.wrap {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr)) 104px;
+  grid-template-rows: auto repeat(4, minmax(52px, 1fr)) auto;
+  gap: 8px;
+}
+
+.row {
+  display: contents;
+}
+
+/* Column headers */
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 7px 7px;
+  border-radius: var(--r-md);
+  background: var(--surface-hi);
+  border: 1px solid var(--line-soft);
+  min-width: 0;
+  transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+.headerSelected {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 1px var(--teal) inset;
+  background: linear-gradient(180deg, var(--surface-hi), var(--teal-wash));
+}
+.headerMain {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 6px;
+  row-gap: 1px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0;
+  min-width: 0;
+  border-radius: var(--r-sm);
+}
+.trackNum {
+  grid-row: 1 / 3;
+  align-self: center;
+  font-size: 11px;
+  color: var(--ink-3);
+  width: 14px;
+}
+.trackName {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trackSound {
+  font-size: 11px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.headerTools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ms {
+  width: 22px;
+  height: 20px;
+  flex: none;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--pad);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink-2);
+  padding: 0;
+  box-shadow: var(--shadow-raised);
+}
+.msMute {
+  background: var(--coral);
+  border-color: var(--coral);
+  color: #fff;
+  box-shadow: var(--shadow-pressed);
+}
+.msSolo {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--amber-ink);
+  box-shadow: var(--shadow-pressed);
+}
+.meter {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.meterOff {
+  opacity: 0.35;
+}
+
+/* Scenes */
+.sceneHeader {
+  align-self: end;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+  padding: 0 4px 6px;
+}
+.scene {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--shell-hi), var(--shell));
+  box-shadow: var(--shadow-raised);
+  text-align: left;
+  min-width: 0;
+  transition: box-shadow var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.scene:active {
+  box-shadow: var(--shadow-pressed);
+}
+.sceneLit {
+  border-color: var(--amber);
+  background: linear-gradient(180deg, var(--shell-hi), var(--amber-wash));
+}
+.sceneIcon {
+  font-size: 9px;
+  color: var(--ink-3);
+}
+.sceneLit .sceneIcon {
+  color: var(--amber);
+}
+.sceneName {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.sceneCount {
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+/* Stop row */
+.stop {
+  justify-self: center;
+}
+.stopAll {
+  height: 30px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--shell-hi);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--ink-2);
+  box-shadow: var(--shadow-raised);
+}
+.stopAll:active {
+  box-shadow: var(--shadow-pressed);
+}

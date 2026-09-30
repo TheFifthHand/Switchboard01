@@ -8,7 +8,9 @@
  * undo/redo count as fresh edits for autosave instead of rewinding the clock.
  *
  * The edit lock refuses routing edits (labels starting with "patch:") while a
- * performance take is recording, including undo/redo of such edits.
+ * performance take is recording, including undo/redo of such edits and of
+ * undoable whole-project swaps (which replace the patch as well). `replace()`
+ * itself is not locked: stop the take before loading another project.
  */
 import { applyPatches, enablePatches, freeze, produce, produceWithPatches, type Draft, type Patch as ImmerPatch } from 'immer';
 import type { Project } from '../project/types';
@@ -23,7 +25,11 @@ export const PATCH_LABEL_PREFIX = 'patch:';
 export interface ApplyOptions {
   /** Edits with the same gesture id, applied consecutively, form one undo step. */
   gesture?: string;
-  /** Change the project without recording an undo step (and clear redo). */
+  /**
+   * Change the project without recording an undo step. Clears redo, and drops
+   * older undo steps whose recorded paths this change invalidates (for example
+   * steps that edit notes of an array this change adds to or removes from).
+   */
   skipHistory?: boolean;
 }
 
@@ -60,6 +66,36 @@ function isPatchLabel(label: string): boolean {
   return label.startsWith(PATCH_LABEL_PREFIX);
 }
 
+type PatchPath = ImmerPatch['path'];
+
+/** True when `inner` lies strictly below `outer`. */
+function strictlyInside(inner: PatchPath, outer: PatchPath): boolean {
+  if (inner.length <= outer.length) return false;
+  for (let i = 0; i < outer.length; i++) if (inner[i] !== outer[i]) return false;
+  return true;
+}
+
+/**
+ * Where recorded patches stop being trustworthy after `p` is applied outside
+ * the history: adding/removing an item shifts the indices of its siblings (so
+ * everything in the container is suspect), and replacing a value swaps
+ * everything beneath it.
+ */
+function unstableRoot(p: ImmerPatch): PatchPath {
+  const last = p.path[p.path.length - 1];
+  return p.op !== 'replace' || last === 'length' ? p.path.slice(0, -1) : p.path;
+}
+
+function entryTouches(entry: HistoryEntry, roots: readonly PatchPath[]): boolean {
+  const hit = (q: ImmerPatch) => roots.some((r) => strictlyInside(q.path, r));
+  return entry.patches.some(hit) || entry.inverse.some(hit);
+}
+
+/** Undo/redo steps the edit lock holds back: routing edits, and whole-project swaps (they replace the patch too). */
+function lockedEntry(entry: HistoryEntry): boolean {
+  return isPatchLabel(entry.label) || entry.patches.some((p) => p.path.length === 0);
+}
+
 export class ProjectStore implements ReadableStore<Project> {
   private readonly store: Store<Project>;
   private undoStack: HistoryEntry[] = [];
@@ -67,6 +103,8 @@ export class ProjectStore implements ReadableStore<Project> {
   /** Gesture of the most recent recorded apply; cleared by anything that ends the gesture. */
   private openGesture: string | null = null;
   private lock: string | null = null;
+  /** While locked: which edits are still allowed (default: everything except routing edits). */
+  private lockAllows: ((label: string) => boolean) | null = null;
   private readonly now: () => number;
   private readonly limit: number;
   /** History and lock state, for undo buttons and lock banners. */
@@ -88,14 +126,27 @@ export class ProjectStore implements ReadableStore<Project> {
    * or {changed:false, refused} when the edit lock blocks it.
    */
   apply(label: string, recipe: Recipe, opts: ApplyOptions = {}): ApplyResult {
-    if (this.lock !== null && isPatchLabel(label)) return { changed: false, refused: this.lock };
+    if (this.lock !== null && !this.allowedWhileLocked(label)) return { changed: false, refused: this.lock };
     const base = this.store.getState();
-    const [next, patches, inverse] = produceWithPatches(base, recipe as (d: Draft<Project>) => void);
+    // Ignore any return value: immer treats a returned value as a replacement state.
+    const [next, patches, inverse] = produceWithPatches(base, (d: Draft<Project>) => {
+      recipe(d as Project);
+    });
     if (patches.length === 0) return { changed: false };
 
     if (opts.skipHistory) {
       // Redo entries were recorded against the pre-change state; they would no longer apply cleanly.
       this.redoStack = [];
+      // Undo entries are path/index based (immer records "remove notes[5]"). If this
+      // unrecorded edit restructured something an entry points into, undoing that
+      // entry would change the wrong item: drop it and everything older.
+      const roots = patches.map(unstableRoot);
+      for (let i = this.undoStack.length - 1; i >= 0; i--) {
+        if (!entryTouches(this.undoStack[i], roots)) continue;
+        this.undoStack.splice(0, i + 1);
+        this.openGesture = null;
+        break;
+      }
     } else {
       const top = this.undoStack[this.undoStack.length - 1];
       if (opts.gesture !== undefined && top && top.gesture === opts.gesture && this.openGesture === opts.gesture) {
@@ -120,12 +171,12 @@ export class ProjectStore implements ReadableStore<Project> {
 
   canUndo(): boolean {
     const top = this.undoStack[this.undoStack.length - 1];
-    return !!top && !(this.lock !== null && isPatchLabel(top.label));
+    return !!top && !(this.lock !== null && this.entryLocked(top));
   }
 
   canRedo(): boolean {
     const top = this.redoStack[this.redoStack.length - 1];
-    return !!top && !(this.lock !== null && isPatchLabel(top.label));
+    return !!top && !(this.lock !== null && this.entryLocked(top));
   }
 
   /** Display text of the edit Undo would revert ("Connect cable"), or null. */
@@ -142,7 +193,7 @@ export class ProjectStore implements ReadableStore<Project> {
   undo(): ApplyResult {
     const entry = this.undoStack[this.undoStack.length - 1];
     if (!entry) return { changed: false };
-    if (this.lock !== null && isPatchLabel(entry.label)) return { changed: false, refused: this.lock };
+    if (this.lock !== null && this.entryLocked(entry)) return { changed: false, refused: this.lock };
     this.undoStack.pop();
     this.redoStack.push(entry);
     this.openGesture = null;
@@ -153,7 +204,7 @@ export class ProjectStore implements ReadableStore<Project> {
   redo(): ApplyResult {
     const entry = this.redoStack[this.redoStack.length - 1];
     if (!entry) return { changed: false };
-    if (this.lock !== null && isPatchLabel(entry.label)) return { changed: false, refused: this.lock };
+    if (this.lock !== null && this.entryLocked(entry)) return { changed: false, refused: this.lock };
     this.redoStack.pop();
     this.undoStack.push(entry);
     this.openGesture = null;
@@ -193,10 +244,23 @@ export class ProjectStore implements ReadableStore<Project> {
     this.info.setState(this.computeInfo());
   }
 
-  /** Lock routing edits (reason shown to the user), or unlock with null. */
-  setLock(reason: string | null): void {
+  /**
+   * Lock edits (reason shown to the user), or unlock with null. By default only
+   * routing edits are refused; `allows` narrows the lock to an allow-list of
+   * labels (a performance take allows only the edits it records).
+   */
+  setLock(reason: string | null, allows?: (label: string) => boolean): void {
     this.lock = reason;
+    this.lockAllows = reason === null ? null : (allows ?? null);
     this.info.setState(this.computeInfo());
+  }
+
+  private allowedWhileLocked(label: string): boolean {
+    return this.lockAllows ? this.lockAllows(label) : !isPatchLabel(label);
+  }
+
+  private entryLocked(entry: HistoryEntry): boolean {
+    return lockedEntry(entry) || !this.allowedWhileLocked(entry.label);
   }
 
   getLock(): string | null {

@@ -1,0 +1,113 @@
+.wrap {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.wrap[data-layout='inline'] {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.label {
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+/* A recessed readout window. */
+.field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, #e2e5e8 0%, #eceef0 100%);
+  box-shadow:
+    inset 0 1px 2px rgba(20, 24, 28, 0.2),
+    inset 0 0 0 1px rgba(20, 24, 28, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.8);
+  cursor: ns-resize;
+  transition: box-shadow var(--t-fast) var(--ease);
+}
+
+.wrap[data-size='sm'] .field {
+  height: 32px;
+}
+
+.wrap[data-size='lg'] .field {
+  height: 42px;
+  padding: 0 12px 0 10px;
+}
+
+.field:focus-within {
+  box-shadow:
+    inset 0 1px 2px rgba(20, 24, 28, 0.2),
+    inset 0 0 0 1px rgba(20, 24, 28, 0.08),
+    0 0 0 2px var(--shell-hi),
+    0 0 0 4px var(--teal);
+}
+
+.field[data-dragging] {
+  box-shadow:
+    inset 0 1px 2px rgba(20, 24, 28, 0.2),
+    inset 0 0 0 1px var(--teal);
+}
+
+.field[data-invalid] {
+  box-shadow:
+    inset 0 1px 2px rgba(20, 24, 28, 0.2),
+    inset 0 0 0 1px var(--coral),
+    0 0 0 3px var(--coral-wash);
+}
+
+.input {
+  align-self: stretch;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  outline: none;
+  cursor: inherit;
+}
+
+.input:focus {
+  cursor: text;
+  box-shadow: none;
+}
+
+.wrap[data-size='sm'] .input {
+  font-size: var(--fs-md);
+}
+
+.wrap[data-size='lg'] .input {
+  font-size: var(--fs-xl);
+}
+
+.input:disabled {
+  color: var(--ink-3);
+}
+
+.unit {
+  padding-top: 2px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.wrap[data-disabled] .field {
+  cursor: default;
+  opacity: 0.55;
+}

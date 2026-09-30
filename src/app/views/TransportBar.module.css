@@ -1,0 +1,191 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 58px;
+  padding: 0 14px;
+  background: linear-gradient(180deg, var(--shell-hi), var(--shell));
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
+  position: relative;
+  z-index: 5;
+  min-width: 0;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+  gap: 3px;
+  padding-right: 4px;
+  user-select: none;
+  flex: none;
+}
+.brandName {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--ink);
+}
+.brandNum {
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+}
+
+.views {
+  flex: none;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line-soft);
+  flex: none;
+}
+
+.play {
+  min-width: 86px;
+}
+
+.position {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 56px;
+}
+.posLabel {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--ink-3);
+}
+.posValue {
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--ink);
+  min-height: 20px;
+}
+.mode {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--teal-wash);
+  color: var(--teal-ink);
+  border: 1px solid var(--teal);
+}
+
+.recActive {
+  animation: recPulse 1.2s ease-in-out infinite;
+}
+@keyframes recPulse {
+  50% {
+    box-shadow: 0 0 0 3px var(--coral-wash);
+  }
+}
+
+.meters {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.muteAll {
+  min-width: 92px;
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.project {
+  max-width: 170px;
+  min-width: 0;
+}
+.projectName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  max-width: 120px;
+  vertical-align: bottom;
+}
+
+.saveWrap {
+  position: relative;
+}
+.save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+}
+.saveDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+.saveOk .saveDot {
+  background: var(--teal);
+}
+.saveBusy .saveDot {
+  background: var(--amber);
+}
+.saveError {
+  color: var(--coral-ink);
+  background: var(--coral-wash);
+}
+.saveError .saveDot {
+  background: var(--coral);
+}
+.savePopover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 300px;
+  padding: 12px;
+  background: var(--shell-hi);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-float);
+  z-index: 40;
+  font-size: var(--fs-sm);
+}
+.savePopover p {
+  margin: 0 0 10px;
+}
+.saveActions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Narrow desktop: hide secondary text, keep every control reachable. */
+@media (max-width: 1400px) {
+  .brandNum {
+    display: none;
+  }
+  .projectName {
+    max-width: 80px;
+  }
+}
+@media (max-width: 1280px) {
+  .brand {
+    display: none;
+  }
+}

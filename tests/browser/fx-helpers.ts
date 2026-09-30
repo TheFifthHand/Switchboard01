@@ -49,6 +49,28 @@ export function sines(parts: [freq: number, amp: number][], seconds: number): Fl
   return x;
 }
 
+/** Naive (non-band-limited) rising saw: its sharp resets are a worst case for filters. */
+export function saw(freq: number, seconds: number, amp = 0.5): Float32Array {
+  const n = frames(seconds);
+  const x = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const p = (freq * i) / SR;
+    x[i] = amp * (2 * (p - Math.floor(p)) - 1);
+  }
+  return x;
+}
+
+/** A ±1 square wave at `freq` Hz (instant edges) as a mono buffer filling the context. */
+export function squareBuffer(ctx: OfflineAudioContext, freq: number): AudioBuffer {
+  const buf = ctx.createBuffer(1, ctx.length, SR);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) {
+    const p = (freq * i) / SR;
+    d[i] = p - Math.floor(p) < 0.5 ? 1 : -1;
+  }
+  return buf;
+}
+
 /** Seeded white noise between `start` and `end` seconds (silence elsewhere). */
 export function noise(seconds: number, amp: number, seed = 7, start = 0, end = seconds): Float32Array {
   const n = frames(seconds);

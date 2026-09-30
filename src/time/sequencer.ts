@@ -1,0 +1,1547 @@
+/**
+ * Sequencer (pure: no DOM, no Web Audio).
+ *
+ * Turns the project (clips, launcher, arrangement, performances, arp input)
+ * into timed `SeqEvent`s for windows of the transport timeline. A driver
+ * (RealtimeTransport, renderOffline) calls `process(untilTime)` repeatedly
+ * and schedules what comes back on the audio clock.
+ *
+ * See src/time/contracts.ts for the timing model. Implementation notes:
+ * - Every state change (clip switch, song block, recorded control event,
+ *   end) is a boundary: the window is generated up to it, the change is
+ *   applied, generation continues. Applied switches are kept in a short
+ *   history so `invalidate()` can roll them back and replay them.
+ * - A note already handed out can only be shortened through a `NoteCut`
+ *   (`takeCuts()`): the driver releases that voice early. That happens when
+ *   a launch is queued after the outgoing clip's note was generated, a mono
+ *   part gets a new note while an earlier one is still sounding, or a tempo
+ *   change makes a sounding note's end tick come sooner.
+ * - A replayed take's recorded tempo changes are all in the clock from the
+ *   start, so every note length and time already follows them.
+ */
+import {
+  TICKS_PER_BAR,
+  TICKS_PER_BEAT,
+  TICKS_PER_STEP,
+  type Clip,
+  type Id,
+  type LauncherSnapshotEntry,
+  type Performance,
+  type PerformanceEvent,
+  type Project,
+  type Track,
+} from '../project/types';
+import type { LaunchResult, PlayMode, SeqEvent, StartOptions, TrackLaunchState } from './contracts';
+import { MAX_SWING_TICKS, TempoMap, clampBpm, clampSwing, swingWarp } from './clock';
+import { EMPTY_LATCH, arpDivisionTicks, arpGateTicks, arpGridAtOrAfter, arpInput, arpNoteAt, updateLatch, type LatchState } from './arp';
+import { projectFromSnapshot } from './snapshot';
+
+export type NoteEvent = Extract<SeqEvent, { kind: 'note' }>;
+export type BeatEvent = Extract<SeqEvent, { kind: 'beat' }>;
+
+/** Shorten a note that was already handed out: release its voice at `time`. */
+export interface NoteCut {
+  note: NoteEvent;
+  trackId: Id;
+  tick: number;
+  time: number;
+}
+
+export interface SequencerOptions {
+  getProject: () => Project;
+}
+
+export interface SeqPosition {
+  tick: number;
+  bar: number;
+  /** 0..3 */
+  beat: number;
+  /** 0..15 */
+  step: number;
+}
+
+export interface SongBlockPlan {
+  /** Index into project.arrangement.blocks. */
+  index: number;
+  blockId: Id;
+  row: number;
+  bars: number;
+  repeats: number;
+  startTick: number;
+  endTick: number;
+}
+
+/** Applied transport state older than this is forgotten; `invalidate()` cannot rewind further back. */
+export const HISTORY_TICKS = 8 * TICKS_PER_BAR;
+export const DEFAULT_ARP_VELOCITY = 0.8;
+const MAX_RECENT = 512;
+
+/* ------------------------------------------------------------------ */
+/* Pure helpers                                                        */
+/* ------------------------------------------------------------------ */
+
+/** The next bar line strictly after `tick`. */
+export function nextBarTick(tick: number): number {
+  return (Math.floor(tick / TICKS_PER_BAR) + 1) * TICKS_PER_BAR;
+}
+
+export function positionOf(tick: number): SeqPosition {
+  const bar = Math.floor(tick / TICKS_PER_BAR);
+  const within = tick - bar * TICKS_PER_BAR;
+  return { tick, bar, beat: Math.floor(within / TICKS_PER_BEAT), step: Math.floor(within / TICKS_PER_STEP) };
+}
+
+function clampInt(v: number, lo: number, hi: number): number {
+  if (!Number.isFinite(v)) return lo;
+  return Math.min(hi, Math.max(lo, Math.round(v)));
+}
+
+function clamp01(v: number): number {
+  return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0;
+}
+
+function clipLength(clip: Clip): number {
+  return clampInt(clip.bars, 1, 64) * TICKS_PER_BAR;
+}
+
+/** Scene length in bars: the longest clip in the row (at least 1). */
+export function sceneBars(project: Project, row: number): number {
+  let bars = 1;
+  for (const t of project.tracks) {
+    const c = t.clips[row];
+    if (c && c.bars > bars) bars = c.bars;
+  }
+  return bars;
+}
+
+/** Arrangement blocks laid out on the song timeline (blocks whose scene is missing are skipped). */
+export function songBlocks(project: Project): SongBlockPlan[] {
+  const out: SongBlockPlan[] = [];
+  let tick = 0;
+  project.arrangement.blocks.forEach((b, index) => {
+    const row = project.scenes.findIndex((s) => s.id === b.sceneId);
+    if (row < 0) return;
+    const bars = sceneBars(project, row);
+    const repeats = clampInt(b.repeats, 1, 8);
+    const len = bars * repeats * TICKS_PER_BAR;
+    out.push({ index, blockId: b.id, row, bars, repeats, startTick: tick, endTick: tick + len });
+    tick += len;
+  });
+  return out;
+}
+
+/** Song length in ticks: sum of scene bars x repeats. */
+export function songLengthTicks(project: Project): number {
+  const blocks = songBlocks(project);
+  return blocks.length ? blocks[blocks.length - 1].endTick : 0;
+}
+
+const KIND_ORDER: Record<SeqEvent['kind'], number> = {
+  end: 0,
+  block: 1,
+  launch: 2,
+  tempo: 3,
+  swing: 4,
+  master: 5,
+  mute: 6,
+  param: 7,
+  macro: 8,
+  beat: 9,
+  note: 10,
+};
+
+function compareEvents(a: SeqEvent, b: SeqEvent): number {
+  return a.tick - b.tick || KIND_ORDER[a.kind] - KIND_ORDER[b.kind];
+}
+
+/* ------------------------------------------------------------------ */
+/* Prepared clips                                                      */
+/* ------------------------------------------------------------------ */
+
+interface PreparedNote {
+  tick: number;
+  pitch: number;
+  velocity: number;
+  /** End within the loop (clamped to the clip length). */
+  end: number;
+  /** Mono parts: end also clamped to the next note's start. */
+  monoEnd: number;
+}
+
+interface PreparedClip {
+  length: number;
+  notes: PreparedNote[];
+}
+
+interface PrepEntry {
+  notes: Clip['notes'];
+  bars: number;
+  poly?: PreparedClip;
+  mono?: PreparedClip;
+}
+
+// Clips are immutable project data; cache by identity (re-validated against notes/bars).
+const prepCache = new WeakMap<Clip, PrepEntry>();
+
+function prepareClip(clip: Clip, mono: boolean): PreparedClip {
+  let entry = prepCache.get(clip);
+  if (!entry || entry.notes !== clip.notes || entry.bars !== clip.bars) {
+    entry = { notes: clip.notes, bars: clip.bars };
+    prepCache.set(clip, entry);
+  }
+  const cached = mono ? entry.mono : entry.poly;
+  if (cached) return cached;
+  const length = clipLength(clip);
+  const notes: PreparedNote[] = [];
+  for (const n of clip.notes) {
+    if (!Number.isFinite(n.tick) || !Number.isFinite(n.pitch) || n.tick < 0 || n.tick >= length) continue;
+    const dur = Number.isFinite(n.duration) && n.duration > 0 ? n.duration : 1;
+    // Notes end at the loop end, like a looping clip in any sequencer.
+    const end = Math.min(n.tick + dur, length);
+    notes.push({ tick: n.tick, pitch: n.pitch, velocity: clamp01(n.velocity), end, monoEnd: end });
+  }
+  notes.sort((x, y) => x.tick - y.tick || x.pitch - y.pitch);
+  let list = notes;
+  if (mono) {
+    // One note at a time: of notes starting together the lowest wins, and a
+    // note ends where the next one starts.
+    list = [];
+    for (const n of notes) if (!list.length || list[list.length - 1].tick !== n.tick) list.push(n);
+    for (let i = 0; i < list.length; i++) {
+      const next = i + 1 < list.length ? list[i + 1].tick : length;
+      list[i].monoEnd = Math.min(list[i].end, next);
+    }
+  }
+  const prep: PreparedClip = { length, notes: list };
+  if (mono) entry.mono = prep;
+  else entry.poly = prep;
+  return prep;
+}
+
+/* ------------------------------------------------------------------ */
+/* Internal state                                                      */
+/* ------------------------------------------------------------------ */
+
+interface Playing {
+  slot: number;
+  clipId: Id;
+  startTick: number;
+}
+
+type TransitionSource = 'live' | 'song' | 'replay';
+
+interface Transition {
+  atTick: number;
+  /** Target slot (null = stop) unless `row` is set. */
+  slot: number | null;
+  /** Scene row resolved when applied: that slot if it holds a clip, else stop. */
+  row: number | null;
+  source: TransitionSource;
+  seq: number;
+  /** Tick at which the request was made (queued state becomes visible then). */
+  requestTick: number;
+}
+
+interface Applied {
+  appliedTick: number;
+  prev: Playing | null;
+  due: Transition[];
+}
+
+interface Emitted {
+  event: NoteEvent;
+  tick: number;
+  endTick: number;
+  /** End before mono truncation (for legato detection). */
+  naturalEndTick: number;
+  /** Scheduled end time: `time + duration`, lowered by every truncation or cut since. */
+  endTime: number;
+  swing: number;
+  clock: TempoMap;
+  batch: number;
+  dropped: boolean;
+}
+
+interface TrackRt {
+  playing: Playing | null;
+  pending: Transition[];
+  history: Applied[];
+  recent: Emitted[];
+}
+
+interface ArpChange extends LatchState {
+  tick: number;
+  /** Grid tick of arp step 0, null when nothing sounds. */
+  origin: number | null;
+  velocity: number;
+}
+
+interface ArpRt {
+  latch: LatchState;
+  velocity: number;
+  changes: ArpChange[];
+  /** Changes come from a performance being replayed. */
+  replayDriven: boolean;
+}
+
+interface ReplayNote {
+  tick: number;
+  endTick: number;
+  trackId: Id;
+  pitch: number;
+  velocity: number;
+}
+
+type ControlEvent = Extract<PerformanceEvent, { type: 'macro' | 'param' | 'mute' | 'tempo' | 'swing' | 'master' }>;
+
+interface ReplayState {
+  performance: Performance;
+  project: Project;
+  controls: ControlEvent[];
+  next: number;
+  notes: ReplayNote[];
+  /** The take's recorded tempo changes, in order (the clock is built from them up front). */
+  tempos: { tick: number; bpm: number }[];
+  /** Tick of a live tempo change that replaced the recorded tempo map from there on, else null. */
+  tempoOverrideTick: number | null;
+}
+
+interface SongState {
+  blocks: SongBlockPlan[];
+  next: number;
+}
+
+/** Events with tick < untilTick and time < floorTime were already handed out (and not cancelled). */
+interface Clause {
+  untilTick: number;
+  floorTime: number;
+}
+
+interface Candidate {
+  tick: number;
+  endTick: number;
+  naturalEndTick: number;
+  trackId: Id;
+  order: number;
+  /** Source order at equal ticks: clip, replay, arp. */
+  src: number;
+  pitch: number;
+  velocity: number;
+  source: NoteEvent['source'];
+  clipId?: Id;
+  swung: boolean;
+  mono: boolean;
+}
+
+interface Domain {
+  clock: TempoMap;
+  swing: SwingTimeline | null;
+  clauses: Clause[];
+}
+
+class SwingTimeline {
+  private pts: { tick: number; swing: number }[] = [{ tick: -Infinity, swing: 0 }];
+
+  reset(swing: number): void {
+    this.pts = [{ tick: -Infinity, swing: clampSwing(swing) }];
+  }
+
+  at(tick: number): number {
+    const p = this.pts;
+    for (let i = p.length - 1; i > 0; i--) if (p[i].tick <= tick) return p[i].swing;
+    return p[0].swing;
+  }
+
+  set(tick: number, swing: number): void {
+    const keep = this.pts.filter((p) => p.tick < tick);
+    this.pts = keep.length ? [...keep, { tick, swing: clampSwing(swing) }] : [{ tick: -Infinity, swing: clampSwing(swing) }];
+  }
+
+  prune(tick: number): void {
+    let first = 0;
+    while (first + 1 < this.pts.length && this.pts[first + 1].tick <= tick) first++;
+    if (first > 0) this.pts = this.pts.slice(first);
+  }
+}
+
+function compareCandidates(x: Candidate, y: Candidate): number {
+  return x.tick - y.tick || x.order - y.order || x.src - y.src || x.pitch - y.pitch;
+}
+
+function skipped(clauses: readonly Clause[], tick: number, time: number): boolean {
+  for (const c of clauses) if (tick < c.untilTick && time < c.floorTime) return true;
+  return false;
+}
+
+function changeAt(changes: readonly ArpChange[], tick: number): ArpChange | undefined {
+  for (let i = changes.length - 1; i >= 0; i--) if (changes[i].tick <= tick) return changes[i];
+  return undefined;
+}
+
+/** The arp change produced by new input at `tick`, continuing the step count unless the arp restarts. */
+function nextArpChange(prev: ArpChange | undefined, latch: LatchState, tick: number, track: Track, velocity: number): ArpChange {
+  const prevSet = prev ? arpInput(prev, track.arp.latch) : [];
+  const nextSet = arpInput(latch, track.arp.latch);
+  let origin = prev?.origin ?? null;
+  if (!nextSet.length) origin = null;
+  else if (!prevSet.length || origin === null) origin = arpGridAtOrAfter(tick, track.arp.division);
+  return { tick, held: latch.held, latched: latch.latched, origin, velocity };
+}
+
+function samePlaying(a: Playing | null, b: Playing | null): boolean {
+  if (!a || !b) return a === b;
+  return a.slot === b.slot && a.startTick === b.startTick;
+}
+
+/**
+ * Loop start for a clip given as playing in a start launcher. An entry that
+ * started after `from` (e.g. a launcher snapshot taken later on the timeline)
+ * would stay silent until then; it moves back by whole loops so it plays from
+ * `from` with the same loop phase.
+ */
+function loopStartAtOrBefore(startTick: number, length: number, from: number): number {
+  if (!Number.isFinite(startTick)) return from;
+  if (startTick <= from) return startTick;
+  return startTick - Math.ceil((startTick - from) / length) * length;
+}
+
+/* ------------------------------------------------------------------ */
+/* Sequencer                                                           */
+/* ------------------------------------------------------------------ */
+
+export class Sequencer {
+  private readonly getProject: () => Project;
+  private readonly clock = new TempoMap();
+  private readonly swing = new SwingTimeline();
+  private readonly tracks = new Map<Id, TrackRt>();
+  private readonly arps = new Map<Id, ArpRt>();
+
+  private _playing = false;
+  private _mode: PlayMode = { kind: 'live' };
+  private cursor = 0;
+  private startTick = 0;
+  /** Musical start (after any count-in): no clip plays before it. */
+  private musicStartTick = 0;
+  private historyFloor = -Infinity;
+  private endTick: number | null = null;
+  private _ended = false;
+  private stoppedTick = 0;
+  private clauses: Clause[] = [];
+  private song: SongState | null = null;
+  private replay: ReplayState | null = null;
+  private savedLive: Map<Id, Playing | null> | null = null;
+  private transitionSeq = 0;
+  private cuts: NoteCut[] = [];
+  /**
+   * Time of the 'end' event already handed out and not cancelled since. The
+   * end sits on the cursor, at the upper edge of a rewind, so the rewind
+   * clauses cannot tell whether it was handed out: this does.
+   */
+  private endSentTime: number | null = null;
+  private batch = 0;
+  private inProcess = false;
+  private readonly dropped = new Set<NoteEvent>();
+
+  // Free-running arpeggiator clock while the transport is stopped.
+  private freeClock: TempoMap | null = null;
+  private freeCursor = 0;
+  private freeClauses: Clause[] = [];
+  private freeHistoryFloor = -Infinity;
+
+  constructor(opts: SequencerOptions) {
+    this.getProject = opts.getProject;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* State                                                             */
+  /* ---------------------------------------------------------------- */
+
+  get playing(): boolean {
+    return this._playing;
+  }
+
+  get mode(): PlayMode {
+    return { ...this._mode };
+  }
+
+  /** True after a song / performance / bounded render reached its end. */
+  get ended(): boolean {
+    return this._ended;
+  }
+
+  /** Events have been generated for un-swung ticks below this. */
+  get generatedTick(): number {
+    return this._playing ? this.cursor : this.freeCursor;
+  }
+
+  /**
+   * Tempo at the generation cursor while playing (the start tempo right after
+   * `start()`); the idle arpeggiator's tempo while stopped.
+   */
+  get bpm(): number {
+    if (this._playing) return this.clock.bpmAtTick(this.cursor);
+    return this.freeClock ? this.freeClock.bpm : this.clock.bpm;
+  }
+
+  /** The arpeggiator is running on its free clock (transport stopped, notes held or latched). */
+  get idleActive(): boolean {
+    return !this._playing && this.freeClock !== null;
+  }
+
+  /** The project being played: the performance snapshot while replaying, else the live project. */
+  activeProject(): Project {
+    return this.replay?.project ?? this.getProject();
+  }
+
+  /** The live project (settings such as the metronome stay live during a replay). */
+  liveProject(): Project {
+    return this.getProject();
+  }
+
+  tickAt(time: number): number {
+    return this.clock.tickAt(time);
+  }
+
+  timeAt(tick: number): number {
+    return this.clock.timeAt(tick);
+  }
+
+  swingAt(tick: number): number {
+    return this.swing.at(tick);
+  }
+
+  /** Playhead at `time`; it waits at the start tick until the transport's start time comes. */
+  getPosition(time: number): SeqPosition {
+    return positionOf(this._playing ? Math.max(this.startTick, this.clock.tickAt(time)) : this.stoppedTick);
+  }
+
+  private rt(trackId: Id): TrackRt {
+    let rt = this.tracks.get(trackId);
+    if (!rt) {
+      rt = { playing: null, pending: [], history: [], recent: [] };
+      this.tracks.set(trackId, rt);
+    }
+    return rt;
+  }
+
+  private requireTrack(project: Project, trackId: Id): Track {
+    const t = project.tracks.find((x) => x.id === trackId);
+    if (!t) throw new Error(`Unknown track "${trackId}"`);
+    return t;
+  }
+
+  private resolvePlaying(track: Track, slot: number, startTick: number): Playing | null {
+    const clip = Number.isInteger(slot) ? track.clips[slot] : null;
+    return clip ? { slot, clipId: clip.id, startTick } : null;
+  }
+
+  private slotFor(track: Track, tr: Transition): number | null {
+    const slot = tr.row !== null ? tr.row : tr.slot;
+    return slot !== null && track.clips[slot] ? slot : null;
+  }
+
+  getTrackState(trackId: Id): TrackLaunchState {
+    const rt = this.tracks.get(trackId);
+    if (!rt) return { playing: null, queued: null };
+    const q = rt.pending.find((tr) => tr.source === 'live' || tr.requestTick <= this.cursor);
+    let queued: TrackLaunchState['queued'] = null;
+    if (q) {
+      const track = this.activeProject().tracks.find((t) => t.id === trackId);
+      queued = { slot: track ? this.slotFor(track, q) : q.slot, atTick: q.atTick };
+    }
+    return { playing: rt.playing ? { ...rt.playing } : null, queued };
+  }
+
+  /** What plays now (or will play when Play is pressed, while stopped). */
+  getLauncherSnapshot(): LauncherSnapshotEntry[] {
+    return this.activeProject().tracks.map((t) => {
+      const p = this.tracks.get(t.id)?.playing;
+      return { trackId: t.id, playing: p ? { slot: p.slot, startTick: p.startTick } : null };
+    });
+  }
+
+  /** Cuts produced since the last call (the driver releases those voices early). */
+  takeCuts(): NoteCut[] {
+    const c = this.cuts;
+    this.cuts = [];
+    return c;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Transport                                                         */
+  /* ---------------------------------------------------------------- */
+
+  start(time: number, opts: StartOptions = {}): void {
+    const t0 = Number.isFinite(time) ? time : 0;
+    const mode: PlayMode = opts.mode ?? { kind: 'live' };
+    let perf: Performance | null = null;
+    if (mode.kind === 'replay') {
+      // Validate before touching any state: a failed start leaves playback as it was.
+      perf = this.getProject().performances.find((p) => p.id === mode.performanceId) ?? null;
+      if (!perf) throw new Error(`Performance "${mode.performanceId}" not found`);
+    }
+    if (this._playing) this.stopTransport(t0);
+    const base = this.getProject();
+    let project = base;
+    let replay: ReplayState | null = null;
+    let song: SongState | null = null;
+    let fromTick = opts.fromTick;
+    let launcher = opts.launcher;
+    let endTick: number | null = null;
+
+    if (perf) {
+      project = projectFromSnapshot(base, perf.snapshot);
+      fromTick ??= perf.startTick;
+      launcher ??= perf.snapshot.launcher;
+      endTick = perf.endTick;
+    } else if (mode.kind === 'song') {
+      const blocks = songBlocks(base);
+      const total = blocks.length ? blocks[blocks.length - 1].endTick : 0;
+      const first = blocks.findIndex((b) => b.index >= mode.fromBlock);
+      fromTick ??= first >= 0 ? blocks[first].startTick : total;
+      const f = fromTick;
+      // The block containing the start position switches in at the start.
+      song = { blocks: blocks.filter((b) => b.endTick > f), next: 0 };
+      endTick = total;
+    }
+
+    const from = Number.isFinite(fromTick) ? (fromTick as number) : 0;
+    const countIn = clampInt(opts.countInBars ?? 0, 0, 4);
+    const startTick = from - countIn * TICKS_PER_BAR;
+
+    if (mode.kind !== 'live') {
+      this.savedLive = new Map();
+      for (const t of base.tracks) {
+        const p = this.tracks.get(t.id)?.playing ?? null;
+        this.savedLive.set(t.id, p ? { ...p } : null);
+      }
+    } else {
+      this.savedLive = null;
+    }
+
+    this._mode = mode;
+    this.song = song;
+    this.endTick = endTick;
+    this._ended = false;
+    this.clock.reset({ time: t0, tick: startTick, bpm: project.bpm });
+    this.swing.reset(project.swing);
+    this.startTick = startTick;
+    this.musicStartTick = from;
+    this.cursor = startTick;
+    this.historyFloor = startTick;
+    this.clauses = [];
+    this.cuts = [];
+    this.endSentTime = null;
+
+    for (const id of [...this.tracks.keys()]) {
+      if (!project.tracks.some((t) => t.id === id)) this.tracks.delete(id);
+    }
+    for (const track of project.tracks) {
+      const rt = this.rt(track.id);
+      let playing: Playing | null = null;
+      if (launcher) {
+        const e = launcher.find((x) => x.trackId === track.id);
+        const clip = e?.playing && Number.isInteger(e.playing.slot) ? track.clips[e.playing.slot] : null;
+        if (e?.playing && clip) playing = this.resolvePlaying(track, e.playing.slot, loopStartAtOrBefore(e.playing.startTick, clipLength(clip), from));
+      } else if (mode.kind === 'live' && rt.playing) {
+        // Armed while stopped: starts with the transport.
+        playing = this.resolvePlaying(track, rt.playing.slot, from);
+      }
+      rt.playing = playing;
+      rt.pending = [];
+      rt.history = [];
+      rt.recent = [];
+    }
+
+    if (song) {
+      for (const b of song.blocks) {
+        for (const track of project.tracks) {
+          this.insertTransition(this.rt(track.id), {
+            atTick: b.startTick,
+            slot: null,
+            row: b.row,
+            source: 'song',
+            seq: ++this.transitionSeq,
+            requestTick: b.startTick - TICKS_PER_BAR,
+          });
+        }
+      }
+    }
+
+    // Arpeggiator input moves onto the transport grid.
+    this.freeClock = null;
+    this.freeClauses = [];
+    for (const track of project.tracks) {
+      const arp = this.arps.get(track.id);
+      if (!arp) continue;
+      arp.replayDriven = false;
+      arp.changes = [nextArpChange(undefined, arp.latch, startTick, track, arp.velocity)];
+    }
+
+    if (perf) {
+      this.replay = null;
+      replay = this.setupReplay(perf, project);
+    }
+    this.replay = replay;
+    this._playing = true;
+  }
+
+  /**
+   * Stop the transport at `time`. Stop also releases a latched arpeggio
+   * (keys still physically held keep playing on the free-running clock).
+   * The launcher returns to its armed state: in live mode the latest queued
+   * request of each track (or what it was playing) starts again from the top
+   * on the next Play; after song or replay playback the live selection from
+   * before is restored.
+   */
+  stop(time: number): void {
+    const t = Number.isFinite(time) ? time : 0;
+    for (const arp of this.arps.values()) arp.latch = { held: arp.latch.held, latched: [] };
+    if (this._playing) {
+      this.stopTransport(t);
+      return;
+    }
+    if (this.freeClock) {
+      const tick = this.freeClock.tickAt(t);
+      const project = this.getProject();
+      for (const track of project.tracks) {
+        const arp = this.arps.get(track.id);
+        if (arp && arp.changes.length) this.pushLiveArpChange(track, arp, tick);
+      }
+    }
+  }
+
+  private stopTransport(time: number): void {
+    this.stoppedTick = Math.max(this.startTick, this.clock.tickAt(time));
+    const live = this.getProject();
+    for (const [id, rt] of this.tracks) {
+      let armed: Playing | null = null;
+      if (this.savedLive) {
+        const saved = this.savedLive.get(id) ?? null;
+        const track = live.tracks.find((t) => t.id === id);
+        armed = saved && track ? this.resolvePlaying(track, saved.slot, 0) : null;
+      } else {
+        // The latest queued request is the part's most recent intention.
+        let slot: number | null = rt.playing?.slot ?? null;
+        for (let i = rt.pending.length - 1; i >= 0; i--) {
+          if (rt.pending[i].source === 'live') {
+            slot = rt.pending[i].slot;
+            break;
+          }
+        }
+        const track = live.tracks.find((t) => t.id === id);
+        armed = slot !== null && track ? this.resolvePlaying(track, slot, 0) : null;
+      }
+      rt.playing = armed;
+      rt.pending = [];
+      rt.history = [];
+      rt.recent = [];
+    }
+    this._playing = false;
+    this._mode = { kind: 'live' };
+    this.replay = null;
+    this.song = null;
+    this.savedLive = null;
+    this.endTick = null;
+    this._ended = false;
+    this.endSentTime = null;
+    this.clauses = [];
+    this.cuts = [];
+    this.startFreeArp(time);
+  }
+
+  /** Keys still held keep the arpeggiator going on a free clock anchored at `time`. */
+  private startFreeArp(time: number): void {
+    const project = this.getProject();
+    this.freeClauses = [];
+    const active = project.tracks.filter((t) => {
+      const arp = this.arps.get(t.id);
+      return t.arp.enabled && !!arp && arpInput(arp.latch, t.arp.latch).length > 0;
+    });
+    for (const arp of this.arps.values()) {
+      arp.changes = [];
+      arp.replayDriven = false;
+    }
+    if (!active.length) {
+      this.freeClock = null;
+      return;
+    }
+    // The tempo in effect at Stop (a replayed take's clock also holds its later tempo changes).
+    this.freeClock = new TempoMap({ time, tick: 0, bpm: this.clock.bpmAtTime(time) });
+    this.freeCursor = 0;
+    this.freeHistoryFloor = 0;
+    for (const track of active) {
+      const arp = this.arps.get(track.id)!;
+      arp.changes = [nextArpChange(undefined, arp.latch, 0, track, arp.velocity)];
+    }
+  }
+
+  /**
+   * Change tempo at `time` (clamped to 40-220). Call `invalidate(time)`
+   * afterwards to re-time generated events. Notes already handed out that
+   * started before the change and end after it are shortened (via cuts) when
+   * the new tempo makes them end earlier. While a take is replayed, the live
+   * tempo holds until the take's next recorded tempo change.
+   */
+  setTempo(bpm: number, time: number): void {
+    const b = clampBpm(bpm);
+    const t = Number.isFinite(time) ? time : 0;
+    if (this._playing) {
+      const a = this.clock.reanchor(t, b);
+      if (this.replay) this.replay.tempoOverrideTick = a.tick;
+      this.retimeAfter(this.clock, a.tick);
+    }
+    if (this.freeClock) {
+      const a = this.freeClock.reanchor(t, b);
+      this.retimeAfter(this.freeClock, a.tick);
+    }
+  }
+
+  /** Change swing from the tick reached at `time`. Call `invalidate(time)` afterwards. */
+  setSwing(swing: number, time: number): void {
+    if (!this._playing || !Number.isFinite(time)) return;
+    this.swing.set(this.clock.tickAt(time), clampSwing(swing));
+  }
+
+  /** End the music at `tick` (bounded offline renders of a scene or launcher state). */
+  setEndTick(tick: number | null): void {
+    if (!this._playing) return;
+    this.endTick = tick === null || !Number.isFinite(tick) ? null : Math.max(tick, this.startTick);
+    this._ended = false;
+    this.endSentTime = null;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Launcher                                                          */
+  /* ---------------------------------------------------------------- */
+
+  launchClip(trackId: Id, slot: number, time: number): LaunchResult {
+    const track = this.requireTrack(this.activeProject(), trackId);
+    if (!Number.isInteger(slot) || slot < 0 || slot >= track.clips.length) throw new RangeError(`Clip slot ${slot} is out of range`);
+    return this.request(track, track.clips[slot] ? slot : null, time);
+  }
+
+  stopTrack(trackId: Id, time: number): LaunchResult {
+    return this.request(this.requireTrack(this.activeProject(), trackId), null, time);
+  }
+
+  /** Every track: slot `row` if it holds a clip, otherwise stop. */
+  launchScene(row: number, time: number): LaunchResult[] {
+    const project = this.activeProject();
+    const rows = project.tracks.reduce((m, t) => Math.max(m, t.clips.length), 0);
+    if (!Number.isInteger(row) || row < 0 || row >= rows) throw new RangeError(`Scene row ${row} is out of range`);
+    return project.tracks.map((t) => this.request(t, t.clips[row] ? row : null, time));
+  }
+
+  stopAll(time: number): LaunchResult[] {
+    return this.activeProject().tracks.map((t) => this.request(t, null, time));
+  }
+
+  private request(track: Track, slot: number | null, time: number): LaunchResult {
+    const t = Number.isFinite(time) ? time : 0;
+    const rt = this.rt(track.id);
+    if (!this._playing) {
+      rt.playing = slot === null ? null : this.resolvePlaying(track, slot, 0);
+      rt.pending = [];
+      return { trackId: track.id, slot, atTick: 0, atTime: t };
+    }
+    const nowTick = this.clock.tickAt(t);
+    const at = nextBarTick(nowTick);
+    const result: LaunchResult = { trackId: track.id, slot, atTick: at, atTime: this.clock.timeAt(at) };
+    const queued = rt.pending.find((tr) => tr.source === 'live' && tr.atTick === at);
+    if (queued && queued.slot === slot) return result;
+    // One queued request per track: the newest replaces later live requests.
+    rt.pending = rt.pending.filter((tr) => !(tr.source === 'live' && tr.atTick >= at));
+    this.insertTransition(rt, { atTick: at, slot, row: null, source: 'live', seq: ++this.transitionSeq, requestTick: nowTick });
+    this.cutAtSwitch(rt, at);
+    return result;
+  }
+
+  private insertTransition(rt: TrackRt, tr: Transition): void {
+    let i = rt.pending.length;
+    while (i > 0 && (rt.pending[i - 1].atTick > tr.atTick || (rt.pending[i - 1].atTick === tr.atTick && rt.pending[i - 1].seq > tr.seq))) i--;
+    rt.pending.splice(i, 0, tr);
+  }
+
+  /** Clip notes already generated that sound across a switch at `at` end there. */
+  private cutAtSwitch(rt: TrackRt, at: number): void {
+    for (const e of rt.recent) {
+      if (e.dropped || e.event.source !== 'clip' || e.tick >= at) continue;
+      if (e.naturalEndTick > at) e.naturalEndTick = at;
+      if (e.endTick > at) this.truncate(e, at);
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Arpeggiator                                                       */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Keys held for a track's arpeggiator, in the order played (already
+   * scale-snapped). Uses the track's ArpSettings; latch is applied here.
+   * While the transport is stopped the arp runs on a free clock anchored at
+   * the first press.
+   */
+  setArpHeld(trackId: Id, pitches: readonly number[], time: number, velocity = DEFAULT_ARP_VELOCITY): void {
+    const project = this.activeProject();
+    const track = project.tracks.find((t) => t.id === trackId);
+    if (!track) return;
+    const t = Number.isFinite(time) ? time : 0;
+    let arp = this.arps.get(trackId);
+    if (!arp) {
+      arp = { latch: EMPTY_LATCH, velocity: DEFAULT_ARP_VELOCITY, changes: [], replayDriven: false };
+      this.arps.set(trackId, arp);
+    }
+    arp.latch = updateLatch(arp.latch, pitches);
+    arp.velocity = clamp01(velocity);
+    if (this._playing) {
+      this.pushLiveArpChange(track, arp, this.clock.tickAt(t));
+      return;
+    }
+    if (!this.freeClock) {
+      if (!track.arp.enabled || !arpInput(arp.latch, track.arp.latch).length) {
+        arp.changes = [];
+        return;
+      }
+      this.freeClock = new TempoMap({ time: t, tick: 0, bpm: project.bpm });
+      this.freeCursor = 0;
+      this.freeClauses = [];
+      this.freeHistoryFloor = 0;
+      for (const a of this.arps.values()) a.changes = [];
+    }
+    this.pushLiveArpChange(track, arp, this.freeClock.tickAt(t));
+  }
+
+  private pushLiveArpChange(track: Track, arp: ArpRt, tick: number): void {
+    const change = nextArpChange(changeAt(arp.changes, tick), arp.latch, tick, track, arp.velocity);
+    if (arp.replayDriven) {
+      // A recorded take owns the later changes: insert, keep them.
+      let i = arp.changes.length;
+      while (i > 0 && arp.changes[i - 1].tick > tick) i--;
+      arp.changes.splice(i, 0, change);
+    } else {
+      // Live input describes the state from now on.
+      arp.changes = [...arp.changes.filter((c) => c.tick < tick), change];
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Replay                                                            */
+  /* ---------------------------------------------------------------- */
+
+  private setupReplay(perf: Performance, project: Project): ReplayState {
+    const start = perf.startTick;
+    const end = perf.endTick;
+    const events = perf.events
+      .map((e, i) => ({ e, i }))
+      .filter(({ e }) => Number.isFinite(e.t))
+      .sort((x, y) => x.e.t - y.e.t || x.i - y.i)
+      .map((x) => x.e);
+    const controls: ControlEvent[] = [];
+    const notes: ReplayNote[] = [];
+    const open = new Map<string, { t: number; pitch: number; velocity: number; trackId: Id }>();
+    const arpTracks = new Map(project.tracks.filter((t) => t.arp.enabled).map((t) => [t.id, t]));
+    const arpKeys = new Map<Id, { key: string; pitch: number }[]>();
+    const arpState = new Map<Id, { latch: LatchState; changes: ArpChange[] }>();
+    for (const [id, track] of arpTracks) {
+      arpState.set(id, { latch: EMPTY_LATCH, changes: [nextArpChange(undefined, EMPTY_LATCH, this.startTick, track, DEFAULT_ARP_VELOCITY)] });
+      arpKeys.set(id, []);
+    }
+    const noteKey = (trackId: Id, key: string): string => `${trackId}\u0000${key}`;
+    const close = (k: string, t: number): void => {
+      const o = open.get(k);
+      if (!o) return;
+      open.delete(k);
+      // A recorded tap still sounds: at least one tick.
+      notes.push({ tick: o.t, endTick: Math.max(t, o.t + 1), trackId: o.trackId, pitch: o.pitch, velocity: o.velocity });
+    };
+    const arpInputChange = (trackId: Id, t: number, velocity: number): void => {
+      const track = arpTracks.get(trackId)!;
+      const st = arpState.get(trackId)!;
+      st.latch = updateLatch(st.latch, arpKeys.get(trackId)!.map((k) => k.pitch));
+      st.changes.push(nextArpChange(st.changes[st.changes.length - 1], st.latch, t, track, velocity));
+    };
+
+    for (const e of events) {
+      switch (e.type) {
+        case 'launch':
+          if (e.atTick >= start && e.atTick < end && project.tracks.some((t) => t.id === e.trackId)) {
+            this.insertTransition(this.rt(e.trackId), { atTick: e.atTick, slot: e.slot, row: null, source: 'replay', seq: ++this.transitionSeq, requestTick: e.t });
+          }
+          break;
+        case 'scene':
+        case 'stopAll':
+          if (e.atTick >= start && e.atTick < end) {
+            for (const track of project.tracks) {
+              this.insertTransition(this.rt(track.id), {
+                atTick: e.atTick,
+                slot: null,
+                row: e.type === 'scene' ? e.row : null,
+                source: 'replay',
+                seq: ++this.transitionSeq,
+                requestTick: e.t,
+              });
+            }
+          }
+          break;
+        case 'noteOn': {
+          if (e.t < start || e.t >= end) break;
+          const velocity = clamp01(e.velocity);
+          const keys = arpKeys.get(e.trackId);
+          if (keys) {
+            const i = keys.findIndex((k) => k.key === e.key);
+            if (i >= 0) keys.splice(i, 1);
+            keys.push({ key: e.key, pitch: e.pitch });
+            arpInputChange(e.trackId, e.t, velocity);
+            break;
+          }
+          const k = noteKey(e.trackId, e.key);
+          close(k, e.t);
+          open.set(k, { t: e.t, pitch: e.pitch, velocity, trackId: e.trackId });
+          break;
+        }
+        case 'noteOff': {
+          const keys = arpKeys.get(e.trackId);
+          if (keys) {
+            const i = keys.findIndex((k) => k.key === e.key);
+            if (i < 0 || e.t < start || e.t >= end) break;
+            keys.splice(i, 1);
+            arpInputChange(e.trackId, e.t, arpState.get(e.trackId)!.changes.at(-1)?.velocity ?? DEFAULT_ARP_VELOCITY);
+            break;
+          }
+          close(noteKey(e.trackId, e.key), Math.min(e.t, end));
+          break;
+        }
+        default:
+          if (e.t >= start && e.t < end) controls.push(e);
+      }
+    }
+    for (const k of [...open.keys()]) close(k, end);
+    notes.sort((a, b) => a.tick - b.tick);
+
+    // The whole recorded tempo map goes into the clock now, so a note that
+    // spans a later tempo change gets its true length however the timeline is
+    // windowed (live replay and export agree).
+    const tempos: ReplayState['tempos'] = [];
+    for (const c of controls) if (c.type === 'tempo') tempos.push({ tick: c.t, bpm: clampBpm(c.bpm) });
+    // Starting later in the take (fromTick): changes before the start set the starting tempo.
+    const anchor = this.clock.anchor;
+    let startBpm = anchor.bpm;
+    for (const tp of tempos) if (tp.tick <= this.startTick) startBpm = tp.bpm;
+    if (startBpm !== anchor.bpm) this.clock.reset({ ...anchor, bpm: startBpm });
+    for (const tp of tempos) if (tp.tick > this.startTick) this.clock.reanchorAtTick(tp.tick, tp.bpm);
+
+    for (const [id, st] of arpState) {
+      let arp = this.arps.get(id);
+      if (!arp) {
+        arp = { latch: EMPTY_LATCH, velocity: DEFAULT_ARP_VELOCITY, changes: [], replayDriven: true };
+        this.arps.set(id, arp);
+      }
+      arp.changes = st.changes;
+      arp.replayDriven = true;
+    }
+    return { performance: perf, project, controls, next: 0, notes, tempos, tempoOverrideTick: null };
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Generation                                                        */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Generate every event whose un-swung tick lies in
+   * [generatedTick, tickAt(untilTime)), in tick order, and advance.
+   */
+  process(untilTime: number): SeqEvent[] {
+    let out: SeqEvent[] = [];
+    if (!Number.isFinite(untilTime)) return out;
+    this.batch++;
+    this.inProcess = true;
+    this.dropped.clear();
+    try {
+      const project = this.activeProject();
+      if (this._playing) this.runTransport(untilTime, project, out);
+      else if (this.freeClock) this.runFree(untilTime, project, out);
+    } finally {
+      this.inProcess = false;
+    }
+    if (this.dropped.size) {
+      const dropped = this.dropped;
+      out = out.filter((e) => !(e.kind === 'note' && dropped.has(e)));
+      this.dropped.clear();
+    }
+    out.sort(compareEvents);
+    this.prune();
+    return out;
+  }
+
+  private runTransport(untilTime: number, project: Project, out: SeqEvent[]): void {
+    // Each pass either applies due changes (which consumes them) or advances the cursor.
+    for (let guard = 0; guard < 1_000_000 && !this._ended; guard++) {
+      const untilTick = this.clock.tickAt(untilTime);
+      if (this.cursor >= untilTick) break;
+      const b = this.nextBoundary();
+      if (b <= this.cursor) {
+        this.applyDue(project, out);
+        continue;
+      }
+      const segEnd = Math.min(b, untilTick);
+      this.generate(this.cursor, segEnd, project, out);
+      this.cursor = segEnd;
+    }
+    this.clauses = this.clauses.filter((c) => c.untilTick > this.cursor);
+  }
+
+  private nextBoundary(): number {
+    let b = this.endTick ?? Infinity;
+    for (const rt of this.tracks.values()) if (rt.pending.length && rt.pending[0].atTick < b) b = rt.pending[0].atTick;
+    const song = this.song;
+    if (song && song.next < song.blocks.length) b = Math.min(b, song.blocks[song.next].startTick);
+    const rp = this.replay;
+    if (rp && rp.next < rp.controls.length) b = Math.min(b, rp.controls[rp.next].t);
+    return b;
+  }
+
+  private push(out: SeqEvent[], e: SeqEvent): void {
+    if (!skipped(this.clauses, e.tick, e.time)) out.push(e);
+  }
+
+  private applyDue(project: Project, out: SeqEvent[]): void {
+    const at = this.cursor;
+    if (this.endTick !== null && this.endTick <= at) {
+      if (this.endSentTime === null) {
+        const time = this.clock.timeAt(at);
+        this.push(out, { kind: 'end', tick: at, time });
+        this.endSentTime = time;
+      }
+      this._ended = true;
+      return;
+    }
+    const rp = this.replay;
+    if (rp) while (rp.next < rp.controls.length && rp.controls[rp.next].t <= at) this.applyControl(rp.controls[rp.next++], out);
+    const song = this.song;
+    if (song) {
+      while (song.next < song.blocks.length && song.blocks[song.next].startTick <= at) {
+        const b = song.blocks[song.next++];
+        this.push(out, { kind: 'block', tick: at, time: this.clock.timeAt(at), blockIndex: b.index, sceneRow: b.row });
+      }
+    }
+    const byId = new Map(project.tracks.map((t) => [t.id, t]));
+    const ids = [...project.tracks.map((t) => t.id), ...[...this.tracks.keys()].filter((id) => !byId.has(id))];
+    for (const id of ids) {
+      const rt = this.tracks.get(id);
+      if (!rt || !rt.pending.length || rt.pending[0].atTick > at) continue;
+      const due: Transition[] = [];
+      while (rt.pending.length && rt.pending[0].atTick <= at) due.push(rt.pending.shift()!);
+      const track = byId.get(id);
+      if (!track) continue;
+      const prev = rt.playing;
+      let next = prev;
+      for (const tr of due) {
+        const slot = this.slotFor(track, tr);
+        next = slot === null ? null : this.resolvePlaying(track, slot, tr.atTick);
+      }
+      rt.history.push({ appliedTick: at, prev, due });
+      rt.playing = next;
+      if (!samePlaying(prev, next)) {
+        this.push(out, { kind: 'launch', tick: at, time: this.clock.timeAt(at), trackId: id, slot: next?.slot ?? null, clipId: next?.clipId ?? null });
+      }
+    }
+  }
+
+  private applyControl(ev: ControlEvent, out: SeqEvent[]): void {
+    // Recorded before a later start position (fromTick): applied at the start, not in the past.
+    const tick = Math.max(ev.t, this.cursor);
+    const time = this.clock.timeAt(tick);
+    switch (ev.type) {
+      case 'tempo': {
+        const bpm = clampBpm(ev.bpm);
+        const rp = this.replay;
+        // The clock already follows the recorded tempo map, unless a live
+        // tempo change replaced it: then the take takes over again from here.
+        if (rp && rp.tempoOverrideTick !== null && tick >= rp.tempoOverrideTick) {
+          for (const tp of rp.tempos) if (tp.tick >= tick) this.clock.reanchorAtTick(tp.tick, tp.bpm);
+          rp.tempoOverrideTick = null;
+          this.retimeAfter(this.clock, tick);
+        }
+        this.push(out, { kind: 'tempo', tick, time, bpm });
+        break;
+      }
+      case 'swing': {
+        const swing = clampSwing(ev.swing);
+        this.swing.set(tick, swing);
+        this.push(out, { kind: 'swing', tick, time, swing });
+        break;
+      }
+      case 'macro':
+        this.push(out, { kind: 'macro', tick, time, trackId: ev.trackId, macro: ev.macro, value: ev.value });
+        break;
+      case 'param':
+        this.push(out, { kind: 'param', tick, time, module: ev.module, param: ev.param, value: ev.value });
+        break;
+      case 'mute':
+        this.push(out, { kind: 'mute', tick, time, trackId: ev.trackId, mute: ev.mute });
+        break;
+      case 'master':
+        this.push(out, { kind: 'master', tick, time, volumeDb: ev.volumeDb });
+        break;
+    }
+  }
+
+  private generate(a: number, b: number, project: Project, out: SeqEvent[]): void {
+    // `+ 0` turns Math.ceil's -0 into 0.
+    let bt = Math.ceil(a / TICKS_PER_BEAT) * TICKS_PER_BEAT + 0;
+    if (bt < a) bt += TICKS_PER_BEAT;
+    for (; bt < b; bt += TICKS_PER_BEAT) {
+      const bar = Math.floor(bt / TICKS_PER_BAR);
+      const beat = Math.round((bt - bar * TICKS_PER_BAR) / TICKS_PER_BEAT);
+      this.push(out, {
+        kind: 'beat',
+        tick: bt,
+        time: this.clock.timeAt(bt),
+        bar,
+        beat,
+        beatSeconds: 60 / this.clock.bpmAtTick(bt),
+        countIn: bt < this.musicStartTick,
+      });
+    }
+
+    const cands: Candidate[] = [];
+    const limit = this.endTick ?? Infinity;
+    project.tracks.forEach((track, order) => {
+      const rt = this.tracks.get(track.id);
+      const mono = track.instrument.kind === 'bass';
+      if (rt?.playing) {
+        // No pending switch lies inside the window (switches are boundaries), so the first one bounds every note.
+        const switchTick = Math.min(rt.pending.length ? rt.pending[0].atTick : Infinity, limit);
+        this.clipCandidates(track, order, rt.playing, a, b, switchTick, mono, cands);
+      }
+      this.arpCandidates(track, order, a, b, limit, mono, true, cands);
+    });
+    if (this.replay) this.replayCandidates(project, a, b, limit, cands);
+    cands.sort(compareCandidates);
+    const domain: Domain = { clock: this.clock, swing: this.swing, clauses: this.clauses };
+    for (const c of cands) this.emitNote(c, domain, out);
+  }
+
+  private clipCandidates(track: Track, order: number, p: Playing, a: number, b: number, switchTick: number, mono: boolean, cands: Candidate[]): void {
+    const clip = track.clips[p.slot];
+    if (!clip) return;
+    if (clip.id !== p.clipId) p.clipId = clip.id;
+    const prep = prepareClip(clip, mono);
+    if (!prep.notes.length) return;
+    const len = prep.length;
+    const lo = Math.max(a, p.startTick, this.musicStartTick);
+    if (lo >= b) return;
+    for (let k = Math.max(0, Math.floor((lo - p.startTick) / len)); ; k++) {
+      const base = p.startTick + k * len;
+      if (base >= b) break;
+      for (const n of prep.notes) {
+        const t = base + n.tick;
+        if (t < lo) continue;
+        if (t >= b) break;
+        const natural = Math.min(base + n.end, switchTick);
+        const end = mono ? Math.min(base + n.monoEnd, switchTick) : natural;
+        if (end <= t) continue;
+        cands.push({
+          tick: t,
+          endTick: end,
+          naturalEndTick: natural,
+          trackId: track.id,
+          order,
+          src: 0,
+          pitch: n.pitch,
+          velocity: n.velocity,
+          source: 'clip',
+          clipId: clip.id,
+          swung: true,
+          mono,
+        });
+      }
+    }
+  }
+
+  private arpCandidates(track: Track, order: number, a: number, b: number, limit: number, mono: boolean, swung: boolean, cands: Candidate[]): void {
+    const arp = this.arps.get(track.id);
+    if (!arp || !arp.changes.length || !track.arp.enabled) return;
+    const div = arpDivisionTicks(track.arp.division);
+    const gate = arpGateTicks(track.arp);
+    let g = Math.ceil(a / div) * div + 0;
+    if (g < a) g += div;
+    for (; g < b; g += div) {
+      const ch = changeAt(arp.changes, g);
+      if (!ch || ch.origin === null || g < ch.origin) continue;
+      const set = arpInput(ch, track.arp.latch);
+      if (!set.length) continue;
+      const pitch = arpNoteAt(set, track.arp, Math.round((g - ch.origin) / div));
+      if (pitch === null) continue;
+      const end = Math.min(g + gate, limit);
+      if (end <= g) continue;
+      cands.push({ tick: g, endTick: end, naturalEndTick: end, trackId: track.id, order, src: 2, pitch, velocity: ch.velocity, source: 'arp', swung, mono });
+    }
+  }
+
+  private replayCandidates(project: Project, a: number, b: number, limit: number, cands: Candidate[]): void {
+    const notes = this.replay!.notes;
+    let lo = 0;
+    let hi = notes.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (notes[mid].tick < a) lo = mid + 1;
+      else hi = mid;
+    }
+    const order = new Map(project.tracks.map((t, i) => [t.id, i]));
+    for (let i = lo; i < notes.length && notes[i].tick < b; i++) {
+      const n = notes[i];
+      const idx = order.get(n.trackId);
+      if (idx === undefined || n.tick < this.musicStartTick) continue;
+      const end = Math.min(n.endTick, limit);
+      if (end <= n.tick) continue;
+      cands.push({
+        tick: n.tick,
+        endTick: end,
+        naturalEndTick: end,
+        trackId: n.trackId,
+        order: idx,
+        src: 1,
+        pitch: n.pitch,
+        velocity: n.velocity,
+        source: 'replay',
+        // Recorded ticks already carry the player's timing.
+        swung: false,
+        mono: project.tracks[idx].instrument.kind === 'bass',
+      });
+    }
+  }
+
+  private lastSounding(rt: TrackRt): Emitted | undefined {
+    for (let i = rt.recent.length - 1; i >= 0; i--) if (!rt.recent[i].dropped) return rt.recent[i];
+    return undefined;
+  }
+
+  private emitNote(c: Candidate, d: Domain, out: SeqEvent[]): void {
+    const swing = c.swung && d.swing ? d.swing.at(c.tick) : 0;
+    const time = d.clock.timeAtSwung(c.tick, swing);
+    if (skipped(d.clauses, c.tick, time)) return;
+    const rt = this.rt(c.trackId);
+    let legato = false;
+    if (c.mono) {
+      const prev = this.lastSounding(rt);
+      if (prev && prev.tick === c.tick) {
+        // Two notes starting together on a mono part: the lowest wins.
+        if (c.pitch >= prev.event.pitch) return;
+        this.truncate(prev, c.tick);
+      } else if (prev && prev.tick < c.tick) {
+        legato = prev.naturalEndTick > c.tick;
+        // End exactly where this note starts (a swung and an unswung source may disagree by a few ticks).
+        if (prev.endTick > c.tick) this.truncate(prev, c.tick, time);
+      }
+    }
+    const endTime = d.clock.timeAtSwung(c.endTick, swing);
+    const event: NoteEvent = {
+      kind: 'note',
+      tick: c.tick,
+      time,
+      trackId: c.trackId,
+      pitch: c.pitch,
+      velocity: c.velocity,
+      duration: Math.max(0, endTime - time),
+      durationTicks: c.endTick - c.tick,
+      legato,
+      source: c.source,
+    };
+    if (c.clipId !== undefined) event.clipId = c.clipId;
+    out.push(event);
+    rt.recent.push({
+      event,
+      tick: c.tick,
+      endTick: c.endTick,
+      naturalEndTick: c.naturalEndTick,
+      endTime: time + event.duration,
+      swing,
+      clock: d.clock,
+      batch: this.batch,
+      dropped: false,
+    });
+    if (rt.recent.length > MAX_RECENT) rt.recent.splice(0, rt.recent.length - MAX_RECENT);
+  }
+
+  /**
+   * Shorten an emitted note to end at `tick` (at `atTime` when given): in
+   * place while it is still in the batch being built, else via a cut. A note
+   * is never lengthened.
+   */
+  private truncate(e: Emitted, tick: number, atTime?: number): void {
+    const newEnd = Math.max(e.tick, tick);
+    if (newEnd >= e.endTick) return;
+    e.endTick = newEnd;
+    const ev = e.event;
+    const drop = newEnd <= e.tick;
+    const endTime = drop ? ev.time : Math.min(e.endTime, Math.max(ev.time, atTime ?? e.clock.timeAtSwung(newEnd, e.swing)));
+    const shortened = endTime < e.endTime;
+    e.endTime = endTime;
+    if (this.inProcess && e.batch === this.batch) {
+      if (drop) {
+        e.dropped = true;
+        this.dropped.add(ev);
+      } else {
+        ev.durationTicks = newEnd - e.tick;
+        ev.duration = endTime - ev.time;
+      }
+      return;
+    }
+    if (drop) e.dropped = true;
+    if (drop || shortened) this.cuts.push({ note: ev, trackId: ev.trackId, tick: newEnd, time: endTime });
+  }
+
+  /**
+   * After a tempo change at `tick` of `clock`: notes that started before it
+   * and end after it follow the new tempo. A note still in the batch being
+   * built is re-timed in place (longer or shorter); one already handed out can
+   * only be shortened, by a cut, since a scheduled voice cannot be lengthened.
+   */
+  private retimeAfter(clock: TempoMap, tick: number): void {
+    for (const rt of this.tracks.values()) {
+      for (const e of rt.recent) {
+        if (e.dropped || e.clock !== clock || e.endTick <= tick) continue;
+        // Notes that sound from the change on move as a whole: invalidate() regenerates them.
+        if (swingWarp(e.tick, e.swing) >= tick) continue;
+        const ev = e.event;
+        const end = Math.max(ev.time, clock.timeAtSwung(e.endTick, e.swing));
+        if (this.inProcess && e.batch === this.batch) {
+          ev.duration = end - ev.time;
+          e.endTime = end;
+        } else if (end < e.endTime - 1e-9) {
+          e.endTime = end;
+          this.cuts.push({ note: ev, trackId: ev.trackId, tick: e.endTick, time: end });
+        }
+      }
+    }
+  }
+
+  private runFree(untilTime: number, project: Project, out: SeqEvent[]): void {
+    const clock = this.freeClock!;
+    const untilTick = clock.tickAt(untilTime);
+    if (this.freeCursor < untilTick) {
+      const cands: Candidate[] = [];
+      project.tracks.forEach((track, order) =>
+        this.arpCandidates(track, order, this.freeCursor, untilTick, Infinity, track.instrument.kind === 'bass', false, cands),
+      );
+      cands.sort(compareCandidates);
+      const domain: Domain = { clock, swing: null, clauses: this.freeClauses };
+      for (const c of cands) this.emitNote(c, domain, out);
+      this.freeCursor = untilTick;
+      this.freeClauses = this.freeClauses.filter((c) => c.untilTick > this.freeCursor);
+    }
+    if (!this.freeArpActive(project)) {
+      // Nothing held or latched any more: retire the idle clock.
+      this.freeClock = null;
+      this.freeClauses = [];
+      for (const a of this.arps.values()) a.changes = [];
+    }
+  }
+
+  private freeArpActive(project: Project): boolean {
+    for (const track of project.tracks) {
+      const arp = this.arps.get(track.id);
+      if (!arp || !track.arp.enabled || !arp.changes.length) continue;
+      const last = arp.changes[arp.changes.length - 1];
+      if (last.tick > this.freeCursor || arpInput(last, track.arp.latch).length) return true;
+    }
+    return false;
+  }
+
+  /** Transport stopped and the idle arp clock fell behind (throttled tab): skip ahead without a backlog. */
+  skipIdleTo(time: number): void {
+    if (this._playing || !this.freeClock || !Number.isFinite(time)) return;
+    this.freeCursor = Math.max(this.freeCursor, this.freeClock.tickAt(time));
+    this.freeClauses = this.freeClauses.filter((c) => c.untilTick > this.freeCursor);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Invalidation                                                      */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Regenerate events whose (swung) time is >= fromTime on the next
+   * process(). The driver must first cancel every voice/automation it
+   * scheduled at or after `fromTime`; earlier events are not repeated.
+   */
+  invalidate(fromTime: number): void {
+    if (!Number.isFinite(fromTime)) return;
+    // Cuts on cancelled notes are void, and cancelled notes no longer sound.
+    this.cuts = this.cuts.filter((c) => c.note.time < fromTime);
+    for (const rt of this.tracks.values()) rt.recent = rt.recent.filter((e) => e.event.time < fromTime);
+    if (this._playing) this.rewindTransport(fromTime);
+    else if (this.freeClock) this.rewindFree(fromTime);
+  }
+
+  private rewindTransport(fromTime: number): void {
+    const fromTick = this.clock.tickAt(fromTime);
+    // Swing delays notes by up to MAX_SWING_TICKS: earlier ticks can sound at/after fromTime.
+    const r = Math.max(fromTick - MAX_SWING_TICKS, this.startTick, this.historyFloor);
+    const c = this.cursor;
+    if (r >= c) return;
+    for (const rt of this.tracks.values()) {
+      while (rt.history.length && rt.history[rt.history.length - 1].appliedTick >= r) {
+        const h = rt.history.pop()!;
+        rt.playing = h.prev;
+        for (const tr of h.due) this.insertTransition(rt, tr);
+      }
+    }
+    const song = this.song;
+    if (song) {
+      song.next = 0;
+      while (song.next < song.blocks.length && song.blocks[song.next].startTick < r) song.next++;
+    }
+    const rp = this.replay;
+    if (rp) {
+      rp.next = 0;
+      while (rp.next < rp.controls.length && rp.controls[rp.next].t < r) rp.next++;
+    }
+    if (this.endTick !== null && this.endTick >= r) this._ended = false;
+    // The driver cancelled an 'end' at or after fromTime; an earlier one is still out.
+    if (this.endSentTime !== null && this.endSentTime >= fromTime) this.endSentTime = null;
+    this.clauses = [{ untilTick: c, floorTime: fromTime }, ...this.clauses.map((cl) => ({ untilTick: cl.untilTick, floorTime: Math.min(cl.floorTime, fromTime) }))];
+    this.cursor = r;
+  }
+
+  private rewindFree(fromTime: number): void {
+    const clock = this.freeClock!;
+    const r = Math.max(clock.tickAt(fromTime), this.freeHistoryFloor);
+    const c = this.freeCursor;
+    if (r >= c) return;
+    this.freeClauses = [{ untilTick: c, floorTime: fromTime }, ...this.freeClauses.map((cl) => ({ untilTick: cl.untilTick, floorTime: Math.min(cl.floorTime, fromTime) }))];
+    this.freeCursor = r;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Housekeeping                                                      */
+  /* ---------------------------------------------------------------- */
+
+  private prune(): void {
+    const playing = this._playing;
+    if (!playing && !this.freeClock) return;
+    const cursor = playing ? this.cursor : this.freeCursor;
+    const floor = cursor - HISTORY_TICKS;
+    if (floor <= (playing ? this.historyFloor : this.freeHistoryFloor)) return;
+    if (playing) {
+      this.historyFloor = floor;
+      for (const rt of this.tracks.values()) while (rt.history.length && rt.history[0].appliedTick < floor) rt.history.shift();
+      this.clock.prune(this.clock.timeAt(floor));
+      this.swing.prune(floor);
+    } else {
+      this.freeHistoryFloor = floor;
+      this.freeClock!.prune(this.freeClock!.timeAt(floor));
+    }
+    for (const rt of this.tracks.values()) {
+      if (rt.recent.length < 2) continue;
+      const last = rt.recent[rt.recent.length - 1];
+      rt.recent = rt.recent.filter((e) => e === last || Math.max(e.endTick, e.naturalEndTick) >= floor);
+    }
+    for (const arp of this.arps.values()) {
+      let first = 0;
+      while (first + 1 < arp.changes.length && arp.changes[first + 1].tick <= floor) first++;
+      if (first > 0) arp.changes = arp.changes.slice(first);
+    }
+  }
+}

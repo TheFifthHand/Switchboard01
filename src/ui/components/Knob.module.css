@@ -1,0 +1,289 @@
+.knob {
+  --dial: 44px;
+  --w: 68px;
+  --arc: var(--amber);
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  width: var(--w);
+  flex: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.knob[data-size='sm'] {
+  --dial: 34px;
+  --w: 54px;
+}
+
+.knob[data-size='lg'] {
+  --dial: 60px;
+  --w: 84px;
+}
+
+.knob[data-tone='teal'] {
+  --arc: var(--teal);
+}
+
+.knob[data-tone='off'] {
+  --arc: var(--ink-3);
+}
+
+.slider {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 2px 0 1px;
+  border-radius: var(--r-md);
+  outline: none;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.slider:focus-visible {
+  box-shadow: none;
+}
+
+.knob[data-readonly] .slider,
+.knob[data-disabled] .slider {
+  cursor: default;
+}
+
+.dial {
+  position: relative;
+  width: var(--dial);
+  height: var(--dial);
+  border-radius: 50%;
+  transition: box-shadow var(--t-fast) var(--ease);
+}
+
+.slider:focus-visible .dial {
+  box-shadow: 0 0 0 2px var(--shell-hi), 0 0 0 4px var(--teal);
+}
+
+.ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.track,
+.arc {
+  fill: none;
+  stroke-width: 5.5;
+  stroke-linecap: round;
+}
+
+.track {
+  stroke: #cfd3d7;
+}
+
+.arc {
+  stroke: var(--arc);
+}
+
+.knob[data-readonly] .arc {
+  opacity: 0.55;
+}
+
+.tick,
+.tickMajor {
+  stroke: #a9afb5;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+.tickMajor {
+  stroke: #8d949b;
+  stroke-width: 1.8;
+}
+
+.tickDot {
+  fill: #aab0b6;
+}
+
+.tickOn {
+  fill: var(--arc);
+}
+
+/* Body: a static shadow + a knurled skirt that turns, a lit cap that does not
+   (the light source stays put while the knob rotates), and the pointer. */
+.body {
+  position: absolute;
+  inset: 17%;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 0.5px rgba(20, 24, 28, 0.28),
+    0 1px 1.5px rgba(20, 24, 28, 0.26),
+    0 2.5px 6px rgba(20, 24, 28, 0.13);
+}
+
+.skirt {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    repeating-conic-gradient(from 0deg, rgba(40, 46, 52, 0.075) 0deg 3deg, rgba(255, 255, 255, 0.16) 3deg 10deg),
+    linear-gradient(180deg, #f1f2f2 0%, #d6dadd 55%, #c4c9cd 100%);
+  transform: rotate(var(--angle));
+}
+
+.cap {
+  position: absolute;
+  inset: 13%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 28%, #ffffff 0%, #f6f6f5 30%, #e7e9ea 72%, #dadddf 100%);
+  box-shadow:
+    0 0 0 0.5px rgba(20, 24, 28, 0.2),
+    0 0.5px 0 rgba(255, 255, 255, 0.9) inset,
+    0 -1px 1.5px rgba(20, 24, 28, 0.08) inset,
+    0 1px 1.5px rgba(20, 24, 28, 0.12);
+}
+
+.rotor {
+  position: absolute;
+  inset: 0;
+  transform: rotate(var(--angle));
+}
+
+.pointer {
+  position: absolute;
+  left: 50%;
+  top: 7%;
+  width: 2px;
+  height: 36%;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--ink);
+}
+
+.knob[data-size='sm'] .pointer {
+  width: 1.5px;
+  margin-left: -0.75px;
+}
+
+.knob[data-size='lg'] .pointer {
+  width: 2.5px;
+  margin-left: -1.25px;
+  top: 8%;
+  height: 32%;
+}
+
+.knob[data-disabled] .body {
+  opacity: 0.55;
+}
+
+.knob[data-disabled] .pointer {
+  background: var(--ink-3);
+}
+
+.label {
+  max-width: calc(100% + 8px);
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 15px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knob[data-size='lg'] .label {
+  font-size: var(--fs-md);
+  color: var(--ink);
+}
+
+.value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  max-width: calc(100% + 8px);
+  height: 15px;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 15px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.value[data-kind='option'] {
+  font-family: var(--font-ui);
+  letter-spacing: 0;
+}
+
+.knob[data-dragging] .value,
+.slider:focus-visible .value {
+  color: var(--ink);
+}
+
+.knob[data-disabled] .label,
+.knob[data-disabled] .value {
+  color: var(--ink-3);
+  opacity: 0.7;
+}
+
+.modMark {
+  color: var(--teal);
+}
+
+.badge {
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 15px;
+  padding: 0 5px 0 3px;
+  border-radius: 8px;
+  background: var(--teal-ink);
+  color: #eaf6f4;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 15px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  box-shadow: 0 0 0 1.5px var(--surface-hi);
+}
+
+.knob[data-size='lg'] .badge {
+  height: 16px;
+  padding: 0 6px 0 4px;
+  line-height: 16px;
+}
+
+.entry {
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  width: max(100%, 64px);
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--teal);
+  border-radius: var(--r-sm);
+  background: #fff;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  text-align: center;
+  transform: translateX(-50%);
+  box-shadow: 0 0 0 3px var(--teal-wash), var(--shadow-float);
+  outline: none;
+  z-index: 5;
+}
+
+.entry[data-invalid] {
+  border-color: var(--coral);
+  box-shadow: 0 0 0 3px var(--coral-wash);
+}

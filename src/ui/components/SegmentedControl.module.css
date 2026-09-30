@@ -1,0 +1,110 @@
+.group {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #cdd2d6 0%, #d6dadd 100%);
+  box-shadow:
+    inset 0 1px 2px rgba(20, 24, 28, 0.2),
+    inset 0 0 0 1px rgba(20, 24, 28, 0.05),
+    0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.group[data-block] {
+  display: flex;
+  width: 100%;
+}
+
+.group[data-block] .segment {
+  flex: 1 1 0;
+}
+
+.segment {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0 12px 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-md);
+  font-weight: 560;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    background var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+
+.group[data-size='sm'] .segment {
+  height: 28px;
+  padding: 0 10px 0 8px;
+  font-size: var(--fs-sm);
+}
+
+.segment:hover:not(:disabled):not([data-selected]) {
+  background: rgba(255, 255, 255, 0.35);
+  color: var(--ink);
+}
+
+.segment[data-selected] {
+  background: linear-gradient(180deg, #ffffff 0%, #f3f4f5 60%, #eceef0 100%);
+  box-shadow:
+    0 0 0 0.5px rgba(20, 24, 28, 0.18),
+    0 1px 1.5px rgba(20, 24, 28, 0.18),
+    0 2px 4px rgba(20, 24, 28, 0.06),
+    inset 0 1px 0 #ffffff;
+  color: var(--ink);
+}
+
+.segment:focus-visible {
+  z-index: 1;
+}
+
+.segment[data-selected]:focus-visible {
+  box-shadow:
+    0 1px 1.5px rgba(20, 24, 28, 0.18),
+    0 0 0 2px var(--shell-hi),
+    0 0 0 4px var(--teal);
+}
+
+.segment:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.lamp {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(20, 24, 28, 0.2);
+  transition:
+    background var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+
+.segment[data-selected] .lamp {
+  background: var(--teal);
+  box-shadow: 0 0 5px var(--teal-glow);
+}
+
+.text {
+  line-height: 1;
+}
+
+.key {
+  margin-left: 2px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}

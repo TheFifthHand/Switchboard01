@@ -1,16 +1,20 @@
 /**
  * Channel module: the mixer strip of one part.
  *
- *   in -> pump gain -> tremolo gain -> fader gain -> StereoPanner -> out
- *                                                              |-> sendA (post-fader)
- *                                                              |-> sendB (post-fader)
- *                                                              |-> meter (optional)
+ *   in -> pump gain -> tremolo gain -> fader gain -> audible gain -> StereoPanner -> out
+ *                                                                           |-> sendA (post-fader)
+ *                                                                           |-> sendB (post-fader)
+ *                                                                           |-> meter (optional)
  *
  * - Pump is a tempo-synchronized ducking envelope driven by the engine once
  *   per beat (`pump()`); it does not listen to any audio (no sidechain).
  * - Mod input 'level' adds to the tremolo gain (base 1, +1 signal = +100%).
+ *   The sum is clamped to 0..2 (a WaveShaper on the control signal), so
+ *   several cables into the same socket can never invert or blow up the level.
  * - Mod input 'pan' adds to the panner position (clamped by the panner).
- * - Fader gain = level (dB) x audible (mute/solo), always ramped.
+ * - Fader gain = level (dB), audible gain = mute/solo (0/1). They are separate
+ *   nodes so level automation scheduled ahead of time can never undo a mute
+ *   (or re-mute a track) when it lands. Both are always ramped.
  */
 import type { Id, ParamValues } from '../../project/types';
 import { CHANNEL_PARAMS, PUMP_DIVISION_BEATS, dbToGain, readParam } from '../../project/params';
@@ -30,6 +34,14 @@ const METER_FFT = 1024;
 function modAmount(port: string): number {
   return MODULE_DEFS.channel.ports.find((p) => p.id === port && p.direction === 'in')?.modRange?.amount ?? 1;
 }
+
+/**
+ * Tremolo control curve. The shaper input is u = 0.5 + 0.5 x mod, and the
+ * output (the tremolo gain) is clamp(2u, 0, 2) = clamp(1 + mod, 0, 2). Three
+ * points make it exactly piecewise linear; beyond +/-1 the WaveShaper holds
+ * the end values.
+ */
+const TREMOLO_CURVE = new Float32Array([0, 0, 2]);
 
 /**
  * One scheduled segment of the pump gain: a linear move from `v0` to `floor`
@@ -57,7 +69,12 @@ export class ChannelModule implements ModuleNode {
   private readonly pumpGain: GainNode;
   private readonly tremGain: GainNode;
   private readonly levelMod: GainNode;
+  /** Tremolo control: constant 0.5 + scaled mod -> clamping shaper -> tremGain.gain. */
+  private readonly tremBase: ConstantSourceNode;
+  private readonly tremSum: GainNode;
+  private readonly tremShaper: WaveShaperNode;
   private readonly fader: GainNode;
+  private readonly audibleGain: GainNode;
   private readonly panner: StereoPannerNode;
   private readonly panMod: GainNode;
   private readonly sendAGain: GainNode;
@@ -91,6 +108,7 @@ export class ChannelModule implements ModuleNode {
     this.tremGain = ctx.createGain();
     this.levelMod = ctx.createGain();
     this.fader = ctx.createGain();
+    this.audibleGain = ctx.createGain();
     this.panner = ctx.createStereoPanner();
     this.panMod = ctx.createGain();
     this.sendAGain = ctx.createGain();
@@ -99,20 +117,33 @@ export class ChannelModule implements ModuleNode {
     this.inGain.connect(this.pumpGain);
     this.pumpGain.connect(this.tremGain);
     this.tremGain.connect(this.fader);
-    this.fader.connect(this.panner);
+    this.fader.connect(this.audibleGain);
+    this.audibleGain.connect(this.panner);
     this.panner.connect(this.sendAGain);
     this.panner.connect(this.sendBGain);
 
     this.pumpGain.gain.value = 1;
-    this.tremGain.gain.value = 1;
-    this.levelMod.gain.value = modAmount('level');
-    this.levelMod.connect(this.tremGain.gain);
+    // The tremolo gain is driven entirely by its (always running) control
+    // signal: 1 with nothing patched, 1 + mod clamped to 0..2 otherwise.
+    this.tremGain.gain.value = 0;
+    this.tremBase = new ConstantSourceNode(ctx, { offset: 0.5 });
+    this.tremSum = new GainNode(ctx, { channelCount: 1, channelCountMode: 'explicit' });
+    this.tremShaper = new WaveShaperNode(ctx, { curve: TREMOLO_CURVE, oversample: 'none', channelCount: 1, channelCountMode: 'explicit' });
+    this.levelMod.channelCount = 1;
+    this.levelMod.channelCountMode = 'explicit';
+    this.levelMod.gain.value = 0.5 * modAmount('level');
+    this.tremBase.connect(this.tremSum);
+    this.levelMod.connect(this.tremSum);
+    this.tremSum.connect(this.tremShaper);
+    this.tremShaper.connect(this.tremGain.gain);
+    this.tremBase.start();
     this.panMod.gain.value = modAmount('pan');
     this.panMod.connect(this.panner.pan);
 
     // Initial values are set directly: nothing is sounding through a new strip yet.
     this.readParams(params);
     this.fader.gain.value = this.faderTarget();
+    this.audibleGain.gain.value = 1;
     this.panner.pan.value = this.pan;
     this.sendAGain.gain.value = this.sendA;
     this.sendBGain.gain.value = this.sendB;
@@ -154,7 +185,7 @@ export class ChannelModule implements ModuleNode {
   }
 
   private faderTarget(): number {
-    return this.audible ? dbToGain(this.level) : 0;
+    return dbToGain(this.level);
   }
 
   private at(time: number): number {
@@ -181,12 +212,13 @@ export class ChannelModule implements ModuleNode {
   setAudible(audible: boolean, time: number, immediate = false): void {
     if (this.disposed || audible === this.audible) return;
     this.audible = audible;
+    const g = this.audibleGain.gain;
     if (immediate) {
-      this.fader.gain.cancelScheduledValues(0);
-      this.fader.gain.value = this.faderTarget();
+      g.cancelScheduledValues(0);
+      g.value = audible ? 1 : 0;
       return;
     }
-    this.fader.gain.setTargetAtTime(this.faderTarget(), this.at(time), AUDIBLE_TAU);
+    g.setTargetAtTime(audible ? 1 : 0, this.at(time), AUDIBLE_TAU);
   }
 
   isAudible(): boolean {
@@ -351,12 +383,17 @@ export class ChannelModule implements ModuleNode {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.tremBase.stop();
     for (const n of [
       this.inGain,
       this.pumpGain,
       this.tremGain,
       this.levelMod,
+      this.tremBase,
+      this.tremSum,
+      this.tremShaper,
       this.fader,
+      this.audibleGain,
       this.panner,
       this.panMod,
       this.sendAGain,

@@ -24,8 +24,10 @@ import {
   peak,
   render,
   rms,
+  saw,
   sine,
   sines,
+  squareBuffer,
   thd,
   toneAmp,
 } from './fx-helpers';
@@ -93,6 +95,39 @@ describe('FilterModule', () => {
     const full = await filterTone(12000, lp, { cutoff: 1 });
     const over = await filterTone(12000, lp, { cutoff: 6 });
     expect(Math.abs(over - full)).toBeLessThan(0.1);
+  });
+
+  it('square-wave cutoff modulation at full resonance stays bounded and still sweeps', async () => {
+    // A saw through a Q = 12 filter whose cutoff a square LFO throws ±4 octaves
+    // at 14.7 Hz (1/16 notes at 220 BPM, depth 1). Without slew limiting,
+    // Chromium's direct-form biquad rings up to peaks of 10-30 here.
+    const x = saw(110, 2, 0.5);
+    const lfoHz = 14.7;
+    const period = 1 / lfoHz;
+    for (const mode of [0, 1]) {
+      const { L } = await render({
+        seconds: 2,
+        input: x,
+        create: (env, ctx) => {
+          const m = new FilterModule(env, 'f', { mode, cutoff: 1000, resonance: 1 });
+          const lfo = new AudioBufferSourceNode(ctx, { buffer: squareBuffer(ctx, lfoHz) });
+          lfo.connect(m.input('cutoff') as AudioNode);
+          lfo.start(0);
+          return m;
+        },
+      });
+      expect(peak(L, frames(0.1)).value, `mode ${mode}`).toBeLessThan(2);
+      if (mode === 1) {
+        // High-pass: cutoff up (16 kHz) removes the saw, cutoff down (62 Hz) passes it.
+        let up = 0;
+        let down = 0;
+        for (let k = 2; k < 26; k++) {
+          up += rms(L, frames((k + 0.15) * period), frames((k + 0.45) * period)) ** 2;
+          down += rms(L, frames((k + 0.65) * period), frames((k + 0.95) * period)) ** 2;
+        }
+        expect(10 * Math.log10(up / down)).toBeLessThan(-15);
+      }
+    }
   });
 
   it('switching mode mid-note is click-free', async () => {
@@ -210,7 +245,7 @@ describe('ChorusModule', () => {
     expect(bestLag(R, x, frames(0.3), frames(0.4), 1200)).toBe(frames(0.019));
   });
 
-  it('sweeps each line by up to ±3 ms with the right channel 90 degrees behind', async () => {
+  it('sweeps each line by up to ±3 ms with the two LFOs 90 degrees apart', async () => {
     const x = noise(1.2, 0.3);
     const { L, R } = await render({ seconds: 1.2, input: x, create: (env) => new ChorusModule(env, 'c', { mix: 1, depth: 1, rate: 1 }) });
     // Measure the local delay where each LFO is at a turning point (delay momentarily still).
@@ -311,5 +346,20 @@ describe('bypass', () => {
     expect(maxStep(L, frames(0.05))).toBeLessThan(0.02);
     expect(db(toneAmp(L, 300, frames(0.4), frames(0.58)) / 0.5)).toBeGreaterThan(-0.1);
     expect(db(toneAmp(L, 300, frames(0.7), frames(0.99)) / 0.5)).toBeLessThan(-20);
+  });
+
+  it('the latest bypass request wins, even if an earlier one was scheduled later', async () => {
+    const x = sine(300, 1, 0.5);
+    const { L } = await render({
+      seconds: 1,
+      input: x,
+      create: (env) => new FilterModule(env, 'f', { mode: 1, cutoff: 3000 }),
+      setup: (m) => {
+        m.setBypass(true, 0.5);
+        m.setBypass(false, 0.3);
+      },
+    });
+    // Never bypassed: the high-pass keeps removing 300 Hz after 0.5 s.
+    expect(db(toneAmp(L, 300, frames(0.6), frames(0.95)) / 0.5)).toBeLessThan(-20);
   });
 });

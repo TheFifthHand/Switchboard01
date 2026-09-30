@@ -176,7 +176,7 @@ describe('DelayModule', () => {
     expect(peak(L, frames(0.4), frames(0.5)).value).toBeLessThan(1e-4);
   });
 
-  it('changing division mid-render glides without clicks or runaway', async () => {
+  it('changing division mid-render stays bounded and moves the echo to the new time', async () => {
     const x = noise(3, 0.2, 11, 0, 2);
     const { L } = await render({
       seconds: 3,
@@ -185,5 +185,18 @@ describe('DelayModule', () => {
       at: [[1, (m) => m.setParams({ division: 4, feedback: 0.7, mix: 0.5 }, 1)]],
     });
     expect(peak(L).value).toBeLessThan(2);
+
+    // Impulses before and after the change echo on the old and new grid.
+    const clicks = await render({
+      seconds: 3,
+      input: impulses(3, [0.1, 1.5]),
+      create: (env) => new DelayModule(env, 'dl', { division: 1, feedback: 0, width: 0, mix: 1, tone: 12000 }),
+      at: [[1, (m) => m.setParams({ division: 4, feedback: 0, width: 0, mix: 1, tone: 12000 }, 1)]],
+    });
+    const before = echoAt(clicks.L, 0.1 + delaySeconds(1, 120));
+    const after = echoAt(clicks.L, 1.5 + delaySeconds(4, 120));
+    expect(Math.abs(before.index - frames(0.1 + delaySeconds(1, 120)))).toBeLessThanOrEqual(frames(0.001));
+    expect(Math.abs(after.index - frames(1.5 + delaySeconds(4, 120)))).toBeLessThanOrEqual(frames(0.001));
+    expect(after.value).toBeGreaterThan(0.3);
   });
 });

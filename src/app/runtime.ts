@@ -28,6 +28,8 @@ export interface RuntimeState {
   songBlock: number | null;
   tracks: Record<Id, TrackRuntime>;
   recording: RecordingState;
+  /** Clip that Record Notes writes into. */
+  recordTarget: { trackId: Id; slot: number } | null;
   /** Waiting for the count-in bar before recording starts. */
   countingIn: boolean;
   /** Transport stopped itself because scheduling could not keep up (background tab, device). */
@@ -50,6 +52,7 @@ export const runtimeStore = createStore<RuntimeState>({
   songBlock: null,
   tracks: {},
   recording: 'off',
+  recordTarget: null,
   countingIn: false,
   stalled: null,
   muteAll: false,

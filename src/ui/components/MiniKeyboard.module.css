@@ -1,0 +1,198 @@
+.keyboard {
+  position: relative;
+  width: 100%;
+  min-width: 280px;
+  overflow: hidden;
+  border-radius: 3px 3px 7px 7px;
+  background: #2b2e33;
+  box-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.35),
+    inset 0 3px 0 #33373c,
+    0 1px 0 rgba(255, 255, 255, 0.7),
+    0 2px 6px rgba(20, 24, 28, 0.12);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
+.keyboard[data-disabled] {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.white,
+.black {
+  position: absolute;
+  top: 0;
+  overflow: hidden;
+  transition:
+    transform 50ms linear,
+    box-shadow 80ms var(--ease),
+    background 120ms var(--ease);
+}
+
+/* White keys: a lit face with a hairline gap and a visible front edge. */
+.white {
+  bottom: 0;
+  z-index: 1;
+  border-radius: 0 0 5px 5px;
+  background: linear-gradient(180deg, #e9ebec 0%, #fbfbfa 9%, #f7f7f6 70%, #eeeff0 100%);
+  box-shadow:
+    inset -1px 0 0 rgba(20, 24, 28, 0.22),
+    inset 1px 0 0 rgba(255, 255, 255, 0.9),
+    inset 0 -5px 0 #dfe2e4,
+    inset 0 -6px 0 rgba(20, 24, 28, 0.1);
+}
+
+.white[data-pressed],
+.white[data-lit] {
+  background: linear-gradient(180deg, #e2e5e7 0%, #f3f3f2 12%, #f4f3f0 100%);
+  box-shadow:
+    inset -1px 0 0 rgba(20, 24, 28, 0.22),
+    inset 1px 0 0 rgba(255, 255, 255, 0.8),
+    inset 0 -2px 0 #dfe2e4,
+    inset 0 -3px 0 rgba(20, 24, 28, 0.1),
+    inset 0 3px 4px rgba(20, 24, 28, 0.12);
+}
+
+.white[data-scale='out'] {
+  background: linear-gradient(180deg, #d5d9dc 0%, #e1e4e6 9%, #dee1e3 100%);
+}
+
+/* Black keys: graphite caps with a darker front face. */
+.black {
+  z-index: 2;
+  height: 62%;
+  border-radius: 0 0 3.5px 3.5px;
+  background: linear-gradient(180deg, #25282c 0%, #3b3f45 14%, #34383d 80%, #2c2f34 100%);
+  box-shadow:
+    inset 0 -6px 0 #1c1e21,
+    inset 1px 0 0 rgba(255, 255, 255, 0.07),
+    inset -1px 0 0 rgba(0, 0, 0, 0.4),
+    0 2px 3px rgba(0, 0, 0, 0.35);
+}
+
+.black[data-pressed],
+.black[data-lit] {
+  background: linear-gradient(180deg, #202326 0%, #33373c 18%, #30343a 100%);
+  box-shadow:
+    inset 0 -3px 0 #1c1e21,
+    inset 1px 0 0 rgba(255, 255, 255, 0.05),
+    0 1px 1.5px rgba(0, 0, 0, 0.35);
+}
+
+.black[data-scale='out'] {
+  background: linear-gradient(180deg, #5d6268 0%, #767b82 14%, #70757b 100%);
+  box-shadow:
+    inset 0 -6px 0 #5b6066,
+    0 2px 3px rgba(0, 0, 0, 0.22);
+}
+
+.white[data-pressed],
+.black[data-pressed] {
+  transform: translateY(1px);
+}
+
+/* The light: a small amber pool near the front of a sounding key. */
+.glow {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--ease);
+}
+
+.white .glow {
+  background: radial-gradient(ellipse 70% 26% at 50% 86%, rgba(242, 166, 52, 0.55) 0%, rgba(242, 166, 52, 0) 100%);
+}
+
+.black .glow {
+  background: radial-gradient(ellipse 80% 30% at 50% 82%, rgba(246, 184, 80, 0.7) 0%, rgba(246, 184, 80, 0) 100%);
+}
+
+.white[data-lit] .glow,
+.black[data-lit] .glow {
+  opacity: 1;
+  transition-duration: 30ms;
+}
+
+/* Scale dots (teal = in the current scale); the root gets a ring. */
+.dot {
+  position: absolute;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  border-radius: 50%;
+  background: var(--teal);
+}
+
+.white .dot {
+  top: calc(62% + 7px);
+}
+
+.black .dot {
+  bottom: 11px;
+  background: var(--teal-hi);
+}
+
+.white[data-root] .dot,
+.black[data-root] .dot {
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  box-shadow: 0 0 0 2px rgba(35, 149, 142, 0.25);
+}
+
+.black[data-root] .dot {
+  box-shadow: 0 0 0 2px rgba(92, 195, 187, 0.35);
+}
+
+.legend {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 9px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  pointer-events: none;
+}
+
+.black .legend {
+  bottom: 21px;
+}
+
+.keycap {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 13px;
+}
+
+.black .keycap {
+  color: #aab1b8;
+}
+
+.black[data-scale='out'] .keycap {
+  color: #d2d6da;
+}
+
+.name {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 13px;
+}
+
+.white[data-root] .name {
+  color: var(--teal-ink);
+}
+
+.white[data-scale='out'] .keycap,
+.white[data-scale='out'] .name {
+  color: #8c9299;
+}

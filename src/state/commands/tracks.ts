@@ -1,6 +1,6 @@
 /** Per-part edits: name, mute/solo/lock, sound, instrument params, drum voices, arp, macros. */
 import { builtinSampleInfo, kitInfo, presetInfo } from '../../content/catalog';
-import { PRESETS, applyKitToProject, applyPresetToProject, applySamplerToProject } from '../../content/presets';
+import { PRESETS, applyKitToProject, applyPresetToProject, applySamplerToProject, presetMacroMap } from '../../content/presets';
 import { defaultMacroMap } from '../../project/factory';
 import { DRUM_VOICE_PARAM_SPECS, INSTRUMENT_PARAMS, clampParam, specById } from '../../project/params';
 import { specsForModule } from '../../project/resolve';
@@ -202,17 +202,10 @@ export function removeMacroTarget(store: ProjectStore, trackId: Id, macro: Macro
  * with the preset's own overrides for bass/poly presets.
  */
 export function soundMacroMap(track: Track): MacroMap {
-  const map = defaultMacroMap(track.id);
   const inst = track.instrument;
-  if (inst.kind === 'bass' || inst.kind === 'poly') {
-    const preset = PRESETS[inst.presetId];
-    for (const macro of MACRO_IDS) {
-      const targets = preset?.macroMap?.[macro];
-      if (!targets) continue;
-      map[macro] = targets.map(({ slot, ...rest }) => ({ ...rest, module: `${track.id}:${slot}` }));
-    }
-  }
-  return map;
+  const preset = inst.kind === 'bass' || inst.kind === 'poly' ? PRESETS[inst.presetId] : undefined;
+  // Same construction applyPresetToProject uses, so "reset" matches what choosing the sound gives.
+  return preset ? presetMacroMap(track.id, preset) : defaultMacroMap(track.id);
 }
 
 /** Restore the macro mapping of the part's current sound, keeping only targets whose module exists. */

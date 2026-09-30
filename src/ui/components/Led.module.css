@@ -1,0 +1,82 @@
+.led {
+  --lamp: var(--amber);
+  --glow: var(--amber-glow);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.led[data-tone='teal'] {
+  --lamp: var(--teal);
+  --glow: var(--teal-glow);
+}
+
+.led[data-tone='coral'] {
+  --lamp: var(--coral);
+  --glow: var(--coral-glow);
+}
+
+.led[data-tone='neutral'] {
+  --lamp: var(--ink-2);
+  --glow: transparent;
+}
+
+.led[data-on] {
+  color: var(--ink);
+}
+
+.led[data-size='sm'] {
+  gap: 5px;
+  font-size: var(--fs-xs);
+}
+
+.lamp {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #bcc1c6;
+  box-shadow:
+    inset 0 1px 1.5px rgba(20, 24, 28, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.7);
+  transition:
+    background var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+
+.led[data-size='sm'] .lamp {
+  width: 6px;
+  height: 6px;
+}
+
+.led[data-on] .lamp {
+  background: radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.55) 0 18%, transparent 45%), var(--lamp);
+  box-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.1),
+    0 0 7px var(--glow);
+}
+
+.led[data-blink] .lamp {
+  animation: blink 1.2s steps(1, end) infinite;
+}
+
+@keyframes blink {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  60.01%,
+  100% {
+    opacity: 0.25;
+  }
+}
+
+.text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

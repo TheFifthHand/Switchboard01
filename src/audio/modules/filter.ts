@@ -5,13 +5,22 @@
  *   in ─┬─ selLP ─ LP ─┐
  *       ├─ selHP ─ HP ─┼─ sum ─ shelf ─> out
  *       └─ selBP ─ BP ─┘
- *   cutoff mod ─ clamp(±1) ─ ×4800 ct ─> detune of all three filters
+ *   cutoff mod ─ clamp(±1) ─ one-pole 50 Hz ─ ×4800 ct ─> detune of all three filters
  *
  * Each mode has its own biquad, so switching mode is a short crossfade of
  * their inputs instead of changing a live filter's type (which clicks); the
  * old mode's filter rings out naturally. Resonance maps to a conventional Q of 0.5..12; low/high-pass use
  * Web Audio's dB form of that Q, and their output is trimmed as Q rises so
  * the resonant peak stays musical rather than jumping +21 dB.
+ *
+ * The modulation is slew-limited because BiquadFilterNode is a direct-form
+ * structure: when a square or saw LFO drops the cutoff several octaves within
+ * a few samples at high Q, the filter's stored slope turns into a huge
+ * oscillation at the new cutoff (peaks near 30 were measured from a saw of
+ * amplitude 0.5; about 1.5 with the smoother). A 3 ms one-pole
+ * removes that while leaving tempo-synced LFO sweeps essentially untouched
+ * (-0.4 dB, about 3 ms of lag at 15 Hz). Its output is a weighted average of
+ * clamped values, so the ±4800 cent bound still holds.
  */
 import { FILTER_PARAMS, readParam } from '../../project/params';
 import type { Id, ParamValues } from '../../project/types';
@@ -22,6 +31,8 @@ const MODE_TYPES: readonly BiquadFilterType[] = ['lowpass', 'highpass', 'bandpas
 const BANDPASS = 2;
 /** Full-scale cutoff modulation in cents (matches the port's modRange). */
 const CUTOFF_MOD_CENTS = 4800;
+/** Corner of the one-pole smoother on the cutoff modulation (Hz). */
+export const CUTOFF_MOD_SMOOTH_HZ = 50;
 const SHELF_FREQ = 3500;
 
 /** Conventional Q for resonance 0..1: 0.5 .. 12. */
@@ -54,12 +65,16 @@ export class FilterModule extends EffectModule {
     sum.connect(this.shelf);
     this.shelf.connect(this.bypass.processed);
 
-    // Modulation: clamp the summed signal to ±1, then scale to cents.
-    const modIn = this.own(new GainNode(ctx, { gain: 1, channelCount: 1, channelCountMode: 'explicit' }));
-    const modClamp = this.own(new WaveShaperNode(ctx, { curve: identityCurve(), channelCount: 1, channelCountMode: 'explicit' }));
-    const modScale = this.own(new GainNode(ctx, { gain: CUTOFF_MOD_CENTS, channelCount: 1, channelCountMode: 'explicit' }));
+    // Modulation: clamp the summed signal to ±1, slew-limit it, then scale to cents.
+    const mono = { channelCount: 1, channelCountMode: 'explicit' } as const;
+    const modIn = this.own(new GainNode(ctx, { gain: 1, ...mono }));
+    const modClamp = this.own(new WaveShaperNode(ctx, { curve: identityCurve(), ...mono }));
+    const a = Math.exp((-2 * Math.PI * CUTOFF_MOD_SMOOTH_HZ) / ctx.sampleRate);
+    const modSmooth = this.own(new IIRFilterNode(ctx, { feedforward: [1 - a], feedback: [1, -a], ...mono }));
+    const modScale = this.own(new GainNode(ctx, { gain: CUTOFF_MOD_CENTS, ...mono }));
     modIn.connect(modClamp);
-    modClamp.connect(modScale);
+    modClamp.connect(modSmooth);
+    modSmooth.connect(modScale);
     this.registerMod('cutoff', modIn);
 
     for (let i = 0; i < MODE_TYPES.length; i++) {

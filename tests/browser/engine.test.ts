@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { AudioEngine, loadEngineWorklets } from '../../src/audio/engine';
 import { OUTPUT_CEILING, type EngineFactory, type MeterFrame } from '../../src/audio/contracts';
-import { MASTER_ID, conn, createInstrument, moduleId } from '../../src/project/factory';
+import { MASTER_ID, conn, createClip, createInstrument, moduleId } from '../../src/project/factory';
 import { Rng } from '../../src/project/rng';
 import type { Connection, Project } from '../../src/project/types';
 import {
@@ -200,7 +200,9 @@ describe('AudioEngine Mute All and panic', () => {
     h.at(0.9, () => h.engine.setMuteAll(false));
     h.at(1.1, () => h.engine.scheduleNote('t4', { pitch: A4, velocity: 0.5, time: 1.2, duration: 0.3 }));
     const { L, R } = await h.render();
-    // The tail really was there before muting.
+    // The tail really was there before muting: t4's note is over (dry) by
+    // ~0.28 s, so 440 Hz after 0.32 s can only be its reverb and echoes.
+    expect(toneAmp(L, 440, 0.32, 0.58)).toBeGreaterThan(0.01);
     expect(rms(L, 0.3, 0.58)).toBeGreaterThan(1e-3);
     expect(voicesAfterMute).toBe(0);
     expect(peak(L, 0.62, 1.19)).toBeLessThan(1e-5);
@@ -259,6 +261,47 @@ describe('AudioEngine mute and solo', () => {
     expect(a4).toBeLessThan(1e-3);
     expect(b4).toBeLessThan(1e-3);
   });
+
+  it('sends are post-fader: they follow the channel level and go silent with mute', async () => {
+    const p = coreProject();
+    p.patch.connections.push(conn('t3:ch', 'sendA', MASTER_ID, 'in'));
+    p.tracks[2].macros = { ...p.tracks[2].macros, space: 0.5 / 0.85 }; // -> sendA 0.5
+    const quieter = clone(p);
+    moduleParams(quieter, 't3:ch').level = -6;
+    const muted = clone(quieter);
+    muted.tracks[2].mute = true;
+    const h = await harness(1.6, p);
+    h.engine.scheduleNote('t3', { pitch: A4, velocity: 0.2, time: 0.02 });
+    h.at(0.5, () => h.engine.setProject(quieter));
+    h.at(1.0, () => h.engine.setProject(muted));
+    const { L } = await h.render();
+    // Direct 0.2 + send 0.5 x 0.2.
+    expect(toneAmp(L, 440, 0.1, 0.45)).toBeCloseTo(0.3, 3);
+    expect(toneAmp(L, 440, 0.6, 0.95)).toBeCloseTo(0.3 * 10 ** (-6 / 20), 3);
+    expect(toneAmp(L, 440, 1.1, 1.55)).toBeLessThan(1e-4);
+  });
+
+  it('level automation scheduled ahead never undoes a mute, nor re-mutes an unmuted part', async () => {
+    const p = coreProject();
+    const muted = clone(p);
+    muted.tracks[2].mute = true;
+    const h = await harness(2.4, p);
+    h.engine.scheduleNote('t3', { pitch: A4, velocity: 0.5, time: 0.01 });
+    // Scheduled while audible, lands while muted.
+    h.engine.scheduleParam('t3:ch', 'level', -6, 0.6);
+    h.at(0.4, () => h.engine.setProject(muted));
+    h.at(1.05, () => h.engine.setProject(p));
+    // Scheduled while muted, lands after unmuting.
+    h.at(1.5, () => h.engine.setProject(muted));
+    h.at(1.55, () => h.engine.scheduleParam('t3:ch', 'level', -12, 1.8));
+    h.at(1.65, () => h.engine.setProject(p));
+    const { L } = await h.render();
+    const db = (t0: number, t1: number) => 20 * Math.log10(toneAmp(L, 440, t0, t1) / 0.5);
+    expect(db(0.1, 0.35)).toBeCloseTo(0, 1);
+    expect(toneAmp(L, 440, 0.5, 1.0)).toBeLessThan(1e-4); // stays muted through the 0.6 s point
+    expect(db(1.15, 1.45)).toBeCloseTo(-6, 1); // unmuted at the automated level
+    expect(db(1.9, 2.3)).toBeCloseTo(-12, 1); // the point scheduled while muted does not re-mute
+  });
 });
 
 describe('AudioEngine project updates', () => {
@@ -292,13 +335,37 @@ describe('AudioEngine project updates', () => {
     const h = await harness(0.1, p, factory);
     const updatesBefore = built.map((b) => b.updates);
     const statsBefore = h.engine.getStats();
+    // Note edits replace the tracks array (as the store does) but leave every
+    // instrument, macro and module untouched.
+    const noteEdits: Project[] = Array.from({ length: 200 }, (_, i) => ({
+      ...p,
+      updatedAt: 5000 + i,
+      tracks: p.tracks.map((t, k) => (k === 2 ? { ...t, clips: [createClip('c', 1, [{ tick: i, pitch: 60, velocity: 1, duration: 24 }]), null, null, null] } : t)),
+    }));
     const t0 = performance.now();
     for (let i = 0; i < 2000; i++) h.engine.setProject({ ...p, name: `rename ${i}`, updatedAt: i });
+    for (const q of noteEdits) h.engine.setProject(q);
     const elapsed = performance.now() - t0;
     expect(elapsed).toBeLessThan(150);
     expect(built.map((b) => b.updates)).toEqual(updatesBefore);
     expect(h.engine.getStats()).toEqual(statsBefore);
     await h.render();
+  });
+
+  it('instrument automation does not carry over to a different instrument kind', async () => {
+    const p = coreProject();
+    const poly = clone(p);
+    poly.tracks[2].instrument = createInstrument('poly');
+    poly.tracks[2].instrument.params.level = 0; // same stored level as the bass had
+    const h = await harness(1, p);
+    h.engine.scheduleNote('t3', { pitch: A4, velocity: 0.4, time: 0.02, duration: 0.3 });
+    h.engine.scheduleParam('t3:inst', 'level', -12, 0.1);
+    h.at(0.4, () => h.engine.setProject(poly));
+    h.at(0.5, () => h.engine.scheduleNote('t3', { pitch: A4, velocity: 0.4, time: 0.55, duration: 0.3 }));
+    const { L } = await h.render();
+    const db = (t0: number, t1: number) => 20 * Math.log10(toneAmp(L, 440, t0, t1) / 0.4);
+    expect(db(0.15, 0.3)).toBeCloseTo(-12, 1); // the bass follows the automation
+    expect(db(0.6, 0.8)).toBeCloseTo(0, 1); // the new poly engine starts from the project value
   });
 
   it('applies master volume changes from the project', async () => {

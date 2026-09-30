@@ -1,0 +1,245 @@
+/**
+ * Optional Tips.
+ *
+ * - `TipsProvider` publishes the remembered "Tips" setting (owned by the app's
+ *   UI store) to every control; `useTips()` reads or toggles it.
+ * - `Tooltip` explains a control in plain language first and technical detail
+ *   second. It appears after ~350 ms of hover and immediately on keyboard
+ *   focus, never intercepts the pointer (pointer-events: none), hides the
+ *   moment anything is pressed so it never gets in the way of playing, and is
+ *   kept inside the viewport.
+ * - When Tips are off, a tooltip still shows a control's `name` if it has one
+ *   (icon-only buttons need their name), but no explanations.
+ * - The trigger is linked with aria-describedby to a hidden description, so
+ *   screen readers get the same text whether or not the bubble is visible.
+ */
+import {
+  cloneElement,
+  createContext,
+  isValidElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
+import styles from './Tooltip.module.css';
+
+/* ------------------------------------------------------------------ */
+/* Tips setting                                                        */
+/* ------------------------------------------------------------------ */
+
+export interface TipsContextValue {
+  enabled: boolean;
+  setEnabled(enabled: boolean): void;
+}
+
+const TipsContext = createContext<TipsContextValue>({ enabled: true, setEnabled: () => {} });
+
+export interface TipsProviderProps {
+  enabled: boolean;
+  /** Called by `useTips().setEnabled` (e.g. from a Tips switch). */
+  onEnabledChange?(enabled: boolean): void;
+  children?: ReactNode;
+}
+
+export function TipsProvider({ enabled, onEnabledChange, children }: TipsProviderProps) {
+  const setEnabled = useCallback((v: boolean) => onEnabledChange?.(v), [onEnabledChange]);
+  const value = useMemo(() => ({ enabled, setEnabled }), [enabled, setEnabled]);
+  return <TipsContext.Provider value={value}>{children}</TipsContext.Provider>;
+}
+
+export function useTips(): TipsContextValue {
+  return useContext(TipsContext);
+}
+
+/* ------------------------------------------------------------------ */
+/* Tooltip                                                             */
+/* ------------------------------------------------------------------ */
+
+export const TOOLTIP_DELAY_MS = 350;
+const MARGIN = 8;
+const GAP = 8;
+
+export interface TooltipProps {
+  /** Short name of the control, shown first (and even when Tips are off). */
+  name?: string;
+  /** Plain-language explanation of the audible result. */
+  tip?: ReactNode;
+  /** Technical detail, shown second in smaller type. */
+  detail?: ReactNode;
+  /** Preferred side; flips when there is no room. */
+  placement?: 'top' | 'bottom';
+  disabled?: boolean;
+  /** The trigger. It must accept `aria-describedby` and render a DOM element. */
+  children: ReactElement;
+}
+
+interface Pos {
+  left: number;
+  top: number;
+  side: 'top' | 'bottom';
+}
+
+export function Tooltip({ name, tip, detail, placement = 'top', disabled, children }: TooltipProps) {
+  const { enabled } = useTips();
+  const showTip = enabled && (tip !== undefined || detail !== undefined);
+  const hasContent = !disabled && (Boolean(name) || showTip);
+
+  const descId = useId();
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const timer = useRef<number | undefined>(undefined);
+  // After a press, stay hidden until the pointer leaves the control.
+  const suppressed = useRef(false);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<Pos | null>(null);
+
+  const clearTimer = () => {
+    if (timer.current !== undefined) window.clearTimeout(timer.current);
+    timer.current = undefined;
+  };
+  const hide = useCallback(() => {
+    clearTimer();
+    setOpen(false);
+    setPos(null);
+  }, []);
+
+  useEffect(() => () => clearTimer(), []);
+  useEffect(() => {
+    if (!hasContent) hide();
+  }, [hasContent, hide]);
+
+  // Hide on window blur, scroll or resize: the anchor may have moved.
+  useEffect(() => {
+    if (!open) return;
+    const onAway = () => hide();
+    window.addEventListener('blur', onAway);
+    window.addEventListener('resize', onAway);
+    window.addEventListener('scroll', onAway, true);
+    return () => {
+      window.removeEventListener('blur', onAway);
+      window.removeEventListener('resize', onAway);
+      window.removeEventListener('scroll', onAway, true);
+    };
+  }, [open, hide]);
+
+  const trigger = (): Element | null => anchorRef.current?.firstElementChild ?? null;
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const el = trigger();
+    const bubble = bubbleRef.current;
+    if (!el || !bubble) return;
+    const r = el.getBoundingClientRect();
+    const bw = bubble.offsetWidth;
+    const bh = bubble.offsetHeight;
+    const vw = document.documentElement.clientWidth;
+    const vh = document.documentElement.clientHeight;
+    let side = placement;
+    if (side === 'top' && r.top - GAP - bh < MARGIN) side = 'bottom';
+    else if (side === 'bottom' && r.bottom + GAP + bh > vh - MARGIN && r.top - GAP - bh >= MARGIN) side = 'top';
+    let top = side === 'top' ? r.top - GAP - bh : r.bottom + GAP;
+    top = Math.max(MARGIN, Math.min(vh - MARGIN - bh, top));
+    let left = r.left + r.width / 2 - bw / 2;
+    left = Math.max(MARGIN, Math.min(vw - MARGIN - bw, left));
+    setPos({ left: Math.round(left), top: Math.round(top), side });
+  }, [open, placement, name, tip, detail]);
+
+  if (!isValidElement(children)) return children;
+  if (!hasContent) return children;
+
+  const onPointerOver = (e: PointerEvent) => {
+    if (e.pointerType === 'touch' || suppressed.current || open || timer.current !== undefined) return;
+    timer.current = window.setTimeout(() => {
+      timer.current = undefined;
+      setOpen(true);
+    }, TOOLTIP_DELAY_MS);
+  };
+  const onPointerOut = (e: PointerEvent) => {
+    const to = e.relatedTarget as Node | null;
+    if (to && anchorRef.current?.contains(to)) return;
+    suppressed.current = false;
+    hide();
+  };
+  const onPointerDown = () => {
+    suppressed.current = true;
+    hide();
+  };
+  const onFocus = (e: FocusEvent) => {
+    const t = e.target as Element;
+    let keyboard = false;
+    try {
+      keyboard = t.matches(':focus-visible');
+    } catch {
+      keyboard = false;
+    }
+    if (keyboard && !suppressed.current) {
+      clearTimer();
+      setOpen(true);
+    }
+  };
+  const onBlur = (e: FocusEvent) => {
+    const to = e.relatedTarget as Node | null;
+    if (to && anchorRef.current?.contains(to)) return;
+    hide();
+  };
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && open) hide();
+  };
+
+  const childProps = children.props as { 'aria-describedby'?: string };
+  const describedBy = [childProps['aria-describedby'], descId].filter(Boolean).join(' ');
+  const trig = cloneElement(children as ReactElement<{ 'aria-describedby'?: string }>, { 'aria-describedby': describedBy });
+
+  const descText = [name, showTip ? tip : null, showTip ? detail : null].filter((x) => x !== undefined && x !== null && x !== '');
+
+  return (
+    <span
+      ref={anchorRef}
+      className={styles.anchor}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onPointerDown={onPointerDown}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      onKeyDown={onKeyDown}
+    >
+      {trig}
+      <span id={descId} hidden>
+        {descText.map((t, i) => (
+          <span key={i}>
+            {i > 0 ? ' ' : ''}
+            {t}
+            {typeof t === 'string' && !/[.!?:]$/.test(t) ? '.' : ''}
+          </span>
+        ))}
+      </span>
+      {open &&
+        createPortal(
+          <div
+            ref={bubbleRef}
+            className={styles.bubble}
+            data-side={pos?.side ?? placement}
+            data-ready={pos ? 'true' : 'false'}
+            style={pos ? { left: pos.left, top: pos.top } : { left: -9999, top: -9999 }}
+            aria-hidden="true"
+          >
+            {name && <div className={styles.name}>{name}</div>}
+            {showTip && tip !== undefined && <div className={styles.tip}>{tip}</div>}
+            {showTip && detail !== undefined && <div className={styles.detail}>{detail}</div>}
+          </div>,
+          document.body,
+        )}
+    </span>
+  );
+}

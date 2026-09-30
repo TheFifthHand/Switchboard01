@@ -266,15 +266,28 @@ function validateSampleMeta(raw: unknown, issues: Issues): SampleMeta | null {
   return meta;
 }
 
+/** Check imported-recording metadata (e.g. before adding it to a project). Null when unusable. */
+export function sanitizeSampleMeta(raw: unknown): SampleMeta | null {
+  try {
+    return validateSampleMeta(raw, new Issues());
+  } catch {
+    return null;
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Notes & clips                                                       */
 /* ------------------------------------------------------------------ */
 
-function pitchRange(kind: InstrumentKind): [number, number] {
-  return kind === 'drums' ? [0, DRUM_VOICES - 1] : [0, 127];
+type PitchRange = readonly [number, number];
+const MIDI_RANGE: PitchRange = [0, 127];
+
+/** Pitches a part can play: drum voice indices for kits, MIDI notes otherwise. */
+function playableRange(kind: InstrumentKind): PitchRange {
+  return kind === 'drums' ? [0, DRUM_VOICES - 1] : MIDI_RANGE;
 }
 
-function validateNote(raw: unknown, clipTicks: number, kind: InstrumentKind, ids: Set<Id>, issues: Issues): Note | null {
+function validateNote(raw: unknown, clipTicks: number, range: PitchRange, ids: Set<Id>, issues: Issues): Note | null {
   if (!isObj(raw)) {
     issues.warn('Removed a damaged note.');
     return null;
@@ -288,7 +301,7 @@ function validateNote(raw: unknown, clipTicks: number, kind: InstrumentKind, ids
     issues.warn('Removed a note with invalid values.');
     return null;
   }
-  const [lo, hi] = pitchRange(kind);
+  const [lo, hi] = range;
   const p = Math.round(pitch);
   if (p !== pitch) issues.warn('Rounded a note pitch.');
   if (p < lo || p > hi) {
@@ -308,7 +321,7 @@ function validateNote(raw: unknown, clipTicks: number, kind: InstrumentKind, ids
   return { id: id as string, tick, pitch: p, velocity: v, duration: d };
 }
 
-function validateClipInner(raw: unknown, kind: InstrumentKind, clipIds: Set<Id>, issues: Issues): Clip | null {
+function validateClipInner(raw: unknown, range: PitchRange, clipIds: Set<Id>, issues: Issues): Clip | null {
   if (!isObj(raw)) {
     issues.error('A clip is damaged.');
     return null;
@@ -336,7 +349,7 @@ function validateClipInner(raw: unknown, kind: InstrumentKind, clipIds: Set<Id>,
   const noteIds = new Set<Id>();
   const notes: Note[] = [];
   for (const n of raw.notes as unknown[]) {
-    const note = validateNote(n, ticks, kind, noteIds, issues);
+    const note = validateNote(n, ticks, range, noteIds, issues);
     if (note) notes.push(note);
   }
   const clip: Clip = { id: id as string, name: text(raw.name, 'Clip', issues, 'clip name', 60), bars: bars as ClipBars, notes };
@@ -359,7 +372,7 @@ function validateClipInner(raw: unknown, kind: InstrumentKind, clipIds: Set<Id>,
 export function sanitizeClip(raw: unknown, kind: InstrumentKind): { clip: Clip | null; warnings: string[] } {
   try {
     const issues = new Issues();
-    const clip = validateClipInner(raw, kind, new Set(), issues);
+    const clip = validateClipInner(raw, playableRange(kind), new Set(), issues);
     return { clip: issues.failed ? null : clip, warnings: [...issues.errors, ...issues.warnings()] };
   } catch {
     return { clip: null, warnings: ['The clip could not be read.'] };
@@ -565,7 +578,9 @@ function validateTrack(raw: unknown, index: number, trackIds: Set<Id>, clipIds: 
       clips.push(null);
       continue;
     }
-    const clip = validateClipInner(c, instrument.kind, clipIds, issues);
+    // Any MIDI pitch is kept on load: a part whose instrument changed (for example
+    // bass -> drums) keeps notes it cannot play, so switching back restores them.
+    const clip = validateClipInner(c, MIDI_RANGE, clipIds, issues);
     if (!clip) return null;
     clips.push(clip);
   }

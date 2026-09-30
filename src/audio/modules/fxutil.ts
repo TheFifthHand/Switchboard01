@@ -309,8 +309,16 @@ export class BypassSwitch {
   set(bypass: boolean, time: number): void {
     if (bypass === this.bypassed) return;
     this.bypassed = bypass;
-    this.processed.gain.setTargetAtTime(bypass ? 0 : 1, time, BYPASS_TAU);
-    this.direct.gain.setTargetAtTime(bypass ? 1 : 0, time, BYPASS_TAU);
+    // Drop a crossfade scheduled later than `time` (a change requested out of
+    // order), or it would override this newer state. A fade already running
+    // continues smoothly from its current value.
+    for (const [g, v] of [
+      [this.processed.gain, bypass ? 0 : 1],
+      [this.direct.gain, bypass ? 1 : 0],
+    ] as const) {
+      g.cancelScheduledValues(time);
+      g.setTargetAtTime(v, time, BYPASS_TAU);
+    }
   }
 
   nodes(): AudioNode[] {

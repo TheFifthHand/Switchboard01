@@ -1,0 +1,35 @@
+.app {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) 100px;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 560px;
+  min-width: 1024px;
+  background: var(--shell-lo);
+}
+
+.bannerSlot {
+  min-width: 0;
+}
+
+.main {
+  min-height: 0;
+  min-width: 0;
+  background: linear-gradient(180deg, var(--shell-lo), var(--shell));
+}
+
+.keyboard {
+  min-height: 0;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 14px;
+  background: var(--coral-wash);
+  border-bottom: 1px solid var(--coral);
+  color: var(--coral-ink);
+  font-size: var(--fs-sm);
+}

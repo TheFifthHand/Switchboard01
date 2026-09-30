@@ -1,0 +1,50 @@
+.anchor {
+  display: contents;
+}
+
+.bubble {
+  position: fixed;
+  z-index: 1000;
+  max-width: 264px;
+  padding: 7px 10px 8px;
+  border-radius: var(--r-md);
+  background: #2b2f34;
+  color: var(--ink-inverse);
+  box-shadow: 0 6px 20px rgba(20, 24, 28, 0.22), 0 1px 3px rgba(20, 24, 28, 0.2);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+
+.bubble[data-side='bottom'] {
+  transform: translateY(-2px);
+}
+
+.bubble[data-ready='true'] {
+  opacity: 1;
+  transform: none;
+}
+
+.name {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.name + .tip {
+  margin-top: 2px;
+}
+
+.tip {
+  color: #f1efe9;
+}
+
+.detail {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  color: #aeb5bc;
+  font-size: var(--fs-xs);
+}

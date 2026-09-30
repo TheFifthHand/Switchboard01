@@ -81,6 +81,22 @@ export function cleanName(name: string, max = 60): string | null {
   return s.length ? s : null;
 }
 
+/** Structural equality for JSON-like data (key order ignored; undefined-valued keys count as absent). */
+export function deepEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    const bb = b as unknown[];
+    return a.length === bb.length && a.every((x, i) => deepEqual(x, bb[i]));
+  }
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  const ka = Object.keys(ra).filter((k) => ra[k] !== undefined);
+  const kb = Object.keys(rb).filter((k) => rb[k] !== undefined);
+  return ka.length === kb.length && ka.every((k) => deepEqual(ra[k], rb[k]));
+}
+
 export function run(store: ProjectStore, label: string, recipe: (d: Project) => void, gesture?: string): CommandResult {
   return store.apply(label, recipe, gesture !== undefined ? { gesture } : {});
 }

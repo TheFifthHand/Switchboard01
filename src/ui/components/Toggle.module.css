@@ -1,0 +1,130 @@
+.switch {
+  --lamp: var(--amber);
+  --lamp-glow: var(--amber-glow);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 32px;
+  margin: 0;
+  padding: 4px 8px 4px 4px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  text-align: left;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.switch[data-tone='teal'] {
+  --lamp: var(--teal);
+  --lamp-glow: var(--teal-glow);
+}
+
+.switch[data-tone='coral'] {
+  --lamp: var(--coral);
+  --lamp-glow: var(--coral-glow);
+}
+
+.switch:hover:not(:disabled) {
+  background: rgba(20, 24, 28, 0.04);
+}
+
+.switch:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.label {
+  color: var(--ink-2);
+}
+
+.switch[data-size='sm'] {
+  gap: 7px;
+  font-size: var(--fs-sm);
+}
+
+/* Recessed slot with a raised, gripped lever. */
+.slot {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 18px;
+  border-radius: 5px;
+  background: linear-gradient(180deg, #c3c8cd 0%, #d3d7db 100%);
+  box-shadow:
+    inset 0 1px 2px rgba(20, 24, 28, 0.28),
+    inset 0 0 0 1px rgba(20, 24, 28, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.switch[data-size='sm'] .slot {
+  width: 30px;
+  height: 16px;
+}
+
+.lever {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: calc(100% - 4px);
+  border-radius: 3.5px;
+  background:
+    repeating-linear-gradient(90deg, rgba(20, 24, 28, 0) 0 5px, rgba(20, 24, 28, 0.13) 5px 6px, rgba(255, 255, 255, 0.6) 6px 7px, rgba(20, 24, 28, 0) 7px 9px),
+    linear-gradient(180deg, #ffffff 0%, #eceef0 60%, #dfe2e5 100%);
+  background-position: 3px 0, 0 0;
+  box-shadow:
+    0 0 0 0.5px rgba(20, 24, 28, 0.25),
+    0 1px 1.5px rgba(20, 24, 28, 0.25),
+    inset 0 1px 0 #ffffff;
+  transition: transform var(--t-med) var(--ease);
+}
+
+.switch[data-size='sm'] .lever {
+  width: 14px;
+}
+
+.switch[data-on] .lever {
+  transform: translateX(14px);
+}
+
+.switch[data-size='sm'][data-on] .lever {
+  transform: translateX(12px);
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 34px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.switch[data-on] .state {
+  color: var(--ink);
+}
+
+.lamp {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #b7bcc1;
+  box-shadow: inset 0 1px 1px rgba(20, 24, 28, 0.3);
+  transition: background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+
+.switch[data-on] .lamp {
+  background: var(--lamp);
+  box-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.08),
+    0 0 6px var(--lamp-glow);
+}

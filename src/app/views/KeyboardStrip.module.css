@@ -1,0 +1,69 @@
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 100%;
+  padding: 10px 16px;
+  background: linear-gradient(180deg, var(--shell), var(--shell-lo));
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+
+.octave {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 4px 6px;
+  flex: none;
+}
+.octLabel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 52px;
+}
+.octValue {
+  font-size: 15px;
+  font-weight: 500;
+}
+.octCaption {
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.reset {
+  grid-column: 1 / 4;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--shell-hi);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.keys {
+  flex: 1;
+  min-width: 320px;
+  max-width: 760px;
+}
+
+.assist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+  width: 230px;
+}
+.keyRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.assistNote {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

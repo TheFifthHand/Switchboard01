@@ -21,7 +21,7 @@ import type {
   NoteTrigger,
   VoiceHandle,
 } from './contracts';
-import type { Connection, Id, Instrument, MacroId, ModuleType, ParamValues, PatchModule, PortKind, Project, Track } from '../project/types';
+import { PPQ, type Connection, type Id, type Instrument, type MacroId, type ModuleType, type ParamValues, type PatchModule, type PortKind, type Project, type Track } from '../project/types';
 import { MODULE_DEFS, portDef } from '../project/modules';
 import { BPM_SPEC, INSTRUMENT_PARAMS, MASTER_VOLUME_SPEC, MODULE_PARAMS, clampParam, dbToGain, specById, type ParamSpec } from '../project/params';
 import { macroTargetValue, resolveAllParams } from '../project/resolve';
@@ -165,6 +165,13 @@ interface LiveNote {
   handle: VoiceHandle;
 }
 
+/** A point of the running transport's tempo map: transport `tick` at context `time`. */
+interface TransportAnchor {
+  time: number;
+  tick: number;
+  bpm: number;
+}
+
 /* ------------------------------------------------------------------ */
 /* Engine                                                              */
 /* ------------------------------------------------------------------ */
@@ -222,6 +229,12 @@ export class AudioEngine implements AudioEngineApi {
   /** Automation overlay: module id -> param -> scheduled points (time ascending). */
   private readonly overlay = new Map<Id, Map<string, AutoPoint[]>>();
   private readonly live = new Map<string, LiveNote>();
+  /**
+   * Tempo map of the running transport (null while stopped), so modules
+   * created during playback (an LFO patched in, an undo restoring one) start
+   * phase-aligned instead of free-running.
+   */
+  private transport: TransportAnchor[] | null = null;
 
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
   private timerSeq = 0;
@@ -342,7 +355,9 @@ export class AudioEngine implements AudioEngineApi {
     if (first || project.bpm !== prev.bpm) {
       const bpm = clampParam(BPM_SPEC, project.bpm);
       if (first) this.bpm = bpm;
-      else this.tempoChanged(bpm, now);
+      // The transport usually reports the same change (at its own, exact
+      // time) before the store update arrives here: do not apply it twice.
+      else if (bpm !== this.bpm) this.tempoChanged(bpm, now);
     }
 
     const seedChanged = !first && project.seed !== prev.seed;
@@ -417,6 +432,7 @@ export class AudioEngine implements AudioEngineApi {
       if (m.bypass) node.setBypass(true, now);
       if (node instanceof ChannelModule && this.meters) node.enableMeter();
       if (node instanceof MasterModule) node.output('out')?.connect(this.volume);
+      this.alignToTransport(node, now);
       this.mods.set(m.id, {
         id: m.id,
         type: m.type,
@@ -432,6 +448,25 @@ export class AudioEngine implements AudioEngineApi {
 
     this.rebuildIndexes(project);
     return created;
+  }
+
+  /** Bring a module created while the transport runs onto the transport's phase and tempo map. */
+  private alignToTransport(node: ModuleNode, now: number): void {
+    const map = this.transport;
+    if (!map || map.length === 0) return;
+    let i = 0;
+    while (i + 1 < map.length && map[i + 1].time <= now) i++;
+    const a = map[i];
+    if (node.transportStarted) {
+      if (a.time >= now) {
+        // The start (or the first tempo point) is still ahead: schedule it as is.
+        node.transportStarted(a.time, a.tick, a.bpm);
+      } else {
+        node.transportStarted(now, a.tick + ((now - a.time) * a.bpm * PPQ) / 60, a.bpm);
+      }
+    }
+    // Tempo points still ahead (a module without transport hooks, e.g. a delay, needs them too).
+    for (let k = i + 1; k < map.length; k++) node.setTempo?.(map[k].bpm, map[k].time);
   }
 
   private retireModule(node: ModuleNode): void {
@@ -479,6 +514,11 @@ export class AudioEngine implements AudioEngineApi {
       if (ov) {
         // A real project change to an automated param takes over from the automation.
         for (const param of [...ov.keys()]) if (proj[param] !== rec.projParams[param]) ov.delete(param);
+        // Automation recorded for another instrument kind means nothing to the new one.
+        if (rec.node instanceof InstrumentModule && rec.node.kind !== null) {
+          const track = rec.trackId ? tracks.get(rec.trackId) : undefined;
+          if (track && track.instrument.kind !== rec.node.kind) ov.clear();
+        }
         if (ov.size === 0) this.overlay.delete(rec.id);
       }
       rec.projParams = proj;
@@ -548,6 +588,9 @@ export class AudioEngine implements AudioEngineApi {
         this.dropConnection(rec, now);
       } else if (d.target !== rec.target) {
         rec.target = d.target;
+        // Drop a fade-in that may still be under way (its end point would
+        // otherwise pull the gain back to the old amount), then glide.
+        holdAt(rec.gain.gain, now);
         rec.gain.gain.setTargetAtTime(d.target, now, PARAM_SMOOTHING);
       }
     }
@@ -781,7 +824,9 @@ export class AudioEngine implements AudioEngineApi {
     if (this.disposed || !Number.isFinite(time) || !Number.isFinite(tick)) return;
     const b = clampParam(BPM_SPEC, finiteOr(bpm, this.bpm));
     const t = Math.max(time, this.now());
+    this.transport = null;
     if (b !== this.bpm) this.tempoChanged(b, t);
+    this.transport = [{ time, tick, bpm: b }];
     for (const rec of this.mods.values()) rec.node.transportStarted?.(time, tick, b);
   }
 
@@ -789,6 +834,7 @@ export class AudioEngine implements AudioEngineApi {
     if (this.disposed) return;
     const now = this.now();
     const t = Math.max(finiteOr(time, now), now);
+    this.transport = null;
     for (const ch of this.channels) ch.cancelAfter(t);
     for (const lfo of this.lfos) lfo.transportStopped(t);
     this.cancelClicksAfter(t);
@@ -806,8 +852,21 @@ export class AudioEngine implements AudioEngineApi {
   tempoChanged(bpm: number, time: number): void {
     if (this.disposed || !Number.isFinite(bpm)) return;
     const b = clampParam(BPM_SPEC, bpm);
-    const t = Math.max(finiteOr(time, this.now()), this.now());
+    const now = this.now();
+    const t = Math.max(finiteOr(time, now), now);
     this.bpm = b;
+    const map = this.transport;
+    if (map && map.length) {
+      // Re-anchor the transport tempo map at `t` (later points are superseded).
+      let a = map[0];
+      for (const x of map) if (x.time <= t) a = x;
+      const tick = a.tick + ((t - a.time) * a.bpm * PPQ) / 60;
+      const kept = map.filter((x) => x.time < t);
+      kept.push({ time: t, tick, bpm: b });
+      let first = 0;
+      while (first + 1 < kept.length && kept[first + 1].time <= now) first++;
+      this.transport = kept.slice(first);
+    }
     for (const rec of this.mods.values()) rec.node.setTempo?.(b, t);
   }
 
@@ -831,13 +890,23 @@ export class AudioEngine implements AudioEngineApi {
       g.linearRampToValueAtTime(0, now + MUTE_RAMP);
       this.flushWhenSilent(now + MUTE_RAMP, null);
     } else {
-      // Tails must be gone before the output opens again.
-      this.runPendingFlush();
       if (!this.muted) return;
       this.muted = false;
-      holdAt(g, now);
-      g.linearRampToValueAtTime(1, now + UNMUTE_RAMP);
+      // Tails must be gone before the output opens again. If the fade-out is
+      // still under way, reopen right after its flush; killing voices now,
+      // while they are still audible, would click.
+      if (this.flushTimer !== null) this.flushAfter = () => this.reopen();
+      else this.reopen();
     }
+  }
+
+  /** Ramp the Mute All gain back to unity (unless muted again meanwhile). */
+  private reopen(): void {
+    if (this.muted || this.disposed) return;
+    const t = this.now();
+    const g = this.muteGain.gain;
+    holdAt(g, t);
+    g.linearRampToValueAtTime(1, t + UNMUTE_RAMP);
   }
 
   panic(): void {
@@ -851,12 +920,7 @@ export class AudioEngine implements AudioEngineApi {
     const g = this.muteGain.gain;
     holdAt(g, now);
     g.linearRampToValueAtTime(0, now + PANIC_RAMP);
-    this.flushWhenSilent(now + PANIC_RAMP, () => {
-      if (this.muted) return;
-      const t = this.now();
-      holdAt(g, t);
-      g.linearRampToValueAtTime(1, t + UNMUTE_RAMP);
-    });
+    this.flushWhenSilent(now + PANIC_RAMP, () => this.reopen());
   }
 
   /**
@@ -870,26 +934,21 @@ export class AudioEngine implements AudioEngineApi {
     }
     this.flushAfter = after;
     if (this.offline) {
-      this.runPendingFlush(true);
+      this.runFlush();
       return;
     }
     const check = (): void => {
       this.flushTimer = null;
       const remaining = silentAt + 0.002 - this.now();
       const running = (this.ctx as AudioContext).state === 'running';
-      if (remaining <= 0 || !running) this.runPendingFlush(true);
+      if (remaining <= 0 || !running) this.runFlush();
       else this.flushTimer = this.setTimer(check, remaining * 1000 + 2);
     };
     this.flushTimer = this.setTimer(check, Math.max(0, silentAt - this.now()) * 1000 + 4);
   }
 
-  private runPendingFlush(force = false): void {
-    if (this.flushTimer !== null) {
-      this.clearTimer(this.flushTimer);
-      this.flushTimer = null;
-      force = true;
-    }
-    if (!force) return;
+  /** Kill + flush now, then run the pending follow-up (reopen after a panic / early unmute). */
+  private runFlush(): void {
     const after = this.flushAfter;
     this.flushAfter = null;
     this.killAndFlush();
