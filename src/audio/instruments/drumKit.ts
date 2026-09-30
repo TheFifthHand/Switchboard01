@@ -277,6 +277,10 @@ export class DrumKitEngine implements InstrumentEngine {
     return buffer;
   }
 
+  prepare(): void {
+    this.preload();
+  }
+
   /** Render every slot's buffer now (optional warm-up, e.g. right after choosing a kit). */
   preload(): void {
     if (this.disposed) return;

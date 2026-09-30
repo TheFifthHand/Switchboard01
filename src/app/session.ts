@@ -14,6 +14,7 @@
  */
 import type { MeterFrame } from '../audio/contracts';
 import { AudioEngine } from '../audio/engine';
+import { engineLatencyFrames } from '../audio/worklets/limiter';
 import { SampleBank } from '../audio/instruments/sampleBank';
 import { BLANK_STARTER, JUMP_IN_SCENE_ROW, JUMP_IN_STARTER_ID, STARTERS, getStarter } from '../content/starters';
 import { snapToScale } from '../music/scales';
@@ -32,7 +33,6 @@ import {
 } from '../project/types';
 import { computeRenderPlan, renderOffline, type RenderSource } from '../render/offline';
 import { encodeWav } from '../render/wav';
-import { quantizeTick } from '../state/commands/notes';
 import * as cmd from '../state/commands';
 import { ProjectStore } from '../state/projectStore';
 import { selectSlot, selectTrack, slotFor, uiStore } from '../state/uiStore';
@@ -184,6 +184,7 @@ export class Session {
     this.autosaver?.markSaved(project);
     this.resetRuntimeTracks();
     await this.loadProjectSamples(project);
+    this.engine?.prepareInstruments();
   }
 
   /**
@@ -289,6 +290,7 @@ export class Session {
       this.engine = engine;
       engine.setMasterVolume(project.masterVolumeDb);
       engine.setProject(project);
+      engine.prepareInstruments();
       const sequencer = new Sequencer({ getProject: () => this.store.getState() });
       const transport = new RealtimeTransport({ ctx, engine, sequencer });
       this.sequencer = sequencer;
@@ -421,10 +423,8 @@ export class Session {
   async play(): Promise<void> {
     if (!(await this.startAudio())) return;
     if (this.replayingId) this.endReplay();
-    const p = this.store.getState();
     this.transport!.start({ mode: { kind: 'live' }, countInBars: 0 });
     patchRuntime({ playing: true, mode: 'live', stalled: null, songBlock: null });
-    void p;
     this.refreshLauncherRuntime();
   }
 
@@ -717,7 +717,7 @@ export class Session {
   /** Musical position the player meant: compensate for output latency. */
   private recordingTick(): number {
     const ctx = this.ctx!;
-    const latency = (ctx.outputLatency || 0) + (ctx.baseLatency || 0);
+    const latency = (ctx.outputLatency || 0) + (ctx.baseLatency || 0) + engineLatencyFrames(ctx.sampleRate) / ctx.sampleRate;
     const seq = this.sequencer!;
     return seq.tickAt(ctx.currentTime - latency);
   }
@@ -743,7 +743,7 @@ export class Session {
     const track = p.tracks.find((t) => t.id === trackId);
     if (!track) return;
     const playingSlot = runtimeStore.getState().tracks[trackId]?.playingSlot ?? null;
-    let slot = playingSlot ?? slotFor(ui, trackId);
+    const slot = playingSlot ?? slotFor(ui, trackId);
     if (!track.clips[slot]) {
       const bars: ClipBars = track.instrument.kind === 'drums' ? 1 : 2;
       cmd.createClip(this.store, trackId, slot, bars, 'Take');
@@ -761,7 +761,6 @@ export class Session {
     } else if (seqState.playing?.slot !== slot) {
       this.applyLaunchResults([this.transport!.launchClip(trackId, slot)]);
     }
-    slot = this.noteRec.slot;
   }
 
   stopRecordNotes(): void {
@@ -787,12 +786,9 @@ export class Session {
     const duration = Math.max(6, now - n.recTick);
     let local = (n.recTick - n.recClipStart) % len;
     if (local < 0) local += len;
-    const r = cmd.addRecordedNotes(this.store, rec.trackId, rec.slot, [{ tick: local, pitch: n.pitch, velocity: n.velocity, duration: Math.min(duration, len) }], { quantize: p.settings.recordQuantize, mode: 'overdub' });
-    // Coalesce the take into one undo step.
-    void r;
-    rec.added += 1;
+    const r = cmd.addRecordedNotes(this.store, rec.trackId, rec.slot, [{ tick: local, pitch: n.pitch, velocity: n.velocity, duration: Math.min(duration, len) }], { quantize: p.settings.recordQuantize, mode: 'overdub', gesture: rec.gesture });
+    if (r.changed) rec.added += 1;
     n.recTick = null;
-    void quantizeTick;
   }
 
   /* ------------------------------------------------------------------ */

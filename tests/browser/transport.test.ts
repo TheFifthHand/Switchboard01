@@ -77,6 +77,8 @@ class FakeEngine implements AudioEngineApi {
   }
   scheduleParam(): void {}
   scheduleMacro(): void {}
+  scheduleMute(): void {}
+  scheduleMasterVolume(): void {}
   cancelScheduledAutomation(time: number): void {
     this.automationCancels++;
     this.dropAfter(time);

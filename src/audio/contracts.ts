@@ -78,6 +78,8 @@ export interface InstrumentEngine {
   /** Hard stop of every voice, immediately (Mute All / panic). */
   kill(): void;
   activeVoices(): number;
+  /** Optional warm-up outside the scheduling path (e.g. render drum buffers). */
+  prepare?(): void;
   dispose(): void;
 }
 
@@ -139,7 +141,15 @@ export interface AudioEngineApi {
   scheduleParam(moduleId: Id, param: string, value: number, time: number): void;
   /** Automation: set a macro at a future time; resolves to its mapped targets. */
   scheduleMacro(trackId: Id, macro: MacroId, value: number, time: number): void;
-  /** Cancel automation scheduled after `time` (used when the sequencer invalidates). */
+  /** Automation: mute/unmute a part's channel at a future time (performance replay). Solo still applies. */
+  scheduleMute(trackId: Id, mute: boolean, time: number): void;
+  /** Automation: master volume (dB) at a future time (performance replay). */
+  scheduleMasterVolume(db: number, time: number): void;
+  /**
+   * Cancel everything the engine scheduled on the sequencer's behalf at/after
+   * `afterTime`: param/macro/mute/master automation, pump ducks and metronome
+   * clicks. The sequencer regenerates those events after an invalidation.
+   */
   cancelScheduledAutomation(afterTime: number): void;
 
   /* Transport notifications */

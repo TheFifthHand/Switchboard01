@@ -221,6 +221,24 @@ export class ChannelModule implements ModuleNode {
     g.setTargetAtTime(audible ? 1 : 0, this.at(time), AUDIBLE_TAU);
   }
 
+  /** Timed mute automation: set the audible state at `time` (no early return, so it can be re-timed). */
+  scheduleAudible(audible: boolean, time: number): void {
+    if (this.disposed) return;
+    this.audible = audible;
+    this.audibleGain.gain.setTargetAtTime(audible ? 1 : 0, this.at(time), AUDIBLE_TAU);
+  }
+
+  /** Drop audible automation at/after `time` and settle on `audible` from then on. */
+  cancelAudibleAfter(time: number, audible: boolean): void {
+    if (this.disposed) return;
+    const now = this.ctx.currentTime;
+    const t = Math.max(Number.isFinite(time) ? time : now, now);
+    const g = this.audibleGain.gain;
+    g.cancelScheduledValues(t);
+    this.audible = audible;
+    g.setTargetAtTime(audible ? 1 : 0, t, AUDIBLE_TAU);
+  }
+
   isAudible(): boolean {
     return this.audible;
   }

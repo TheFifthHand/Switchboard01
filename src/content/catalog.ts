@@ -26,7 +26,7 @@ export const KITS: readonly KitInfo[] = [
  * Standard 16-voice layout. Pad index 0 is the bottom-left pad of the 4×4
  * Drums grid. Every kit fills every slot with a sound of the stated role (the
  * hand-percussion kit substitutes percussion for kit pieces but keeps the
- * choke pair on slots 4/5).
+ * choke group on slots 4/5/6).
  */
 export const DRUM_SLOTS = [
   { slot: 0, role: 'kick', name: 'Kick' },

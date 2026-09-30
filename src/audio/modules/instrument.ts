@@ -196,6 +196,11 @@ export class InstrumentModule implements ModuleNode {
     this.kill();
   }
 
+  /** Warm the current instrument's caches (drum buffers) outside the scheduling path. */
+  prepare(): void {
+    this.current?.engine.prepare?.();
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;

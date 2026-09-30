@@ -307,6 +307,8 @@ export interface RecordOptions {
   quantize: QuantizeGrid;
   /** overdub: merge with the existing notes; replace: the take replaces the clip's notes. */
   mode: 'overdub' | 'replace';
+  /** Edits with the same gesture id form one undo step (one Record Notes pass). */
+  gesture?: string;
 }
 
 /**
@@ -357,9 +359,9 @@ export function addRecordedNotes(store: ProjectStore, trackId: Id, slot: number,
     ? run(store, label, (d) => {
         const c = draftClip(d, trackId, slot);
         c.notes = opts.mode === 'replace' ? added : [...c.notes.filter((n) => !addedKeys.has(keyOf(n))), ...added];
-      })
+      }, opts.gesture)
     : run(store, label, (d) => {
         draftTrack(d, trackId).clips[slot] = { id: uid('clip'), name: defaultClipName(p, slot), bars, notes: added };
-      });
+      }, opts.gesture);
   return { ...r, added: added.length, message };
 }

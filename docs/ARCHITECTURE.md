@@ -56,7 +56,11 @@ Rules:
   an audio sidechain.
 - Arrangement: ordered blocks `{sceneId, repeats}`; song length = Σ scene bars × repeats.
 - Performances: a snapshot of the musical state + timestamped events (launch, scene, notes, macro,
-  param, mute, tempo, swing, master). Patch editing is locked during a take.
+  param, mute, tempo, swing, master). During a take the store is locked to an allow-list: only the
+  edits the take records (knob/param moves, macros, mutes, tempo, swing, master volume) go through;
+  routing, clips/steps, sound choices, drum voices, arp and macro assignments are refused with an
+  explanation, because replay uses the take's snapshot and could not reproduce them. A replayed
+  noteOn pairs with the next noteOff of the same track and key.
 
 ## Audio engine
 
@@ -73,13 +77,23 @@ Rules:
   −1 dBFS) → final safety clipper (WaveShaper bounded to the ceiling) → destination.
 - Tempo-synced modules (delay, LFO, pump) follow `tempoChanged()`; LFO phase aligns on
   `transportStarted()`.
-- Deterministic: noise, impulse responses, random LFO steps and drum synthesis are seeded.
+- Deterministic: noise, impulse responses, random LFO steps and drum synthesis are seeded. Renders of
+  the same project match to within float rounding (Chromium sums a node's inputs in an unspecified
+  order, so the last bits can differ, ~1e-7 ≈ −140 dBFS).
+- Constant output latency: the master limiter's 5 ms look-ahead plus one 128-frame render quantum
+  (`engineLatencyFrames`), identical live and in exports. Record Notes compensates for it together
+  with the device's output latency.
+- `cancelScheduledAutomation(t)` drops param/macro/mute/master automation, pump ducks and metronome
+  clicks at/after `t`; the sequencer regenerates them after an invalidation.
 
 ## Scheduling
 
 - `Sequencer` (src/time/sequencer.ts) is a pure class: transport anchor, swing warp, launcher state
   machine (queue at next bar, one clip per track), scenes, arrangement (song mode), performance
   replay, arpeggiator, beat events. `process(untilTime)` returns `SeqEvent[]`.
+- Notes already handed to the engine can be shortened by a **cut** (`Sequencer.takeCuts()`): a clip
+  switch, a mono overlap or a tempo increase releases the voice early. Every driver applies cuts, which
+  is what guarantees two clips never overlap on one track.
 - `RealtimeTransport` (src/time/transport.ts) drives it from a Web Worker ticker (25 ms) with a
   120 ms look-ahead against `AudioContext.currentTime`, dispatches events to the engine, keeps
   handles of voices that have not started so `invalidate()` can cancel and regenerate them, and

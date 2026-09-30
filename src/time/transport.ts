@@ -19,18 +19,11 @@
  * `cancelScheduledAutomation`), and queued UI events; the sequencer then
  * regenerates exactly the events at/after `from`, which are sent again.
  *
- * Automation choices (the engine has no timed mute / master API):
- * - `mute` events become channel level automation: `scheduleParam(<track>:ch,
- *   'level', -60 dB)` to mute (the channel floor) and the channel's resolved
- *   project level to unmute.
- * - `master` events call `engine.setMasterVolume(db)` when the audio clock
- *   reaches the event (delivered from the ticker, like UI events; offline
- *   renders run it at the exact render quantum).
+ * Recorded mute and master-volume events use the engine's timed
+ * `scheduleMute` / `scheduleMasterVolume`, so they are sample-accurate live
+ * and in exports, and cancellable like other automation.
  */
 import type { AudioEngineApi, VoiceHandle } from '../audio/contracts';
-import { moduleId } from '../project/factory';
-import { CHANNEL_PARAMS, readParam } from '../project/params';
-import { resolveModuleParams } from '../project/resolve';
 import { PPQ, type Id, type Project } from '../project/types';
 import { clampBpm } from './clock';
 import type { LaunchResult, SeqEvent, StartOptions } from './contracts';
@@ -45,8 +38,6 @@ export const STALL_THRESHOLD = 0.25;
 export const START_OFFSET = 0.05;
 /** Live changes (tempo, swing, arp input, invalidate) take effect this far ahead of `currentTime`. */
 export const INVALIDATE_MARGIN = 0.01;
-/** Channel level used for a recorded mute (the channel fader's floor). */
-export const MUTED_CHANNEL_DB = -60;
 
 /* ------------------------------------------------------------------ */
 /* Event dispatch (shared with the offline renderer)                   */
@@ -121,13 +112,11 @@ export class EngineDispatcher {
           engine.scheduleMacro(ev.trackId, ev.macro, ev.value, ev.time);
           break;
         case 'mute':
-          engine.scheduleParam(moduleId.channel(ev.trackId), 'level', ev.mute ? MUTED_CHANNEL_DB : this.channelLevel(ev.trackId), ev.time);
+          engine.scheduleMute(ev.trackId, ev.mute, ev.time);
           break;
-        case 'master': {
-          const db = ev.volumeDb;
-          this.o.at(ev.time, () => engine.setMasterVolume(db));
+        case 'master':
+          engine.scheduleMasterVolume(ev.volumeDb, ev.time);
           break;
-        }
         case 'tempo':
           engine.tempoChanged(ev.bpm, ev.time);
           break;
@@ -141,12 +130,6 @@ export class EngineDispatcher {
           break;
       }
     }
-  }
-
-  private channelLevel(trackId: Id): number {
-    const project = this.o.getProject();
-    const mod = project.patch.modules.find((m) => m.id === moduleId.channel(trackId));
-    return mod ? readParam(CHANNEL_PARAMS, resolveModuleParams(project, mod), 'level') : 0;
   }
 
   /** Release (or, before they start, cancel) voices the sequencer shortened after handing them out. */

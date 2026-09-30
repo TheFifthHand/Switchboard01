@@ -42,6 +42,18 @@ export interface LimiterProcessorOptions {
  * Output latency the limiter adds (its look-ahead delay), in sample frames.
  * Everything leaving the engine is late by this amount (~5 ms).
  */
+/**
+ * Constant output latency of a part in the default patch, in frames: the
+ * master limiter's look-ahead plus the Drive module's 2x-oversampling delay
+ * (128 frames in Chromium; the Drive keeps dry and wet aligned so it is the
+ * same at every setting). Measured in tests/browser/realEngine.test.ts. Every
+ * part with a Drive in its chain is delayed by exactly this much, live and in
+ * exports; a part patched without its Drive is 128 frames (~2.7 ms) earlier.
+ */
+export function engineLatencyFrames(sampleRate: number): number {
+  return limiterLatencyFrames(sampleRate) + 128;
+}
+
 export function limiterLatencyFrames(sampleRate: number): number {
   return Math.max(1, Math.round(LIMITER_LOOKAHEAD_MS * 0.001 * sampleRate)) - 1;
 }

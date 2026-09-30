@@ -79,6 +79,15 @@ class ClickEngine implements AudioEngineApi {
   scheduleMacro(trackId: Id, macro: MacroId, value: number, time: number): void {
     this.macros.push({ trackId, macro, value, time });
   }
+  readonly mutes: { trackId: Id; mute: boolean; time: number }[] = [];
+  scheduleMute(trackId: Id, mute: boolean, time: number): void {
+    this.mutes.push({ trackId, mute, time });
+  }
+  scheduleMasterVolume(db: number, time: number): void {
+    this.masterAt.push({ db, time });
+    // Sample-accurate, like the real engine.
+    this.output.gain.setValueAtTime(10 ** (db / 20), time);
+  }
   cancelScheduledAutomation(): void {}
   transportStarted(time: number, tick: number, bpm: number): void {
     this.started = { time, tick, bpm };
@@ -256,7 +265,7 @@ describe('renderOffline', () => {
     expect(hit(384)).toBeCloseTo(0.8 + 0.5, 2);
   });
 
-  it('turns recorded mutes into channel level automation at their times', async () => {
+  it('replays recorded mutes as timed mute automation at their times', async () => {
     let base = createProject({ bpm: 120, now: 0 });
     base = withClip(base, 't2', 0, 1, [[0, 0]]);
     base.patch.modules.find((m) => m.id === 't2:ch')!.params.level = -4;
@@ -274,11 +283,12 @@ describe('renderOffline', () => {
     };
     const f = factory();
     await renderOffline({ project: { ...base, performances: [perf] }, source: { kind: 'performance', performanceId: 'take' }, sampleRate: SR, tailSeconds: 0.1, ...f });
-    expect(f.engines[0].params).toEqual([
-      { module: 't2:ch', param: 'level', value: -60, time: RENDER_START_OFFSET + 0.5 },
-      // Unmute restores the channel's own level from the take's snapshot.
-      { module: 't2:ch', param: 'level', value: -4, time: RENDER_START_OFFSET + 2.5 },
+    expect(f.engines[0].mutes).toEqual([
+      { trackId: 't2', mute: true, time: RENDER_START_OFFSET + 0.5 },
+      { trackId: 't2', mute: false, time: RENDER_START_OFFSET + 2.5 },
     ]);
+    // Mutes never touch the channel level (the fader keeps the take's mix).
+    expect(f.engines[0].params).toEqual([]);
   });
 
   it('is deterministic: two renders of the same request are bit-identical', async () => {

@@ -15,15 +15,20 @@
  * - Region = [start, end] as fractions of the buffer; end > start is
  *   enforced with a minimum region of 5 ms.
  * - One-shot: plays the region once. Fade-in at the start, and a fade-out
- *   that ends exactly at the region end in output time (region / rate). The
- *   note ends at the region end, or earlier on release.
+ *   that ends at the region end (at the unmodulated rate: region / rate in
+ *   output time). The note ends at the region end, or earlier on release.
+ *   The fade-out has a 1 ms floor, so even Fade Out 0 never ends on a click.
+ * - One-shot edge fades are locked to the playhead, not to the clock:
+ *   pitchMod (cents on the source's detune) changes speed as well as pitch,
+ *   so an LFO on Pitch moves the moment the region end is reached. A second
+ *   buffer source plays a low-rate envelope buffer (the fade shape over the
+ *   region, in buffer time) with the same playbackRate and the same pitchMod
+ *   link as the sample, into the edge gain. Both playheads advance
+ *   identically, so the fade always completes exactly as the sample runs out.
  * - Loop: loops the region (loopStart/loopEnd) until release, then the
- *   release envelope. The fade-out time also acts as the minimum release.
+ *   release envelope. Fade In applies at the note start; Fade Out acts as the
+ *   minimum release.
  * - At most SAMPLER_MAX_VOICES voices; the oldest is stolen with a 6 ms fade.
- * - pitchMod (cents, on the source's detune) also changes the speed. A
- *   one-shot's fade-out is placed for the unmodulated rate, so a one-shot
- *   sped up by modulation reaches its region end slightly before the fade
- *   completes. Loop mode is unaffected (it ends on its release envelope).
  */
 import { SAMPLER_PARAMS, dbToGain, readParam } from '../../project/params';
 import type { Instrument, SamplerInstrument } from '../../project/types';
@@ -55,6 +60,85 @@ const SAMPLER_VELOCITY_SENS = 0.5;
 /** Rate limits: +-4 octaves of combined transposition, tempo sync included. */
 const MIN_RATE = 1 / 16;
 const MAX_RATE = 16;
+/** Shortest one-shot fade-out (output seconds): a trimmed end never clicks. */
+const MIN_FADE_OUT = 0.001;
+/** Sample rate of the one-shot edge envelopes: fades need ~0.1 ms resolution, not audio bandwidth. */
+const EDGE_ENV_RATE = 8000;
+/**
+ * The edge envelope is exactly 0 over its last frames before the region end.
+ * This absorbs sub-frame differences between the sample's and the
+ * envelope's playheads, so the sample always runs out while already silent.
+ */
+const EDGE_ENV_ZERO_FRAMES = 2;
+/** Per-engine edge envelope cache: at most this many buffers / frames in total (~8 MB). */
+const EDGE_CACHE_ENTRIES = 16;
+const EDGE_CACHE_FRAMES = 2_000_000;
+
+/**
+ * Fill `out` (sampled at EDGE_ENV_RATE in buffer time from the region start)
+ * with the one-shot edge gain: a linear fade-in over `fadeIn`, 1, and a
+ * linear fade-out over `fadeOut` that reaches 0 just before `regionLen`
+ * (all in seconds of buffer time). Overlapping fades are scaled to fit.
+ */
+function fillEdgeEnvelope(out: Float32Array, regionLen: number, fadeIn: number, fadeOut: number): void {
+  const zeroAt = Math.max(0, regionLen - Math.min(EDGE_ENV_ZERO_FRAMES / EDGE_ENV_RATE, regionLen / 4));
+  let fi = Math.max(0, finiteOr(fadeIn, 0));
+  let fo = Math.max(0, finiteOr(fadeOut, 0));
+  if (fi + fo > zeroAt && fi + fo > 0) {
+    const k = zeroAt / (fi + fo);
+    fi *= k;
+    fo *= k;
+  }
+  // Frame i sits at i / EDGE_ENV_RATE seconds: 1 before zeroAt, 0 from there; then the ramps.
+  const on = Math.min(out.length, Math.ceil(zeroAt * EDGE_ENV_RATE));
+  out.fill(1, 0, on);
+  out.fill(0, on);
+  if (fi > 0) {
+    const n = Math.min(on, Math.ceil(fi * EDGE_ENV_RATE));
+    for (let i = 0; i < n; i++) out[i] = Math.min(out[i], i / EDGE_ENV_RATE / fi);
+  }
+  if (fo > 0) {
+    for (let i = Math.max(0, Math.floor((zeroAt - fo) * EDGE_ENV_RATE)); i < on; i++) {
+      out[i] = Math.min(out[i], Math.max(0, (zeroAt - i / EDGE_ENV_RATE) / fo));
+    }
+  }
+}
+
+/** Small LRU of edge envelope buffers, so repeated notes do not rebuild them. */
+class EdgeEnvelopeCache {
+  private readonly buffers = new Map<string, AudioBuffer>();
+  private frames = 0;
+
+  /** Envelope for a region of `regionLen` buffer seconds with fades in buffer seconds. */
+  get(regionLen: number, fadeIn: number, fadeOut: number): AudioBuffer {
+    const key = `${regionLen}|${fadeIn}|${fadeOut}`;
+    const hit = this.buffers.get(key);
+    if (hit) {
+      this.buffers.delete(key);
+      this.buffers.set(key, hit);
+      return hit;
+    }
+    // The last frame lies at or beyond the region end, so the envelope covers the whole region.
+    const length = Math.max(2, Math.ceil(regionLen * EDGE_ENV_RATE) + 1);
+    const buffer = new AudioBuffer({ length, numberOfChannels: 1, sampleRate: EDGE_ENV_RATE });
+    fillEdgeEnvelope(buffer.getChannelData(0), regionLen, fadeIn, fadeOut);
+    if (length <= EDGE_CACHE_FRAMES) {
+      this.buffers.set(key, buffer);
+      this.frames += length;
+      for (const [k, b] of this.buffers) {
+        if (this.frames <= EDGE_CACHE_FRAMES && this.buffers.size <= EDGE_CACHE_ENTRIES) break;
+        this.buffers.delete(k);
+        this.frames -= b.length;
+      }
+    }
+    return buffer;
+  }
+
+  clear(): void {
+    this.buffers.clear();
+    this.frames = 0;
+  }
+}
 
 interface SamplerSettings {
   start: number;
@@ -131,6 +215,7 @@ interface SamplerVoiceInit {
   destination: AudioNode;
   pitchMod: AudioNode;
   cutoffMod: AudioNode;
+  envelopes: EdgeEnvelopeCache;
 }
 
 class SamplerVoice extends BaseVoice {
@@ -141,50 +226,51 @@ class SamplerVoice extends BaseVoice {
     const T = init.time;
     const region = samplerRegion(init.buffer.duration, s.start, s.end);
     const regionLen = region.end - region.start;
-    const outLen = regionLen / init.rate;
-    const naturalEnd = s.loop ? Infinity : T + outLen;
+    // Nominal (unmodulated) end; pitch modulation can move the real end either way.
+    const naturalEnd = s.loop ? Infinity : T + regionLen / init.rate;
     const vca = new GainNode(ctx, { gain: 0 });
     const amp = new GainEnvelope(vca.gain);
     super(ctx, T, amp, Math.max(s.release, s.fadeOut), naturalEnd, hooks);
 
     const src = new AudioBufferSourceNode(ctx, { buffer: init.buffer, playbackRate: init.rate });
     this.filter = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: s.cutoff, Q: BUTTERWORTH_Q_DB });
+    // Edge fades after the filter, so the output is exactly zero whatever the filter still rings.
     const edges = new GainNode(ctx, { gain: 0 });
     src.connect(this.filter).connect(edges).connect(vca).connect(init.destination);
     this.addNodes(this.filter, edges, vca);
     this.link(init.pitchMod, src.detune);
     this.link(init.cutoffMod, this.filter.detune);
 
-    // Edge fades (output time). In one-shot mode they share the region; if they overlap they are scaled down.
-    let fadeIn = s.fadeIn;
-    let fadeOut = s.loop ? 0 : s.fadeOut;
-    if (!s.loop && fadeIn + fadeOut > outLen) {
-      const k = outLen / (fadeIn + fadeOut);
-      fadeIn *= k;
-      fadeOut *= k;
-    }
-    const edge = new ParamTimeline([edges.gain], 0);
-    if (fadeIn > 0) {
-      edge.set(T, 0);
-      edge.rampLinear(T, T + fadeIn, 1);
-    } else {
-      edge.set(T, 1);
-    }
-    if (!s.loop && fadeOut > 0) edge.rampLinear(T + outLen - fadeOut, T + outLen, 0);
-
     const peak = velocityGain(init.velocity, SAMPLER_VELOCITY_SENS);
     amp.start(T, 0, peak, s.attack, peak, 1);
 
     if (s.loop) {
+      // Fade in at the note start (output time); the loop ends on its release envelope.
+      const edge = new ParamTimeline([edges.gain], 0);
+      if (s.fadeIn > 0) {
+        edge.set(T, 0);
+        edge.rampLinear(T, T + s.fadeIn, 1);
+      } else {
+        edge.set(T, 1);
+      }
       src.loop = true;
       src.loopStart = region.start;
       src.loopEnd = region.end;
       src.start(T, region.start);
+      this.addSource(src);
     } else {
+      // Playhead-locked edge fades (see the file comment). Fade times are output seconds at the
+      // note's rate, i.e. fade x rate seconds of buffer.
+      const envelope = init.envelopes.get(regionLen, s.fadeIn * init.rate, Math.max(s.fadeOut, MIN_FADE_OUT) * init.rate);
+      const envSrc = new AudioBufferSourceNode(ctx, { buffer: envelope, playbackRate: init.rate });
+      envSrc.connect(edges.gain);
+      this.link(init.pitchMod, envSrc.detune);
       // The duration argument is buffer time: the source stops by itself at the region end.
       src.start(T, region.start, regionLen);
+      envSrc.start(T, 0);
+      this.addSource(src);
+      this.addSource(envSrc);
     }
-    this.addSource(src);
   }
 
   applyLive(s: SamplerSettings, time: number): void {
@@ -203,6 +289,7 @@ export class SamplerEngine implements InstrumentEngine {
   private readonly samples: SampleProvider;
   private readonly getBpm: () => number;
   private readonly voices = new Set<SamplerVoice>();
+  private readonly envelopes = new EdgeEnvelopeCache();
   private instrument: SamplerInstrument;
   private settings: SamplerSettings;
   private disposed = false;
@@ -258,6 +345,7 @@ export class SamplerEngine implements InstrumentEngine {
         destination: this.output,
         pitchMod: this.pitchMod,
         cutoffMod: this.cutoffMod,
+        envelopes: this.envelopes,
       },
       this.hooks,
     );
@@ -292,6 +380,7 @@ export class SamplerEngine implements InstrumentEngine {
     this.disposed = true;
     for (const v of [...this.voices]) v.cancel();
     this.voices.clear();
+    this.envelopes.clear();
     this.pitchMod.disconnect();
     this.cutoffMod.disconnect();
     this.output.disconnect();

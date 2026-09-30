@@ -18,6 +18,9 @@ export const createInstrumentEngine: InstrumentFactory = (ictx, instrument) => {
       return new PolySynthEngine(ictx, instrument);
     case 'sampler':
       return new SamplerEngine(ictx, instrument);
+    default:
+      // Unreachable for validated projects; fail loudly rather than hand the engine `undefined`.
+      throw new Error(`Unknown instrument kind "${(instrument as { kind?: unknown }).kind}"`);
   }
 };
 

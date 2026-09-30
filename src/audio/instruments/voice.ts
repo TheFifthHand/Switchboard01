@@ -402,7 +402,11 @@ export abstract class BaseVoice implements VoiceHandle {
     protected readonly env: GainEnvelope,
     /** Release time of this note (seconds), snapshotted at trigger. */
     protected readonly releaseTime: number,
-    /** End of the sound if nothing releases it (e.g. a one-shot sample); Infinity for oscillators. */
+    /**
+     * Nominal end of the sound if nothing releases it (e.g. a one-shot
+     * sample at its unmodulated rate); Infinity for oscillators. Used for
+     * voice bookkeeping (endTime); the sources themselves decide when they finish.
+     */
     protected readonly naturalEnd: number,
     private readonly hooks: VoiceHooks,
   ) {
@@ -449,9 +453,18 @@ export abstract class BaseVoice implements VoiceHandle {
     return c;
   }
 
+  /**
+   * A requested ending time, never before the note starts and never in the
+   * past: automation scheduled behind the audio clock would make the level
+   * jump to where the curve "should" be by now (a click).
+   */
+  private endingTime(time: number): number {
+    return Math.max(finiteOr(time, this.startTime), this.startTime, this.ctx.currentTime);
+  }
+
   release(time: number): void {
     if (this.ended) return;
-    const t = Math.max(finiteOr(time, this.startTime), this.startTime);
+    const t = this.endingTime(time);
     if (t >= this.releaseAt) return;
     this.releaseAt = t;
     this.reschedule();
@@ -460,7 +473,7 @@ export abstract class BaseVoice implements VoiceHandle {
   /** Fast fade starting at `time` (steal, mono successor, kill). */
   cut(time: number, fade: number, by: BaseVoice | null): void {
     if (this.ended) return;
-    const t = Math.max(finiteOr(time, this.startTime), this.startTime);
+    const t = this.endingTime(time);
     this.cuts.push({ by, time: t, fade });
     this.reschedule();
   }
@@ -480,7 +493,9 @@ export abstract class BaseVoice implements VoiceHandle {
    * The ending implied by the release and cut requests: the earliest cut
    * alone if it comes first; otherwise the release, followed by the earliest
    * cut if that lands inside the release tail (a steal or kill shortens a
-   * long release). Steps at or after a one-shot's natural end never happen.
+   * long release). Steps after a one-shot's nominal end are kept: pitch
+   * modulation can slow a sample down so it is still sounding then (and on
+   * a source that has already finished they are harmless).
    */
   private plan(): EndOp[] {
     let cut: CutRequest | null = null;
@@ -493,7 +508,7 @@ export abstract class BaseVoice implements VoiceHandle {
       if (Number.isFinite(rel)) ops.push({ kind: 'release', time: rel });
       if (cut && cut.time < rel + releaseSeconds(this.releaseTime) + RELEASE_END_RAMP) ops.push({ kind: 'cut', time: cut.time, fade: cut.fade });
     }
-    return ops.filter((op) => op.time < this.naturalEnd);
+    return ops;
   }
 
   /** Re-derive the envelope ending and the source stop time from the release and cut requests. */
@@ -521,11 +536,17 @@ export abstract class BaseVoice implements VoiceHandle {
       else this.env.fade(op.time, op.fade);
     }
     this.scheduled = next;
-    this.setEnd(Math.min(end, this.naturalEnd));
+    this.setEnd(end);
   }
 
+  /**
+   * `end`: when the scheduled ending reaches exact zero (Infinity while held).
+   * Sources stop just after it, never earlier: a source with a natural end
+   * (one-shot sample) stops by itself, possibly later than nominal under pitch
+   * modulation, and must not be cut off while its amplitude is not yet zero.
+   */
   private setEnd(end: number): void {
-    this.endTime = end;
+    this.endTime = Math.min(end, this.naturalEnd);
     const stopAt = Number.isFinite(end) ? end + STOP_MARGIN : HELD_STOP_TIME;
     for (const s of this.sources) {
       try {

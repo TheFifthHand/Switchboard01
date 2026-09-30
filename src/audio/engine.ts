@@ -36,6 +36,7 @@ import { PARAM_SMOOTHING, REWIRE_RAMP, type ModuleEnv, type ModuleNode } from '.
 import { LIMITER_PROCESSOR_NAME, LIMITER_WORKLET_SOURCE, limiterProcessorOptions, safetyClipperCurve } from './worklets/limiter';
 import { CRUSHER_WORKLET_SOURCE } from './worklets/crusher';
 import { createInstrumentEngine } from './instruments/index';
+import { moduleId as trackModuleId } from '../project/factory';
 
 /** Mute All fade-out. */
 export const MUTE_RAMP = 0.008;
@@ -228,6 +229,10 @@ export class AudioEngine implements AudioEngineApi {
 
   /** Automation overlay: module id -> param -> scheduled points (time ascending). */
   private readonly overlay = new Map<Id, Map<string, AutoPoint[]>>();
+  /** Timed mute automation per track (time ascending), for cancellation. */
+  private readonly muteAuto = new Map<Id, { time: number; mute: boolean }[]>();
+  /** Timed master volume automation (time ascending), for cancellation. */
+  private masterAuto: { time: number; db: number }[] = [];
   private readonly live = new Map<string, LiveNote>();
   /**
    * Tempo map of the running transport (null while stopped), so modules
@@ -562,7 +567,24 @@ export class AudioEngine implements AudioEngineApi {
     return { kind: pf.kind, fromAudio, toAudio, target };
   }
 
+  /**
+   * Effects fed only by channel sends are send returns (the shared Reverb and
+   * Delay by default). Bypassing a return switches its output off; passing
+   * the dry send through would just make every sending part louder.
+   */
+  private bypassedReturns(project: Project): Set<Id> {
+    const out = new Set<Id>();
+    const byId = new Map(project.patch.modules.map((m) => [m.id, m]));
+    for (const m of project.patch.modules) {
+      if (!m?.bypass || m.type === 'channel' || m.type === 'master' || m.type === 'instrument') continue;
+      const incoming = project.patch.connections.filter((c) => c?.to?.module === m.id && c.to.port === 'in');
+      if (incoming.length && incoming.every((c) => byId.get(c.from.module)?.type === 'channel' && (c.from.port === 'sendA' || c.from.port === 'sendB'))) out.add(m.id);
+    }
+    return out;
+  }
+
   private reconcileConnections(project: Project, now: number, immediate: boolean): void {
+    const mutedReturns = this.bypassedReturns(project);
     const desired = new Map<Id, DesiredConn>();
     const edges = new Map<Id, Set<Id>>();
     const pairs = new Set<string>();
@@ -570,6 +592,7 @@ export class AudioEngine implements AudioEngineApi {
       if (!c || typeof c.id !== 'string' || desired.has(c.id)) continue;
       const d = this.resolveConnection(c);
       if (!d) continue;
+      if (d.kind === 'audio' && mutedReturns.has(c.from.module)) d.target = 0;
       const pair = `${c.from.module}\u0000${c.from.port}\u0000${c.to.module}\u0000${c.to.port}`;
       if (pairs.has(pair)) continue;
       // Never build a feedback loop: reject any edge that closes a cycle.
@@ -770,6 +793,60 @@ export class AudioEngine implements AudioEngineApi {
     rec.node.setParams(merged, t);
   }
 
+  scheduleMute(trackId: Id, mute: boolean, time: number): void {
+    if (this.disposed) return;
+    const ch = this.mods.get(trackModuleId.channel(trackId))?.node;
+    if (!(ch instanceof ChannelModule)) return;
+    const now = this.now();
+    const t = Math.max(finiteOr(time, now), now);
+    const points = (this.muteAuto.get(trackId) ?? []).filter((p) => p.time !== t);
+    points.push({ time: t, mute });
+    points.sort((a, b) => a.time - b.time);
+    this.muteAuto.set(trackId, points);
+    ch.scheduleAudible(this.audibleFor(trackId, mute), t);
+  }
+
+  scheduleMasterVolume(db: number, time: number): void {
+    if (this.disposed || !Number.isFinite(db)) return;
+    const now = this.now();
+    const t = Math.max(finiteOr(time, now), now);
+    const v = clampParam(MASTER_VOLUME_SPEC, db);
+    this.masterAuto = this.masterAuto.filter((p) => p.time !== t && p.time >= now - 1);
+    this.masterAuto.push({ time: t, db: v });
+    this.masterAuto.sort((a, b) => a.time - b.time);
+    this.volume.gain.setTargetAtTime(dbToGain(v), t, PARAM_SMOOTHING);
+  }
+
+  /** Mute/solo result for a track given an explicit mute state (solo comes from the project). */
+  private audibleFor(trackId: Id, mute: boolean): boolean {
+    const tracks = this.project?.tracks ?? [];
+    const anySolo = tracks.some((x) => x.solo);
+    const track = tracks.find((x) => x.id === trackId);
+    return !mute && (!anySolo || !!track?.solo);
+  }
+
+  /** Drop timed mute/master automation at/after `t` and settle on the values that hold then. */
+  private cancelMuteAndMasterAfter(t: number, clearAll: boolean): void {
+    for (const [trackId, points] of [...this.muteAuto]) {
+      const keep = clearAll ? [] : points.filter((p) => p.time < t);
+      if (keep.length === points.length) continue;
+      const ch = this.mods.get(trackModuleId.channel(trackId))?.node;
+      const projectMute = this.project?.tracks.find((x) => x.id === trackId)?.mute ?? false;
+      const mute = keep.length ? keep[keep.length - 1].mute : projectMute;
+      if (ch instanceof ChannelModule) ch.cancelAudibleAfter(t, this.audibleFor(trackId, mute));
+      if (keep.length) this.muteAuto.set(trackId, keep);
+      else this.muteAuto.delete(trackId);
+    }
+    const keepMaster = clearAll ? [] : this.masterAuto.filter((p) => p.time < t);
+    if (keepMaster.length !== this.masterAuto.length) {
+      this.masterAuto = keepMaster;
+      const db = keepMaster.length ? keepMaster[keepMaster.length - 1].db : (this.project?.masterVolumeDb ?? MASTER_VOLUME_SPEC.default);
+      const g = this.volume.gain;
+      g.cancelScheduledValues(t);
+      g.setTargetAtTime(dbToGain(clampParam(MASTER_VOLUME_SPEC, db)), t, PARAM_SMOOTHING);
+    }
+  }
+
   scheduleMacro(trackId: Id, macro: MacroId, value: number, time: number): void {
     if (this.disposed || !Number.isFinite(value)) return;
     const track = this.project?.tracks.find((t) => t.id === trackId);
@@ -792,6 +869,7 @@ export class AudioEngine implements AudioEngineApi {
     const t = Math.max(finiteOr(afterTime, now), now);
     for (const ch of this.channels) ch.cancelPumpAfter(t);
     this.cancelClicksAfter(t);
+    this.cancelMuteAndMasterAfter(t, false);
     for (const [moduleId, params] of [...this.overlay]) {
       let changed = false;
       for (const [param, points] of [...params]) {
@@ -838,6 +916,8 @@ export class AudioEngine implements AudioEngineApi {
     for (const ch of this.channels) ch.cancelAfter(t);
     for (const lfo of this.lfos) lfo.transportStopped(t);
     this.cancelClicksAfter(t);
+    // Mutes and master moves belonged to the take that was playing.
+    this.cancelMuteAndMasterAfter(t, true);
     // Automation belongs to the take that was playing; the project's own values return.
     for (const moduleId of [...this.overlay.keys()]) {
       this.overlay.delete(moduleId);
@@ -1011,6 +1091,16 @@ export class AudioEngine implements AudioEngineApi {
       n++;
     }
     out.tracks.length = n;
+  }
+
+  /**
+   * Warm every instrument's caches now (drum kit buffers, ~50-300 ms of CPU).
+   * Call while the transport is stopped, e.g. right after audio starts or a
+   * project loads, so the first hits never render inside the scheduler.
+   */
+  prepareInstruments(): void {
+    if (this.disposed) return;
+    for (const rec of this.mods.values()) if (rec.node instanceof InstrumentModule) rec.node.prepare();
   }
 
   getStats(): EngineStats {
