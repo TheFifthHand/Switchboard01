@@ -47,7 +47,12 @@ import { Sequencer } from '../time/sequencer';
 import { RealtimeTransport } from '../time/transport';
 import { notify, patchRuntime, runtimeStore, setTrackRuntime } from './runtime';
 
-export type NoteSource = 'keyboard' | 'computer' | 'pad';
+/**
+ * Where a live note comes from. 'preview' is an editor/browser audition: it
+ * plays exactly the pitch given (no Musical Assist, no arpeggiator) and is
+ * never recorded into clips or performance takes.
+ */
+export type NoteSource = 'keyboard' | 'computer' | 'pad' | 'preview';
 
 export interface BootInfo {
   /** The project that was reopened from storage, if any. */
@@ -77,7 +82,8 @@ const RECORDABLE_LABELS: ReadonlySet<string> = new Set([
 ]);
 const isRecordableLabel = (label: string) => label.startsWith('module:') || RECORDABLE_LABELS.has(label);
 
-export const TAKE_LOCK_MESSAGE = 'Recording a performance: cables, clips and sound choices are locked until you stop. Knobs, macros, mutes and tempo are recorded.';
+export const TAKE_LOCK_MESSAGE =
+  'Recording a performance: cables, clips, sounds, the song and saved takes are locked until you stop. Knobs, macros, mutes and tempo are recorded.';
 
 interface HeldNote {
   trackId: Id;
@@ -718,10 +724,11 @@ export class Session {
     if (!track) return;
     if (this.held.has(key)) this.noteOff(trackId, rawPitch, source);
     const drums = track.instrument.kind === 'drums';
-    const pitch = !drums && p.assist ? snapToScale(rawPitch, p.root, p.scale) : rawPitch;
+    const preview = source === 'preview';
+    const pitch = !drums && !preview && p.assist ? snapToScale(rawPitch, p.root, p.scale) : rawPitch;
     const v = Math.max(0.05, Math.min(1, velocity));
     const note: HeldNote = { trackId, pitch, velocity: v, recTick: null, recClipStart: null };
-    if (this.noteRec && this.noteRec.trackId === trackId && this.transport?.playing) {
+    if (!preview && this.noteRec && this.noteRec.trackId === trackId && this.transport?.playing) {
       const pos = this.recordingTick();
       const rt = this.sequencer?.getTrackState(trackId);
       if (rt?.playing && rt.playing.slot === this.noteRec.slot) {
@@ -730,12 +737,12 @@ export class Session {
       }
     }
     this.held.set(key, note);
-    if (track.arp.enabled && !drums) {
-      this.transport?.setArpHeld(trackId, this.heldPitches(trackId), v);
+    if (track.arp.enabled && !drums && !preview) {
+      this.transport?.setArpHeld(trackId, this.heldPitches(trackId, true), v);
     } else {
       this.engine.liveNoteOn(trackId, pitch, v, key);
     }
-    this.recordEvent({ t: this.currentTick(), type: 'noteOn', trackId, pitch, velocity: v, key });
+    if (!preview) this.recordEvent({ t: this.currentTick(), type: 'noteOn', trackId, pitch, velocity: v, key });
     this.publishHeld(trackId);
   }
 
@@ -747,9 +754,9 @@ export class Session {
     if (!note) return;
     this.held.delete(key);
     const track = this.store.getState().tracks.find((t) => t.id === trackId);
-    if (track?.arp.enabled && track.instrument.kind !== 'drums') this.transport?.setArpHeld(trackId, this.heldPitches(trackId));
+    if (source !== 'preview' && track?.arp.enabled && track.instrument.kind !== 'drums') this.transport?.setArpHeld(trackId, this.heldPitches(trackId, true));
     else this.engine?.liveNoteOff(trackId, key);
-    this.recordEvent({ t: this.currentTick(), type: 'noteOff', trackId, pitch: note.pitch, key });
+    if (source !== 'preview') this.recordEvent({ t: this.currentTick(), type: 'noteOff', trackId, pitch: note.pitch, key });
     if (note.recTick !== null && note.recClipStart !== null && this.noteRec) this.commitRecordedNote(note);
     this.publishHeld(trackId);
   }
@@ -784,9 +791,10 @@ export class Session {
     patchRuntime({ held: {} });
   }
 
-  private heldPitches(trackId: Id): number[] {
+  /** Pitches held on a part; `forArp` leaves out previews, which never feed the arpeggiator. */
+  private heldPitches(trackId: Id, forArp = false): number[] {
     const out: number[] = [];
-    for (const n of this.held.values()) if (n.trackId === trackId && !out.includes(n.pitch)) out.push(n.pitch);
+    for (const [key, n] of this.held) if (n.trackId === trackId && !(forArp && key.startsWith('preview:')) && !out.includes(n.pitch)) out.push(n.pitch);
     return out;
   }
 
@@ -1015,6 +1023,7 @@ export class Session {
 
   /** Import an audio file onto a part (turns it into a sampler). The project is untouched if anything fails. */
   async importSample(file: File, trackId: Id): Promise<{ ok: boolean; message: string }> {
+    if (this.store.getLock()) return { ok: false, message: this.store.getLock()! };
     const check = checkAudioFile(file);
     if (!check.ok) return { ok: false, message: check.message };
     const decodeCtx: BaseAudioContext = this.ctx ?? new OfflineAudioContext(1, 1, 48000);
@@ -1029,8 +1038,11 @@ export class Session {
       this.bank.add(res.meta.id, res.buffer);
       this.loadedSampleIds.add(res.meta.id);
     }
-    cmd.addSampleMeta(this.store, res.meta as SampleMeta);
-    const a = cmd.assignSample(this.store, trackId, res.meta.id);
+    // Adding the recording and putting it on the part is one undo step.
+    const gesture = uid('import');
+    cmd.addSampleMeta(this.store, res.meta as SampleMeta, gesture);
+    const a = cmd.assignSample(this.store, trackId, res.meta.id, gesture);
+    this.store.endGesture();
     if (!a.changed && (a.refused || a.reason)) return { ok: false, message: a.refused ?? a.message ?? 'The recording could not be assigned to this part.' };
     return { ok: true, message: `Imported "${res.meta.name}" (${res.meta.duration.toFixed(1)} s).` };
   }

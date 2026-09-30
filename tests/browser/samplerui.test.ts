@@ -9,8 +9,12 @@ import '../../src/ui/theme.css';
 import { TipsProvider } from '../../src/ui/components';
 import { session } from '../../src/app/instance';
 import { runtimeStore } from '../../src/app/runtime';
+import { snapToScale } from '../../src/music/scales';
+import * as cmd from '../../src/state/commands';
+import { noteName } from '../../src/ui/components';
 import { ImportSampleButton, SamplerEditor } from '../../src/app/views/sampler';
 import { importStore } from '../../src/app/views/sampler/importState';
+import { headerSampleRate } from '../../src/app/views/sampler/samplerMath';
 import { DECODE_FAILED_MESSAGE } from '../../src/persistence/audioImport';
 import * as db from '../../src/persistence/db';
 import { createProject } from '../../src/project/factory';
@@ -87,6 +91,61 @@ async function until(cond: () => boolean, what: string, ms = 8000): Promise<void
   }
 }
 
+/** The editor's drop zone (the element that takes dropped files). */
+function dropZone(root: Element): HTMLElement {
+  const title = [...root.querySelectorAll('p')].find((x) => /Drop a WAV or MP3 here|Release to import/.test(x.textContent ?? ''));
+  if (!title?.parentElement) throw new Error('No drop zone');
+  return title.parentElement;
+}
+
+function drag(target: EventTarget, type: 'dragenter' | 'dragover' | 'drop', file: File): DragEvent {
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  return fire(target, new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt })) as DragEvent;
+}
+
+/** One device pixel of the waveform canvas at fractions of its width and height. */
+function pixel(canvas: HTMLCanvasElement, fx: number, fy = 0.5): [number, number, number, number] {
+  const x = Math.min(canvas.width - 1, Math.round(canvas.width * fx));
+  const y = Math.round(canvas.height * fy);
+  const d = canvas.getContext('2d')!.getImageData(x, y, 1, 1).data;
+  return [d[0], d[1], d[2], d[3]];
+}
+const isAmber = ([r, g, b, a]: number[]) => a > 200 && r > 200 && r - b > 90 && g > b;
+/** Height (device px) of the amber signal in one canvas column. */
+function amberHeight(canvas: HTMLCanvasElement, fx: number): number {
+  const x = Math.min(canvas.width - 1, Math.round(canvas.width * fx));
+  const d = canvas.getContext('2d')!.getImageData(x, 0, 1, canvas.height).data;
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) if (isAmber([d[i], d[i + 1], d[i + 2], d[i + 3]])) n++;
+  return n;
+}
+const isGrey = ([r, g, b, a]: number[]) => a > 40 && Math.abs(r - g) < 25 && Math.abs(g - b) < 25;
+
+/**
+ * Stand-ins for the session's live-note path (no audio device in this test): they publish
+ * the held pitch exactly as the session does, Musical Assist included.
+ */
+function fakeNotes() {
+  vi.spyOn(session, 'startAudio').mockResolvedValue(true);
+  const noteOn = vi.spyOn(session, 'noteOn').mockImplementation((trackId, key) => {
+    const p = project();
+    const pitch = p.assist ? snapToScale(key, p.root, p.scale) : key;
+    runtimeStore.setState((s) => ({ ...s, held: { ...s.held, [trackId]: [pitch] } }));
+  });
+  const noteOff = vi.spyOn(session, 'noteOff').mockImplementation((trackId) => {
+    runtimeStore.setState((s) => ({ ...s, held: { ...s.held, [trackId]: [] } }));
+  });
+  return { noteOn, noteOff };
+}
+
+async function press(el: HTMLElement): Promise<void> {
+  await act(async () => {
+    click(el);
+    await wait(0);
+  });
+}
+
 /** A short 16-bit mono WAV (440 Hz sine). */
 function toneWav(seconds: number, sampleRate = 48000): ArrayBuffer {
   const x = new Float32Array(Math.round(seconds * sampleRate));
@@ -97,7 +156,7 @@ function toneWav(seconds: number, sampleRate = 48000): ArrayBuffer {
 const createdSamples: string[] = [];
 
 beforeEach(() => {
-  runtimeStore.setState((s) => ({ ...s, notice: null, recording: 'off' }));
+  runtimeStore.setState((s) => ({ ...s, notice: null, recording: 'off', recordTarget: null, replayId: null, held: {} }));
   importStore.setState({});
 });
 
@@ -178,6 +237,28 @@ describe('Sampler editor: trim', () => {
     fire(start, new MouseEvent('dblclick', { bubbles: true }));
     expect(samplerParams('t8').start).toBe(0);
   });
+
+  it('draws the recording: amber where it plays, grey outside the trimmed region, shaped by the fades', async () => {
+    const m = setup('t8');
+    const canvas = m.container.querySelector<HTMLCanvasElement>('[aria-label^="Waveform of"] canvas')!;
+    await until(() => canvas.width > 100, 'the canvas to be sized');
+    // The whole file plays: the loud attack of the glass chord is a tall amber band.
+    expect(amberHeight(canvas, 0.03)).toBeGreaterThan(20);
+    act(() => {
+      session.setInstrumentParam('t8', 'start', 0.1);
+      session.setInstrumentParam('t8', 'end', 0.7);
+    });
+    await act(async () => wait(20));
+    expect(amberHeight(canvas, 0.03), 'no amber before Start').toBe(0);
+    expect(isGrey(pixel(canvas, 0.03)), 'grey before Start').toBe(true);
+    expect(isGrey(pixel(canvas, 0.85)), 'grey after End').toBe(true);
+    const unfaded = amberHeight(canvas, 0.12);
+    expect(unfaded, 'amber just after Start').toBeGreaterThan(10);
+    // A long fade-in shapes what is drawn: just after Start the heard signal is far smaller.
+    act(() => session.setInstrumentParam('t8', 'fadeIn', 400));
+    await act(async () => wait(20));
+    expect(amberHeight(canvas, 0.12)).toBeLessThan(unfaded * 0.4);
+  });
 });
 
 describe('Sampler editor: playback and tempo controls', () => {
@@ -224,6 +305,13 @@ describe('Sampler editor: playback and tempo controls', () => {
     expect(set.disabled).toBe(false);
     click(set);
     expect(samplerParams('t8').originalBpm).toBeCloseTo(216, 5);
+    // Done: the key says so in words and stays focusable (not disabled).
+    expect(set.textContent).toBe('216 BPM set');
+    expect(set.getAttribute('aria-disabled')).toBe('true');
+    expect(set.disabled).toBe(false);
+    act(() => session.undo());
+    expect(samplerParams('t8').originalBpm).toBe(120);
+    expect(set.textContent).toBe('Set 216 BPM');
     await act(async () => wait(800)); // let the field's key burst end
   });
 
@@ -247,10 +335,7 @@ describe('Sampler editor: playback and tempo controls', () => {
     }
   });
 
-  it('the picker assigns built-in recordings (turning a synth part into a sampler) and Audition plays the root note', async () => {
-    const noteOn = vi.spyOn(session, 'noteOn').mockImplementation(() => undefined);
-    const noteOff = vi.spyOn(session, 'noteOff').mockImplementation(() => undefined);
-    vi.spyOn(session, 'startAudio').mockResolvedValue(true);
+  it('the picker assigns built-in recordings, turning a synth part into a sampler (undoable)', async () => {
     const m = setup('t4');
     expect(track('t4').instrument.kind).toBe('poly');
     expect(m.container.textContent).toContain('turn this part into a sampler');
@@ -258,24 +343,65 @@ describe('Sampler editor: playback and tempo controls', () => {
     picker.value = 'builtin:bell-hit';
     fire(picker, new Event('change', { bubbles: true }));
     expect(track('t4').instrument).toMatchObject({ kind: 'sampler', sampleId: 'builtin:bell-hit' });
-    // The full editor replaces the empty state.
+    // The full editor replaces the empty state, and keyboard focus lands on its picker.
     await until(() => !!m.container.querySelector('[aria-label="Trim start"]'), 'the sampler editor');
+    expect(document.activeElement?.id).toBe('sampler-recording-t4');
+    expect(m.container.textContent).toContain('Bell Hit');
     act(() => session.undo());
     expect(track('t4').instrument.kind).toBe('poly');
-    act(() => session.redo());
+    await until(() => m.container.textContent?.includes('turn this part into a sampler') ?? false, 'the empty state again');
+  });
 
-    // Loop mode: Audition holds the root note until Stop.
+  it('Audition holds the root key, follows the real note, and is off while a take records', async () => {
+    const { noteOn, noteOff } = fakeNotes();
+    const m = setup('t8');
     click(radio(m.container, 'Loop'));
-    await act(async () => {
-      click(button(m.container, 'Audition: play C4'));
-      await wait(0);
-    });
-    expect(noteOn).toHaveBeenCalledWith('t4', 60, 0.85, 'pad');
-    const stop = button(m.container, /^Stop audition/);
-    expect(stop.getAttribute('aria-pressed')).toBe('true');
-    click(stop);
-    expect(noteOff).toHaveBeenCalledWith('t4', 60, 'pad');
+    await press(button(m.container, 'Audition: play C4'));
+    expect(noteOn).toHaveBeenCalledWith('t8', 60, 0.85, 'preview');
+    expect(button(m.container, /^Stop audition/).getAttribute('aria-pressed')).toBe('true');
+    expect(button(m.container, /^Stop audition/).textContent).toBe('Stop');
+
+    // Mute All / Stop / window blur release every held note in the session: the key follows.
+    act(() => runtimeStore.setState((s) => ({ ...s, held: {} })));
     expect(button(m.container, 'Audition: play C4').getAttribute('aria-pressed')).toBe('false');
+    expect(noteOff).not.toHaveBeenCalled();
+
+    // Stop releases the key it pressed.
+    await press(button(m.container, 'Audition: play C4'));
+    click(button(m.container, /^Stop audition/));
+    expect(noteOff).toHaveBeenCalledWith('t8', 60, 'preview');
+    expect(button(m.container, 'Audition: play C4').getAttribute('aria-pressed')).toBe('false');
+
+    // A root outside the key: Musical Assist moves it, and the editor says so in words.
+    act(() => session.setInstrumentParam('t8', 'rootNote', 61));
+    const heard = snapToScale(61, project().root, project().scale);
+    expect(heard).not.toBe(61);
+    expect(m.container.textContent).toContain(`Root C#4 is outside the key, so Musical Assist plays it as ${noteName(heard)}`);
+    await press(button(m.container, 'Audition: play C#4'));
+    expect(noteOn).toHaveBeenLastCalledWith('t8', 61, 0.85, 'preview');
+    expect(button(m.container, `Stop audition (playing ${noteName(heard)})`)).toBeTruthy();
+
+    // A performance starting mid-audition ends it; Audition stays off during the take.
+    noteOff.mockClear();
+    act(() => runtimeStore.setState((s) => ({ ...s, recording: 'performance' })));
+    expect(noteOff).toHaveBeenCalledWith('t8', 61, 'preview');
+    expect(button(m.container, /^Audition: play C#4/).disabled).toBe(true);
+    // Record Notes into this part: off. Into another part: on.
+    act(() => runtimeStore.setState((s) => ({ ...s, recording: 'notes', recordTarget: { trackId: 't8', slot: 0 } })));
+    expect(button(m.container, /^Audition: play C#4/).disabled).toBe(true);
+    act(() => runtimeStore.setState((s) => ({ ...s, recordTarget: { trackId: 't1', slot: 0 } })));
+    expect(button(m.container, 'Audition: play C#4').disabled).toBe(false);
+  });
+
+  it('a recording whose audio is not in this browser says so and cannot be auditioned', async () => {
+    const m = setup('t8');
+    act(() => {
+      cmd.addSampleMeta(session.store, { id: 'smp_lost_take', name: 'Lost Take', mime: 'audio/wav', byteLength: 2048, duration: 1, sampleRate: 48000, channels: 1, peaks: [-0.5, 0.5, -0.4, 0.4] });
+      cmd.assignSample(session.store, 't8', 'smp_lost_take');
+    });
+    await until(() => m.container.textContent?.includes('audio missing') ?? false, 'the missing-audio label');
+    expect(statusText(m.container)).toContain('is not stored in this browser');
+    expect(button(m.container, /^Audition/).disabled).toBe(true);
   });
 });
 
@@ -294,6 +420,22 @@ describe('Sampler import', () => {
     expect(statusText(m.container)).toContain('"notes.txt" is not a WAV or MP3 file. Convert it to WAV or MP3 and try again.');
     expect(project()).toBe(before);
     expect(track('t4').instrument.kind).toBe('poly');
+
+    // A file released just outside the zone must not make the browser open it in place of the app.
+    const outside = new File(['x'], 'near miss.wav', { type: 'audio/wav' });
+    expect(drag(document.body, 'dragover', outside).defaultPrevented).toBe(true);
+    expect(drag(document.body, 'drop', outside).defaultPrevented).toBe(true);
+    expect(project()).toBe(before);
+  });
+
+  it('the details show the file’s own sample rate, read from its WAV or MP3 header', () => {
+    expect(headerSampleRate(new Uint8Array(toneWav(0.01, 22050)))).toBe(22050);
+    // An MP3 with an ID3v2 tag (10-byte header + 5 bytes), then an MPEG-1 Layer III frame at 48 kHz.
+    const id3 = [0x49, 0x44, 0x33, 3, 0, 0, 0, 0, 0, 5, 1, 2, 3, 4, 5];
+    expect(headerSampleRate(new Uint8Array([...id3, 0xff, 0xfb, 0x94, 0x00]))).toBe(48000);
+    // MPEG-2 Layer III at 22.05 kHz, no tag.
+    expect(headerSampleRate(new Uint8Array([0xff, 0xf3, 0x80, 0x00]))).toBe(22050);
+    expect(headerSampleRate(new Uint8Array([1, 2, 3, 4, 5, 6]))).toBeNull();
   });
 
   it('a file that does not decode shows the actionable message and changes nothing', async () => {
@@ -308,11 +450,15 @@ describe('Sampler import', () => {
     expect(statusText(m.container)).not.toContain(DECODE_FAILED_MESSAGE);
   });
 
-  it('a small generated WAV is decoded, stored in IndexedDB and assigned; the part becomes a sampler', async () => {
+  it('a small generated WAV dropped on the zone is decoded, stored in IndexedDB and assigned; the part becomes a sampler', async () => {
     const m = setup('t4');
     expect(track('t4').instrument.kind).toBe('poly');
-    const file = new File([toneWav(0.5)], 'Test Tone.wav', { type: 'audio/wav' });
-    chooseFile(fileInput(m.container), file);
+    const file = new File([toneWav(0.5, 44100)], 'Test Tone.wav', { type: 'audio/wav' });
+    const zone = dropZone(m.container);
+    drag(zone, 'dragenter', file);
+    expect(drag(zone, 'dragover', file).defaultPrevented).toBe(true);
+    expect(zone.textContent).toContain('Release to import');
+    drag(zone, 'drop', file);
     expect(statusText(m.container)).toContain('Decoding “Test Tone.wav” on this device…');
     await until(() => project().samples.length === 1, 'the recording in the project');
     const meta = project().samples[0];
@@ -327,7 +473,10 @@ describe('Sampler import', () => {
 
     // The full editor shows the recording with its waveform, and the result message carried over.
     await until(() => !!m.container.querySelector('[aria-label="Waveform of Test Tone. Drag Start and End to trim."]'), 'the waveform');
-    expect(m.container.textContent).toContain('0.50 s · 48 kHz · Mono · WAV');
+    // Keyboard continuity: the drop zone is gone, so focus lands on the new editor's picker.
+    expect(document.activeElement?.id).toBe('sampler-recording-t4');
+    // The file's own rate (44.1 kHz), not the rate the browser decoded it at.
+    await until(() => m.container.textContent?.includes('0.50 s · 44.1 kHz · Mono · WAV') ?? false, 'the recording details');
     await until(() => statusText(m.container).includes('Imported "Test Tone" (0.5 s).'), 'the result message');
     const picker = m.container.querySelector<HTMLSelectElement>('#sampler-recording-t4')!;
     expect(picker.value).toBe(meta.id);

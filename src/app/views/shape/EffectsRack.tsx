@@ -8,7 +8,7 @@
  * part's effects without reordering and points to the cable panel.
  */
 import { memo, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Button, IconButton, Notice, Panel, Switch, Tooltip } from '../../../ui/components';
+import { Button, Icon, IconButton, Notice, Panel, Switch, Tooltip } from '../../../ui/components';
 import { DELAY_ID, MASTER_ID, REVERB_ID, moduleId as mid } from '../../../project/factory';
 import { connectionKind, describePathProblem, findModule, inputPortDef, trackChain } from '../../../project/graph';
 import { INSERTABLE_EFFECTS, MODULE_DEFS, PATCH_LIMITS } from '../../../project/modules';
@@ -189,7 +189,12 @@ const EffectCard = memo(function EffectCard(props: { trackId: Id; moduleId: Id; 
   const rightId = `rack-${moduleId}-right`;
 
   const move = (dir: -1 | 1) => {
+    // The card's DOM moves (and a button at the end of the chain becomes disabled), which drops focus
+    // without a blur event: blur first so the button's tooltip closes, then focus follows the card.
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
     if (session.accepted(cmd.moveEffect(session.store, moduleId, index + dir))) focusLater(dir < 0 ? leftId : rightId, dir < 0 ? rightId : leftId);
+    else if (active instanceof HTMLElement) active.focus();
   };
   const remove = () => {
     const r = cmd.removeEffect(session.store, moduleId);
@@ -442,7 +447,7 @@ function FlowLine(props: { trackId: Id; chain: readonly Id[] }) {
             </span>
           )}
           <span className={styles.flowChip} data-end={step.end || undefined} data-off={step.off || undefined}>
-            {step.name}
+            <span className={styles.flowName}>{step.name}</span>
             {step.off && <span className={styles.flowOff}> off</span>}
           </span>
         </li>
@@ -458,7 +463,7 @@ export function EffectsRack(props: { trackId: Id; className?: string }) {
   const noPath = useProject((p) => describePathProblem(p.patch, trackId) !== null);
   const linear = chain !== null;
   const effects = linear ? chain.slice(1, -1) : partEffects;
-  // Effects of this part that a linear chain does not pass through (their cables were removed).
+  // Effects of this part that its linear chain does not pass through (unpatched, or patched elsewhere with cables).
   const offPath = linear ? partEffects.filter((id) => !chain.includes(id)) : [];
   const restore = () => {
     if (session.accepted(cmd.restoreTrackPatch(session.store, trackId))) notify('Restored this part’s default routing.', 'info', 'undo');
@@ -482,6 +487,7 @@ export function EffectsRack(props: { trackId: Id; className?: string }) {
         <FlowLine trackId={trackId} chain={chain} />
       ) : (
         <div className={styles.custom} role="status">
+          <Icon name="cable" size={16} className={styles.customIcon} />
           <span>
             <strong>Custom routing — edit it with the cables below.</strong> This part’s effects are listed here; their order is set by the cables.
           </span>

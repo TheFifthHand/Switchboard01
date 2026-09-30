@@ -53,8 +53,11 @@ async function tab(page, name) {
   await shot(page, '03-play-queued-1366');
   await page.waitForTimeout(2500);
   for (const mode of ['Drums', 'Notes', 'Steps']) {
-    if (mode === 'Drums') await page.getByRole('button', { name: /^Select Drums/ }).click();
-    if (mode === 'Notes') await page.getByRole('button', { name: /^Select Chords/ }).click();
+    // Part selectors live in the Loops column headers.
+    if (mode !== 'Steps') {
+      await tab(page, 'Loops');
+      await page.getByRole('button', { name: mode === 'Drums' ? /^Select Drums/ : /^Select Chords/ }).click();
+    }
     await tab(page, mode);
     await shot(page, `04-play-${mode.toLowerCase()}-1366`);
   }

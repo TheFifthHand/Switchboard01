@@ -139,7 +139,7 @@
 /* ---------- ghost: flat, for low-emphasis actions ---------- */
 .button[data-variant='ghost'] {
   --btn-bg: transparent;
-  --btn-shadow: none;
+  --btn-shadow: 0 0 0 0 transparent;
   color: var(--ink-2);
 }
 
@@ -150,7 +150,7 @@
 
 .button[data-variant='ghost']:active:not(:disabled) {
   --btn-bg: rgba(20, 24, 28, 0.1);
-  --btn-shadow: none;
+  --btn-shadow: 0 0 0 0 transparent;
 }
 
 .button[data-variant='ghost'][data-on] {

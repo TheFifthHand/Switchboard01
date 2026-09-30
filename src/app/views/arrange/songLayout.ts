@@ -6,6 +6,10 @@
  * MIN_BLOCK_WIDTH so its controls stay usable; the ruler and the playhead map
  * bars through the same per-block geometry, so bar numbers always line up
  * with block edges even when a short block is widened.
+ *
+ * A song that fits fills the lane. A song that does not fit scrolls, at the
+ * scale where its shortest block is exactly the minimum width (so all blocks
+ * keep their true proportions), within SCROLL_MAX_PX_PER_BAR.
  */
 
 export interface LaneBlockInput {
@@ -39,10 +43,59 @@ export interface SongLayout {
 export const BLOCK_GAP = 6;
 export const MIN_BLOCK_WIDTH = 140;
 export const MAX_PX_PER_BAR = 60;
-export const MIN_PX_PER_BAR = 8;
+export const MIN_PX_PER_BAR = 10;
+/** Largest scale of a song that scrolls (so one short block cannot make long ones huge). */
+export const SCROLL_MAX_PX_PER_BAR = 24;
 
 export function clampRepeats(r: number): number {
   return Number.isFinite(r) ? Math.min(8, Math.max(1, Math.round(r))) : 1;
+}
+
+/**
+ * The largest scale (≤ MAX_PX_PER_BAR) at which every block, widened to at
+ * least MIN_BLOCK_WIDTH, fits in `room`; null when the song only fits below
+ * MIN_PX_PER_BAR (it then scrolls).
+ */
+function fitScale(totals: readonly number[], room: number): number | null {
+  // Blocks that would be too narrow get the minimum width; the rest share what is left.
+  // Fixing a block only ever lowers the scale, so this settles in at most n rounds.
+  const fixed = totals.map((t) => t <= 0);
+  for (let iter = 0; iter <= totals.length; iter++) {
+    let flexBars = 0;
+    let fixedCount = 0;
+    let longestFixed = 0;
+    totals.forEach((t, i) => {
+      if (fixed[i]) {
+        fixedCount++;
+        longestFixed = Math.max(longestFixed, t);
+      } else flexBars += t;
+    });
+    const flexRoom = room - fixedCount * MIN_BLOCK_WIDTH;
+    if (flexRoom < 0) return null;
+    // Every block sits at the minimum width: the scale at which the longest of them just fills it.
+    const scale = Math.min(MAX_PX_PER_BAR, flexBars > 0 ? flexRoom / flexBars : longestFixed > 0 ? MIN_BLOCK_WIDTH / longestFixed : MAX_PX_PER_BAR);
+    if (scale < MIN_PX_PER_BAR) return null;
+    let changed = false;
+    totals.forEach((t, i) => {
+      if (!fixed[i] && t * scale < MIN_BLOCK_WIDTH) {
+        fixed[i] = true;
+        changed = true;
+      }
+    });
+    if (!changed) return scale;
+  }
+  return null;
+}
+
+/**
+ * Scale of a song that does not fit: the shortest block gets exactly the
+ * minimum width, so every block stays in true proportion (unless that would
+ * pass SCROLL_MAX_PX_PER_BAR, or fall under MIN_PX_PER_BAR).
+ */
+function scrollScale(totals: readonly number[]): number {
+  const shortest = Math.min(...totals.filter((t) => t > 0));
+  if (!Number.isFinite(shortest)) return MIN_PX_PER_BAR;
+  return Math.min(SCROLL_MAX_PX_PER_BAR, Math.max(MIN_PX_PER_BAR, MIN_BLOCK_WIDTH / shortest));
 }
 
 /** Lay the blocks out in `available` pixels (the lane scrolls when they do not fit). */
@@ -51,25 +104,7 @@ export function layoutSong(inputs: readonly LaneBlockInput[], available: number)
   const totals = inputs.map((b) => (b.bars > 0 ? b.bars * clampRepeats(b.repeats) : 0));
   const totalBars = totals.reduce((a, b) => a + b, 0);
   const room = Math.max(0, available - BLOCK_GAP * Math.max(0, n - 1));
-  // Blocks that would be too narrow get the minimum width; the rest share what is left.
-  const fixed = new Set<number>();
-  let ppb = totalBars > 0 ? room / totalBars : MAX_PX_PER_BAR;
-  for (let iter = 0; iter <= n; iter++) {
-    ppb = Math.min(MAX_PX_PER_BAR, Math.max(MIN_PX_PER_BAR, ppb));
-    let changed = false;
-    for (let i = 0; i < n; i++) {
-      if (!fixed.has(i) && totals[i] * ppb < MIN_BLOCK_WIDTH) {
-        fixed.add(i);
-        changed = true;
-      }
-    }
-    if (!changed) break;
-    let flexBars = 0;
-    for (let i = 0; i < n; i++) if (!fixed.has(i)) flexBars += totals[i];
-    const flexRoom = room - fixed.size * MIN_BLOCK_WIDTH;
-    ppb = flexBars > 0 ? flexRoom / flexBars : MAX_PX_PER_BAR;
-  }
-  ppb = Math.min(MAX_PX_PER_BAR, Math.max(MIN_PX_PER_BAR, ppb));
+  const ppb = fitScale(totals, room) ?? scrollScale(totals);
 
   const blocks: LaneBlock[] = [];
   let x = 0;

@@ -50,13 +50,12 @@ export interface Audition {
 const NO_AUDITION: Audition = { release() {} };
 
 /**
- * Let the user hear a note they just placed. It plays through the part like a
- * pad (Musical Assist applies to melodic notes). Skipped while Record Notes
- * writes into this part, so an edit is never recorded twice.
+ * Let the user hear a note they just placed, at exactly its pitch (a preview:
+ * no Musical Assist, no arpeggiator, never recorded).
  */
 export function audition(trackId: Id, pitch: number, velocity: number): Audition {
   if (recordingInto(trackId)) return NO_AUDITION;
-  session.noteOn(trackId, pitch, velocity, 'pad');
+  session.noteOn(trackId, pitch, velocity, 'preview');
   const started = performance.now();
   let done = false;
   return {
@@ -64,8 +63,8 @@ export function audition(trackId: Id, pitch: number, velocity: number): Audition
       if (done) return;
       done = true;
       const left = AUDITION_MIN_MS - (performance.now() - started);
-      if (left > 0) window.setTimeout(() => session.noteOff(trackId, pitch, 'pad'), left);
-      else session.noteOff(trackId, pitch, 'pad');
+      if (left > 0) window.setTimeout(() => session.noteOff(trackId, pitch, 'preview'), left);
+      else session.noteOff(trackId, pitch, 'preview');
     },
   };
 }

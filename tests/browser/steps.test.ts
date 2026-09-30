@@ -156,7 +156,7 @@ describe('drum steps', () => {
     expect(step5.getAttribute('aria-label')).toBe(`Step 5, ${KICK}, on, velocity 80%`);
     expect(step5.getAttribute('aria-pressed')).toBe('true');
     // The hit is auditioned on the kick voice.
-    expect(noteOn).toHaveBeenCalledWith('t1', 0, 0.8, 'pad');
+    expect(noteOn).toHaveBeenCalledWith('t1', 0, 0.8, 'preview');
 
     pointer(step5, 'pointerdown', pointIn(step5));
     expect(notes('t1')).toHaveLength(0);
@@ -183,7 +183,7 @@ describe('drum steps', () => {
     const snareRow = m.container.querySelector<HTMLButtonElement>(`[data-voice="${SNARE_VOICE}"]`)!;
     fire(snareRow, new MouseEvent('click', { bubbles: true, detail: 1 }));
     expect(snareRow.getAttribute('aria-checked')).toBe('true');
-    expect(noteOn).toHaveBeenLastCalledWith('t1', SNARE_VOICE, 0.8, 'pad');
+    expect(noteOn).toHaveBeenLastCalledWith('t1', SNARE_VOICE, 0.8, 'preview');
 
     pointer(byLabel(m.container, `Step 3, ${SNARE}`), 'pointerdown', pointIn(byLabel(m.container, `Step 3, ${SNARE}`)));
     expect(notes('t1')).toEqual([expect.objectContaining({ tick: 48, pitch: SNARE_VOICE })]);
@@ -320,7 +320,7 @@ describe('melodic pitch lane', () => {
     pointer(roll, 'pointerdown', cell(4, 48));
     pointer(roll, 'pointerup', cell(4, 48));
     expect(notes('t3')).toEqual([expect.objectContaining({ tick: 96, pitch: 48, duration: 24, velocity: 0.8 })]);
-    expect(noteOn).toHaveBeenCalledWith('t3', 48, 0.8, 'pad');
+    expect(noteOn).toHaveBeenCalledWith('t3', 48, 0.8, 'preview');
 
     const noteEl = roll.querySelector<HTMLElement>('[data-note-id]')!;
     pointer(noteEl, 'pointerdown', pointIn(noteEl, 0.5, 0.3));
@@ -437,11 +437,11 @@ describe('melodic pitch lane', () => {
   it('leaving Steps in the middle of drawing a note releases its audition', async () => {
     const { m, roll, cell } = setup();
     pointer(roll, 'pointerdown', cell(2, 48));
-    expect(noteOn).toHaveBeenCalledWith('t3', 48, 0.8, 'pad');
+    expect(noteOn).toHaveBeenCalledWith('t3', 48, 0.8, 'preview');
     expect(noteOff).not.toHaveBeenCalled();
     m.unmount();
     await wait(200);
-    expect(noteOff).toHaveBeenCalledWith('t3', 48, 'pad');
+    expect(noteOff).toHaveBeenCalledWith('t3', 48, 'preview');
   });
 
   it('transpose moves the clip a semitone (Shift: an octave)', () => {

@@ -173,6 +173,32 @@
   z-index: 2;
 }
 
+/*
+ * A region narrower than two flags: End's flag drops to the bottom and only the flags take
+ * the pointer (the handles' wide hit strips would overlap), so both stay grabbable. A press
+ * elsewhere on the waveform still moves the nearest handle there.
+ */
+.wave[data-narrow] .handle {
+  pointer-events: none;
+}
+
+.wave[data-narrow] .flag {
+  pointer-events: auto;
+}
+
+.wave[data-narrow] .handle[data-handle='start'] {
+  z-index: 2;
+}
+
+.wave[data-narrow] .handle[data-handle='end'] .flag {
+  top: auto;
+  bottom: 5px;
+}
+
+.wave[data-narrow] .loopLabel {
+  display: none;
+}
+
 /* A macro moves this point: read-only, shown grey and dashed. */
 .handle[data-readonly] {
   cursor: default;

@@ -12,6 +12,7 @@ import { DrumPads } from './DrumPads';
 import { NotesPads } from './NotesPads';
 import { PartPanel } from './PartPanel';
 import { StepEditor } from './StepEditor';
+import { CablesDrawer } from './cables';
 import styles from './PlayView.module.css';
 
 export interface PadModeDef {
@@ -51,6 +52,10 @@ export function PlayView() {
       <aside className={styles.side}>
         <PartPanel />
       </aside>
+      {/* The cable panel: collapsed to a one-line bar until opened. */}
+      <div className={styles.cables}>
+        <CablesDrawer />
+      </div>
     </div>
   );
 }

@@ -258,31 +258,23 @@ describe('Part menu', () => {
     expect(btn.disabled).toBe(false);
   });
 
-  it('a latched arpeggio started by Preview ends with it while the transport is stopped', async () => {
+  it('Preview plays held preview notes even with a latched arpeggiator, and releases them on close without stopping anything', async () => {
     session.accepted(setArp(session.store, 't4', { enabled: true, latch: true }));
+    act(() => patchRuntime({ playing: true }));
     const m = mount(h(SoundBrowser, { open: true, trackId: 't4', onClose: () => {} }));
-    expect(dialog()!.textContent).not.toMatch(/Latch on/);
     const btn = [...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Preview')!;
     click(btn);
     await act(async () => {
       await wait(0);
     });
-    expect(calls.filter((c) => c[0] === 'on')).toHaveLength(3);
+    const ons = calls.filter((c) => c[0] === 'on');
+    expect(ons).toHaveLength(3);
+    // 'preview' notes skip Musical Assist and the arpeggiator and are never recorded (session contract).
+    expect(ons.every((c) => c[4] === 'preview')).toBe(true);
     m.rerender(h(SoundBrowser, { open: false, trackId: 't4', onClose: () => {} }));
-    // The notes are released, then Stop drops the latched pattern (it only ends latched arpeggios while stopped).
-    expect(calls.slice(-4).map((c) => c[0])).toEqual(['off', 'off', 'off', 'stop']);
-
-    // While the music plays, Stop would stop the song: the pattern keeps going and the dialog says so.
-    calls = [];
-    act(() => patchRuntime({ playing: true }));
-    m.rerender(h(SoundBrowser, { open: true, trackId: 't4', onClose: () => {} }));
-    expect(dialog()!.textContent).toMatch(/Latch on: while the music plays, a preview keeps arpeggiating/);
-    click([...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Preview')!);
-    await act(async () => {
-      await wait(0);
-    });
-    m.rerender(h(SoundBrowser, { open: false, trackId: 't4', onClose: () => {} }));
-    expect(calls.filter((c) => c[0] === 'off')).toHaveLength(3);
+    const offs = calls.filter((c) => c[0] === 'off');
+    expect(offs).toHaveLength(3);
+    expect(offs.every((c) => c[3] === 'preview')).toBe(true);
     expect(calls.some((c) => c[0] === 'stop')).toBe(false);
   });
 

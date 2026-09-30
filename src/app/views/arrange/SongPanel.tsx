@@ -66,19 +66,27 @@ function partsText(n: number): string {
   return n === 0 ? 'no clips' : n === 1 ? '1 part' : `${n} parts`;
 }
 
-/** Show a scene row's clips in the Play view (Loops), with the row's first clip selected. */
+/** Show a scene row's clips in the Play view (Loops), with the row's first clip (or first pad, when it has none) selected. */
 export function editSceneClips(row: number): void {
   const p = session.store.getState();
   setPadMode('loops');
   for (const t of p.tracks) if (t.clips[row]) selectSlot(t.id, row);
   const first = p.tracks.find((t) => t.clips[row]);
-  if (first) selectTrack(first.id);
+  const target = first ?? p.tracks[0];
+  if (target) {
+    selectTrack(target.id);
+    selectSlot(target.id, row);
+  }
   setView('play');
-  const scene = p.scenes[row];
-  notify(`Showing the ${scene?.name ?? 'scene'} row: its clips are the pads in row ${row + 1}. Open a pad's menu or Steps to edit them.`);
-  // Put keyboard focus on the row's first pad once the Play view is on screen.
+  const scene = p.scenes[row]?.name ?? 'scene';
+  notify(
+    first
+      ? `Showing the ${scene} row: its clips are the pads in row ${row + 1}. Open a pad's menu or Steps to edit them.`
+      : `The ${scene} row has no clips yet, so this block plays silence. Add clips to the pads in row ${row + 1}.`,
+  );
+  // Put keyboard focus on that pad once the Play view is on screen.
   requestAnimationFrame(() => {
-    if (first) document.getElementById(`pad-${first.id}-${row}`)?.focus({ preventScroll: true });
+    if (target) document.getElementById(`pad-${target.id}-${row}`)?.focus({ preventScroll: true });
   });
 }
 
@@ -105,11 +113,17 @@ function ModeIndicator(props: { current: BlockView | null; blockCount: number })
   const mode = useRuntime((s) => s.mode);
   const playing = useRuntime((s) => s.playing);
   const replayId = useRuntime((s) => s.replayId);
+  const recordingTake = useRuntime((s) => s.recording === 'performance');
   const replayName = useProject((p) => (replayId ? (p.performances.find((x) => x.id === replayId)?.name ?? 'a take') : ''));
   let follows: string;
   let where = '';
   let caption: string;
-  if (playing && mode === 'song') {
+  if (recordingTake) {
+    // A take records live pad playing; the project is locked except for what it records.
+    follows = 'Live pads';
+    where = 'recording a take';
+    caption = 'The song and your takes cannot be edited until you stop recording. Play song or Replay ends the take first.';
+  } else if (playing && mode === 'song') {
     follows = 'Arrangement';
     where = current ? `Block ${current.index + 1} of ${blockCount} · ${current.name}` : '';
     caption = 'Pads still work: a tapped clip joins at the next bar and plays until the next block starts. Stop brings back the pads you had before the song.';
@@ -124,9 +138,9 @@ function ModeIndicator(props: { current: BlockView | null; blockCount: number })
       : 'Stopped. Play song plays the blocks below in order; Play in the transport plays your pads.';
   }
   return (
-    <div className={styles.mode} data-mode={playing ? mode : 'stopped'} role="status" aria-live="polite" data-testid="playback-mode">
+    <div className={styles.mode} data-mode={playing ? mode : 'stopped'} data-recording={recordingTake || undefined} role="status" aria-live="polite" data-testid="playback-mode">
       <div className={styles.modeLine}>
-        <Led on={playing} tone={playing ? 'amber' : 'neutral'} label={playing ? 'Playing' : 'Stopped'} hideLabel size="sm" />
+        <Led on={playing || recordingTake} tone={recordingTake ? 'coral' : playing ? 'amber' : 'neutral'} label={recordingTake ? 'Recording' : playing ? 'Playing' : 'Stopped'} hideLabel size="sm" />
         <span className={styles.modeLabel}>Playback follows:</span>
         <strong className={styles.modeValue}>{follows}</strong>
         {where && <span className={styles.modeWhere}>{where}</span>}
@@ -238,7 +252,7 @@ const SongBlock = memo(function SongBlock(props: BlockProps) {
           <Icon name="chevronDown" size={12} />
         </button>
         <Tooltip name={`Play from block ${block.index + 1}`} tip="Start the song here.">
-          <button type="button" className={styles.blockPlay} tabIndex={inner} aria-label={`Play song from block ${block.index + 1} (${block.name})`} onClick={() => startSong(block.index)} disabled={missing}>
+          <button type="button" className={styles.blockPlay} tabIndex={inner} aria-label={`Play song from block ${block.index + 1} (${block.name})`} onClick={() => void startSong(block.index)} disabled={missing}>
             <Icon name="play" size={12} />
           </button>
         </Tooltip>
@@ -335,7 +349,7 @@ function BlockMenu(props: {
         disabled={block.row < 0}
         onSelect={() => {
           onClose();
-          startSong(block.index);
+          void startSong(block.index);
         }}
       >
         Play song from here
@@ -468,8 +482,11 @@ export function SongPanel() {
   useLayoutEffect(() => {
     const id = pendingFocus.current;
     if (!id || id === EMPTY_FOCUS) return;
+    const el = document.getElementById(`song-block-${id}`);
+    // Blocks appear once the lane is measured: wait for that render rather than dropping the request.
+    if (!el && !measured) return;
     pendingFocus.current = null;
-    document.getElementById(`song-block-${id}`)?.focus({ preventScroll: false });
+    el?.focus({ preventScroll: false });
   });
   const addAllRef = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
@@ -597,6 +614,14 @@ export function SongPanel() {
     const t = e.target as HTMLElement;
     if (t.closest('button, input, a, [role="menuitem"]')) return;
     dragRef.current = { source, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY, started: false, gap: null };
+    // Capture, so a release outside the window still ends the drag (moves still bubble to the window listeners).
+    const captureEl = e.currentTarget;
+    const pointerId = e.pointerId;
+    try {
+      captureEl.setPointerCapture(pointerId);
+    } catch {
+      /* not an active pointer (e.g. a synthetic event) */
+    }
     const onMove = (ev: PointerEvent) => {
       const d = dragRef.current;
       if (!d || ev.pointerId !== d.pointerId) return;
@@ -664,6 +689,11 @@ export function SongPanel() {
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onCancel);
       window.removeEventListener('keydown', onKey, true);
+      try {
+        if (captureEl.hasPointerCapture(pointerId)) captureEl.releasePointerCapture(pointerId);
+      } catch {
+        /* element already gone */
+      }
       cleanupDrag.current = null;
       dragRef.current = null;
       setDrag(null);
@@ -706,16 +736,42 @@ export function SongPanel() {
     }
   }, songMode);
 
+  // A block added at the end of a song that scrolls is brought into view (focus stays on the + button).
+  const pendingReveal = useRef<Id | null>(null);
+  useLayoutEffect(() => {
+    const id = pendingReveal.current;
+    const scroller = scrollerRef.current;
+    if (!id || !scroller || !measured) return;
+    pendingReveal.current = null;
+    const lb = layout.blocks.find((b) => b.id === id);
+    if (!lb) return;
+    const view = scroller.clientWidth;
+    if (lb.x < scroller.scrollLeft || lb.x + lb.width > scroller.scrollLeft + view) {
+      scroller.scrollTo({ left: Math.max(0, lb.x + lb.width + BLOCK_GAP * 2 - view), behavior: 'smooth' });
+    }
+  });
+
   const addScene = (s: SceneSummary) => {
     const r = cmd.addBlock(session.store, s.id);
     if (session.accepted(r) && r.blockId) {
       setActiveId(r.blockId);
+      pendingReveal.current = r.blockId;
       notify(`Added ${s.name} at the end of the song (block ${session.store.getState().arrangement.blocks.length}).`);
     }
   };
   const addAll = () => {
-    for (const s of scenes) session.accepted(cmd.addBlock(session.store, s.id));
+    let first: Id | null = null;
+    // One gesture id: adding every scene is a single undo step.
+    const gesture = `add-all-${Date.now()}`;
+    for (const s of scenes) {
+      const r = cmd.addBlock(session.store, s.id, undefined, undefined, gesture);
+      if (session.accepted(r) && r.blockId) first ??= r.blockId;
+    }
+    if (!first) return;
     notify(`Added ${scenes.map((s) => s.name).join(', ')} in order. Change repeats or drag blocks to shape the song.`);
+    // The button that was pressed is gone with the empty state: keyboard focus moves to the first block.
+    setActiveId(first);
+    pendingFocus.current = first;
   };
 
   const empty = views.length === 0;
@@ -739,7 +795,7 @@ export function SongPanel() {
               variant="primary"
               icon="play"
               pressed={songMode}
-              onClick={() => startSong(0)}
+              onClick={() => void startSong(0)}
               disabled={empty}
               aria-label={songMode ? 'Play song from the start (playing now)' : 'Play song'}
               tip={empty ? 'Add scene blocks first.' : 'Play the blocks in order from the first one. Pressing it while the song plays starts it again from the top.'}
@@ -766,8 +822,8 @@ export function SongPanel() {
       {stale && (
         <div className={styles.stale} role="status">
           <Icon name="info" size={14} />
-          <span>You changed the song while it plays. It keeps the order it started with until you play it again.</span>
-          <Button size="sm" variant="ghost" icon="play" onClick={() => startSong(current ? current.index : 0)}>
+          <span>You changed the song while it plays. Playback keeps the blocks, order and lengths it started with until you start the song again.</span>
+          <Button size="sm" variant="ghost" icon="play" onClick={() => void startSong(current ? current.index : 0)}>
             {current ? `Restart from block ${current.index + 1}` : 'Restart song'}
           </Button>
         </div>
@@ -829,7 +885,7 @@ export function SongPanel() {
               )}
               {markerX !== null && <div className={styles.marker} style={{ left: markerX }} aria-hidden="true" data-testid="insert-marker" />}
             </div>
-            {!empty && <div ref={playheadRef} className={styles.playhead} aria-hidden="true" data-on={songMode || undefined} />}
+            {!empty && <div ref={playheadRef} className={styles.playhead} aria-hidden="true" data-on={songMode || undefined} data-testid="playhead" />}
           </div>
         </div>
       </div>
@@ -864,7 +920,7 @@ export function SongPanel() {
           ))}
         </div>
         <p id={helpId} className={styles.hint}>
-          Drag or Alt+←/→ to reorder · Del removes · Enter for options
+          Drag or Alt+←/→ to reorder · +/− repeats · Del removes · Enter for options
         </p>
       </div>
 

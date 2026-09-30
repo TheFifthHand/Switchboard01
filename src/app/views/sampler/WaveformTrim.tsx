@@ -35,6 +35,8 @@ const KEY_PAGE_STEP = 0.1;
 const BURST_IDLE_MS = 700;
 /** Shift-drag moves the handle this much slower. */
 const FINE_DRAG = 0.1;
+/** Below this region width (CSS px) the End flag sits at the bottom so it never covers the Start flag. */
+const NARROW_REGION_PX = 40;
 
 export interface WaveformTrimProps {
   trackId: Id;
@@ -268,6 +270,8 @@ export function WaveformTrim({ trackId, name, overview, status, duration }: Wave
   const fades = edgeFades(regionLen, v.fadeIn, v.fadeOut, rootRate(v, bpm), loop);
   const controller: Record<Handle, string | null> = { start: startCtl, end: endCtl };
   const usable = duration > 0;
+  // Flags are 17 px wide: in a region narrower than two flags the End flag moves to the bottom, so both stay grabbable.
+  const narrow = (hi - lo) * size.width < NARROW_REGION_PX;
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -482,6 +486,7 @@ export function WaveformTrim({ trackId, name, overview, status, duration }: Wave
       aria-label={`Waveform of ${name}. Drag Start and End to trim.`}
       data-dragging={dragging ?? undefined}
       data-empty={!usable || undefined}
+      data-narrow={narrow || undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}

@@ -9,7 +9,7 @@
  *   command; a note's press and release are deleted together.
  * - Long takes render the first rows and grow on "Show more".
  */
-import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Button, Icon, Led, Tooltip, useRafLoop } from '../../../ui/components';
 import type { Id, Performance } from '../../../project/types';
 import * as cmd from '../../../state/commands';
@@ -17,7 +17,7 @@ import { setView } from '../../../state/uiStore';
 import { session, useProject } from '../../instance';
 import { notify, useRuntime } from '../../runtime';
 import { formatSeconds } from '../../session';
-import { eventCounts, performanceRows, performanceSeconds, type EventKind, type EventRow } from './perfEvents';
+import { eventCounts, performanceRows, performanceSeconds, takeTempoMap, type EventKind, type EventRow } from './perfEvents';
 import styles from './PerformancesPanel.module.css';
 
 /** Rows shown when a take is opened, and how many more each "Show more" adds. */
@@ -166,13 +166,16 @@ function ReplayProgress(props: { perf: Performance; seconds: number }) {
   const barRef = useRef<HTMLSpanElement>(null);
   const textRef = useRef<HTMLSpanElement>(null);
   const last = useRef('');
+  // Elapsed time follows the take's recorded tempo changes, like its length.
+  const tempo = useMemo(() => takeTempoMap(perf), [perf]);
   useRafLoop(() => {
     const t = session.transport;
     if (!t) return;
-    const tick = t.getPosition().tick;
-    const f = Math.min(1, Math.max(0, (tick - perf.startTick) / Math.max(1, perf.endTick - perf.startTick)));
+    const tick = Math.min(perf.endTick, Math.max(perf.startTick, t.getPosition().tick));
+    const elapsed = Math.min(seconds, Math.max(0, tempo.timeAt(tick)));
+    const f = seconds > 0 ? elapsed / seconds : 0;
     if (barRef.current) barRef.current.style.transform = `scaleX(${f.toFixed(4)})`;
-    const text = `${lengthText(f * seconds)} / ${lengthText(seconds)}`;
+    const text = `${lengthText(elapsed)} / ${lengthText(seconds)}`;
     if (textRef.current && text !== last.current) {
       last.current = text;
       textRef.current.textContent = text;
@@ -374,7 +377,7 @@ const TakeRow = memo(function TakeRow(props: { perf: Performance; expanded: bool
               Stop
             </Button>
           ) : (
-            <Button size="sm" variant="secondary" icon="play" onClick={() => void session.replayPerformance(perf.id)} aria-label={`Replay ${perf.name}`} tip="Play the take back exactly as recorded: launches, notes and knob moves." detail="Uses the sounds and routing captured when the take started. Pads and keys are ignored while it replays.">
+            <Button size="sm" variant="secondary" icon="play" onClick={() => void session.replayPerformance(perf.id)} aria-label={`Replay ${perf.name}`} tip="Play the take back exactly as recorded: launches, notes and knob moves." detail="Uses the sounds and routing captured when the take started. Pads and keys are ignored while it replays. Starting a replay ends a take that is recording.">
               Replay
             </Button>
           )}
@@ -416,7 +419,7 @@ export function PerformancesPanel() {
     if (expanded && !performances.some((p) => p.id === expanded)) setExpanded(null);
   }, [expanded, performances]);
 
-  const onToggle = (id: Id) => setExpanded((cur) => (cur === id ? null : id));
+  const onToggle = useCallback((id: Id) => setExpanded((cur) => (cur === id ? null : id)), []);
 
   return (
     <section className={styles.panel} aria-labelledby="perf-title">

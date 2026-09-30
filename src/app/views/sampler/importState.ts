@@ -57,6 +57,11 @@ export async function importFileToPart(file: File, trackId: Id): Promise<{ ok: b
   return res;
 }
 
+/** True while a file is being decoded and stored for this part. */
+export function importInProgress(trackId: Id): boolean {
+  return importStore.getState()[trackId]?.phase === 'decoding';
+}
+
 /** True when an import onto this part succeeded within the last `ms` milliseconds. */
 export function importedRecently(trackId: Id, ms = 3000): boolean {
   const s = importStore.getState()[trackId];

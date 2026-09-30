@@ -69,6 +69,16 @@
   min-width: 108px;
 }
 
+.assistNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: -2px 0 0;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+
 .trimRow {
   display: grid;
   grid-template-areas: 'fin read fout';
@@ -135,19 +145,11 @@
   gap: 6px 0;
 }
 
-/* Narrow column (e.g. 200% zoom): readouts get their own row, meta goes under the title, knobs wrap to 3. */
+/* Narrower column (the Shape view at 1366 px): meta goes under the title, knobs wrap to 3 per row. */
 @container (max-width: 340px) {
   .knobs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .trimRow {
-    grid-template-areas:
-      'read read'
-      'fin fout';
-    grid-template-columns: auto auto;
-    justify-content: space-between;
-    row-gap: 2px;
+    row-gap: 10px;
   }
 
   .head {
@@ -158,6 +160,26 @@
   .head .meta {
     flex-basis: 100%;
     white-space: normal;
+  }
+
+  .readouts {
+    gap: 2px;
+  }
+
+  .readouts dd {
+    font-size: var(--fs-xs);
+  }
+}
+
+/* Very narrow (e.g. 200% zoom): the readouts get their own row above the fade knobs. */
+@container (max-width: 290px) {
+  .trimRow {
+    grid-template-areas:
+      'read read'
+      'fin fout';
+    grid-template-columns: auto auto;
+    justify-content: space-between;
+    row-gap: 2px;
   }
 }
 
@@ -176,6 +198,10 @@
 .explain {
   color: var(--ink);
   font-weight: 560;
+}
+
+.nowrap {
+  white-space: nowrap;
 }
 
 .explainIcon {

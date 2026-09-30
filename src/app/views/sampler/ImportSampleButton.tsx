@@ -10,7 +10,7 @@
  * result appear in a live status line. When an import fails, the message
  * says what to do and the project is left exactly as it was.
  */
-import { useId, useRef, useState, type DragEvent } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Button, Icon } from '../../../ui/components';
 import { IMPORT_LIMITS } from '../../../persistence/audioImport';
 import { useStore } from '../../../state/store';
@@ -34,8 +34,29 @@ export const IMPORT_PRIVACY_TEXT = 'Files stay on this device: decoded and kept 
 export const IMPORT_PITCH_TEXT = 'Imported recordings keep their pitch unless you change Pitch.';
 const TAKE_LOCK_TEXT = 'A performance is recording, so the sound can’t change. Stop recording to import.';
 
-function hasFiles(e: DragEvent): boolean {
+function hasFiles(e: { dataTransfer: DataTransfer | null }): boolean {
   return Array.from(e.dataTransfer?.types ?? []).includes('Files');
+}
+
+/**
+ * While a drop zone is on screen, a file released just outside it must not make the browser
+ * open that file in place of the app. Drops the zone handles are already default-prevented.
+ */
+function useNearMissGuard(active: boolean): void {
+  useEffect(() => {
+    if (!active) return;
+    const guard = (e: globalThis.DragEvent) => {
+      if (e.defaultPrevented || !hasFiles(e)) return;
+      e.preventDefault();
+      if (e.type === 'dragover' && e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+    };
+    window.addEventListener('dragover', guard);
+    window.addEventListener('drop', guard);
+    return () => {
+      window.removeEventListener('dragover', guard);
+      window.removeEventListener('drop', guard);
+    };
+  }, [active]);
 }
 
 export function ImportSampleButton({ trackId, variant = 'button' }: ImportSampleButtonProps) {
@@ -48,6 +69,7 @@ export function ImportSampleButton({ trackId, variant = 'button' }: ImportSample
   const hintId = useId();
   const busy = status.phase === 'decoding';
   const disabled = busy || takeLocked;
+  useNearMissGuard(variant === 'dropzone');
 
   const importFile = (file: File | undefined) => {
     if (!file || disabled) return;
@@ -56,6 +78,11 @@ export function ImportSampleButton({ trackId, variant = 'button' }: ImportSample
       // so the result is also announced as a notice (the new status line appears silently).
       if (res.ok && variant === 'dropzone') notify(res.message, 'info');
     });
+  };
+
+  // While decoding, the key keeps keyboard focus (aria-disabled) but opens nothing.
+  const choose = () => {
+    if (!disabled) fileRef.current?.click();
   };
 
   const input = (
@@ -114,9 +141,11 @@ export function ImportSampleButton({ trackId, variant = 'button' }: ImportSample
           <Button
             icon="upload"
             size="sm"
-            disabled={disabled}
+            disabled={takeLocked}
+            aria-disabled={busy || undefined}
+            className={busy ? styles.busy : undefined}
             aria-describedby={`${statusId} ${hintId}`}
-            onClick={() => fileRef.current?.click()}
+            onClick={choose}
             tip={`Import a WAV or MP3 from this device onto ${partName}. ${IMPORT_PITCH_TEXT}`}
             detail={`${IMPORT_LIMITS_TEXT} ${IMPORT_PRIVACY_TEXT}`}
           >
@@ -164,7 +193,15 @@ export function ImportSampleButton({ trackId, variant = 'button' }: ImportSample
         <Icon name="upload" size={18} />
       </span>
       <p className={styles.zoneTitle}>{over ? 'Release to import' : 'Drop a WAV or MP3 here'}</p>
-      <Button icon="folder" size="sm" disabled={disabled} aria-describedby={`${statusId} ${hintId}`} onClick={() => fileRef.current?.click()}>
+      <Button
+        icon="folder"
+        size="sm"
+        disabled={takeLocked}
+        aria-disabled={busy || undefined}
+        className={busy ? styles.busy : undefined}
+        aria-describedby={`${statusId} ${hintId}`}
+        onClick={choose}
+      >
         {busy ? 'Decoding…' : 'Choose file…'}
       </Button>
       <p className={styles.limits}>{IMPORT_LIMITS_TEXT}</p>

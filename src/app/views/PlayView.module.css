@@ -1,6 +1,7 @@
 .view {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 312px;
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 12px;
   height: 100%;
   min-height: 0;
@@ -32,6 +33,11 @@
 
 .side {
   min-height: 0;
+  min-width: 0;
+}
+
+.cables {
+  grid-column: 1 / -1;
   min-width: 0;
 }
 

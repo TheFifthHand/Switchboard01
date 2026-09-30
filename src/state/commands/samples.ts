@@ -19,7 +19,7 @@ export function sampleUsage(p: Project, sampleId: Id): { tracks: Id[]; performan
   };
 }
 
-export function addSampleMeta(store: ProjectStore, meta: SampleMeta): CommandResult {
+export function addSampleMeta(store: ProjectStore, meta: SampleMeta, gesture?: string): CommandResult {
   const p = store.getState();
   const clean = sanitizeSampleMeta(meta);
   if (!clean) return refuse('invalid', 'The recording information is incomplete.');
@@ -27,7 +27,7 @@ export function addSampleMeta(store: ProjectStore, meta: SampleMeta): CommandRes
   if (p.samples.length >= VALIDATION_LIMITS.maxSamples) return refuse('limit', 'This project already holds as many recordings as it can.');
   return run(store, 'sample:Import recording', (d) => {
     d.samples.push(clean);
-  });
+  }, gesture);
 }
 
 /** Remove a recording from the project; refused while a part or a saved take uses it. */
@@ -43,7 +43,7 @@ export function removeSampleMeta(store: ProjectStore, sampleId: Id): CommandResu
 }
 
 /** Play a recording (imported or built-in) on a part, turning it into a sampler if needed. */
-export function assignSample(store: ProjectStore, trackId: Id, sampleId: Id | null): CommandResult {
+export function assignSample(store: ProjectStore, trackId: Id, sampleId: Id | null, gesture?: string): CommandResult {
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
@@ -55,9 +55,9 @@ export function assignSample(store: ProjectStore, trackId: Id, sampleId: Id | nu
     return run(store, 'sample:Assign recording', (d) => {
       const inst = draftTrack(d, trackId).instrument;
       if (inst.kind === 'sampler') inst.sampleId = sampleId;
-    });
+    }, gesture);
   }
-  return run(store, 'sample:Assign recording', (d) => applySamplerToProject(d, trackId, sampleId));
+  return run(store, 'sample:Assign recording', (d) => applySamplerToProject(d, trackId, sampleId), gesture);
 }
 
 export function setSamplerParam(store: ProjectStore, trackId: Id, param: string, value: number, gesture?: string): CommandResult {

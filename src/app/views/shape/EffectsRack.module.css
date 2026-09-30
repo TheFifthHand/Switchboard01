@@ -120,34 +120,42 @@
   background: transparent;
   color: var(--ink-3);
   box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.flowChip[data-off] .flowName {
   text-decoration: line-through;
   text-decoration-color: var(--line-strong);
 }
 
 .flowOff {
-  margin-left: 4px;
-  font-size: 10px;
+  margin-left: 5px;
+  font-size: var(--fs-xs);
   font-weight: 650;
-  letter-spacing: 0.08em;
-  text-decoration: none;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
+/* Neutral information (not teal: custom routing is about audio cables, not selection or modulation). */
 .custom {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
   border-radius: var(--r-md);
-  background: var(--teal-wash);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 30%, transparent);
+  background: var(--surface-hi);
+  box-shadow: inset 0 0 0 1px var(--line);
   color: var(--ink-2);
   font-size: var(--fs-sm);
   line-height: 1.35;
 }
 
+.customIcon {
+  flex: none;
+  color: var(--ink-3);
+}
+
 .custom strong {
-  color: var(--teal-ink);
+  color: var(--ink);
   font-weight: 600;
 }
 

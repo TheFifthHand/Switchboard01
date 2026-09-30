@@ -20,16 +20,16 @@ import { Button, Icon, NumberField, SegmentedControl, Select, Switch, noteName, 
 import { BUILTIN_SAMPLES, builtinSampleInfo } from '../../../content/catalog';
 import { snapToScale } from '../../../music/scales';
 import { moduleId } from '../../../project/factory';
-import type { Id } from '../../../project/types';
+import type { Id, Project } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { shallowEqual } from '../../../state/store';
 import { session, useProject } from '../../instance';
 import { INSTRUMENT_LABEL, soundName } from '../../labels';
-import { useRuntime } from '../../runtime';
+import { runtimeStore, useRuntime } from '../../runtime';
 import { ParamKnob } from '../shape/ParamKnob';
 import { ImportSampleButton } from './ImportSampleButton';
-import { importedRecently } from './importState';
-import { isBuiltinId, useSampleOverview } from './sampleOverview';
+import { importInProgress, importedRecently } from './importState';
+import { isBuiltinId, useSampleOverview, useStoredFile } from './sampleOverview';
 import {
   BARS_MAX,
   BARS_MIN,
@@ -47,7 +47,7 @@ import {
   formatSemitones,
   formatTime,
   rateToSemitones,
-  rootRate,
+  noteRate,
   suggestedBars,
   syncRate,
 } from './samplerMath';
@@ -114,11 +114,35 @@ const AUDITION_IDS = ['start', 'end', 'mode', 'pitch', 'fine', 'sync', 'original
 /** Longest one-shot audition before the key releases by itself (seconds). */
 const MAX_AUDITION_SECONDS = 60;
 
-function Audition(props: { trackId: Id; duration: number }) {
-  const { trackId, duration } = props;
-  const root = useProject((p) => readSamplerValues(p, trackId, ['rootNote']).rootNote);
-  const heard = useProject((p) => (p.assist ? snapToScale(root, p.root, p.scale) : root));
-  const [playing, setPlaying] = useState(false);
+/** The pitch a pad plays for `key` on this project (Musical Assist keeps it in the key). */
+function heardPitch(p: Project, key: number): number {
+  return p.assist ? snapToScale(key, p.root, p.scale) : key;
+}
+
+/** True when the part's arpeggiator keeps playing released notes (Latch on). */
+function latchedArp(p: Project, trackId: Id): boolean {
+  const t = p.tracks.find((x) => x.id === trackId);
+  return !!t && t.arp.enabled && t.arp.latch;
+}
+
+/** Why Audition cannot play right now (null: it can). A preview must never end up in a take. */
+function auditionBlock(s: { recording: string; recordTarget: { trackId: Id } | null; replayId: Id | null }, trackId: Id): string | null {
+  if (s.recording === 'performance') return 'A performance is recording, so Audition is off (a preview must not end up in the take). Play the pads or keyboard to be recorded.';
+  if (s.recording === 'notes' && s.recordTarget?.trackId === trackId) return 'Record Notes is writing into this part, so Audition is off (it would be recorded).';
+  if (s.replayId !== null) return 'A recorded performance is replaying. Stop it to audition.';
+  return null;
+}
+
+function Audition(props: { trackId: Id; sampleId: Id; duration: number; available: boolean }) {
+  const { trackId, sampleId, duration, available } = props;
+  const root = useProject((p) => Math.round(readSamplerValues(p, trackId, ['rootNote']).rootNote));
+  const heard = useProject((p) => heardPitch(p, root));
+  const blocked = useRuntime((s) => auditionBlock(s, trackId));
+  /** The pitch this audition holds (as the session publishes it), or null. */
+  const [holding, setHolding] = useState<number | null>(null);
+  // The session releases every held note on Stop, Mute All, window blur and pointer cancel:
+  // the button follows the real note, so it never says "Stop" over silence.
+  const sounding = useRuntime((s) => holding !== null && (s.held[trackId]?.includes(holding) ?? false));
   const current = useRef<{ key: number; timer: number } | null>(null);
   const alive = useRef(true);
   const pending = useRef(false);
@@ -129,17 +153,35 @@ function Audition(props: { trackId: Id; duration: number }) {
     if (!c) return;
     current.current = null;
     window.clearTimeout(c.timer);
-    session.noteOff(trackId, c.key, 'pad');
-    if (alive.current) setPlaying(false);
+    session.noteOff(trackId, c.key, 'preview');
+    // A latched arpeggio would keep playing the root on the idle clock with no visible Stop.
+    // While the transport is stopped, Stop ends only that (and any other held notes).
+    if (latchedArp(session.store.getState(), trackId) && !runtimeStore.getState().playing) session.stop();
+    if (alive.current) setHolding(null);
   }, [trackId]);
 
+  // Stop when the part or its recording changes, and when the editor goes away.
   useEffect(() => {
     alive.current = true;
     return () => {
       alive.current = false;
       stop();
     };
-  }, [stop]);
+  }, [stop, sampleId]);
+
+  // The note was released elsewhere (Stop, Mute All, blur): forget it without a second note-off.
+  useEffect(() => {
+    if (holding === null || sounding) return;
+    const c = current.current;
+    if (c) window.clearTimeout(c.timer);
+    current.current = null;
+    setHolding(null);
+  }, [holding, sounding]);
+
+  // A take or a replay starting mid-audition ends it.
+  useEffect(() => {
+    if (blocked) stop();
+  }, [blocked, stop]);
 
   const start = () => {
     stop();
@@ -148,20 +190,26 @@ function Audition(props: { trackId: Id; duration: number }) {
     void session.startAudio().then((ok) => {
       if (!ok || !alive.current || !pending.current) return;
       pending.current = false;
+      const rt = runtimeStore.getState();
+      if (auditionBlock(rt, trackId)) return;
       const p = session.store.getState();
       const v = readSamplerValues(p, trackId, AUDITION_IDS);
       const key = Math.round(v.rootNote);
-      session.noteOn(trackId, key, 0.85, 'pad');
+      const pitch = heardPitch(p, key);
+      session.noteOn(trackId, key, 0.85, 'preview');
+      if (!runtimeStore.getState().held[trackId]?.includes(pitch)) return;
       // One-shot: the voice ends by itself at the region end; the key is released after it.
       // Loop: it repeats until Stop.
-      const seconds = (Math.abs(v.end - v.start) * duration) / rootRate(v, p.bpm);
+      const seconds = (Math.abs(v.end - v.start) * duration) / noteRate(v, pitch, p.bpm);
       const timer = v.mode === 1 ? 0 : window.setTimeout(stop, Math.min(MAX_AUDITION_SECONDS, seconds) * 1000 + 150);
       current.current = { key, timer };
-      setPlaying(true);
+      setHolding(pitch);
     });
   };
 
+  const playing = holding !== null && sounding;
   const rootName = noteName(root);
+  const off = !playing && (!!blocked || !available);
   return (
     <Button
       size="sm"
@@ -169,18 +217,40 @@ function Audition(props: { trackId: Id; duration: number }) {
       pressed={playing}
       tone="amber"
       className={styles.audition}
-      aria-label={playing ? `Stop audition (playing ${noteName(heard)})` : `Audition: play ${rootName}`}
+      disabled={off}
+      aria-label={playing ? `Stop audition (playing ${noteName(heard)})` : `Audition: play ${rootName}${off ? ' (unavailable)' : ''}`}
       onClick={() => (playing ? stop() : start())}
       tip={
         playing
           ? 'Stops the audition.'
-          : heard === root
-            ? `Plays the trimmed recording at its root note (${rootName}). One-shot plays it once; Loop repeats until you press Stop.`
-            : `Musical Assist keeps played notes in the key, so ${rootName} plays as ${noteName(heard)}. Switch Musical Assist off to hear the original pitch.`
+          : !available
+            ? 'This recording’s audio is not in this browser, so there is nothing to play.'
+            : (blocked ??
+              (heard === root
+                ? `Plays the trimmed recording at its root note (${rootName}). One-shot plays it once; Loop repeats until you press Stop.`
+                : `Plays the trimmed recording on its root key. Musical Assist keeps played notes in the key, so ${rootName} sounds as ${noteName(heard)}.`))
       }
     >
       {playing ? 'Stop' : 'Audition'}
     </Button>
+  );
+}
+
+/** Shown when Musical Assist moves the root key: the recording is heard off its own pitch. */
+function AssistNote(props: { trackId: Id }) {
+  const { trackId } = props;
+  const root = useProject((p) => Math.round(readSamplerValues(p, trackId, ['rootNote']).rootNote));
+  const heard = useProject((p) => heardPitch(p, root));
+  if (heard === root) return null;
+  const diff = heard - root;
+  return (
+    <p className={styles.assistNote}>
+      <Icon name="info" size={12} className={styles.explainIcon} />
+      <span>
+        Root {noteName(root)} is outside the key, so Musical Assist plays it as {noteName(heard)} ({diff > 0 ? '+' : '−'}
+        {Math.abs(diff)} st). Turn Assist off to hear the recording at its own pitch.
+      </span>
+    </p>
   );
 }
 
@@ -239,10 +309,13 @@ function TrimFooter(props: { trackId: Id; duration: number }) {
   );
 }
 
-function metaText(overview: { duration: number; sampleRate: number; channels: number } | null, fallback: { duration: number; sampleRate: number; channels: number } | null, source: string): string {
-  const o = overview ?? fallback;
-  if (!o) return source;
-  return [formatDuration(o.duration), formatSampleRate(o.sampleRate), o.channels === 1 ? 'Mono' : 'Stereo', source].join(' · ');
+/**
+ * "2.00 s · 44.1 kHz · Stereo · WAV · 345 KB". `rate` is the file's own sample rate
+ * (null: unknown, left out); built-ins are made at the rate they play at.
+ */
+function metaText(info: { duration: number; channels: number } | null, rate: number | null, source: string): string {
+  if (!info) return source;
+  return [formatDuration(info.duration), rate ? formatSampleRate(rate) : null, info.channels === 1 ? 'Mono' : 'Stereo', source].filter(Boolean).join(' · ');
 }
 
 /* ------------------------------------------------------------------ */
@@ -288,7 +361,11 @@ function PlaybackSection(props: { trackId: Id }) {
           options={ROOT_OPTIONS}
           disabled={!!rootCtl}
           width={78}
-          tip="The key that plays the recording at its original pitch. Other keys play it higher or lower (and faster or slower)."
+          tip={
+            rootCtl
+              ? `The ${rootCtl} macro sets the root note. Remove that mapping in Macros to set it here.`
+              : 'The key that plays the recording at its original pitch. Other keys play it higher or lower (and faster or slower).'
+          }
           onChange={(val) => session.setInstrumentParam(trackId, 'rootNote', Number(val))}
         />
       </div>
@@ -347,7 +424,11 @@ function TempoSection(props: { trackId: Id; sampleId: Id; duration: number }) {
           checked={on}
           disabled={!!syncCtl}
           onChange={(c) => session.setInstrumentParam(trackId, 'sync', c ? 1 : 0)}
-          tip="Speeds the recording up or down to follow the project tempo. Its pitch moves with the speed."
+          tip={
+            syncCtl
+              ? `The ${syncCtl} macro switches Tempo Sync. Remove that mapping in Macros to switch it here.`
+              : 'Speeds the recording up or down to follow the project tempo. Its pitch moves with the speed.'
+          }
           detail="Rate = project BPM ÷ Original BPM. Not pitch-preserving."
         />
         <NumberField
@@ -363,12 +444,20 @@ function TempoSection(props: { trackId: Id; sampleId: Id; duration: number }) {
           chars={5}
           disabled={!!obpmCtl}
           onChange={(val, info) => session.setInstrumentParam(trackId, 'originalBpm', val, info.gesture)}
-          tip="The tempo the recording was made at. Tempo Sync compares it with the project tempo."
+          tip={
+            obpmCtl
+              ? `The ${obpmCtl} macro sets Original BPM. Remove that mapping in Macros to set it here.`
+              : on
+                ? 'The tempo the recording was made at. Tempo Sync compares it with the project tempo.'
+                : 'The tempo the recording was made at. It takes effect when Tempo Sync is on.'
+          }
         />
       </div>
       <p className={styles.explain}>
         <Icon name="info" size={14} className={styles.explainIcon} />
-        <span>Speed and pitch change together (no time-stretch)</span>
+        <span>
+          Speed and pitch change together <span className={styles.nowrap}>(no time-stretch)</span>
+        </span>
       </p>
       <p className={styles.syncState} data-on={on || undefined}>
         {on
@@ -395,12 +484,22 @@ function TempoSection(props: { trackId: Id; sampleId: Id; duration: number }) {
         <Button
           size="sm"
           className={styles.setBpm}
-          disabled={!inRange || matches || !!obpmCtl}
+          icon={matches ? 'check' : undefined}
+          disabled={!inRange || !!obpmCtl}
+          // Already set: the key keeps focus (aria-disabled) and says so in words.
+          aria-disabled={matches || undefined}
           aria-describedby={!inRange ? warnId : undefined}
-          onClick={() => session.setInstrumentParam(trackId, 'originalBpm', Math.round(target * 100) / 100)}
-          tip={`Sets Original BPM so ${formatBars(bars)} fill the ${formatTime(regionSeconds, duration)} region: ${formatBars(bars)} × 4 beats × 60 ÷ ${regionSeconds.toFixed(3)} s.`}
+          aria-label={matches ? `Original BPM already matches: ${formatBpm(target)}` : undefined}
+          onClick={() => {
+            if (!matches) session.setInstrumentParam(trackId, 'originalBpm', Math.round(target * 100) / 100);
+          }}
+          tip={
+            obpmCtl
+              ? `The ${obpmCtl} macro sets Original BPM. Remove that mapping in Macros to set it here.`
+              : `Sets Original BPM so ${formatBars(bars)} fill the ${formatTime(regionSeconds, duration)} region: ${formatBars(bars)} × 4 beats × 60 ÷ ${regionSeconds.toFixed(3)} s.`
+          }
         >
-          {inRange ? `Set ${formatBpm(target)}` : 'Set BPM'}
+          {!inRange ? 'Set BPM' : matches ? `${formatBpm(target)} set` : `Set ${formatBpm(target)}`}
         </Button>
       </div>
       {!inRange && regionSeconds > 0 && (
@@ -424,15 +523,23 @@ function RecordingEditor(props: { trackId: Id; sampleId: Id; name: string; partN
   const { trackId, sampleId, name, partName } = props;
   const titleId = useId();
   const importTitleId = useId();
-  const { overview, status, meta } = useSampleOverview(sampleId);
+  const found = useSampleOverview(sampleId);
+  const file = useStoredFile(sampleId);
   const builtin = isBuiltinId(sampleId);
-  const duration = overview?.duration ?? meta?.duration ?? 0;
-  const source = builtin ? 'Built-in' : meta ? `${fileKind(meta.mime)} · ${formatBytes(meta.byteLength)}` : 'Missing';
+  const meta = found.meta;
+  // An imported recording whose audio is not in this browser cannot play: say so rather than draw it.
+  const missing = found.status === 'missing' || (!builtin && (!meta || file?.stored === false));
+  const overview = missing ? null : found.overview;
+  const status = missing ? 'missing' : found.status;
+  const duration = found.overview?.duration ?? meta?.duration ?? 0;
+  const source = builtin ? 'Built-in' : meta ? `${fileKind(meta.mime)} · ${formatBytes(meta.byteLength)}${missing ? ' · audio missing' : ''}` : 'Missing';
+  const info = found.overview ?? meta;
+  const rate = builtin ? (found.overview?.sampleRate ?? null) : file?.stored ? file.rate : null;
 
   // Keyboard continuity: after a choice or import in the empty state (whose controls are now gone), focus the picker.
   useEffect(() => {
     const chose = focusPickerOnMount.delete(trackId);
-    if (!chose && !importedRecently(trackId)) return;
+    if (!chose && !importedRecently(trackId) && !importInProgress(trackId)) return;
     const active = document.activeElement;
     if (!active || active === document.body) document.getElementById(pickerId(trackId))?.focus({ preventScroll: true });
   }, [trackId]);
@@ -445,12 +552,13 @@ function RecordingEditor(props: { trackId: Id; sampleId: Id; name: string; partN
             Recording
           </h3>
           <span className={styles.rule} aria-hidden="true" />
-          <span className={`${styles.meta} mono`}>{metaText(overview, meta, source)}</span>
+          <span className={`${styles.meta} mono`}>{metaText(info, rate, source)}</span>
         </div>
         <div className={styles.pickRow}>
           <SamplePicker trackId={trackId} sampleId={sampleId} label={`Recording for ${partName}`} />
-          <Audition trackId={trackId} duration={duration} />
+          <Audition trackId={trackId} sampleId={sampleId} duration={duration} available={!missing} />
         </div>
+        <AssistNote trackId={trackId} />
         <WaveformTrim trackId={trackId} name={name} overview={overview} status={status} duration={duration} />
         <TrimFooter trackId={trackId} duration={duration} />
       </section>

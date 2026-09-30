@@ -78,6 +78,15 @@
 .mode[data-mode='replay'] .modeValue {
   color: var(--amber-ink);
 }
+/* Recording a take: coral, and the lock is spelled out in the caption. */
+.mode[data-recording] {
+  border-color: rgba(220, 95, 71, 0.45);
+  background: linear-gradient(180deg, var(--surface-hi), var(--coral-wash));
+}
+.mode[data-recording] .modeWhere {
+  color: var(--coral-ink);
+  font-weight: 600;
+}
 .modeWhere {
   min-width: 0;
   overflow: hidden;
@@ -148,19 +157,28 @@
   gap: 8px;
 }
 
+/* An information note (neutral, like the kit's info Notice): not a selection, not an error. */
 .stale {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-top: -2px;
-  padding: 4px 6px 4px 10px;
+  padding: 4px 6px 4px 12px;
   border-radius: var(--r-md);
-  background: var(--teal-wash);
-  color: var(--teal-ink);
+  background: var(--surface-hi);
+  box-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.11),
+    inset 3px 0 0 var(--ink-3);
+  color: var(--ink);
   font-size: var(--fs-sm);
+}
+.stale > svg {
+  flex: none;
+  color: var(--ink-2);
 }
 .stale span {
   flex: 1;
+  min-width: 0;
 }
 
 /* ---------- lane ---------- */
@@ -721,5 +739,29 @@
   }
   .mode {
     max-width: none;
+  }
+}
+
+/* Narrow (or zoomed) windows: the scene cards keep their bars and parts
+   readable, and the keyboard hint moves to its own line under them. */
+@media (max-width: 1100px) {
+  /* The playback-mode box gets the full width so its explanation is never cut off. */
+  .head {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+  .titleBlock {
+    flex-basis: 100%;
+  }
+  .headRight {
+    margin-left: auto;
+  }
+  .palette {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .hint {
+    flex-basis: 100%;
+    text-align: left;
   }
 }

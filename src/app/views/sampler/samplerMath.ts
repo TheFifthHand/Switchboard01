@@ -49,9 +49,14 @@ export interface SamplerPlayback {
   originalBpm: number;
 }
 
+/** Playback rate of `note` (speed and pitch together), with Tempo Sync at `bpm`. */
+export function noteRate(v: SamplerPlayback, note: number, bpm: number): number {
+  return samplerRate({ pitch: v.pitch, fine: v.fine, rootNote: v.rootNote, sync: v.sync === 1, originalBpm: v.originalBpm }, note, bpm);
+}
+
 /** Playback rate of the root note (speed and pitch together), with Tempo Sync at `bpm`. */
 export function rootRate(v: SamplerPlayback, bpm: number): number {
-  return samplerRate({ pitch: v.pitch, fine: v.fine, rootNote: v.rootNote, sync: v.sync === 1, originalBpm: v.originalBpm }, v.rootNote, bpm);
+  return noteRate(v, v.rootNote, bpm);
 }
 
 /** Rate multiplier from Tempo Sync alone. */
@@ -175,4 +180,50 @@ export function formatSemitones(semis: number): string {
 /** File type label from a MIME type. */
 export function fileKind(mime: string): string {
   return mime.includes('mpeg') || mime.includes('mp3') ? 'MP3' : 'WAV';
+}
+
+/* ------------------------------------------------------------------ */
+/* The file's own sample rate                                          */
+/* ------------------------------------------------------------------ */
+
+/** MPEG audio sample rates by version bits (00 = 2.5, 10 = 2, 11 = 1) and rate index. */
+const MPEG_RATES: Record<number, readonly number[]> = {
+  0: [11025, 12000, 8000],
+  2: [22050, 24000, 16000],
+  3: [44100, 48000, 32000],
+};
+
+/**
+ * The sample rate written in a WAV or MP3 file's header, or null when the
+ * header cannot be read. The browser decodes files at its own rate, so the
+ * decoded buffer does not tell the file's rate; the header does.
+ */
+export function headerSampleRate(bytes: Uint8Array): number | null {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const tag = (at: number) => String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]);
+  if (bytes.length >= 12 && (tag(0) === 'RIFF' || tag(0) === 'RF64') && tag(8) === 'WAVE') {
+    // Walk the chunks to "fmt ": its sample rate is 4 bytes into the chunk data.
+    let at = 12;
+    while (at + 8 <= bytes.length) {
+      const size = view.getUint32(at + 4, true);
+      if (tag(at) === 'fmt ') return at + 12 <= bytes.length ? view.getUint32(at + 12, true) || null : null;
+      at += 8 + size + (size % 2);
+    }
+    return null;
+  }
+  // MP3: skip an ID3v2 tag, then read the first frame header.
+  let at = 0;
+  if (bytes.length >= 10 && bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
+    at = 10 + (((bytes[6] & 0x7f) << 21) | ((bytes[7] & 0x7f) << 14) | ((bytes[8] & 0x7f) << 7) | (bytes[9] & 0x7f));
+  }
+  for (let i = at; i + 3 < bytes.length; i++) {
+    if (bytes[i] !== 0xff || (bytes[i + 1] & 0xe0) !== 0xe0) continue;
+    const version = (bytes[i + 1] >> 3) & 0x03;
+    const layer = (bytes[i + 1] >> 1) & 0x03;
+    const rateIndex = (bytes[i + 2] >> 2) & 0x03;
+    const bitrate = (bytes[i + 2] >> 4) & 0x0f;
+    if (version === 1 || layer === 0 || rateIndex === 3 || bitrate === 0x0f) continue;
+    return MPEG_RATES[version][rateIndex];
+  }
+  return null;
 }

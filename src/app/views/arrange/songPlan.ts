@@ -26,15 +26,13 @@ runtimeStore.subscribe((s, prev) => {
 });
 
 /** Play the song from block `index` (restarts it when it is already playing). */
-export function startSong(index: number): void {
-  const p = session.store.getState();
-  if (p.arrangement.blocks.length === 0) {
-    void session.playSong(index);
-    return;
-  }
-  // playSong restarts the transport, so the plan is rebuilt from the current blocks.
-  planStore.setState(songBlocks(p));
-  void session.playSong(index);
+export async function startSong(index: number): Promise<void> {
+  await session.playSong(index);
+  // A restart while the song plays does not change the runtime mode, so the
+  // subscription above does not see it: take the plan the transport just laid
+  // out (playSong reads the project synchronously right before it resolves).
+  const rt = runtimeStore.getState();
+  if (rt.playing && rt.mode === 'song') planStore.setState(songBlocks(session.store.getState()));
 }
 
 export function useSongPlan(): readonly SongBlockPlan[] | null {

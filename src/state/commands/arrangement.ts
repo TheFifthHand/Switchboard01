@@ -8,16 +8,17 @@ import { NOT_FOUND, clamp, isFiniteNumber, refuse, run, type CommandResult } fro
 export const DEFAULT_BLOCK_REPEATS = 2;
 
 /** Add a block for a scene at `index` (default: the end). */
-export function addBlock(store: ProjectStore, sceneId: Id, index?: number, repeats = DEFAULT_BLOCK_REPEATS): CommandResult & { blockId?: Id } {
+export function addBlock(store: ProjectStore, sceneId: Id, index?: number, repeats = DEFAULT_BLOCK_REPEATS, gesture?: string): CommandResult & { blockId?: Id } {
   const p = store.getState();
   if (!p.scenes.some((s) => s.id === sceneId)) return NOT_FOUND('scene');
   if (p.arrangement.blocks.length >= VALIDATION_LIMITS.maxBlocks) return refuse('limit', 'The song already has as many blocks as it can hold.');
   const len = p.arrangement.blocks.length;
   const at = index === undefined || !Number.isFinite(index) ? len : clamp(Math.round(index), 0, len);
   const block = { id: uid('blk'), sceneId, repeats: clamp(Math.round(isFiniteNumber(repeats) ? repeats : DEFAULT_BLOCK_REPEATS), 1, 8) };
+  // A shared gesture id makes several additions (e.g. "Add all scenes") one undo step.
   const r = run(store, 'arrange:Add block', (d) => {
     d.arrangement.blocks.splice(at, 0, block);
-  });
+  }, gesture);
   return { ...r, blockId: block.id };
 }
 

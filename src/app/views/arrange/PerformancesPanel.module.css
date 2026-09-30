@@ -43,15 +43,14 @@
   font-weight: 500;
   color: var(--ink-2);
 }
+/* One line at the usual widths; wraps rather than hiding words when the window is narrow. */
 .explain {
   flex: 1;
   min-width: 0;
   margin: 0;
   font-size: var(--fs-sm);
+  line-height: 1.35;
   color: var(--ink-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .recording {
   display: inline-flex;

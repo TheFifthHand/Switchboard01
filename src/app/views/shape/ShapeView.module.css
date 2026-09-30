@@ -249,9 +249,36 @@
   }
 }
 
+/* Below 1024 CSS px (e.g. 200 % zoom) the app scrolls vertically: macros and instrument side by
+   side, the effects rack full width underneath, every panel at its natural height. */
+@media (max-width: 1023px) {
+  .view {
+    height: auto;
+  }
+
+  .strip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .columns {
+    grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
+  }
+
+  .columns > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (min-width: 1700px) {
   .columns {
     grid-template-columns: minmax(400px, 0.75fr) minmax(0, 0.9fr) minmax(0, 1.45fr);
     gap: 12px;
   }
+}
+
+/* Ghost buttons (move arrows, Reset mappings, Change sound, Hide…): the kit's focus rule composes the
+   ring with `--btn-shadow: none`, which makes the whole declaration invalid, so they would show no
+   focus ring at all. Draw the standard ring here. */
+.view [data-variant='ghost']:focus-visible {
+  box-shadow: var(--focus-ring);
 }

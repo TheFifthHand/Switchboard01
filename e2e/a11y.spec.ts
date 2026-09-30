@@ -28,7 +28,7 @@ async function audit(page: Page, label: string) {
  * blurred) — the ring may be drawn on the element or on an inner part.
  */
 async function tabTour(page: Page, presses: number) {
-  const seen: { name: string; ring: boolean }[] = [];
+  const seen: { name: string; ring: boolean; what?: string }[] = [];
   for (let i = 0; i < presses; i++) {
     await page.keyboard.press('Tab');
     const info = await page.evaluate(() => {
@@ -39,12 +39,11 @@ async function tabTour(page: Page, presses: number) {
       const name = (el.getAttribute('aria-label') || labelled || viaLabel || el.textContent || el.getAttribute('title') || '').trim().replace(/\s+/g, ' ').slice(0, 60);
       const r = el.getBoundingClientRect();
       (window as any).__tourEl = el;
-      return { name, box: { x: Math.max(0, r.x - 6), y: Math.max(0, r.y - 6), width: r.width + 12, height: r.height + 12 } };
+      const what = `${el.tagName.toLowerCase()}${el.getAttribute('role') ? `[role=${el.getAttribute('role')}]` : ''}.${String(el.className).slice(0, 40)}`;
+      return { name, what, box: { x: Math.max(0, r.x - 6), y: Math.max(0, r.y - 6), width: r.width + 12, height: r.height + 12 } };
     });
-    if (!info) {
-      seen.push({ name: '', ring: false });
-      continue;
-    }
+    // Focus left the page (Tab wrapped to the browser UI): not a stop.
+    if (!info) continue;
     const visible = info.box.width > 12 && info.box.height > 12 && info.box.y < (page.viewportSize()?.height ?? 768);
     let ring = true;
     if (visible) {
@@ -55,7 +54,7 @@ async function tabTour(page: Page, presses: number) {
       ring = !focused.equals(blurred);
       await page.evaluate(() => (window as any).__tourEl.focus());
     }
-    seen.push({ name: info.name, ring });
+    seen.push({ name: info.name, ring, what: info.what });
   }
   return seen;
 }
@@ -113,6 +112,25 @@ test('keyboard only: Jump In, reach every essential control, play a note, change
   // Space plays/stops when focus is not on a control (on a focused button it activates that button).
   await page.keyboard.press('Space');
   await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing)).toBe(false);
+  expect(pageErrors(page)).toEqual([]);
+});
+
+test('keyboard only: every Tab stop in Shape and Arrange has a name and a visible focus ring', async ({ page }) => {
+  await openFresh(page);
+  await page.getByRole('button', { name: 'Jump In' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing)).toBe(true);
+  const skip = page.getByRole('button', { name: /Skip/ });
+  if (await skip.isVisible().catch(() => false)) await skip.click();
+  for (const view of ['Shape', 'Arrange']) {
+    const tab = page.getByRole('tab', { name: view, exact: true });
+    await tab.click();
+    await tab.focus();
+    const tour = await tabTour(page, 120);
+    const unnamed = tour.filter((t) => !t.name).map((t) => t.what);
+    expect(unnamed, `${view}: Tab stops without an accessible name`).toEqual([]);
+    const missing = tour.filter((t) => t.name && !t.ring).map((t) => t.name);
+    expect(missing, `${view}: no visible focus ring on: ${missing.join(', ')}`).toEqual([]);
+  }
   expect(pageErrors(page)).toEqual([]);
 });
 

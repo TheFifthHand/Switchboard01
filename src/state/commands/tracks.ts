@@ -19,7 +19,7 @@ import {
 } from '../../project/types';
 import { ARP_DIVISIONS, ARP_MODES, VALIDATION_LIMITS } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
-import { NOT_FOUND, clamp, cleanName, draftTrack, findTrack, isFiniteNumber, refuse, run, type CommandResult } from './common';
+import { NOT_FOUND, clamp, cleanName, deepEqual, draftTrack, findTrack, isFiniteNumber, refuse, run, type CommandResult } from './common';
 
 export function renameTrack(store: ProjectStore, trackId: Id, name: string): CommandResult {
   if (!findTrack(store.getState(), trackId)) return NOT_FOUND('part');
@@ -173,7 +173,7 @@ function cleanTarget(p: Project, t: Partial<MacroTarget>): MacroTarget | string 
  * Change (index < length) or add (index === length) one target of a macro.
  * A partial update is merged over the existing target and re-validated.
  */
-export function setMacroTarget(store: ProjectStore, trackId: Id, macro: MacroId, index: number, partial: Partial<MacroTarget>): CommandResult {
+export function setMacroTarget(store: ProjectStore, trackId: Id, macro: MacroId, index: number, partial: Partial<MacroTarget>, gesture?: string): CommandResult {
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
@@ -185,7 +185,7 @@ export function setMacroTarget(store: ProjectStore, trackId: Id, macro: MacroId,
   if (typeof cleaned === 'string') return refuse('invalid', cleaned);
   return run(store, 'track:Change macro assignment', (d) => {
     draftTrack(d, trackId).macroMap[macro][index] = cleaned;
-  });
+  }, gesture);
 }
 
 export function removeMacroTarget(store: ProjectStore, trackId: Id, macro: MacroId, index: number): CommandResult {
@@ -216,6 +216,7 @@ export function resetMacroMap(store: ProjectStore, trackId: Id): CommandResult {
   const map = soundMacroMap(t);
   const modules = new Set(p.patch.modules.map((m) => m.id));
   for (const macro of MACRO_IDS) map[macro] = map[macro].filter((x) => modules.has(x.module));
+  if (deepEqual(map, t.macroMap)) return { changed: false };
   return run(store, 'track:Reset macro assignments', (d) => {
     draftTrack(d, trackId).macroMap = map;
   });

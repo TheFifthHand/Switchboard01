@@ -55,8 +55,8 @@ function MappingRow(props: { trackId: Id; macro: MacroId; index: number; row: Ro
   const now = macroTargetValue(target, macroValue);
   const fmt = (v: number) => (spec ? formatParam(spec, v) : String(Number(v.toFixed(3))));
 
-  const commit = (partialTarget: Partial<MacroTarget>) => {
-    session.accepted(cmd.setMacroTarget(session.store, trackId, macro, index, partialTarget));
+  const commit = (partialTarget: Partial<MacroTarget>, gesture?: string) => {
+    session.accepted(cmd.setMacroTarget(session.store, trackId, macro, index, partialTarget, gesture));
   };
   const remove = () => {
     const r = cmd.removeMacroTarget(session.store, trackId, macro, index);
@@ -64,7 +64,7 @@ function MappingRow(props: { trackId: Id; macro: MacroId; index: number; row: Ro
   };
 
   return (
-    <li className={styles.row} role="group" aria-label={`${macroName} moves ${label}`}>
+    <div className={styles.row} role="group" aria-label={`${macroName} moves ${label}`}>
       <div className={styles.info}>
         <span className={styles.target}>{label}</span>
         <span className={`${styles.meta} mono`}>
@@ -91,10 +91,8 @@ function MappingRow(props: { trackId: Id; macro: MacroId; index: number; row: Ro
             size="sm"
             label={`${label} min`}
             tip={`${label} when ${macroName} is at ${pct(from)}.`}
-            detail={`${target.curve === 'exp' ? 'Exponential' : 'Linear'} curve. Changes apply when you let go.`}
-            onChange={(v, info) => {
-              if (info.final) commit({ min: v });
-            }}
+            detail={`${target.curve === 'exp' ? 'Exponential' : 'Linear'} curve.`}
+            onChange={(v, info) => commit({ min: v }, info.gesture)}
           />
           <span className={styles.arrow} aria-hidden="true">
             →
@@ -106,10 +104,8 @@ function MappingRow(props: { trackId: Id; macro: MacroId; index: number; row: Ro
             size="sm"
             label={`${label} max`}
             tip={`${label} when ${macroName} is at ${pct(to)}.`}
-            detail={`${target.curve === 'exp' ? 'Exponential' : 'Linear'} curve. Changes apply when you let go.`}
-            onChange={(v, info) => {
-              if (info.final) commit({ max: v });
-            }}
+            detail={`${target.curve === 'exp' ? 'Exponential' : 'Linear'} curve.`}
+            onChange={(v, info) => commit({ max: v }, info.gesture)}
           />
         </div>
       ) : (
@@ -125,7 +121,7 @@ function MappingRow(props: { trackId: Id; macro: MacroId; index: number; row: Ro
         tip={`${macroName} stops moving ${label}; its own knob sets it again. Undo brings the mapping back.`}
         onClick={remove}
       />
-    </li>
+    </div>
   );
 }
 
@@ -174,11 +170,11 @@ function MacroCard(props: { trackId: Id; macro: MacroId }) {
         {rows.length === 0 ? (
           <p className={styles.empty}>No mappings — {spec.label} does nothing. “Reset mappings” restores the sound’s design.</p>
         ) : (
-          <ul className={styles.rows}>
+          <div className={styles.rows}>
             {rows.map((row, i) => (
               <MappingRow key={`${row.target.module}.${row.target.param}.${i}`} trackId={trackId} macro={macro} index={i} row={row} macroValue={value} />
             ))}
-          </ul>
+          </div>
         )}
         {macro === 'pump' && <PumpNote trackId={trackId} />}
       </div>
@@ -189,6 +185,19 @@ function MacroCard(props: { trackId: Id; macro: MacroId }) {
 export function MacroColumn(props: { trackId: Id; className?: string }) {
   const { trackId, className } = props;
   const onReset = () => {
+    // Same result resetMacroMap would store (the sound's map, minus modules no longer in the patch):
+    // when nothing would change, say so instead of adding an empty undo step.
+    const p = session.store.getState();
+    const t = p.tracks.find((x) => x.id === trackId);
+    if (t) {
+      const ids = new Set(p.patch.modules.map((m) => m.id));
+      const designed = cmd.soundMacroMap(t);
+      const same = MACRO_IDS.every((m) => cmd.deepEqual(t.macroMap[m], designed[m].filter((x) => ids.has(x.module))));
+      if (same) {
+        notify('The macro mappings already match the sound’s design.', 'info');
+        return;
+      }
+    }
     const r = cmd.resetMacroMap(session.store, trackId);
     if (session.accepted(r)) notify('Macro mappings restored to the sound’s design.', 'info', 'undo');
   };

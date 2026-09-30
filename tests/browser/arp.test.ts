@@ -14,6 +14,7 @@ import { RecordOptions } from '../../src/app/views/RecordOptions';
 import { TransportBar } from '../../src/app/views/TransportBar';
 import { getStarter } from '../../src/content/starters';
 import type { Id } from '../../src/project/types';
+import { setArp } from '../../src/state/commands';
 import { selectTrack, setKeyboardOctave, setPadMode, setTipsEnabled, uiStore } from '../../src/state/uiStore';
 import { TipsProvider } from '../../src/ui/components';
 import { cleanup, fire, key, mount } from './ui-harness';
@@ -249,6 +250,55 @@ describe('Keyboard legends', () => {
       const legend = k.lastElementChild!.firstElementChild as HTMLElement | null;
       if (!dot || !legend) continue;
       expect(legend.getBoundingClientRect().top).toBeGreaterThanOrEqual(dot.getBoundingClientRect().bottom - 2);
+    }
+  });
+});
+
+describe('Preview notes (editors and the sound browser)', () => {
+  it('play the exact pitch, skip the arpeggiator, and are never recorded; played notes go through both', () => {
+    session.accepted(setArp(session.store, 't4', { enabled: true }));
+    // No audio device here: stand in for the engine and transport the session drives.
+    const s = session as unknown as { engine: unknown; transport: unknown; take: unknown };
+    const saved = { engine: s.engine, transport: s.transport, take: s.take };
+    const live: [string, Id, number][] = [];
+    const arpHeld: [Id, number[]][] = [];
+    s.engine = {
+      liveNoteOn: (t: Id, p: number) => live.push(['on', t, p]),
+      liveNoteOff: (t: Id) => live.push(['off', t, -1]),
+      releaseLive: () => {},
+    };
+    s.transport = { playing: false, setArpHeld: (t: Id, pitches: number[]) => arpHeld.push([t, [...pitches]]), getPosition: () => ({ tick: 0 }) };
+    const take = { events: [] as unknown[] };
+    s.take = take;
+    try {
+      // House is in G dorian with Musical Assist on: F# (66) is outside the scale.
+      expect(session.store.getState().assist).toBe(true);
+      session.noteOn('t3', 66, 0.8, 'preview');
+      expect(live).toEqual([['on', 't3', 66]]);
+      session.noteOff('t3', 66, 'preview');
+      // A played key is snapped into the scale.
+      session.noteOn('t3', 66, 0.8, 'computer');
+      expect(live[2][2]).not.toBe(66);
+      session.noteOff('t3', 66, 'computer');
+      expect(take.events.map((e) => (e as { type: string }).type)).toEqual(['noteOn', 'noteOff']);
+
+      // With the arpeggiator on (Chords), a preview still sounds straight and never feeds the pattern.
+      live.length = 0;
+      arpHeld.length = 0;
+      session.noteOn('t4', 60, 0.8, 'preview');
+      expect(live).toEqual([['on', 't4', 60]]);
+      expect(arpHeld).toEqual([]);
+      session.noteOn('t4', 67, 0.8, 'computer');
+      expect(arpHeld.at(-1)).toEqual(['t4', [67]]);
+      session.noteOff('t4', 60, 'preview');
+      session.noteOff('t4', 67, 'computer');
+      expect(arpHeld.at(-1)).toEqual(['t4', []]);
+      expect(take.events).toHaveLength(4);
+    } finally {
+      s.engine = saved.engine;
+      s.transport = saved.transport;
+      s.take = saved.take;
+      act(() => patchRuntime({ held: {} }));
     }
   });
 });

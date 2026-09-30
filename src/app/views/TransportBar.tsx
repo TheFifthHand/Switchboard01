@@ -33,6 +33,9 @@ export function readMeterFrame(): MeterFrame {
 function Position() {
   const ref = useRef<HTMLSpanElement>(null);
   const playing = useRuntime((s) => s.playing);
+  const mode = useRuntime((s) => s.mode);
+  // The label says what drives playback: live pads, the arrangement (SONG) or a take (REPLAY).
+  const label = playing && mode === 'song' ? 'SONG' : playing && mode === 'replay' ? 'REPLAY' : 'BAR.BEAT';
   const last = useRef('');
   useRafLoop(() => {
     const t = session.transport;
@@ -45,8 +48,8 @@ function Position() {
     }
   }, playing);
   return (
-    <div className={styles.position} role="timer" aria-label="Bar and beat">
-      <span className={styles.posLabel}>BAR.BEAT</span>
+    <div className={styles.position} role="timer" aria-label={label === 'BAR.BEAT' ? 'Bar and beat' : `Bar and beat, playing the ${label === 'SONG' ? 'song' : 'recorded performance'}`}>
+      <span className={`${styles.posLabel} ${label !== 'BAR.BEAT' ? styles.posMode : ''}`}>{label}</span>
       <span ref={ref} className={`${styles.posValue} mono`}>
         {playing ? '' : '1.1'}
       </span>
@@ -242,7 +245,6 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
   const masterDb = useProject((p) => p.masterVolumeDb);
   const projectName = useProject((p) => p.name);
   const playing = useRuntime((s) => s.playing);
-  const mode = useRuntime((s) => s.mode);
   const muteAll = useRuntime((s) => s.muteAll);
   const tipsEnabled = useUi((s) => s.tipsEnabled);
   const history = useHistory();
@@ -270,7 +272,6 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           {playing ? 'Stop' : 'Play'}
         </Button>
         <Position />
-        {mode !== 'live' && playing && <span className={styles.mode}>{mode === 'song' ? 'SONG' : 'REPLAY'}</span>}
       </div>
 
       <div className={styles.group}>

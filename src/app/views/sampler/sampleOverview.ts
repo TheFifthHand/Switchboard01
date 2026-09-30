@@ -10,6 +10,9 @@
  *   deterministic generator at 48 kHz.
  *
  * Overviews are cached, so switching parts or re-rendering never recomputes.
+ *
+ * For imported recordings it also reads the stored file once: whether this
+ * browser holds its audio at all, and the sample rate in the file's header.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { generateBuiltinSample } from '../../../audio/instruments/builtinSamples';
@@ -19,6 +22,7 @@ import * as db from '../../../persistence/db';
 import type { Id, SampleMeta } from '../../../project/types';
 import { session, useProject } from '../../instance';
 import { useRuntime } from '../../runtime';
+import { headerSampleRate } from './samplerMath';
 
 export interface SampleOverview {
   /** [min0, max0, min1, max1, ...] across all channels, -1..1. */
@@ -112,6 +116,71 @@ function loadStoredOverview(id: Id): Promise<SampleOverview | null> {
     decodeJobs.set(id, job);
   }
   return job;
+}
+
+/* ------------------------------------------------------------------ */
+/* The imported file's own sample rate                                 */
+/* ------------------------------------------------------------------ */
+
+/** Bytes read from the start of a stored file to find its header (ID3 tags can be large). */
+const HEADER_BYTES = 256 * 1024;
+
+/** What this browser holds of an imported recording's original file. */
+export type StoredFile = { stored: false } | { stored: true; /** The file's own sample rate, null when its header is unreadable. */ rate: number | null };
+
+const storedFiles = new Map<Id, StoredFile>();
+const storedJobs = new Map<Id, Promise<StoredFile>>();
+
+/** Look up (once) a recording's stored file and the sample rate in its header. */
+function loadStoredFile(id: Id): Promise<StoredFile> {
+  const hit = storedFiles.get(id);
+  if (hit) return Promise.resolve(hit);
+  let job = storedJobs.get(id);
+  if (!job) {
+    job = (async (): Promise<StoredFile> => {
+      const rec = await db.getSample(id);
+      if (!rec) return { stored: false };
+      const head = await rec.blob
+        .slice(0, HEADER_BYTES)
+        .arrayBuffer()
+        .catch(() => null);
+      return { stored: true, rate: head ? headerSampleRate(new Uint8Array(head)) : null };
+    })()
+      .then((f) => {
+        // A missing file may still arrive (a project bundle being imported): only remember hits.
+        if (f.stored) storedFiles.set(id, f);
+        return f;
+      })
+      // Storage unreadable: assume the file is there (the session reports real load failures).
+      .catch((): StoredFile => ({ stored: true, rate: null }))
+      .finally(() => storedJobs.delete(id));
+    storedJobs.set(id, job);
+  }
+  return job;
+}
+
+/**
+ * The stored original file of an imported recording: whether this browser
+ * has its audio, and the file's own sample rate (the browser decodes at its
+ * own rate, so the metadata holds the decoding rate, not the file's).
+ * `undefined` while it is being read and for built-in recordings.
+ */
+export function useStoredFile(sampleId: Id): StoredFile | undefined {
+  const [state, setState] = useState<{ id: Id; file: StoredFile } | null>(null);
+  const builtin = isBuiltinId(sampleId);
+  const cached = builtin ? undefined : storedFiles.get(sampleId);
+  useEffect(() => {
+    if (builtin || storedFiles.has(sampleId)) return;
+    let alive = true;
+    void loadStoredFile(sampleId).then((file) => {
+      if (alive) setState({ id: sampleId, file });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [builtin, sampleId]);
+  if (builtin) return undefined;
+  return cached ?? (state && state.id === sampleId ? state.file : undefined);
 }
 
 export interface OverviewState {

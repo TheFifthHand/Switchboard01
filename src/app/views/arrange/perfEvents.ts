@@ -180,9 +180,28 @@ function launchText(perf: Performance, names: Names, trackId: Id, slot: number |
   return `${part} → ${clip?.name ?? `Slot ${slot + 1}`}`;
 }
 
-/** Where a queued launch took effect, in the same bar.beat.step terms as the Time column. */
-function at(perf: Performance, tick: number): string {
-  return formatPosition(tick - perf.startTick);
+/**
+ * When a queued launch takes effect, in the same bar.beat.step terms as the
+ * Time column. Replay drops a launch queued for after the take's end, and the
+ * row says so.
+ */
+function when(perf: Performance, verb: 'starts' | 'stops', tick: number): string {
+  if (tick >= perf.endTick) return `queued for after the take ends, so it is not heard`;
+  return `${verb} at ${formatPosition(tick - perf.startTick)}`;
+}
+
+/**
+ * For a noteOn without a release: the next press of the same key on the same
+ * part, which is where replay ends it (-1 when none: it is held to the end).
+ */
+function nextPressOfKey(events: readonly PerformanceEvent[], index: number): number {
+  const e = events[index];
+  if (e.type !== 'noteOn') return -1;
+  for (let i = index + 1; i < events.length; i++) {
+    const x = events[i];
+    if (x.type === 'noteOn' && x.trackId === e.trackId && x.key === e.key) return i;
+  }
+  return -1;
 }
 
 /**
@@ -201,22 +220,31 @@ export function performanceRows(perf: Performance): EventRow[] {
     const base = { index, tick: e.t, time: formatPosition(rel) };
     switch (e.type) {
       case 'launch':
-        rows.push({ ...base, kind: 'Launch', detail: `${launchText(perf, names, e.trackId, e.slot)}, ${e.slot === null ? 'stops' : 'starts'} at ${at(perf, e.atTick)}` });
+        rows.push({ ...base, kind: 'Launch', detail: `${launchText(perf, names, e.trackId, e.slot)}, ${when(perf, e.slot === null ? 'stops' : 'starts', e.atTick)}` });
         break;
       case 'stopAll':
-        rows.push({ ...base, kind: 'Launch', detail: `All parts → Stop, stops at ${at(perf, e.atTick)}` });
+        rows.push({ ...base, kind: 'Launch', detail: `All parts → Stop, ${when(perf, 'stops', e.atTick)}` });
         break;
       case 'scene': {
         const scene = perf.snapshot.scenes[e.row];
-        rows.push({ ...base, kind: 'Scene', detail: `${scene?.name ?? `Scene ${e.row + 1}`} for all parts, starts at ${at(perf, e.atTick)}` });
+        rows.push({ ...base, kind: 'Scene', detail: `${scene?.name ?? `Scene ${e.row + 1}`} for all parts, ${when(perf, 'starts', e.atTick)}` });
         break;
       }
       case 'noteOn': {
         const off = pairs.get(index);
-        const what = `${names.trackName(e.trackId)} · ${names.pitchName(e.trackId, e.pitch)}`;
-        const len = off !== undefined ? map.timeAt(perf.events[off].t) - map.timeAt(e.t) : null;
+        const track = names.track(e.trackId);
+        // On a part with the arpeggiator on, replay feeds the key to the arpeggiator (as when it was played).
+        const arp = track?.arp.enabled === true;
+        const what = `${names.trackName(e.trackId)} · ${names.pitchName(e.trackId, e.pitch)}${arp ? ' into the arpeggiator' : ''}`;
         const velocity = `velocity ${Math.round(Math.min(1, Math.max(0, e.velocity)) * 100)}%`;
-        rows.push({ ...base, kind: 'Note', detail: len !== null ? `${what}, ${seconds(Math.max(0, len))}, ${velocity}` : `${what}, held to the end, ${velocity}`, pairIndex: off });
+        let length: string;
+        if (off !== undefined) {
+          length = seconds(Math.max(0, map.timeAt(perf.events[off].t) - map.timeAt(e.t)));
+        } else {
+          const next = nextPressOfKey(perf.events, index);
+          length = next >= 0 ? `${seconds(Math.max(0, map.timeAt(perf.events[next].t) - map.timeAt(e.t)))} (until the next press)` : 'held to the end';
+        }
+        rows.push({ ...base, kind: 'Note', detail: `${what}, ${length}, ${velocity}`, pairIndex: off });
         break;
       }
       case 'noteOff':
