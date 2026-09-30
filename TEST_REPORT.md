@@ -43,22 +43,23 @@ _Status: draft, updated at each milestone. Final numbers are filled in at handof
   it never changes the timing between sounds; Record Notes compensates for it.
 - Swing 100 %: off-beat 16ths land exactly one third of a step late; on-beats unchanged.
 
-### Starter levels (4 bars per scene, 44.1 kHz, before the +4 dB starter trim)
+### Starter levels (4 bars per scene, 44.1 kHz, as shipped)
 
-| Starter | BPM | Key | Scene 1 | Scene 2 (Groove) | Scene 3 | Scene 4 |
-|---------|-----|-----|---------|------------------|---------|---------|
-| House | 124 | G dorian | Intro −34.7 / −17.3 | Groove −23.3 / −9.7 | Lift −22.0 / −5.3 | Break −29.2 / −13.5 |
-| Synthwave | 100 | D minor | Intro −34.3 / −18.3 | Cruise −24.6 / −9.5 | Chorus −23.3 / −7.7 | Breakdown −27.0 / −13.1 |
-| Ambient | 72 | E lydian | Float −30.9 / −12.4 | Pulse −25.6 / −10.2 | Bloom −24.2 / −8.0 | Drift −26.6 / −10.9 |
-| Techno | 128 | F phrygian | Intro −34.1 / −9.9 | Groove −22.7 / −7.5 | Peak −20.9 / −6.3 | Breakdown −24.2 / −9.8 |
-| Breakbeat | 132 | B minor | Intro −31.9 / −12.1 | Groove −23.7 / −7.8 | Drop −21.8 / −6.1 | Break −26.9 / −13.1 |
-| Drum and Bass | 174 | C# minor | Intro −32.8 / −14.7 | Roll −24.0 / −8.3 | Drop −22.5 / −7.3 | Float −26.6 / −13.2 |
-| Downtempo | 84 | Eb major | Intro −35.9 / −17.1 | Sway −25.3 / −8.5 | Lift −24.2 / −8.0 | Haze −27.6 / −14.0 |
-| Garage | 136 | A minor | Intro −34.3 / −15.4 | Two-Step −24.5 / −5.6 | Lift −22.5 / −4.6 | Break −28.3 / −10.0 |
+| Starter | BPM | Key | Scene 1 | Scene 2 (core groove) | Scene 3 | Scene 4 |
+|---------|-----|-----|---------|------------------------|---------|---------|
+| House | 124 | G dorian | Intro −30.7 / −13.3 | Groove −19.3 / −5.7 | Lift −18.0 / −1.3 | Break −25.2 / −9.5 |
+| Synthwave | 100 | D minor | Intro −30.3 / −14.3 | Cruise −20.6 / −5.5 | Chorus −19.3 / −3.7 | Breakdown −23.0 / −9.1 |
+| Ambient | 72 | E lydian | Float −26.9 / −8.4 | Pulse −21.6 / −6.2 | Bloom −20.2 / −4.0 | Drift −22.6 / −6.9 |
+| Techno | 128 | F phrygian | Intro −30.1 / −5.9 | Groove −18.7 / −3.5 | Peak −16.9 / −2.3 | Breakdown −20.2 / −5.8 |
+| Breakbeat | 132 | B minor | Intro −27.9 / −8.1 | Groove −19.7 / −3.8 | Drop −17.8 / −2.1 | Break −22.9 / −9.1 |
+| Drum and Bass | 174 | C# minor | Intro −28.8 / −10.7 | Roll −20.0 / −4.3 | Drop −18.5 / −3.3 | Float −22.6 / −9.2 |
+| Downtempo | 84 | Eb major | Intro −31.9 / −13.1 | Sway −21.3 / −4.5 | Lift −20.2 / −4.0 | Haze −23.6 / −10.0 |
+| Garage | 136 | A minor | Intro −30.3 / −11.4 | Two-Step −20.5 / −1.6 | Lift −18.5 / −1.0 | Break −24.3 / −6.0 |
 
-Values are RMS / sample peak in dBFS. All starters were then raised by 4 dB together
-(`STARTER_OUTPUT_TRIM_DB`) so grooves play near −20 dBFS RMS; the limiter (ceiling −1 dBFS) only
-touches the loudest peaks (< 1 % of samples, asserted per scene).
+Values are RMS (steady part, after the first bar) / sample peak, in dBFS. Core grooves sit between
+−18.7 and −21.6 dBFS RMS; the limiter (ceiling −1 dBFS) only touches the loudest peaks of the
+fullest scenes (< 1 % of samples, asserted for every scene in `tests/browser/starters.test.ts`).
+Intros are deliberately sparse and quieter.
 
 ### Determinism
 Two renders of the same project differ by at most ~1e-6 (below −100 dBFS): Chromium sums a node's

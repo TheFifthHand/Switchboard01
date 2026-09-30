@@ -787,8 +787,10 @@ describe('varyClip — on every clip of every starter project', () => {
     for (const starter of STARTERS) {
       const project = starter.build();
       for (const track of project.tracks) {
-        track.clips.forEach((src) => {
+        track.clips.forEach((src, slot) => {
           if (!src || src.notes.length === 0) return;
+          // Clip ids are random per build; seed repeated presses from a stable key so the run is reproducible.
+          const stableKey = `${starter.id}:${track.id}:${slot}`;
           clips++;
           const kind = track.instrument.kind;
           const len = src.bars * 384;
@@ -816,7 +818,7 @@ describe('varyClip — on every clip of every starter project', () => {
           if (!changed) unchanged.push(`${where} (${src.notes.length} notes)`);
           // Pressed ten times in a row: still in its register and not piling up notes.
           let current = src;
-          for (let g = 1; g <= 10; g++) current = { ...current, notes: varyClip(current, opts(variationSeed(project.seed, src.id, g))) };
+          for (let g = 1; g <= 10; g++) current = { ...current, notes: varyClip(current, opts(variationSeed(project.seed, stableKey, g))) };
           expect(current.notes.length, where).toBeLessThanOrEqual(src.notes.length * 1.75 + 8);
           if (kind !== 'drums') {
             const [lo, hi] = range(src.notes);

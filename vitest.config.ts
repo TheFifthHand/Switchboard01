@@ -19,6 +19,7 @@ export default defineConfig({
         },
       },
       {
+        optimizeDeps: { include: ['react', 'react-dom', 'react-dom/client', 'react/jsx-dev-runtime'] },
         test: {
           name: 'browser',
           include: ['tests/browser/**/*.test.ts'],
