@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react';
-import { Button, IconButton, Knob, Meter, NumberField, SegmentedControl, Tooltip, useRafLoop } from '../../ui/components';
+import { Button, IconButton, Knob, Meter, NumberField, SegmentedControl, Switch, Tooltip, useRafLoop } from '../../ui/components';
 import { BPM_SPEC, MASTER_VOLUME_SPEC, SWING_SPEC } from '../../project/params';
-import { setView, type View } from '../../state/uiStore';
+import { setTipsEnabled, setView, type View } from '../../state/uiStore';
 import { session, useAutosave, useHistory, useProject, useUi } from '../instance';
 import { useRuntime } from '../runtime';
 import type { MeterFrame } from '../../audio/contracts';
+import { RecordOptions, recordOptionsCaption } from './RecordOptions';
 import styles from './TransportBar.module.css';
 
 const VIEW_OPTIONS = [
@@ -82,6 +83,62 @@ function SaveStatus() {
   );
 }
 
+/** Record Notes, Record Performance and their options, with the recording status as the caption. */
+function RecordGroup() {
+  const recording = useRuntime((s) => s.recording);
+  const countingIn = useRuntime((s) => s.countingIn);
+  const targetId = useRuntime((s) => s.recordTarget?.trackId ?? null);
+  const targetName = useProject((p) => (targetId ? (p.tracks.find((t) => t.id === targetId)?.name ?? '') : ''));
+  const options = useProject((p) => recordOptionsCaption(p.settings));
+  const caption =
+    recording === 'notes'
+      ? countingIn
+        ? `Count-in · then ${targetName}`
+        : `Recording notes · ${targetName}`
+      : recording === 'performance'
+        ? 'Recording performance'
+        : options
+          ? `Record · ${options}`
+          : 'Record';
+  return (
+    <div className={`${styles.group} ${styles.recGroup}`} role="group" aria-label="Recording">
+      <span className={styles.recCaption} data-live={recording !== 'off' || undefined} aria-live="polite">
+        {recording !== 'off' && <span className={styles.recDot} aria-hidden="true" />}
+        {caption}
+      </span>
+      <div className={styles.recButtons}>
+        <Button
+          variant="secondary"
+          size="sm"
+          tone="coral"
+          pressed={recording === 'notes'}
+          onClick={() => void session.toggleRecordNotes()}
+          aria-label="Record Notes"
+          tip={recording === 'notes' ? 'Stop recording notes. Undo removes the whole take.' : 'Record what you play on the keyboard or drum pads into the selected clip.'}
+          detail="Timing, metronome and count-in are in Recording options (the metronome button)."
+          className={recording === 'notes' ? styles.recActive : undefined}
+        >
+          Notes
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          tone="coral"
+          pressed={recording === 'performance'}
+          onClick={() => void session.togglePerformance()}
+          aria-label="Record Performance"
+          tip={recording === 'performance' ? 'Stop and keep this performance. Replay or export it in Arrange.' : 'Capture everything you do — launches, notes, knob moves — as a replayable performance.'}
+          detail="Cables and sound choices are locked while recording so the take replays exactly."
+          className={recording === 'performance' ? styles.recActive : undefined}
+        >
+          Performance
+        </Button>
+        <RecordOptions />
+      </div>
+    </div>
+  );
+}
+
 export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): void }) {
   const view = useUi((s) => s.view);
   const bpm = useProject((p) => p.bpm);
@@ -90,9 +147,8 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
   const projectName = useProject((p) => p.name);
   const playing = useRuntime((s) => s.playing);
   const mode = useRuntime((s) => s.mode);
-  const recording = useRuntime((s) => s.recording);
-  const countingIn = useRuntime((s) => s.countingIn);
   const muteAll = useRuntime((s) => s.muteAll);
+  const tipsEnabled = useUi((s) => s.tipsEnabled);
   const history = useHistory();
 
   return (
@@ -152,32 +208,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
         />
       </div>
 
-      <div className={styles.group} role="group" aria-label="Recording">
-        <Button
-          variant="secondary"
-          tone="coral"
-          icon="record"
-          pressed={recording === 'notes'}
-          onClick={() => void session.toggleRecordNotes()}
-          tip="Record what you play on the keyboard or drum pads into the selected clip."
-          detail="Uses the quantize setting of the part. Undo removes the whole take."
-          className={recording === 'notes' ? styles.recActive : undefined}
-        >
-          {recording === 'notes' ? (countingIn ? 'Count-in…' : 'Recording notes') : 'Record Notes'}
-        </Button>
-        <Button
-          variant="secondary"
-          tone="coral"
-          icon="recordPerformance"
-          pressed={recording === 'performance'}
-          onClick={() => void session.togglePerformance()}
-          tip="Capture everything you do — launches, notes, knob moves — as a replayable performance."
-          detail="Cables and sound choices are locked while recording so the take replays exactly."
-          className={recording === 'performance' ? styles.recActive : undefined}
-        >
-          {recording === 'performance' ? 'Stop recording' : 'Record Performance'}
-        </Button>
-      </div>
+      <RecordGroup />
 
       <div className={styles.group}>
         <Knob spec={MASTER_VOLUME_SPEC} value={masterDb} size="sm" onChange={(v, info) => session.setMasterVolume(v, info.gesture)} label="Master" />
@@ -187,6 +218,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
         </div>
         <Button
           variant={muteAll ? 'danger' : 'secondary'}
+          size="sm"
           icon="mute"
           pressed={muteAll}
           onClick={() => session.toggleMuteAll()}
@@ -202,11 +234,32 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
         <SaveStatus />
         <IconButton icon="undo" label={history.undoLabel ? `Undo ${history.undoLabel}` : 'Undo'} disabled={!history.canUndo} onClick={() => session.undo()} size="sm" variant="ghost" aria-keyshortcuts="Control+Z" />
         <IconButton icon="redo" label={history.redoLabel ? `Redo ${history.redoLabel}` : 'Redo'} disabled={!history.canRedo} onClick={() => session.redo()} size="sm" variant="ghost" aria-keyshortcuts="Control+Shift+Z" />
-        <Button variant="ghost" size="sm" icon="folder" onClick={props.onOpenLibrary} tip="Projects: open, rename, duplicate, import and export." className={styles.project}>
+        <Switch
+          label="Tips"
+          hideLabel
+          onText="Tips"
+          offText="Tips"
+          size="sm"
+          tone="teal"
+          checked={tipsEnabled}
+          onChange={(on) => setTipsEnabled(on)}
+          tip="Explanations like this one appear when you point at or tab to a control."
+          detail="Remembered in this browser. Icon buttons still show their names when Tips are off."
+          className={styles.tips}
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          icon="folder"
+          onClick={props.onOpenLibrary}
+          tip={`Projects: open, rename, duplicate, import and export. Open now: ${projectName}.`}
+          aria-label={`Projects (open: ${projectName})`}
+          className={styles.project}
+        >
           <span className={styles.projectName}>{projectName}</span>
         </Button>
-        <Button variant="primary" size="sm" icon="download" onClick={props.onOpenExport} tip="Save your song or a recorded performance as a WAV file.">
-          Export
+        <Button variant="primary" size="sm" icon="download" onClick={props.onOpenExport} aria-label="Export WAV" tip="Save your song, a scene or a recorded performance as a WAV file." className={styles.export}>
+          <span className={styles.exportText}>Export</span>
         </Button>
       </div>
     </header>

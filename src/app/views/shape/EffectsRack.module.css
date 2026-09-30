@@ -1,0 +1,355 @@
+.scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.count {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+/* ---------- add menu ---------- */
+
+.addWrap {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: 270px;
+  padding: 5px;
+  border-radius: var(--r-md);
+  background: var(--shell-hi);
+  box-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.12),
+    var(--shadow-float);
+}
+
+.menuItem {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+}
+
+.menuItem:hover,
+.menuItem:focus-visible {
+  background: var(--teal-wash);
+  box-shadow: none;
+  outline: none;
+}
+
+.menuItem:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--teal);
+}
+
+.menuLabel {
+  color: var(--ink);
+  font-size: var(--fs-md);
+  font-weight: 560;
+}
+
+.menuDesc {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+
+/* ---------- signal flow ---------- */
+
+.flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-weight: 560;
+  letter-spacing: 0.02em;
+}
+
+.flowItem {
+  display: inline-flex;
+  align-items: center;
+}
+
+.flowArrow {
+  padding: 0 5px;
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+.flowChip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 10px;
+  background: var(--amber-wash);
+  color: var(--amber-ink);
+}
+
+.flowChip[data-end] {
+  background: var(--surface);
+  color: var(--ink-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: var(--teal-wash);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 30%, transparent);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+}
+
+.custom strong {
+  color: var(--teal-ink);
+  font-weight: 600;
+}
+
+.hint {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+}
+
+/* ---------- effect cards ---------- */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(244px, 1fr));
+  gap: 8px;
+}
+
+.cardCell {
+  display: flex;
+  min-width: 0;
+}
+
+.card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 6px 5px;
+  border-radius: var(--r-md);
+  background: var(--surface-hi);
+  border: 1px solid var(--line-soft);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+  transition:
+    border-color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+
+.card[data-selected] {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 1px var(--teal) inset;
+}
+
+.card[data-bypassed] .cardKnobs {
+  opacity: 0.55;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cardName {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 26px;
+  margin: 0;
+  padding: 0 6px 0 2px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  text-align: left;
+}
+
+.cardName:hover {
+  background: rgba(20, 24, 28, 0.05);
+}
+
+.slot {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface-lo);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+}
+
+.card[data-selected] .slot {
+  background: var(--teal);
+  color: #fff;
+}
+
+.cardTitle {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardKnobs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(54px, 1fr));
+  justify-items: center;
+  gap: 4px 4px;
+  transition: opacity var(--t-fast) var(--ease);
+}
+
+.cardFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 4px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.footTools {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* ---------- module rows (channel, returns, LFOs) ---------- */
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.groupTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  line-height: 16px;
+  text-transform: uppercase;
+}
+
+.groupTitle::after {
+  content: '';
+  flex: 1;
+  order: 1;
+  height: 1px;
+  background: var(--line-soft);
+}
+
+.groupAction {
+  order: 2;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.modRow {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: start;
+  padding: 4px 0;
+}
+
+.modRow + .modRow {
+  border-top: 1px solid var(--line-soft);
+}
+
+.modRow[data-bypassed] .modKnobs {
+  opacity: 0.55;
+}
+
+.modInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.modTitle {
+  color: var(--ink);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.modNote {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+}
+
+.modTools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -4px;
+}
+
+.modKnobs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  transition: opacity var(--t-fast) var(--ease);
+}
+
+.lfoTargets {
+  color: var(--teal-ink);
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+}
+
+.lfoTargets[data-empty] {
+  color: var(--ink-3);
+}
+
+.missing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+}

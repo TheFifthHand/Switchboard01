@@ -20,8 +20,19 @@ export function useElementSize<T extends Element>(ref: RefObject<T | null>): Ele
       const h = Math.round(height);
       setSize((prev) => (prev.width === w && prev.height === h ? prev : { width: w, height: h }));
     };
-    const r = el.getBoundingClientRect();
-    update(r.width, r.height);
+    // First measurement in the same box the observer reports (content box):
+    // client size minus padding for HTML elements, the layout box for others.
+    if (el instanceof HTMLElement) {
+      const cs = getComputedStyle(el);
+      const px = (v: string) => Number.parseFloat(v) || 0;
+      update(
+        Math.max(0, el.clientWidth - px(cs.paddingLeft) - px(cs.paddingRight)),
+        Math.max(0, el.clientHeight - px(cs.paddingTop) - px(cs.paddingBottom)),
+      );
+    } else {
+      const r = el.getBoundingClientRect();
+      update(r.width, r.height);
+    }
     if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver((entries) => {
       const entry = entries[entries.length - 1];

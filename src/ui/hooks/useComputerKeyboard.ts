@@ -20,8 +20,9 @@
  *    Z X C V   -> pads  0  1  2  3   (bottom row)
  *
  * Safety rules: typing in inputs, textareas, selects and editable text is
- * never intercepted; Ctrl/Meta/Alt chords and events a focused control has
- * already handled (defaultPrevented) are ignored; key repeats are ignored;
+ * never intercepted; nothing plays while a modal dialog is open (its buttons
+ * are not the instrument); Ctrl/Meta/Alt chords and events a focused control
+ * has already handled (defaultPrevented) are ignored; key repeats are ignored;
  * every held key is released on key-up (whatever the modifiers), window
  * blur, the tab becoming hidden, octave changes, layout changes, disabling
  * and unmount — so no note can get stuck.
@@ -109,6 +110,11 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   return target.closest('[contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]') !== null;
 }
 
+/** True while a modal dialog (e.g. Export) is open; the instrument keys are inactive then. */
+function isModalOpen(): boolean {
+  return document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]') !== null;
+}
+
 export interface ComputerKeyboardOptions {
   enabled: boolean;
   layout: ComputerKeyboardLayout;
@@ -146,7 +152,7 @@ export function useComputerKeyboard(options: ComputerKeyboardOptions): ComputerK
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (isTypingTarget(e.target)) return;
+      if (isTypingTarget(e.target) || isModalOpen()) return;
       if (layout === 'notes' && (e.code === OCTAVE_KEYS.down.code || e.code === OCTAVE_KEYS.up.code)) {
         e.preventDefault();
         if (e.repeat) return;

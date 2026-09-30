@@ -256,6 +256,77 @@ describe('SamplerEngine', () => {
     expect(Math.abs(r.L[idx(0.05) + 1])).toBeLessThan(0.02);
   });
 
+  it('Fade In and Fade Out shape the one-shot edges over their set times, at any pitch', async () => {
+    for (const pitch of [0, 12]) {
+      const rate = Math.pow(2, pitch / 12);
+      const T = 0.05;
+      const outLen = 0.8 / rate;
+      const r = await render(1, sampler({ start: 0, end: 0.8, fadeIn: 100, fadeOut: 200, pitch }), (e) => {
+        e.trigger({ pitch: 60, velocity: 1, time: T });
+      });
+      // Local amplitude from the RMS of 4 periods centred on t.
+      const period = 1 / (TONE_HZ * rate);
+      const amp = (t: number) => Math.SQRT2 * rms(r.L, idx(t - 2 * period), idx(t + 2 * period));
+      const steady = amp(T + 0.15);
+      expect(steady, `pitch ${pitch}`).toBeGreaterThan(0.45);
+      expect(amp(T + 0.05) / steady, `pitch ${pitch}: half-way into the fade-in`).toBeCloseTo(0.5, 1);
+      expect(amp(T + outLen - 0.1) / steady, `pitch ${pitch}: half-way through the fade-out`).toBeCloseTo(0.5, 1);
+      expect(amp(T + outLen - 0.05) / steady, `pitch ${pitch}: three quarters through the fade-out`).toBeCloseTo(0.25, 1);
+      expect(extent(r.L).off).toBeGreaterThan(T + outLen - 0.002);
+      expect(peak(r.L, idx(T + outLen) + 1)).toBe(0);
+    }
+  });
+
+  it('a one-shot under full-scale pitch modulation fades out with its playhead: no click at the region end', async () => {
+    // The region ends on a waveform peak: without a completed fade, running out there is a hard step.
+    const quarter = 0.25 / TONE_HZ;
+    const T = 0.05;
+    const regionLen = 0.5 + quarter;
+    for (const mod of ['+200', '-200', 'lfo', 'lfo-no-fades'] as const) {
+      const r = await render(
+        1,
+        sampler({ start: 0, end: regionLen, ...(mod === 'lfo-no-fades' ? { fadeIn: 0, fadeOut: 0, pitch: 12 } : {}) }),
+        (e, ctx) => {
+          if (mod === '+200' || mod === '-200') {
+            const c = new ConstantSourceNode(ctx, { offset: Number(mod) });
+            c.connect(e.pitchMod);
+            c.start(0);
+          } else {
+            // A +-200 ct LFO (one full-scale cable into the Pitch input), 7 Hz.
+            const lfo = new OscillatorNode(ctx, { frequency: 7 });
+            const depth = new GainNode(ctx, { gain: 200 });
+            lfo.connect(depth).connect(e.pitchMod);
+            lfo.start(0);
+          }
+          e.trigger({ pitch: 60, velocity: 1, time: T });
+        },
+      );
+      const maxRate = Math.pow(2, (mod === 'lfo-no-fades' ? 1400 : 200) / 1200);
+      const natural = (2 * Math.PI * TONE_HZ * TONE_AMP * maxRate) / SR;
+      expect(maxStep(r.L), mod).toBeLessThan(natural * 1.1);
+      if (mod === '+200' || mod === '-200') {
+        // The region is still played to its end, just faster or slower.
+        const expectedEnd = T + regionLen / Math.pow(2, Number(mod) / 1200);
+        expect(Math.abs(extent(r.L).off - expectedEnd), mod).toBeLessThan(0.002);
+      }
+      expect(r.engine.activeVoices()).toBe(0);
+    }
+  });
+
+  it('kill() still stops a one-shot that pitch modulation has slowed past its nominal end', async () => {
+    // Region 0.5 s at -200 ct lasts 0.561 s: nominal end 0.55 s, real end 0.611 s.
+    const r = await render(0.8, sampler({ start: 0, end: 0.5 }), (e, ctx, at) => {
+      const c = new ConstantSourceNode(ctx, { offset: -200 });
+      c.connect(e.pitchMod);
+      c.start(0);
+      e.trigger({ pitch: 60, velocity: 1, time: 0.05 });
+      at(0.56, () => e.kill());
+    });
+    expect(rms(r.L, idx(0.551), idx(0.559))).toBeGreaterThan(0.2);
+    expect(peak(r.L, idx(0.565) + 128)).toBe(0);
+    expect(r.engine.activeVoices()).toBe(0);
+  });
+
   it('releasing a one-shot early ends it with the release envelope', async () => {
     const r = await render(1, sampler({ start: 0, end: 0.8 }), (e) => void e.trigger({ pitch: 60, velocity: 1, time: 0.1, duration: 0.2 }));
     expect(rms(r.L, idx(0.15), idx(0.29))).toBeGreaterThan(0.3);
@@ -337,6 +408,21 @@ describe('SamplerEngine', () => {
     });
     expect(rms(r.L, idx(0.1), idx(0.29))).toBeGreaterThan(0.2);
     expect(peak(r.L, idx(0.305) + 128)).toBe(0);
+    expect(r.engine.activeVoices()).toBe(0);
+  });
+
+  it('releaseAll() releases held loops smoothly and cancels notes that start later', async () => {
+    const r = await render(0.8, sampler({ mode: 1, start: 0.2, end: 0.3 }), (e, _ctx, at) => {
+      e.trigger({ pitch: 60, velocity: 1, time: 0.05 });
+      e.trigger({ pitch: 67, velocity: 1, time: 0.05 });
+      e.trigger({ pitch: 64, velocity: 1, time: 0.5 }); // after the releaseAll time: never sounds
+      at(0.25, () => e.releaseAll(0.3));
+    });
+    expect(rms(r.L, idx(0.1), idx(0.29))).toBeGreaterThan(0.2);
+    // Release 50 ms from 0.3 s, then exact silence (nothing starts at 0.5 s).
+    expect(peak(r.L, idx(0.3 + 0.05 + 0.003) + 1)).toBe(0);
+    const natural = (2 * Math.PI * TONE_HZ * Math.pow(2, 7 / 12) * 2 * TONE_AMP) / SR;
+    expect(maxStep(r.L, idx(0.29), idx(0.36))).toBeLessThan(natural);
     expect(r.engine.activeVoices()).toBe(0);
   });
 });

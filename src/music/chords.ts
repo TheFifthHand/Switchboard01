@@ -297,15 +297,27 @@ export function diatonicSeventh(root: number, scale: ScaleId, degree: number, oc
 }
 
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+/** Stacked tones above a named chord, by interval from its root. */
+const EXTENSION_NAMES: Record<number, string> = { 10: '7', 11: 'maj7', 13: 'b9', 14: '9', 15: '#9' };
 
-/** Roman numeral of a diatonic chord: minor key degree 0 -> 'i', degree 4 as a seventh -> 'v7'. */
+/**
+ * Roman numeral of a diatonic chord: minor key degree 0 -> 'i', degree 4 as
+ * a seventh -> 'v7'. Stacks without a common name keep the numeral of the
+ * part that has one and list the remaining tones: major degree 2 as a ninth
+ * -> 'iii7(b9)', harmonic minor degree 2 as a seventh -> 'III+(maj7)'.
+ */
 export function romanNumeral(root: number, scale: ScaleId, degree: number, size: 3 | 4 | 5 = 3): string {
   const d = ((Math.trunc(degree) % 7) + 7) % 7;
-  const spec = identifyChord(diatonicChord(root, scale, d, size, 3));
+  const chord = diatonicChord(root, scale, d, size, 3);
   const numeral = ROMAN[d];
-  if (!spec) return numeral;
-  const q = CHORD_QUALITIES[spec.quality];
-  return `${q.minorish ? numeral.toLowerCase() : numeral}${q.roman}`;
+  for (let n = chord.length; n >= 3; n--) {
+    const spec = identifyChord(chord.slice(0, n));
+    if (!spec || spec.bass !== undefined) continue;
+    const q = CHORD_QUALITIES[spec.quality];
+    const extra = chord.slice(n).map((p) => EXTENSION_NAMES[p - chord[0]] ?? String(p - chord[0]));
+    return `${q.minorish ? numeral.toLowerCase() : numeral}${q.roman}${extra.length ? `(${extra.join(',')})` : ''}`;
+  }
+  return numeral;
 }
 
 /* ------------------------------------------------------------------ */

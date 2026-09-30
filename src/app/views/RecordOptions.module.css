@@ -1,0 +1,84 @@
+.trigger {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, var(--shell-hi), var(--shell));
+  box-shadow: var(--shadow-raised);
+  color: var(--ink-2);
+}
+.trigger:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.trigger:active,
+.trigger[aria-expanded='true'] {
+  box-shadow: var(--shadow-pressed);
+}
+.trigger[aria-expanded='true'] {
+  border-color: var(--teal);
+}
+.led {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #c3c8cc;
+}
+.trigger[data-on] .led {
+  background: var(--amber);
+  box-shadow: 0 0 5px var(--amber-glow);
+}
+.trigger[data-on] {
+  color: var(--ink);
+}
+
+.popover {
+  width: 320px;
+  padding: 12px 14px;
+}
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.title {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  color: var(--ink);
+}
+.option {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+.option > :first-child {
+  align-self: flex-start;
+}
+.label {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--ink-2);
+  padding: 2px 0 3px;
+}
+.help {
+  margin: 0;
+  padding-left: 4px;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.help strong {
+  color: var(--ink-2);
+  font-weight: 600;
+}

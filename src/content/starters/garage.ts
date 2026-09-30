@@ -2,7 +2,8 @@
  * Garage — 136 BPM, A minor, shuffled (swing 0.45). A skippy two-step beat,
  * hollow organ bass and short plucked minor-ninth stabs (Am9 to Dm9). The
  * Lift moves to Fmaj9 and G6/9: Am9 over an F bass is Fmaj9#11 and Dm9 over
- * G is G13sus, so every bass and chord clip fits every other row. Swing
+ * G is G13sus, so every bass and chord clip fits every other row; the bass
+ * avoids E and B (a semitone under F and C) so this holds on any bar. Swing
  * pushes the off-beat sixteenths of hats, stabs and vocal chops.
  */
 import { clip, defineStarter, drums, hand, line, mel, stabs } from './dsl';
@@ -109,7 +110,7 @@ export const GARAGE = defineStarter({
           line(
             2,
             `A1! - . . . . . A1 . . A1 - . C2 . D2 |
-             D2! - . . . . . D2 . . D2 - . F2 . E2`,
+             D2! - . . . . . D2 . . D2 - . F2 . C2`,
             { gate: 0.75 },
           ),
         ),
@@ -195,9 +196,10 @@ export const GARAGE = defineStarter({
         clip(
           'Choir In',
           4,
+          // A over the Am7 and Dm/A bars, then E over Am(add9) and Dm(add9): never a semitone from the pad.
           mel([
-            ['E4', 0, 32, 0.4],
-            ['A4', 32, 32, 0.38],
+            ['A4', 0, 32, 0.4],
+            ['E4', 32, 32, 0.38],
           ]),
         ),
         null,

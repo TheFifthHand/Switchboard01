@@ -1,0 +1,248 @@
+.drums {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+  min-height: 0;
+}
+
+.colHead {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding-left: 6px;
+}
+
+/* ---------- overview: 16 sounds x 16 steps ---------- */
+.overview {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: calc(16 * 30px + 6px);
+  display: grid;
+  grid-template-rows: repeat(16, minmax(11px, 1fr));
+  row-gap: 1px;
+  padding: 3px 0;
+  border-radius: var(--r-md);
+  background: var(--surface-lo);
+  box-shadow: inset 0 1px 2px rgba(20, 24, 28, 0.12);
+}
+
+.voiceRow {
+  align-items: stretch;
+  min-height: 0;
+  margin: 0 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease);
+}
+.voiceRow:hover:not([data-selected]) {
+  background: rgba(255, 255, 255, 0.4);
+}
+.voiceRow[data-selected] {
+  background: var(--teal-wash);
+  box-shadow: inset 0 0 0 1px rgba(35, 149, 142, 0.55);
+  color: var(--teal-ink);
+}
+.voiceRow:focus-visible {
+  box-shadow: 0 0 0 2px var(--teal);
+}
+
+.voiceName {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 6px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1;
+}
+.voiceRow[data-selected] .voiceName {
+  font-weight: 700;
+}
+.voiceNum {
+  width: 14px;
+  flex: none;
+  text-align: right;
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.voiceRow[data-selected] .voiceNum {
+  color: var(--teal);
+}
+.voiceText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell {
+  align-self: center;
+  height: calc(100% - 4px);
+  max-height: 16px;
+  min-height: 6px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 0 0.5px rgba(20, 24, 28, 0.08);
+}
+.voiceRow[data-selected] .cell {
+  background: rgba(255, 255, 255, 0.72);
+}
+.cell[data-v='1'],
+.voiceRow[data-selected] .cell[data-v='1'] {
+  background: rgba(233, 164, 60, 0.5);
+}
+.cell[data-v='2'],
+.voiceRow[data-selected] .cell[data-v='2'] {
+  background: rgba(233, 164, 60, 0.85);
+}
+.cell[data-v='3'],
+.voiceRow[data-selected] .cell[data-v='3'] {
+  background: var(--amber);
+  box-shadow: 0 0 5px var(--amber-glow);
+}
+
+/* ---------- step pads of the selected sound ---------- */
+.lane {
+  flex: none;
+  height: clamp(56px, 8.4vh, 116px);
+}
+.laneLabel {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 0 8px 0 10px;
+  border-left: 3px solid var(--teal);
+  border-radius: 2px;
+}
+.laneName {
+  font-size: var(--fs-md);
+  font-weight: 650;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.laneMeta {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.step {
+  --pad-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.11),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -2px 3px rgba(20, 24, 28, 0.045),
+    0 1px 1.5px rgba(20, 24, 28, 0.14),
+    0 2px 5px rgba(20, 24, 28, 0.05);
+  position: relative;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fbfbfb 0%, #f2f4f5 48%, #e7eaec 100%);
+  box-shadow: var(--pad-shadow);
+  color: var(--ink-2);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    background 120ms var(--ease),
+    box-shadow 120ms var(--ease),
+    transform 60ms linear;
+}
+.step:hover {
+  background: linear-gradient(180deg, #ffffff 0%, #f5f6f7 48%, #eaedef 100%);
+}
+.step:active {
+  transform: translateY(1px);
+}
+.step:focus-visible {
+  box-shadow: var(--pad-shadow), 0 0 0 2px var(--shell-hi), 0 0 0 4px var(--teal);
+  z-index: 1;
+}
+
+/* The light pools up from under the lower edge; brightness follows velocity. */
+.light {
+  position: absolute;
+  left: 50%;
+  bottom: -44%;
+  width: 180%;
+  height: 130%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 226, 170, 1) 0%, rgba(242, 166, 52, 0.78) 34%, rgba(242, 166, 52, 0.3) 64%, rgba(242, 166, 52, 0) 100%);
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity 120ms var(--ease);
+  pointer-events: none;
+}
+.step[data-on] {
+  background: linear-gradient(180deg, #fffcf5 0%, #fbeed6 50%, #f5dfb6 100%);
+  box-shadow:
+    var(--pad-shadow),
+    inset 0 0 0 1px rgba(227, 155, 47, calc(0.25 + 0.45 * var(--vel))),
+    0 0 12px rgba(242, 166, 52, calc(0.15 + 0.4 * var(--vel)));
+  color: var(--amber-ink);
+}
+.step[data-on] .light {
+  opacity: calc(0.3 + 0.7 * var(--vel));
+}
+.step[data-on]:focus-visible {
+  box-shadow: var(--pad-shadow), 0 0 0 2px var(--shell-hi), 0 0 0 4px var(--teal);
+}
+
+.stepNum {
+  position: absolute;
+  top: 5px;
+  left: 7px;
+  font-size: var(--fs-sm);
+  line-height: 1;
+  color: var(--ink-3);
+}
+.step[data-beat] .stepNum {
+  color: var(--ink);
+  font-weight: 600;
+}
+.step[data-on] .stepNum {
+  color: var(--amber-ink);
+}
+.stepVel {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  font-weight: 600;
+  color: var(--amber-ink);
+}
+
+/* Playhead: a bright rim on the step that is sounding. */
+.step[data-playhead]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 2px var(--amber), inset 0 0 0 3px rgba(255, 255, 255, 0.7);
+  pointer-events: none;
+}
+
+.velocity {
+  flex: none;
+  height: clamp(44px, 6.6vh, 92px);
+}

@@ -4,7 +4,8 @@
  *
  * Typed text is interpreted in the units the control displays, so what you
  * read is what you type: "2.5k" or "2.5 kHz" on a frequency, "-6" on a gain,
- * "40" on a percentage (40%), "220" or "220 ms" on a time shown in ms,
+ * "40" on a percentage (40%), "220" or "220 ms" on a time shown in ms
+ * ("0.8 s" or "800 ms" always work),
  * "L20" / "R35" / "C" on a pan control, and an option name on a stepped
  * control.
  */
@@ -27,8 +28,14 @@ function toNumber(s: string): number {
 /**
  * Parse typed text for a parameter. Returns the clamped value, or null when
  * the text cannot be understood (the caller keeps the editor open).
+ *
+ * `current` is the value the control shows while the user types. Times are
+ * displayed in ms below one second and in seconds above, so a plain number is
+ * read in the unit currently on screen ("2" on a knob showing "5 ms" is 2 ms,
+ * not 2 s) unless only the other unit fits the range ("500" on a knob showing
+ * "1.20 s" is 500 ms).
  */
-export function parseParamInput(spec: ParamSpec, raw: string): number | null {
+export function parseParamInput(spec: ParamSpec, raw: string, current?: number): number | null {
   const text = raw.trim();
   if (text === '') return null;
 
@@ -81,8 +88,15 @@ export function parseParamInput(spec: ParamSpec, raw: string): number | null {
       else if (suffix === 's' || suffix === 'sec') {
         /* seconds */
       } else if (suffix === '') {
-        // Short times are displayed in ms, so "220" most likely means 220 ms.
-        if (v > spec.max && v / 1000 >= spec.min && v / 1000 <= spec.max) v /= 1000;
+        const fits = (x: number) => x >= spec.min && x <= spec.max;
+        const shownInMs = current !== undefined && clampParam(spec, current) < 1;
+        if (shownInMs) {
+          // Prefer the unit on screen; fall back to seconds only when ms cannot fit.
+          if (fits(v / 1000) || !fits(v)) v /= 1000;
+        } else if (!fits(v) && fits(v / 1000)) {
+          // Shown in seconds (or unknown): "220" beyond the range most likely means 220 ms.
+          v /= 1000;
+        }
       } else return null;
       break;
     case 'ms':

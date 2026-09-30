@@ -2,8 +2,9 @@
  * Ambient — 72 BPM, E lydian. Slow, spacious layers over Emaj9, F#/E, C#m9
  * and Badd9: the raised fourth (A#) of the second chord gives the lydian glow.
  * Texture loops are three bars long against four-bar harmony, so the layers
- * drift into new combinations each time round. Texture notes come from the
- * B major pentatonic set, which sits over every chord.
+ * drift into new combinations each time round. Texture notes use only C#, D#,
+ * F# and G#, which sit over every chord (B would rub against the A# of F#/E).
+ * The bass lines avoid D# and A#, the notes a semitone under E and B.
  */
 import { HAND, chord, clip, defineStarter, drums, hand, line, mel, strum } from './dsl';
 
@@ -108,7 +109,7 @@ export const AMBIENT = defineStarter({
             `E2 - - - - - - - - - E2? - - - - - |
              E2 - - - - - - - F#2 - - - G#2 - - - |
              C#2 - - - - - - - - - C#2? - - - - - |
-             B1 - - - - - - - - - C#2 - D#2 - - -`,
+             B1 - - - - - - - - - C#2 - F#2 - - -`,
             { gate: 0.95, vel: 0.7 },
           ),
         ),
@@ -221,7 +222,7 @@ export const AMBIENT = defineStarter({
           'Choir Bloom',
           3,
           mel([
-            ['B4', 0, 14, 0.42],
+            ['F#4', 0, 14, 0.42],
             ['G#4', 16, 14, 0.38],
             ['D#5', 32, 14, 0.4],
           ]),
@@ -229,9 +230,11 @@ export const AMBIENT = defineStarter({
         clip(
           'Choir Drift',
           3,
+          // C#4 under F#4 rather than C#5 above it: the choir's second oscillator already sounds
+          // C#5 a fifth over F#4, and C#5 would also ring the choir filter's resonance near 1.1 kHz.
           mel([
             ['F#4', 0, 46, 0.4],
-            ['B4', 8, 38, 0.36],
+            ['C#4', 8, 38, 0.36],
           ]),
         ),
       ],
@@ -244,14 +247,16 @@ export const AMBIENT = defineStarter({
       macros: { space: 0.6, echo: 0.3 },
       clips: [
         // The bell's strongest overtones are a minor third and a fifth above
-        // its note; on G#, C# and D# both stay inside E lydian.
+        // its note; on G#, C# and D# both stay inside E lydian. Each bell is
+        // chosen for the chord it rings over and stops at the bar line where
+        // the next chord would clash with it or its partials.
         clip(
           'Bells',
           4,
           mel([
             ['G#4', 0, 12, 0.6],
-            ['D#4', 22, 12, 0.5],
-            ['C#5', 40, 12, 0.55],
+            ['D#4', 22, 10, 0.5],
+            ['C#5', 40, 8, 0.55],
             ['G#4', 54, 10, 0.45],
           ]),
         ),
@@ -261,8 +266,8 @@ export const AMBIENT = defineStarter({
           'Bells Far',
           4,
           mel([
-            ['C#5', 8, 12, 0.5],
-            ['D#4', 36, 12, 0.5],
+            ['G#4', 8, 8, 0.5],
+            ['C#4', 36, 12, 0.5],
           ]),
         ),
       ],

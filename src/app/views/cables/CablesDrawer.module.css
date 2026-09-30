@@ -1,0 +1,75 @@
+.drawer {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  margin: 0;
+  padding: 0 12px 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, var(--surface-hi) 0%, var(--surface) 100%);
+  box-shadow: var(--shadow-panel);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  text-align: left;
+  transition: background var(--t-fast) var(--ease);
+}
+
+.bar:hover {
+  background: linear-gradient(180deg, #f4f5f6 0%, var(--surface-hi) 100%);
+}
+
+.icon {
+  flex: none;
+  color: var(--ink-2);
+}
+
+.label {
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.part {
+  color: var(--ink);
+  font-size: var(--fs-md);
+  font-weight: 620;
+}
+
+.count {
+  color: var(--ink-3);
+}
+
+.warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--coral-wash);
+  color: var(--coral-ink);
+  font-weight: 600;
+}
+
+.warn svg {
+  color: var(--coral);
+}
+
+.hint {
+  margin-left: auto;
+  color: var(--ink-3);
+}
+
+.chevron {
+  flex: none;
+  color: var(--ink-2);
+}

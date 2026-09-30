@@ -15,6 +15,7 @@ import { parseChord, voiceLeadProgression } from '../../src/music/chords';
 import { parseNote } from '../../src/music/scales';
 import { createProject } from '../../src/project/factory';
 import { resolveAllParams } from '../../src/project/resolve';
+import { spectralCentroid } from '../../src/render/analysis';
 import { Rng } from '../../src/project/rng';
 import type { Instrument } from '../../src/project/types';
 
@@ -108,6 +109,8 @@ interface Render {
   finite: boolean;
   /** RMS of the first difference over RMS: rises with high-frequency content. */
   brightness: number;
+  /** Spectral centroid of the phrase (mono mix), Hz. */
+  centroid: number;
 }
 
 /**
@@ -159,6 +162,7 @@ async function render(factory: InstrumentFactory, info: PresetInfo, tone = 0.5):
   engine.dispose();
 
   const frames = SR * MEASURE_SECONDS;
+  const mono = new Float32Array(frames);
   let sum = 0;
   let diff = 0;
   let peak = 0;
@@ -170,6 +174,7 @@ async function render(factory: InstrumentFactory, info: PresetInfo, tone = 0.5):
       if (!Number.isFinite(v)) finite = false;
       peak = Math.max(peak, Math.abs(v));
       if (i < frames) {
+        mono[i] += v / 2;
         sum += v * v;
         if (i > 0) diff += (v - d[i - 1]) ** 2;
       }
@@ -181,6 +186,7 @@ async function render(factory: InstrumentFactory, info: PresetInfo, tone = 0.5):
     peak,
     finite,
     brightness: Math.sqrt(diff / (sum + 1e-20)),
+    centroid: spectralCentroid(mono, SR),
   };
 }
 
@@ -217,12 +223,17 @@ describe.skipIf(!ENGINES_PRESENT)('synth presets rendered through the real engin
   it('Tone makes every preset audibly darker or brighter', async () => {
     const factory = await loadFactory();
     const problems: string[] = [];
+    const report: string[] = [];
     for (const info of SYNTH_PRESETS) {
       const dark = await render(factory, info, 0.1);
       const bright = await render(factory, info, 0.9);
-      // At least ~5% more high-frequency content (a first-difference/RMS ratio, i.e. a spectral-centroid proxy).
-      if (!(bright.brightness > dark.brightness * 1.05)) problems.push(`${info.name}: ${dark.brightness.toFixed(4)} -> ${bright.brightness.toFixed(4)}`);
+      report.push(`${info.name} ${dark.centroid.toFixed(0)} -> ${bright.centroid.toFixed(0)} Hz`);
+      // The spectral centroid should move by well over half an octave (it is about an octave or more for every preset).
+      if (!(bright.centroid > dark.centroid * 1.8 && bright.brightness > dark.brightness)) {
+        problems.push(`${info.name}: centroid ${dark.centroid.toFixed(0)} -> ${bright.centroid.toFixed(0)} Hz`);
+      }
     }
+    console.info(`[presets] spectral centroid at Tone 0.1 -> 0.9: ${report.join(', ')}`);
     expect(problems).toEqual([]);
   });
 

@@ -3,6 +3,7 @@ import { describeVariation, diffNotes, variationBudget, variationSeed, varyClip,
 import { isInScale, parseNote } from '../../src/music/scales';
 import { pitchClassSet } from '../../src/music/chords';
 import type { Clip, ClipBars, InstrumentKind, Note, ScaleId, TrackRole } from '../../src/project/types';
+import { STARTERS } from '../../src/content/starters';
 
 /* ------------------------------------------------------------------ */
 /* Fixtures (original patterns written for these tests)                */
@@ -242,7 +243,8 @@ describe('varyClip — guarantees for every part type', () => {
     expect(notes.length).toBeGreaterThan(1500);
     const started = performance.now();
     const out = varyClip(dense, { seed: 3, role: 'drums', kind: 'drums', root: 0, scale: 'minor', intensity: 1 });
-    expect(performance.now() - started).toBeLessThan(1500);
+    // Measured around 50 ms; a quadratic rule would take several hundred.
+    expect(performance.now() - started).toBeLessThan(300);
     const d = diffNotes(notes, out);
     expect(d.total).toBeGreaterThan(0);
     expect(d.total).toBeLessThanOrEqual(64);
@@ -383,6 +385,23 @@ function barFirsts(notes: readonly Note[]): Map<number, Note> {
   return out;
 }
 
+/**
+ * A bar's first note keeps its start, pitch and level. A bass root keeps its
+ * length too, apart from at most its last 16th given to an approach tone;
+ * in other parts it may be phrased (legato / staccato).
+ */
+function expectKeptBarFirst(actual: Note | undefined, original: Note, bass = true): void {
+  expect(actual).toBeDefined();
+  expect({ ...actual!, duration: 0 }).toEqual({ ...original, duration: 0 });
+  if (bass) {
+    expect(actual!.duration).toBeLessThanOrEqual(original.duration);
+    expect(actual!.duration).toBeGreaterThanOrEqual(original.duration - 24);
+  } else {
+    expect(actual!.duration).toBeGreaterThanOrEqual(24);
+    expect(actual!.duration).toBeLessThanOrEqual(Math.max(2 * original.duration, 96));
+  }
+}
+
 describe('varyClip — melodic lines', () => {
   const melodic: [string, () => Clip, TrackRole, InstrumentKind][] = [
     ['bass', bassLine, 'bass', 'bass'],
@@ -398,7 +417,7 @@ describe('varyClip — melodic lines', () => {
         const out = varyClip(src, { seed, role, kind, root: 9, scale: 'minor' });
         for (const n of out) expect(isInScale(n.pitch, 9, 'minor'), `${seed} ${n.pitch}`).toBe(true);
         const outFirsts = barFirsts(out);
-        for (const [bar, n] of firsts) expect(outFirsts.get(bar)).toEqual(n);
+        for (const [bar, n] of firsts) expectKeptBarFirst(outFirsts.get(bar), n, role === 'bass');
       }
     });
   }
@@ -417,6 +436,34 @@ describe('varyClip — melodic lines', () => {
         expect(isInScale(n.pitch, 9, 'minorPentatonic')).toBe(true);
       }
     }
+  });
+
+  it('still varies sparse parts of held bar-first notes, with an approach into the next bar', () => {
+    // One held root per bar (an original four-bar line in D minor): every note is a bar's first note.
+    const src = clip('roots', 4, [
+      [0, N('D2'), 0.7, 370],
+      [384, N('A#1'), 0.7, 370],
+      [768, N('F1'), 0.7, 370],
+      [1152, N('C2'), 0.7, 370],
+    ]);
+    const firsts = barFirsts(src.notes);
+    let approaches = 0;
+    for (const seed of SEEDS) {
+      const out = varyClip(src, { seed, role: 'bass', kind: 'bass', root: 2, scale: 'minor' });
+      expect(diffNotes(src.notes, out).total).toBeGreaterThan(0);
+      for (const [bar, n] of firsts) expectKeptBarFirst(barFirsts(out).get(bar), n);
+      const s = [...out].sort((a, b) => a.tick - b.tick);
+      for (let i = 1; i < s.length; i++) expect(s[i - 1].tick + s[i - 1].duration).toBeLessThanOrEqual(s[i].tick);
+      for (const n of out.filter((m) => !src.notes.some((o) => o.id === m.id))) {
+        approaches++;
+        expect(isInScale(n.pitch, 2, 'minor')).toBe(true);
+        // One 16th before the next root (or the loop point), a scale step away from it.
+        const next = s.find((m) => m.tick > n.tick) ?? s[0];
+        expect((next.tick - n.tick + 1536) % 1536).toBe(24);
+        expect(Math.abs(next.pitch - n.pitch)).toBeLessThanOrEqual(2);
+      }
+    }
+    expect(approaches).toBeGreaterThanOrEqual(SEEDS.length);
   });
 
   it('never lifts a bass note more than an octave above where it was', () => {
@@ -537,6 +584,252 @@ describe('varyClip — chord parts keep their harmony', () => {
     expect(moved).toBeGreaterThan(10);
     expect(fewer).toBeGreaterThan(5);
     expect(more).toBeGreaterThan(5);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Sampler parts                                                       */
+/* ------------------------------------------------------------------ */
+
+/** Chopped-sample line in B minor (an original figure). */
+function samplerChops(): Clip {
+  return clip('chops', 2, [
+    [0, N('B3'), 0.85, 36],
+    [72, N('B3'), 0.6, 24],
+    [144, N('F#4'), 0.8, 36],
+    [240, N('E4'), 0.75, 36],
+    [336, N('D4'), 0.55, 24],
+    [384, N('B3'), 0.85, 36],
+    [480, N('A3'), 0.7, 36],
+    [576, N('F#4'), 0.8, 48],
+    [672, N('E4'), 0.6, 24],
+  ]);
+}
+
+describe('varyClip — sampler parts keep their pitches', () => {
+  it('never plays a recording at a new pitch, whatever the part’s role', () => {
+    const src = samplerChops();
+    const pitches = new Set(src.notes.map((n) => n.pitch));
+    const byId = new Map(src.notes.map((n) => [n.id, n]));
+    let added = 0;
+    let moved = 0;
+    for (const role of ['sampler', 'chords', 'lead'] as const) {
+      for (const seed of SEEDS) {
+        const out = varyClip(src, { seed, role, kind: 'sampler', root: 11, scale: 'minor' });
+        for (const n of out) {
+          // A sampler's pitch is its playback speed and the recording's own harmony (e.g. a chord hit).
+          expect(pitches.has(n.pitch), `${role} ${seed}: ${n.pitch}`).toBe(true);
+          const o = byId.get(n.id);
+          if (o) {
+            expect(n.pitch).toBe(o.pitch);
+            if (n.tick !== o.tick) moved++;
+          } else added++;
+        }
+      }
+    }
+    // It still varies: repeats (stutters) and rhythmic shifts.
+    expect(added).toBeGreaterThan(SEEDS.length / 2);
+    expect(moved).toBeGreaterThan(SEEDS.length / 2);
+  });
+
+  it('keeps each bar’s first sample hit exactly, so a timed riser or swell still peaks on the downbeat', () => {
+    const chops = samplerChops();
+    // A riser that starts at step 13 and is timed by its length to end on the next downbeat.
+    const riser = clip('riser', 2, [[384 + 13 * 24, N('C4'), 0.8, 3 * 24], [3 * 24, N('C4'), 0.6, 4 * 24]]);
+    for (const src of [chops, riser]) {
+      for (const seed of SEEDS) {
+        const out = varyClip(src, { seed, role: 'sampler', kind: 'sampler', root: 11, scale: 'minor' });
+        for (const [bar, n] of barFirsts(src.notes)) expect(barFirsts(out).get(bar)).toEqual(n);
+      }
+    }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Pressed again and again                                             */
+/* ------------------------------------------------------------------ */
+
+/** Variation pressed `presses` times in a row, each press varying the previous result (as the Variation button does). */
+function pressRepeatedly(src: Clip, role: TrackRole, kind: InstrumentKind, chain: number, scale: ScaleId = 'minor', presses = 25): Note[] {
+  let current = src;
+  for (let g = 1; g <= presses; g++) {
+    current = { ...current, notes: varyClip(current, { seed: variationSeed(chain, current.id, g), role, kind, root: 9, scale }) };
+  }
+  return current.notes;
+}
+
+const CHAINS = [11, 222, 3333, 44444, 555555, 6666666];
+const range = (notes: readonly Note[]) => [Math.min(...notes.map((n) => n.pitch)), Math.max(...notes.map((n) => n.pitch))];
+
+describe('varyClip — stays musical when pressed again and again', () => {
+  for (const [name, make, role, kind, down, up] of [
+    ['bass line', bassLine, 'bass', 'bass', 2, 7],
+    ['lead line', leadLine, 'lead', 'poly', 12, 12],
+  ] as const) {
+    it(`${name}: stays in its register, in key, on its bar-first notes and about as busy as it was`, () => {
+      const src = make();
+      const [lo, hi] = range(src.notes);
+      const firsts = barFirsts(src.notes);
+      for (const chain of CHAINS) {
+        const out = pressRepeatedly(src, role, kind, chain);
+        for (const n of out) {
+          expect(isInScale(n.pitch, 9, 'minor')).toBe(true);
+          expect(n.pitch, `chain ${chain}`).toBeGreaterThanOrEqual(lo - down);
+          expect(n.pitch, `chain ${chain}`).toBeLessThanOrEqual(hi + up);
+        }
+        for (const [bar, n] of firsts) {
+          const kept = barFirsts(out).get(bar)!;
+          if (kind === 'bass') expectKeptBarFirst(kept, n);
+          else expect({ ...kept, duration: 0 }).toEqual({ ...n, duration: 0 });
+        }
+        // Ornaments come and go, but a bar never fills up beyond eighth-note density (or what was written).
+        for (let bar = 0; bar < src.bars; bar++) {
+          const count = (notes: readonly Note[]) => notes.filter((n) => Math.floor(n.tick / 384) === bar).length;
+          expect(count(out), `chain ${chain} bar ${bar}`).toBeLessThanOrEqual(Math.max(8, count(src.notes)));
+        }
+        expect(out.length, `chain ${chain}`).toBeGreaterThanOrEqual(Math.floor(src.notes.length * 0.6));
+        if (kind === 'bass') {
+          const s = [...out].sort((a, b) => a.tick - b.tick);
+          for (let i = 1; i < s.length; i++) expect(s[i - 1].tick + s[i - 1].duration).toBeLessThanOrEqual(s[i].tick);
+        }
+        // Dynamics neither flatten out nor collapse to extremes.
+        const vs = out.map((n) => n.velocity);
+        expect(vs.filter((v) => v <= 0.15).length).toBe(0);
+        expect(vs.filter((v) => v >= 0.99).length).toBeLessThanOrEqual(2);
+      }
+    });
+  }
+
+  for (const [name, make, role] of [
+    ['stabs', chordStabs, 'chords'],
+    ['pad', padChords, 'pad'],
+  ] as const) {
+    it(`${name}: keeps its harmony, each bar's opening chord and bass note, and its register`, () => {
+      const src = make();
+      const [lo, hi] = range(src.notes);
+      const harmonies = new Set(chordGroups(src.notes).map((g) => g.pcs));
+      const openers = new Map<number, { tick: number; bass: number }>();
+      for (const g of chordGroups(src.notes)) {
+        const bar = Math.floor(g.tick / 384);
+        if (!openers.has(bar)) openers.set(bar, { tick: g.tick, bass: Math.min(...g.pitches) });
+      }
+      const perBar = (groups: { tick: number }[], bar: number) => groups.filter((g) => Math.floor(g.tick / 384) === bar).length;
+      for (const chain of CHAINS) {
+        const groups = chordGroups(pressRepeatedly(src, role, 'poly', chain));
+        for (const g of groups) {
+          expect(harmonies.has(g.pcs), `chain ${chain}: ${g.pcs}`).toBe(true);
+          for (const p of g.pitches) {
+            expect(p).toBeGreaterThanOrEqual(lo - 7);
+            expect(p).toBeLessThanOrEqual(hi + 12);
+          }
+        }
+        for (const [bar, opener] of openers) {
+          const g = groups.find((x) => Math.floor(x.tick / 384) === bar)!;
+          expect(g.tick).toBe(opener.tick);
+          expect(Math.min(...g.pitches)).toBe(opener.bass);
+          const count = perBar(groups, bar);
+          const before = perBar(chordGroups(src.notes), bar);
+          expect(count).toBeGreaterThanOrEqual(Math.min(2, before));
+          expect(count).toBeLessThanOrEqual(Math.max(6, before));
+        }
+      }
+    });
+  }
+
+  it('drums: anchors stay, fills stay in the last beat, ghosts stay capped and hats keep their dynamics', () => {
+    for (const make of [houseDrums, breakDrums]) {
+      const src = make();
+      const keep = anchors(src);
+      const len = src.bars * 384;
+      const hatVel = (notes: readonly Note[]) => notes.filter((n) => n.pitch === 4 || n.pitch === 6).map((n) => n.velocity);
+      const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+      for (const chain of CHAINS) {
+        const out = pressRepeatedly(src, 'drums', 'drums', chain);
+        for (const a of keep) expect(out).toContainEqual(a);
+        expect(out.length, `${src.name} chain ${chain}`).toBeLessThanOrEqual(Math.ceil(src.notes.length * 1.75));
+        for (const t of out.filter((n) => n.pitch >= 8 && n.pitch <= 10)) expect(t.tick).toBeGreaterThanOrEqual(len - 96);
+        for (let bar = 0; bar < src.bars; bar++) {
+          // Snare/rim hits besides the backbeats (outside the fill beat): a handful of ghosts, not a roll.
+          const extra = out.filter((n) => (n.pitch === 2 || n.pitch === 7) && Math.floor(n.tick / 384) === bar && n.tick < len - 96 && ![96, 288].includes(n.tick % 384));
+          expect(extra.length, `${src.name} chain ${chain} bar ${bar}`).toBeLessThanOrEqual(6);
+        }
+        const hats = hatVel(out);
+        expect(hats.filter((v) => v <= 0.1).length).toBeLessThanOrEqual(Math.floor(hats.length * 0.1));
+        expect(med(hats) / med(hatVel(src.notes))).toBeGreaterThan(0.6);
+        expect(med(hats) / med(hatVel(src.notes))).toBeLessThan(1.4);
+      }
+    }
+  });
+
+  it('percussion and sampler parts stay within bounds too', () => {
+    const perc = handPercussion();
+    const chops = samplerChops();
+    const chopPitches = new Set(chops.notes.map((n) => n.pitch));
+    for (const chain of CHAINS) {
+      const p = pressRepeatedly(perc, 'percussion', 'drums', chain);
+      expect(p.some((n) => n.pitch <= 3)).toBe(false);
+      expect(p.length).toBeLessThanOrEqual(Math.ceil(perc.notes.length * 1.75));
+      const s = pressRepeatedly(chops, 'sampler', 'sampler', chain);
+      for (const n of s) expect(chopPitches.has(n.pitch)).toBe(true);
+      expect(s.length).toBeLessThanOrEqual(Math.ceil(chops.notes.length * 1.5));
+    }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The shipped starters                                                */
+/* ------------------------------------------------------------------ */
+
+describe('varyClip — on every clip of every starter project', () => {
+  it('stays in key, keeps harmonies, sampler pitches and drum anchors, and stays bounded when repeated', () => {
+    let clips = 0;
+    const unchanged: string[] = [];
+    for (const starter of STARTERS) {
+      const project = starter.build();
+      for (const track of project.tracks) {
+        track.clips.forEach((src) => {
+          if (!src || src.notes.length === 0) return;
+          clips++;
+          const kind = track.instrument.kind;
+          const len = src.bars * 384;
+          const where = `${starter.id} ${track.name} ${src.name}`;
+          const opts = (seed: number): VariationOptions => ({ seed, role: track.role, kind, root: project.root, scale: project.scale });
+          const byId = new Map(src.notes.map((n) => [n.id, n]));
+          const harmonies = new Set(chordGroups(src.notes).map((g) => g.pcs));
+          const pitches = new Set(src.notes.map((n) => n.pitch));
+          const chordPart = kind !== 'drums' && kind !== 'sampler' && (track.role === 'chords' || track.role === 'pad');
+          let changed = false;
+          for (const seed of [3, 17, 101, 2024, 77777, 123457]) {
+            const out = varyClip(src, opts(seed));
+            if (diffNotes(src.notes, out).total > 0) changed = true;
+            for (const n of out) {
+              expect(n.tick >= 0 && n.tick < len, where).toBe(true);
+              const o = byId.get(n.id);
+              if (kind === 'sampler') expect(pitches.has(n.pitch), where).toBe(true);
+              else if (kind !== 'drums' && !chordPart && project.scale !== 'chromatic' && (!o || o.pitch !== n.pitch)) {
+                expect(isInScale(n.pitch, project.root, project.scale), `${where}: ${n.pitch}`).toBe(true);
+              }
+            }
+            if (chordPart) for (const g of chordGroups(out)) expect(harmonies.has(g.pcs), `${where}: ${g.pcs}`).toBe(true);
+            if (kind === 'drums' && track.role === 'drums') for (const a of anchors(src)) expect(out, where).toContainEqual(a);
+          }
+          if (!changed) unchanged.push(`${where} (${src.notes.length} notes)`);
+          // Pressed ten times in a row: still in its register and not piling up notes.
+          let current = src;
+          for (let g = 1; g <= 10; g++) current = { ...current, notes: varyClip(current, opts(variationSeed(project.seed, src.id, g))) };
+          expect(current.notes.length, where).toBeLessThanOrEqual(src.notes.length * 1.75 + 8);
+          if (kind !== 'drums') {
+            const [lo, hi] = range(src.notes);
+            const [lo2, hi2] = range(current.notes);
+            expect(lo2, where).toBeGreaterThanOrEqual(lo - 12);
+            expect(hi2, where).toBeLessThanOrEqual(hi + 14);
+          }
+        });
+      }
+    }
+    expect(clips).toBeGreaterThan(100);
+    // Only single timed hits, drones and two-note held parts are left alone.
+    expect(unchanged.length, unchanged.join('\n')).toBeLessThanOrEqual(Math.ceil(clips * 0.12));
   });
 });
 

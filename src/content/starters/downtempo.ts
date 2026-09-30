@@ -1,9 +1,10 @@
 /**
  * Downtempo — 84 BPM, Eb major, swung. A lazy, dusty beat with electric-piano
- * chords (Ebmaj9, Cm9, Abmaj9, Bb13sus) over a warm root-and-fifth bass. The
- * Lift walks up Fm9, Gm7, Ab, Bb: over the Groove bass those read as Eb6/9sus
- * and Cm11, so clips from either row blend. Soft air and tape swells keep
- * the texture warm.
+ * chords (Ebmaj9, Cm9, Abmaj9, Bb13sus) over a warm bass. The Lift climbs
+ * Fm9, Abmaj9, Bb9, Cm9. No bass line in any row plays D or G, the two notes
+ * a semitone under Eb and Ab, so every bass clip sits under every chord clip
+ * even when a tapped clip starts mid-phrase (clips launch on the next bar,
+ * not the next four-bar phrase). Soft air and tape swells keep the texture warm.
  */
 import { clip, defineStarter, drums, hand, line, mel, stabs, strum } from './dsl';
 
@@ -12,7 +13,6 @@ const CM9 = 'G3 Bb3 D4 Eb4';
 const ABMAJ9 = 'G3 Bb3 C4 Eb4';
 const BB13SUS = 'Ab3 C4 Eb4 G4';
 const FM9 = 'Ab3 C4 Eb4 G4';
-const GM7 = 'F3 Bb3 D4 G4';
 const BB9 = 'Ab3 C4 D4 F4';
 
 const HAT = '6.3.6.346.3.6.34';
@@ -104,9 +104,9 @@ export const DOWNTEMPO = defineStarter({
           line(
             4,
             `Eb2 - - - - - - . . . Bb1 - Eb2 - . . |
-             C2 - - - - - - . . . G1 - C2 - . . |
+             C2 - - - - - - . . . Bb1 - C2 - . . |
              Ab1 - - - - - - . . . Eb2 - Ab1 - . . |
-             Bb1 - - - - - - . . . F1 - Bb1 - D2 -`,
+             Bb1 - - - - - - . . . F1 - Bb1 - C2 -`,
             { gate: 0.9 },
           ),
         ),
@@ -116,9 +116,9 @@ export const DOWNTEMPO = defineStarter({
           line(
             4,
             `F1 - - - - - . . . . C2 - F2? - Eb2 - |
-             G1 - - - - - . . . . Bb1 - G2? - F2 - |
-             Ab1 - - - - - . . . . Eb2 - Ab2? - C2 - |
-             Bb1 - - - - - . . . . F2 - Bb1 - C2 -`,
+             Ab1 - - - - - . . . . Eb2 - Ab2? - F2 - |
+             Bb1 - - - - - . . . . F2 - Bb1 - Ab1 - |
+             C2 - - - - - . . . . Bb1 - C3? - Eb2 -`,
             { gate: 0.9 },
           ),
         ),
@@ -141,7 +141,7 @@ export const DOWNTEMPO = defineStarter({
           strum('Ab3 C4 Eb4', 48, 14, 0.5, 0.5),
         ),
         clip('Rhodes', 4, stabs(4, 'X------..x---...', [EBMAJ9, CM9, ABMAJ9, BB13SUS], { gate: 0.95 })),
-        clip('Lift Rhodes', 4, stabs(4, '..X-----..x-----', [FM9, GM7, ABMAJ9, BB9], { gate: 0.95 })),
+        clip('Lift Rhodes', 4, stabs(4, '..X-----..x-----', [FM9, ABMAJ9, BB9, CM9], { gate: 0.95 })),
         clip(
           'Haze Rhodes',
           4,
@@ -167,9 +167,9 @@ export const DOWNTEMPO = defineStarter({
           line(
             4,
             `C5 . . Ab4 . . Bb4 . C5 - - - . . Eb5 . |
-             D5 . . Bb4 . . C5 . D5 - - - . . F5 . |
-             Eb5 . . C5 . . Bb4 . G4 - - - . . Ab4 . |
-             D5 - - - C5 - - - Bb4 - - - . . . .`,
+             Eb5 . . C5 . . D5 . Eb5 - - - . . G5 . |
+             F5 . . D5 . . Eb5 . F5 - - - . . Ab5 . |
+             G5 - - - Eb5 - - - C5 - - - . . . .`,
           ),
         ),
         clip(
@@ -194,8 +194,10 @@ export const DOWNTEMPO = defineStarter({
       clips: [
         null,
         null,
-        clip('Lift Pad', 4, line(4, 'F3+Ab3+C4+Eb4 G3+Bb3+D4+F4 Ab3+C4+Eb4+G4 Bb3+D4+F4+Ab4', { unit: 16, gate: 0.98, vel: 0.58 })),
-        clip('Haze Pad', 4, line(4, 'Eb3+Bb3+D4+G4 C3+G3+Bb3+Eb4 Eb3+Ab3+C4+G4 Bb2+F3+Ab3+D4', { unit: 16, gate: 0.98, vel: 0.62 })),
+        // Under the keys' Abmaj9 (G3 on the bottom) the pad leaves out Ab, so the two never rub a semitone apart.
+        clip('Lift Pad', 4, line(4, 'F3+Ab3+C4+Eb4 C4+Eb4+G4+C5 Bb3+D4+F4+Ab4 G3+C4+Eb4+G4', { unit: 16, gate: 0.98, vel: 0.58 })),
+        // The last chord stays suspended (no D) under the keys' Bb11.
+        clip('Haze Pad', 4, line(4, 'Eb3+Bb3+D4+G4 C3+G3+Bb3+Eb4 Eb3+Ab3+C4+G4 Bb2+F3+Ab3+C4', { unit: 16, gate: 0.98, vel: 0.62 })),
       ],
     },
     texture: {
@@ -225,6 +227,7 @@ export const DOWNTEMPO = defineStarter({
       macros: { space: 0.4 },
       // The 2 s reversed swell peaks at its end. Pitched to Eb it lasts about
       // 9.4 steps at 84 BPM (to Bb, about 12.6), so it lands on the downbeat.
+      // Its Eb and Bb fit the chord it rises out of (Cm9 in the Lift, Bb11 in the Haze) and the one it lands on.
       clips: [
         null,
         null,

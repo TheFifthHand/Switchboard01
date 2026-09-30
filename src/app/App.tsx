@@ -14,6 +14,8 @@ import { PlayView } from './views/PlayView';
 import { KeyboardStrip } from './views/KeyboardStrip';
 import { Welcome } from './views/Welcome';
 import { ExportDialog } from './views/ExportDialog';
+import { ShapeView } from './views/shape/ShapeView';
+import { ArrangeView } from './views/arrange/ArrangeView';
 import { downloadBlob } from './download';
 import styles from './App.module.css';
 
@@ -65,6 +67,10 @@ function AudioBanner() {
 function Workspace() {
   const view = useUi((s) => s.view);
   switch (view) {
+    case 'shape':
+      return <ShapeView />;
+    case 'arrange':
+      return <ArrangeView />;
     case 'play':
     default:
       return <PlayView />;
@@ -74,6 +80,7 @@ function Workspace() {
 export function App({ boot }: { boot: BootInfo }) {
   const [welcome, setWelcome] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportSource, setExportSource] = useState<string | undefined>(undefined);
   const tips = useUi((s) => s.tipsEnabled);
 
   // Global shortcuts: Space = play/stop, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y = undo/redo.
@@ -112,11 +119,18 @@ export function App({ boot }: { boot: BootInfo }) {
       void session.exportProjectFile().then(({ blob, filename }) => downloadBlob(blob, filename));
     };
     window.addEventListener('sb:export-project', onExportProject);
+    // Any view can open the export dialog with a preselected source ('song', 'perf:<id>', 'scene:<row>', 'now').
+    const onOpenExport = (e: Event) => {
+      setExportSource((e as CustomEvent<{ source?: string }>).detail?.source);
+      setExportOpen(true);
+    };
+    window.addEventListener('sb:open-export', onOpenExport);
     return () => {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('blur', release);
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('sb:export-project', onExportProject);
+      window.removeEventListener('sb:open-export', onOpenExport);
     };
   }, []);
 
@@ -124,7 +138,7 @@ export function App({ boot }: { boot: BootInfo }) {
     <TipsProvider enabled={tips} onEnabledChange={(on) => setTipsEnabled(on)}>
       <ToastProvider>
         <div className={styles.app} inert={welcome ? true : undefined}>
-          <TransportBar onOpenLibrary={() => setWelcome(true)} onOpenExport={() => setExportOpen(true)} />
+          <TransportBar onOpenLibrary={() => setWelcome(true)} onOpenExport={() => { setExportSource(undefined); setExportOpen(true); }} />
           <div className={styles.bannerSlot}>
             <AudioBanner />
           </div>
@@ -136,7 +150,7 @@ export function App({ boot }: { boot: BootInfo }) {
           </footer>
         </div>
         {welcome && <Welcome lastProject={boot.lastProject} storageError={boot.storageError} onClose={() => setWelcome(false)} onBrowse={() => setWelcome(false)} />}
-        <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+        <ExportDialog open={exportOpen} initialSource={exportSource} onClose={() => { setExportOpen(false); setExportSource(undefined); }} />
         <Notices />
       </ToastProvider>
     </TipsProvider>

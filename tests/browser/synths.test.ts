@@ -307,6 +307,82 @@ describe('MonoSynthEngine', () => {
     expect(early).toBeGreaterThan(late * 1.5);
   });
 
+  it('the sub oscillator is a square one octave below', async () => {
+    const measure = async (sub: number) => {
+      const r = await render(
+        0.6,
+        (ictx) => new MonoSynthEngine(ictx, bass({ ...SINE_BASS, sub, sustain: 1 })),
+        (e) => void e.trigger({ pitch: 45, velocity: 1, time: 0.02, duration: 0.5 }),
+      );
+      const a = idx(0.1);
+      const b = idx(0.5);
+      return { f: toneAmp(r.L, a, b, 110), half: toneAmp(r.L, a, b, 55), third: toneAmp(r.L, a, b, 165) };
+    };
+    const without = await measure(0);
+    const withSub = await measure(1);
+    expect(without.half / without.f).toBeLessThan(0.01);
+    expect(withSub.half / withSub.f).toBeGreaterThan(0.3);
+    // A square has odd harmonics at 1/3 of the fundamental: 165 Hz relative to 55 Hz.
+    expect(withSub.third / withSub.half).toBeGreaterThan(0.2);
+    expect(withSub.third / withSub.half).toBeLessThan(0.45);
+  });
+
+  it('velocity sensitivity scales loudness and the filter envelope; 0 ignores velocity', async () => {
+    const level = async (velocity: number, sens: number) => {
+      const r = await render(
+        0.5,
+        (ictx) => new MonoSynthEngine(ictx, bass({ ...SINE_BASS, sustain: 1, velocity: sens })),
+        (e) => void e.trigger({ pitch: 45, velocity, time: 0.02, duration: 0.4 }),
+      );
+      return rms(r.L, idx(0.1), idx(0.35));
+    };
+    expect((await level(0.3, 1)) / (await level(1, 1))).toBeCloseTo(Math.pow(0.3, 1.6), 2);
+    expect((await level(0.3, 0)) / (await level(1, 0))).toBeCloseTo(1, 4);
+
+    const brightness = async (velocity: number, sens: number) => {
+      const r = await render(
+        0.5,
+        (ictx) => new MonoSynthEngine(ictx, bass({ wave: 0, sub: 0, drive: 0, resonance: 0, cutoff: 150, envAmount: 1, filterDecay: 1, velocity: sens })),
+        (e) => void e.trigger({ pitch: 36, velocity, time: 0.02, duration: 0.4 }),
+      );
+      return centroid(r.L, idx(0.03));
+    };
+    expect(await brightness(1, 1)).toBeGreaterThan((await brightness(0.3, 1)) * 1.5);
+    expect(Math.abs((await brightness(0.3, 0)) / (await brightness(1, 0)) - 1)).toBeLessThan(0.02);
+  });
+
+  it('resonance emphasises the cutoff, and extreme settings stay finite and bounded', async () => {
+    // Saw at 55 Hz, cutoff on its 8th harmonic.
+    const harmonic = async (resonance: number) => {
+      const r = await render(
+        0.5,
+        (ictx) => new MonoSynthEngine(ictx, bass({ wave: 0, sub: 0, drive: 0, envAmount: 0, cutoff: 440, resonance, sustain: 1 })),
+        (e) => void e.trigger({ pitch: 33, velocity: 1, time: 0.02, duration: 0.4 }),
+      );
+      return toneAmp(r.L, idx(0.1), idx(0.4), 440) / toneAmp(r.L, idx(0.1), idx(0.4), 55);
+    };
+    expect((await harmonic(1)) / (await harmonic(0))).toBeGreaterThan(3);
+
+    let worst = 0;
+    for (const wave of [0, 1]) {
+      for (const cutoff of [150, 700]) {
+        for (const drive of [0, 1]) {
+          for (const pitch of [24, 40]) {
+            const r = await render(
+              0.4,
+              (ictx) => new MonoSynthEngine(ictx, bass({ wave, cutoff, drive, resonance: 1, sub: 1, envAmount: 1, sustain: 1 })),
+              (e) => void e.trigger({ pitch, velocity: 1, time: 0.02, duration: 0.3 }),
+            );
+            expect(allFinite(r.L)).toBe(true);
+            worst = Math.max(worst, peak(r.L));
+          }
+        }
+      }
+    }
+    // Level 0 dB: no runaway resonance (the downstream limiter handles the rest).
+    expect(worst).toBeLessThan(1.5);
+  });
+
   it('saturation adds harmonics without changing loudness much (level compensated)', async () => {
     const measure = async (drive: number) => {
       const r = await render(
@@ -391,6 +467,9 @@ describe('MonoSynthEngine', () => {
     for (let i = 1; i < freqs.length; i++) expect(freqs[i]).toBeGreaterThan(freqs[i - 1]);
     expect(freqs.filter((f) => f > 125 && f < 205).length).toBeGreaterThanOrEqual(3);
     expect(Math.abs(zcFreq(legato.L, idx(0.6), idx(0.85)) / 220 - 1)).toBeLessThan(0.01);
+    // Exponential glide (linear in semitones): half-way it is at the geometric mean (155.6 Hz), not 165 Hz.
+    const mid = zcFreq(legato.L, idx(0.3 + 0.125 - 0.02), idx(0.3 + 0.125 + 0.02));
+    expect(Math.abs(mid / Math.sqrt(110 * 220) - 1)).toBeLessThan(0.02);
     // No retriggered attack: the level stays at the held level through the note change.
     const before = rms(legato.L, idx(0.2), idx(0.29));
     const across = periodRmsRange(legato.L, idx(0.28), idx(0.4), 110);
@@ -517,6 +596,23 @@ describe('MonoSynthEngine', () => {
     expect(r.engine.activeVoices()).toBe(0);
   });
 
+  it('a release requested for a time already past starts from the current level (no jump)', async () => {
+    const r = await render(
+      0.8,
+      (ictx) => new MonoSynthEngine(ictx, bass({ ...SINE_BASS, sustain: 1 })),
+      (e, _ctx, at) => {
+        const h = e.trigger({ pitch: 45, velocity: 1, time: 0.05 });
+        // A stale time (30 ms behind the clock) must not make the envelope jump to where the release would be now.
+        at(0.4, () => h?.release(0.37));
+      },
+    );
+    const p = peak(r.L, idx(0.2), idx(0.39));
+    expect(p).toBeGreaterThan(0.1);
+    expect(maxStep(r.L, idx(0.39), idx(0.5))).toBeLessThan(((2 * Math.PI * 110 * p) / SR) * 1.3);
+    expect(peak(r.L, idx(0.4 + 0.08 + 0.003) + 128)).toBe(0);
+    expect(r.engine.activeVoices()).toBe(0);
+  });
+
   it('held notes sound until handle.release(), releaseAll() ends everything', async () => {
     const r = await render(
       1.2,
@@ -562,6 +658,25 @@ describe('PolySynthEngine', () => {
     }
   });
 
+  it('releases during attack, decay and sustain without clicks and frees the voices', async () => {
+    const r = await render(
+      2,
+      (ictx) => new PolySynthEngine(ictx, poly({ ...SINE_POLY, attack: 0.15, decay: 0.2, sustain: 0.5, release: 0.12 })),
+      (e) => {
+        e.trigger({ pitch: 57, velocity: 1, time: 0.05, duration: 0.06 }); // release during the attack
+        e.trigger({ pitch: 57, velocity: 1, time: 0.6, duration: 0.24 }); // release during the decay
+        e.trigger({ pitch: 57, velocity: 1, time: 1.2, duration: 0.5 }); // release from sustain
+      },
+    );
+    const p = peak(r.L);
+    expect(p).toBeGreaterThan(0.05);
+    expect(maxStep(r.L)).toBeLessThan(((2 * Math.PI * 220 * p) / SR) * 1.3);
+    expect(peak(r.L, idx(0.11 + 0.125), idx(0.6))).toBe(0);
+    expect(peak(r.L, idx(0.84 + 0.125), idx(1.2))).toBe(0);
+    expect(peak(r.L, idx(1.7 + 0.125))).toBe(0);
+    expect(r.engine.activeVoices()).toBe(0);
+  });
+
   it('plays in tune; osc 2 is transposed by its semitones', async () => {
     const r = await render(
       0.5,
@@ -595,6 +710,26 @@ describe('PolySynthEngine', () => {
     const high = await c(8000);
     expect(low).toBeLessThan(mid * 0.8);
     expect(mid).toBeLessThan(high * 0.8);
+  });
+
+  it('the filter envelope brightens the attack; velocity scales level', async () => {
+    const r = await render(
+      1,
+      (ictx) => new PolySynthEngine(ictx, poly({ cutoff: 300, resonance: 0, filterEnv: 1, filterDecay: 0.3, sustain: 1 })),
+      (e) => void e.trigger({ pitch: 48, velocity: 1, time: 0.02, duration: 0.9 }),
+    );
+    expect(centroid(r.L, idx(0.02))).toBeGreaterThan(centroid(r.L, idx(0.6)) * 1.5);
+
+    const level = async (velocity: number, sens: number) => {
+      const out = await render(
+        0.5,
+        (ictx) => new PolySynthEngine(ictx, poly({ ...SINE_POLY, sustain: 1, velocity: sens })),
+        (e) => void e.trigger({ pitch: 57, velocity, time: 0.02, duration: 0.4 }),
+      );
+      return rms(out.L, idx(0.1), idx(0.35));
+    };
+    expect((await level(0.3, 1)) / (await level(1, 1))).toBeCloseTo(Math.pow(0.3, 1.6), 2);
+    expect((await level(0.3, 0)) / (await level(1, 0))).toBeCloseTo(1, 4);
   });
 
   it('never allocates more than 12 voices and frees them all after release', async () => {
@@ -642,6 +777,25 @@ describe('PolySynthEngine', () => {
     // Natural motion of the full sum is 2*pi*f*p/SR per sample; a hard cut would add a step of ~perVoice.
     const natural = (2 * Math.PI * f * p) / SR;
     expect(maxStep(r.L, idx(tSteal - 0.002), idx(tSteal + 0.01))).toBeLessThan(natural + perVoice * 0.2);
+  });
+
+  it('steals the oldest voice and leaves the others sounding', async () => {
+    // Twelve held sines a whole tone apart, started 10 ms apart; a 13th note must remove only the first.
+    const pitches = Array.from({ length: 12 }, (_, i) => 48 + 2 * i);
+    const r = await render(
+      0.9,
+      (ictx) => new PolySynthEngine(ictx, poly({ ...SINE_POLY, sustain: 1 })),
+      (e) => {
+        pitches.forEach((pitch, i) => e.trigger({ pitch, velocity: 0.5, time: 0.02 + i * 0.01 }));
+        e.trigger({ pitch: 84, velocity: 0.5, time: 0.3 });
+      },
+    );
+    const amp = (pitch: number, a: number, b: number) => toneAmp(r.L, idx(a), idx(b), midiToHz(pitch));
+    expect(amp(48, 0.1, 0.29) / amp(50, 0.1, 0.29)).toBeGreaterThan(0.8);
+    expect(amp(48, 0.35, 0.75) / amp(50, 0.35, 0.75)).toBeLessThan(0.01);
+    for (const pitch of pitches.slice(1)) expect(amp(pitch, 0.35, 0.75) / amp(pitch, 0.1, 0.29), `pitch ${pitch}`).toBeGreaterThan(0.9);
+    expect(amp(84, 0.35, 0.75)).toBeGreaterThan(0.5 * amp(50, 0.35, 0.75));
+    expect(r.engine.activeVoices()).toBe(POLY_MAX_VOICES);
   });
 
   it('pitchMod: a constant +1200 cents raises the pitch an octave', async () => {

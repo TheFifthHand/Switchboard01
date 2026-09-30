@@ -58,12 +58,13 @@ export function SegmentedControl<T extends string>({
   const base = useId();
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const tabs = kind === 'tabs';
-  const selectedIndex = Math.max(
-    0,
-    options.findIndex((o) => o.value === value),
-  );
+  // -1 when the value matches no option: nothing is shown as engaged.
+  const selectedIndex = options.findIndex((o) => o.value === value);
 
   const enabledIndices = options.map((o, i) => (o.disabled || disabled ? -1 : i)).filter((i) => i >= 0);
+  // Roving tabindex: the engaged segment, or the first usable one when the
+  // engaged segment is disabled or missing, so Tab can always reach the group.
+  const tabStop = enabledIndices.includes(selectedIndex) ? selectedIndex : (enabledIndices[0] ?? -1);
 
   const move = (from: number, dir: 1 | -1 | 'first' | 'last') => {
     if (enabledIndices.length === 0) return;
@@ -127,7 +128,7 @@ export function SegmentedControl<T extends string>({
             aria-selected={tabs ? selected : undefined}
             aria-checked={tabs ? undefined : selected}
             aria-controls={controlsId}
-            tabIndex={selected ? 0 : -1}
+            tabIndex={i === tabStop ? 0 : -1}
             disabled={segDisabled}
             className={styles.segment}
             data-selected={selected || undefined}

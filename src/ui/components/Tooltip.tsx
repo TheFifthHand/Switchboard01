@@ -6,8 +6,8 @@
  * - `Tooltip` explains a control in plain language first and technical detail
  *   second. It appears after ~350 ms of hover and immediately on keyboard
  *   focus, never intercepts the pointer (pointer-events: none), hides the
- *   moment anything is pressed so it never gets in the way of playing, and is
- *   kept inside the viewport.
+ *   moment anything is pressed so it never gets in the way of playing,
+ *   closes on Escape wherever focus is, and is kept inside the viewport.
  * - When Tips are off, a tooltip still shows a control's `name` if it has one
  *   (icon-only buttons need their name), but no explanations.
  * - The trigger is linked with aria-describedby to a hidden description, so
@@ -26,7 +26,6 @@ import {
   useRef,
   useState,
   type FocusEvent,
-  type KeyboardEvent,
   type PointerEvent,
   type ReactElement,
   type ReactNode,
@@ -119,17 +118,26 @@ export function Tooltip({ name, tip, detail, placement = 'top', disabled, childr
     if (!hasContent) hide();
   }, [hasContent, hide]);
 
-  // Hide on window blur, scroll or resize: the anchor may have moved.
+  // Hide on window blur, scroll or resize (the anchor may have moved), and on
+  // Escape wherever focus is — a hover tooltip must be dismissible without
+  // moving the pointer. Escape keeps doing its own job (the key is not consumed).
   useEffect(() => {
     if (!open) return;
     const onAway = () => hide();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      suppressed.current = true;
+      hide();
+    };
     window.addEventListener('blur', onAway);
     window.addEventListener('resize', onAway);
     window.addEventListener('scroll', onAway, true);
+    window.addEventListener('keydown', onKey, true);
     return () => {
       window.removeEventListener('blur', onAway);
       window.removeEventListener('resize', onAway);
       window.removeEventListener('scroll', onAway, true);
+      window.removeEventListener('keydown', onKey, true);
     };
   }, [open, hide]);
 
@@ -191,10 +199,10 @@ export function Tooltip({ name, tip, detail, placement = 'top', disabled, childr
   const onBlur = (e: FocusEvent) => {
     const to = e.relatedTarget as Node | null;
     if (to && anchorRef.current?.contains(to)) return;
+    // Leaving the control ends a press/Escape suppression, so a keyboard user
+    // who comes back gets the tip again.
+    suppressed.current = false;
     hide();
-  };
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' && open) hide();
   };
 
   const childProps = children.props as { 'aria-describedby'?: string };
@@ -212,7 +220,6 @@ export function Tooltip({ name, tip, detail, placement = 'top', disabled, childr
       onPointerDown={onPointerDown}
       onFocus={onFocus}
       onBlur={onBlur}
-      onKeyDown={onKeyDown}
     >
       {trig}
       <span id={descId} hidden>

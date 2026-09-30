@@ -11,8 +11,9 @@
  *   Stepped parameters always move by at least one step.
  * - Enter, or typing a digit, opens inline numeric entry ("2.5k", "-6",
  *   "220 ms", "L20", an option name). Enter commits, Escape cancels.
- * - The mouse wheel only acts once the knob has keyboard focus, so page
- *   scrolling never changes a sound by accident.
+ * - The mouse wheel only acts once the knob has keyboard focus (reached with
+ *   Tab, or used with its own keys), so page scrolling never changes a sound
+ *   by accident — not after a click, a right-click, or Space for Play.
  * - Each drag / keyboard-or-wheel burst carries one gesture id so the app can
  *   store it as one undo step; the last call of a gesture has final: true
  *   (pointer up, blur, or ~0.7 s after the last key). During a drag onChange
@@ -301,14 +302,18 @@ export function Knob(props: KnobProps) {
   /* ---------------- pointer ---------------- */
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
-    const el = e.currentTarget;
-    if (!interactive) return;
-    e.preventDefault(); // no text selection; focus is set explicitly below
-    pointerFocusing.current = true;
-    el.focus({ preventScroll: true });
-    pointerFocusing.current = false;
+    // Any press is pointer focus, never keyboard focus: right and middle
+    // clicks (and presses on read-only knobs) focus natively later in this
+    // same task, so keep the flag up until the task ends.
     wheelArmed.current = false;
+    pointerFocusing.current = true;
+    window.setTimeout(() => {
+      pointerFocusing.current = false;
+    }, 0);
+    if (e.button !== 0 || !interactive) return;
+    const el = e.currentTarget;
+    e.preventDefault(); // no text selection; focus is set explicitly below
+    el.focus({ preventScroll: true });
     finishBurst();
     endDrag();
     try {
@@ -362,7 +367,6 @@ export function Knob(props: KnobProps) {
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (!interactive || e.ctrlKey || e.metaKey || e.altKey) return;
-    wheelArmed.current = true;
     const fine = e.shiftKey;
     const cur = latest.current;
     let v: number;
@@ -400,9 +404,13 @@ export function Knob(props: KnobProps) {
           e.preventDefault();
           openEntry(e.key, false);
         }
+        // Other keys (Shift alone, Space for Play, letters that play notes)
+        // are not "using this knob", so they do not arm the wheel.
         return;
     }
     e.preventDefault();
+    // Deliberate keyboard use of this knob arms the wheel.
+    wheelArmed.current = true;
     burstChange(v);
   };
 
@@ -434,7 +442,7 @@ export function Knob(props: KnobProps) {
 
   const commitEntry = (refocus: boolean) => {
     if (!entryOpen.current || !entry) return;
-    const v = parseParamInput(spec, entry.text);
+    const v = parseParamInput(spec, entry.text, latest.current);
     if (v === null) {
       if (refocus) setEntry({ ...entry, invalid: true, selectAll: false });
       else closeEntry(false);

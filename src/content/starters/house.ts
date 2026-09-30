@@ -1,7 +1,9 @@
 /**
  * House — 124 BPM, G dorian. A solid four-on-the-floor groove under a
  * two-chord dorian vamp (Gm9 to C9): the minor tonic and the bright major IV
- * share G, Bb and D, so every bass and chord variation sits over any other.
+ * share G, Bb and D, and the bass lines avoid A and E (a semitone under the
+ * voicings' Bb and F), so every bass and chord variation sits over any other,
+ * even when a tapped clip starts on the "wrong" bar of the vamp.
  * Groove (row 1) is what Jump In plays: drums, congas, a bouncing bass and
  * off-beat organ stabs.
  */
@@ -108,7 +110,7 @@ export const HOUSE = defineStarter({
           line(
             2,
             `. . G1 - . G2? . . . . G1 - . . Bb1 C2 |
-             . . C2 - . C3? . . . . C2 - . E2 D2 .`,
+             . . C2 - . C3? . . . . C2 - . F2 D2 .`,
           ),
         ),
         clip(
@@ -117,7 +119,7 @@ export const HOUSE = defineStarter({
           line(
             2,
             `. G1 G1? G2? . G1 G1? F2? . G1 G1? D2 . Bb1 G1 Bb1 |
-             . C2 C2? C3? . C2 C2? Bb2? . C2 C2? G2 . E2 D2 .`,
+             . C2 C2? C3? . C2 C2? Bb2? . C2 C2? G2 . F2 D2 .`,
           ),
         ),
         clip('Held Roots', 4, line(4, 'G1 C2 G1 F1', { unit: 16, gate: 0.96, vel: 0.62 })),
@@ -193,7 +195,8 @@ export const HOUSE = defineStarter({
       clips: [
         clip('Soft Bed', 4, line(4, 'G3+Bb3+D4+F4 G3+Bb3+D4+E4 A3+Bb3+D4+F4 G3+Bb3+C4+E4', { unit: 16, gate: 0.98, vel: 0.55 })),
         null,
-        clip('Warm Bed', 4, line(4, 'Bb3+D4+F4+A4 Bb3+D4+E4+G4 Bb3+D4+F4+A4 C4+E4+G4+A4', { unit: 16, gate: 0.98, vel: 0.62 })),
+        // Every C bar keeps Bb on top with the Lift stabs (an A there would rub against their Bb4).
+        clip('Warm Bed', 4, line(4, 'Bb3+D4+F4+A4 Bb3+D4+E4+G4 Bb3+D4+F4+A4 C4+E4+G4+Bb4', { unit: 16, gate: 0.98, vel: 0.62 })),
         clip('Swell', 4, line(4, 'D4+F4+A4+C5 E4+G4+A4+D5 D4+F4+A4+D5 E4+G4+A4+C5', { unit: 16, gate: 0.98, vel: 0.66 })),
       ],
     },
@@ -250,9 +253,10 @@ export const HOUSE = defineStarter({
         clip(
           'Long Oh',
           4,
-          // Near C4, where the built-in "oh" was recorded, so the voice keeps its natural formants.
+          // Near C4, where the built-in "oh" was recorded, so the voice keeps its natural formants;
+          // D and G are tones of the held Gm9 underneath.
           mel([
-            ['A3', 8, 8, 0.7],
+            ['D4', 8, 8, 0.7],
             ['G3', 40, 8, 0.65],
           ]),
         ),

@@ -1,9 +1,9 @@
 .bar {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   height: 58px;
-  padding: 0 14px;
+  padding: 0 12px;
   background: linear-gradient(180deg, var(--shell-hi), var(--shell));
   border-bottom: 1px solid var(--line);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
@@ -41,9 +41,56 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-left: 14px;
+  padding-left: 10px;
   border-left: 1px solid var(--line-soft);
   flex: none;
+}
+
+/* Recording: status caption above Notes / Performance / options. */
+.recGroup {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  align-self: stretch;
+}
+.recCaption {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  /* As wide as the buttons below, never wider. */
+  width: 0;
+  min-width: 100%;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  line-height: 12px;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recCaption[data-live] {
+  color: var(--coral-ink);
+}
+.recDot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--coral);
+  animation: recBlink 1.2s ease-in-out infinite;
+}
+@keyframes recBlink {
+  50% {
+    opacity: 0.35;
+  }
+}
+.recButtons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .play {
@@ -95,13 +142,13 @@
 }
 
 .muteAll {
-  min-width: 92px;
+  min-width: 90px;
 }
 
 .right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   margin-left: auto;
   min-width: 0;
 }
@@ -127,7 +174,7 @@
   align-items: center;
   gap: 6px;
   height: 28px;
-  padding: 0 8px;
+  padding: 0 6px;
   border: none;
   background: transparent;
   font-size: var(--fs-sm);
@@ -175,16 +222,24 @@
   gap: 8px;
 }
 
+.tips {
+  flex: none;
+}
+
 /* Narrow desktop: hide secondary text, keep every control reachable. */
-@media (max-width: 1400px) {
-  .brandNum {
+@media (max-width: 1640px) {
+  .projectName {
     display: none;
   }
-  .projectName {
-    max-width: 80px;
+  .right .project[data-size],
+  .right .export[data-size] {
+    gap: 0;
+  }
+  .exportText {
+    display: none;
   }
 }
-@media (max-width: 1280px) {
+@media (max-width: 1540px) {
   .brand {
     display: none;
   }

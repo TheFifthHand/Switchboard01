@@ -52,8 +52,8 @@
 
 .pad[data-light='coral'] {
   --lc: 226, 96, 70;
-  --core: 255, 214, 204;
-  --mid: 0.4;
+  --core: 255, 220, 210;
+  --mid: 0.34;
 }
 
 .pad:hover:not(:disabled) {

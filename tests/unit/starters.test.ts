@@ -103,29 +103,80 @@ function musicalContent(p: Project) {
   };
 }
 
-/** Pitches of a clip sounding at `tick`, with the clip looping from tick 0. */
-const soundingAt = (c: Clip, tick: number): number[] => {
-  const local = tick % (c.bars * TICKS_PER_BAR);
-  return c.notes.filter((n) => n.tick <= local && local < n.tick + n.duration).map((n) => n.pitch);
+/** Pitches of a clip sounding at `tick`, with the clip looping from `startTick`. */
+const soundingAt = (c: Clip, tick: number, startTick = 0, minDuration = 0): number[] => {
+  const length = c.bars * TICKS_PER_BAR;
+  const local = (((tick - startTick) % length) + length) % length;
+  return c.notes.filter((n) => n.duration >= minDuration && n.tick <= local && local < n.tick + n.duration).map((n) => n.pitch);
 };
 
+const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+const lcm = (a: number, b: number) => (a * b) / gcd(a, b);
+
 /**
- * Share of the time the bass sounds (16 bars, sampled per 16th, both clips
- * launched together) during which the other part sounds a minor ninth above a
- * bass note — the harshest clash a bass can make with a chord or melody.
+ * Share of the time the bass sounds during which the other part sounds a
+ * minor ninth above a bass note — the harshest clash a bass can make with a
+ * chord or melody. Sampled per 16th over a full cycle of both loops, with the
+ * bass clip starting `bassOffsetBars` bars after the other clip (a clip tapped
+ * during playback joins on the next bar line, so it can start on any bar of
+ * the other part's loop).
  */
-function minorNinthShare(bass: Clip, upper: Clip, pitchClasses: readonly number[] = [0]): number {
+function minorNinthShare(bass: Clip, upper: Clip, pitchClasses: readonly number[] = [0], bassOffsetBars = 0): number {
+  const cycle = lcm(bass.bars, upper.bars);
+  const bars = cycle * Math.ceil(16 / cycle);
   let bassSteps = 0;
   let clashSteps = 0;
-  for (let step = 0; step < 16 * 16; step++) {
+  for (let step = 0; step < bars * 16; step++) {
     const tick = step * TICKS_PER_STEP;
-    const low = soundingAt(bass, tick);
+    const low = soundingAt(bass, tick, bassOffsetBars * TICKS_PER_BAR);
     if (low.length === 0) continue;
     bassSteps++;
     const high = soundingAt(upper, tick);
     if (low.some((b) => high.some((u) => pitchClasses.some((pc) => (((u + pc - b) % 12) + 12) % 12 === 1)))) clashSteps++;
   }
   return bassSteps ? clashSteps / bassSteps : 0;
+}
+
+/** Ordered semitone rubs (lower pitch class > upper pitch class) where `hi` sits a minor second or minor ninth above `lo`. */
+const rubs = (lo: readonly number[], hi: readonly number[]): string[] => {
+  const out: string[] = [];
+  for (const x of lo) for (const y of hi) if (y > x && (y - x) % 12 === 1) out.push(`${x % 12}>${y % 12}`);
+  return out;
+};
+
+/** Parts that carry the harmony; a line (bass, lead) may pass through a semitone briefly, a chord may not. */
+const HARMONY_ROLES: ReadonlySet<TrackRole> = new Set(['chords', 'pad', 'texture', 'sampler']);
+
+/**
+ * Share of a scene (sampled per 16th while both parts sound) in which layering
+ * two parts creates a minor second or minor ninth that neither part voices by
+ * itself. A part's own close voicing (a minor-ninth chord with its ninth under
+ * the third) is a deliberate colour; the same rub arising between two
+ * instruments is an accident. Between harmony parts every note counts (a stab
+ * repeatedly striking a semitone against a held pad is heard); when a bass or
+ * lead line is involved only notes held for three steps or more count, so
+ * short passing tones are allowed.
+ */
+function layeredRubShare(a: Track, b: Track, row: number): number {
+  const pa = trackPitchClasses(a);
+  const pb = trackPitchClasses(b);
+  const ca = a.clips[row];
+  const cb = b.clips[row];
+  if (!pa || !pb || !ca || !cb) return 0;
+  const minDuration = HARMONY_ROLES.has(a.role) && HARMONY_ROLES.has(b.role) ? 0 : 3 * TICKS_PER_STEP;
+  const held = (c: Clip, pcs: readonly number[], tick: number) => soundingAt(c, tick, 0, minDuration).flatMap((p) => pcs.map((o) => p + o));
+  let both = 0;
+  let rubbing = 0;
+  for (let step = 0; step < lcm(ca.bars, cb.bars) * 16; step++) {
+    const tick = step * TICKS_PER_STEP;
+    const na = held(ca, pa, tick);
+    const nb = held(cb, pb, tick);
+    if (!na.length || !nb.length) continue;
+    both++;
+    const own = new Set([...rubs(na, na), ...rubs(nb, nb)]);
+    if ([...rubs(na, nb), ...rubs(nb, na)].some((r) => !own.has(r))) rubbing++;
+  }
+  return both ? rubbing / both : 0;
 }
 
 /** Pitch classes each note of a melodic track produces (null for unpitched parts). */
@@ -297,12 +348,29 @@ describe.each(STARTERS.map((s) => [s.name, s] as const))('%s starter', (_name, s
     }
   });
 
-  it('lets any bass clip play under any chord clip (tapping a variation stays musical)', () => {
+  it('lets any bass clip join under any chord or pad clip on any bar (tapping a variation stays musical)', () => {
     const bass = byRole(project, 'bass');
-    const chords = byRole(project, 'chords');
-    for (const low of bass.clips) {
-      for (const upper of chords.clips) {
-        if (low && upper) expect(minorNinthShare(low, upper), `"${upper.name}" over "${low.name}"`).toBeLessThanOrEqual(0.05);
+    for (const role of ['chords', 'pad'] as const) {
+      for (const low of bass.clips) {
+        for (const upper of byRole(project, role).clips) {
+          if (!low || !upper) continue;
+          // A tapped clip starts on the next bar line, so every whole-bar phase between the loops happens.
+          for (let offset = 0; offset < lcm(low.bars, upper.bars); offset++) {
+            expect(minorNinthShare(low, upper, [0], offset), `${role} "${upper.name}" over "${low.name}" joining ${offset} bar(s) in`).toBeLessThanOrEqual(0.05);
+          }
+        }
+      }
+    }
+  });
+
+  it('layers the parts of each scene without semitone rubs between them', () => {
+    for (let row = 0; row < 4; row++) {
+      const parts = project.tracks.filter((t) => t.clips[row] && trackPitchClasses(t));
+      for (let i = 0; i < parts.length; i++) {
+        for (let j = i + 1; j < parts.length; j++) {
+          const [a, b] = [parts[i], parts[j]];
+          expect(layeredRubShare(a, b, row), `${project.scenes[row].name}: ${a.role} "${a.clips[row]!.name}" with ${b.role} "${b.clips[row]!.name}"`).toBeLessThanOrEqual(0.05);
+        }
       }
     }
   });
@@ -480,6 +548,22 @@ describe('Blank project', () => {
     const result = validateProject(JSON.parse(JSON.stringify(blank)));
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.warnings).toEqual([]);
+  });
+
+  it('is mixed like the starters, so newly written parts balance without re-mixing', () => {
+    // The starters' faders and kit trims were set from rendered loudness. The synthesized kits play
+    // far hotter than the synths, so an untrimmed kit would bury every part a user writes.
+    const gain = (p: Project, role: TrackRole) => {
+      const t = byRole(p, role);
+      const kitTrim = t.instrument.kind === 'drums' ? t.instrument.params.level : 0;
+      return channelParam(p, t.id, 'level') + kitTrim;
+    };
+    const starters = STARTERS.map((s) => s.build());
+    for (const role of ['drums', 'percussion', 'bass', 'chords', 'lead', 'pad', 'texture', 'sampler'] as const) {
+      const used = starters.map((p) => gain(p, role));
+      expect(gain(blank, role), role).toBeGreaterThanOrEqual(Math.min(...used) - 2);
+      expect(gain(blank, role), role).toBeLessThanOrEqual(Math.max(...used) + 2);
+    }
   });
 });
 

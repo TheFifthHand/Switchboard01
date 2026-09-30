@@ -110,6 +110,16 @@ export function Pad(props: PadProps) {
     onReleaseRef.current?.();
   };
 
+  // A pad disabled while held (e.g. the part becomes locked) would never see
+  // its pointerup or key-up: release it now.
+  useEffect(() => {
+    if (!disabled || (pointer.current === null && keyDown.current === null)) return;
+    pointer.current = null;
+    keyDown.current = null;
+    setPressed(false);
+    onReleaseRef.current?.();
+  }, [disabled]);
+
   // Never leave a pad held: release on window blur and on unmount.
   useEffect(() => {
     const onBlur = () => {
@@ -192,6 +202,7 @@ export function Pad(props: PadProps) {
       data-wrap={!sublabel && !shownCaption ? true : undefined}
       disabled={disabled}
       aria-label={spoken}
+      aria-keyshortcuts={keyHint || undefined}
       style={{ '--intensity': String(0.35 + 0.65 * lvl) } as CSSProperties}
       onPointerDown={onPointerDown}
       onPointerUp={onPointerEnd}

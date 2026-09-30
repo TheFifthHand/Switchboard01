@@ -79,6 +79,8 @@
   text-align: right;
   outline: none;
   cursor: inherit;
+  /* Vertical drags change the value on touch screens too, instead of panning the page. */
+  touch-action: none;
 }
 
 .input:focus {

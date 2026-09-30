@@ -7,7 +7,7 @@
  * meters are driven by an explicitly labelled "Demo signal" knob, never by a
  * fake animation.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { DRUM_SLOTS } from '../../content/catalog';
 import { scaleMask } from '../../music/scales';
 import { BPM_SPEC, CHANNEL_PARAMS, DELAY_PARAMS, MASTER_VOLUME_SPEC, POLY_PARAMS, SWING_SPEC, BASS_PARAMS, FILTER_PARAMS, specById, type ParamSpec } from '../../project/params';
@@ -182,7 +182,9 @@ function GalleryPage({ tips, setTips }: { tips: boolean; setTips(v: boolean): vo
   // Demo signal for the meters (explicitly not audio).
   const [demo, setDemo] = useState(0.5);
   const demoRef = useRef(demo);
-  demoRef.current = demo;
+  useLayoutEffect(() => {
+    demoRef.current = demo;
+  }, [demo]);
   const readDemo = useCallback(() => demoRef.current, []);
   const trackReaders = useRef(TRACK_GAIN.map((g) => () => demoRef.current * g)).current;
 

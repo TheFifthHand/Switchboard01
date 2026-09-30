@@ -8,7 +8,10 @@ import { SegmentedControl } from '../../ui/components';
 import { setPadMode, type PadMode } from '../../state/uiStore';
 import { useUi } from '../instance';
 import { LoopsGrid } from './LoopsGrid';
+import { DrumPads } from './DrumPads';
+import { NotesPads } from './NotesPads';
 import { PartPanel } from './PartPanel';
+import { StepEditor } from './StepEditor';
 import styles from './PlayView.module.css';
 
 export interface PadModeDef {
@@ -17,7 +20,12 @@ export interface PadModeDef {
   render: () => ReactNode;
 }
 
-export const PAD_MODES: PadModeDef[] = [{ value: 'loops', label: 'Loops', render: () => <LoopsGrid /> }];
+export const PAD_MODES: PadModeDef[] = [
+  { value: 'loops', label: 'Loops', render: () => <LoopsGrid /> },
+  { value: 'drums', label: 'Drums', render: () => <DrumPads /> },
+  { value: 'notes', label: 'Notes', render: () => <NotesPads /> },
+  { value: 'steps', label: 'Steps', render: () => <StepEditor /> },
+];
 
 export function PlayView() {
   const padMode = useUi((s) => s.padMode);

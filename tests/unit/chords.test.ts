@@ -112,6 +112,26 @@ describe('diatonic chords', () => {
     expect(romanNumeral(9, 'minor', 5)).toBe('VI');
     expect(romanNumeral(9, 'harmonicMinor', 4, 4)).toBe('V7');
     expect(romanNumeral(0, 'major', 1, 4)).toBe('ii7');
+    expect(romanNumeral(0, 'major', 1, 5)).toBe('ii9');
+    // Stacks without a common chord name keep the named part and list the rest.
+    expect(romanNumeral(0, 'major', 2, 5)).toBe('iii7(b9)');
+    expect(romanNumeral(0, 'major', 6, 5)).toBe('viiø7(b9)');
+    expect(romanNumeral(9, 'harmonicMinor', 2, 4)).toBe('III+(maj7)');
+  });
+
+  it('writes minor and diminished chords in lower case at every size, like their triads', () => {
+    const scales: ScaleId[] = ['major', 'minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'harmonicMinor'];
+    for (const scale of scales) {
+      for (let degree = 0; degree < 7; degree++) {
+        const triad = diatonicTriad(0, scale, degree);
+        const minorThird = triad[1] - triad[0] === 3;
+        for (const size of [3, 4, 5] as const) {
+          const numeral = romanNumeral(0, scale, degree, size).match(/^[IViv]+/)![0];
+          expect(numeral, `${scale} ${degree} ${size}`).toBe(minorThird ? numeral.toLowerCase() : numeral.toUpperCase());
+          expect(numeral.length).toBeGreaterThan(0);
+        }
+      }
+    }
   });
 });
 

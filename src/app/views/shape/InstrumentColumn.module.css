@@ -1,0 +1,204 @@
+.scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.kind {
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+/* Sections sit side by side when the column is wide enough, else stack. */
+.sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+}
+
+.sections > .section {
+  flex: 1 1 auto;
+  max-width: 100%;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  line-height: 16px;
+  text-transform: uppercase;
+}
+
+.sectionTitle::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line-soft);
+}
+
+.knobs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 4px;
+}
+
+/* ---------- drum voices ---------- */
+
+.voicesWrap {
+  container-type: inline-size;
+}
+
+.voices {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.voices thead th {
+  position: sticky;
+  top: -8px;
+  z-index: 1;
+  padding: 2px 0 4px;
+  background: var(--surface-hi);
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-align: center;
+}
+
+.voices thead th:first-child {
+  width: 34px;
+}
+
+.voices thead th.headName {
+  text-align: left;
+}
+
+.voices thead th:nth-child(n + 3) {
+  width: 52px;
+}
+
+.voiceRow td,
+.voiceRow th {
+  padding: 2px 0;
+  border-top: 1px solid var(--line-soft);
+  vertical-align: middle;
+}
+
+.voiceRow[data-selected] td,
+.voiceRow[data-selected] th {
+  background: var(--teal-wash);
+}
+
+.voiceRow[data-selected] td:first-child {
+  box-shadow: inset 2px 0 0 var(--teal);
+}
+
+.cellPlay {
+  text-align: center;
+}
+
+.cellKnob {
+  text-align: center;
+}
+
+.voiceRow th.voiceName {
+  padding-left: 4px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.voiceLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.voiceNum {
+  flex: none;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+
+.voiceText {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audition {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #fdfdfc 0%, #eef0f1 100%);
+  box-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.13),
+    inset 0 1px 0 #ffffff,
+    0 1px 1.5px rgba(20, 24, 28, 0.12);
+  color: var(--ink-2);
+  touch-action: none;
+}
+
+.audition:hover {
+  color: var(--ink);
+}
+
+.audition[data-held] {
+  background: linear-gradient(180deg, #fff5e3 0%, #fbe3b8 100%);
+  box-shadow:
+    0 0 0 1px var(--amber),
+    inset 0 1px 2px rgba(122, 72, 0, 0.18),
+    0 0 8px var(--amber-glow);
+  color: var(--amber-ink);
+}
+
+.audition:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--shell-hi),
+    0 0 0 4px var(--teal);
+}
+
+/* Compact table knobs: the column header names them. */
+.cellKnob .mini[data-size] {
+  --dial: 26px;
+  --w: 52px;
+}
+
+.mini [role='slider'] > div:nth-of-type(2) {
+  display: none;
+}
+
+/* Narrow column: slimmer knob columns so the sound names stay readable. */
+@container (max-width: 340px) {
+  .voices thead th:nth-child(n + 3) {
+    width: 44px;
+  }
+
+  .cellKnob .mini[data-size] {
+    --w: 44px;
+  }
+}

@@ -3,7 +3,8 @@
  * pedal, so the low end is focused and every chord change is heard as colour
  * above it (Fm7, Dbmaj7/F, Ebsus/F, Bbm/F). The phrygian flat second (Gb)
  * appears only as a passing note in the bass and acid lines, falling back to
- * F. Rhythmic movement comes from dotted-eighth rim and stab patterns against
+ * F. No bass note is a C, which would sit a semitone under the Db chords.
+ * Rhythmic movement comes from dotted-eighth rim and stab patterns against
  * the four-on-the-floor, a triplet-rate filter LFO on the dub stab (Motion)
  * and Pump on the pad.
  */
@@ -13,6 +14,7 @@ const FM7 = 'F3 Ab3 C4 Eb4';
 const DBMAJ7_F = 'Db3 F3 Ab3 C4';
 const EBSUS_F = 'Eb3 Bb3 Eb4 F4';
 const BBM_F = 'F3 Bb3 Db4';
+const DB_F = 'Db3 F3 Ab3 Db4';
 
 const HAT = '3474347434743474';
 
@@ -88,7 +90,7 @@ export const TECHNO = defineStarter({
           line(
             2,
             `. . F1 F1? . . F1 F1? . . F1 F1? . . F1 F2? |
-             . . F1 F1? . . F1 F1? . . F1 F1? . F2? Eb2 C2`,
+             . . F1 F1? . . F1 F1? . . F1 F1? . F2? Eb2 Ab1`,
             { gate: 0.6 },
           ),
         ),
@@ -129,7 +131,8 @@ export const TECHNO = defineStarter({
           chord(FM7, 3, 1.5, 0.75),
           chord(BBM_F, 16 + 3, 1.5, 0.7),
           chord(FM7, 32 + 3, 1.5, 0.75),
-          chord(DBMAJ7_F, 48 + 3, 1.5, 0.7),
+          // A plain Db triad here: the choir holds Db4, and the maj7's C4 would rub a semitone under it.
+          chord(DB_F, 48 + 3, 1.5, 0.7),
         ),
       ],
     },

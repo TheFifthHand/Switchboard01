@@ -193,6 +193,11 @@ describe('applyPresetToProject', () => {
         expect(bright / dark).toBeGreaterThan(6);
         expect(bright / dark).toBeLessThanOrEqual(TONE_RANGE * TONE_RANGE + 1e-6);
         expect(at('tone', 0.5).get(`${trackId}:filter`)!.bright).toBe(0);
+        // Every other instrument control Tone moves is also exactly as designed at 0.5, and moves toward the ends.
+        for (const t of track.macroMap.tone.filter((x) => x.module === inst && x.param !== 'cutoff')) {
+          expect(at('tone', 0.5).get(inst)![t.param], `${info.id} ${t.param}`).toBeCloseTo(data.params[t.param], 6);
+          expect(at('tone', 0).get(inst)![t.param]).not.toBeCloseTo(at('tone', 1).get(inst)![t.param], 2);
+        }
 
         // Motion: still at 0; at 1 the LFO moves a filter set where this sound has energy.
         const still = at('motion', 0);

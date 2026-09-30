@@ -3,8 +3,9 @@
  * percussion, a deep sub moving every two bars and liquid electric-piano
  * chords (C#m9, Amaj9, B6). The Drop swaps the tonic for F#m9: over a C#
  * bass it reads as F#m/C#, and C#m9 over F# reads as F#13sus, so bass and
- * chord clips from any row stay consonant. Restraint: long chords, sparse
- * melody, drums doing the running.
+ * chord clips from any row stay consonant. The sub never plays D# or G# (a
+ * semitone under E and A), so that holds whichever bar a tapped clip starts
+ * on. Restraint: long chords, sparse melody, drums doing the running.
  */
 import { clip, defineStarter, drums, line, mel, stabs, strum } from './dsl';
 
@@ -98,7 +99,7 @@ export const DRUM_AND_BASS = defineStarter({
             `C#2 - - - - - . . . . C#2 - - - . . |
              . . C#2 - - - - - . . E2 - - - B1 - |
              A1 - - - - - . . . . A1 - - - . . |
-             . . B1 - - - - - . . B1 - - - G#1 -`,
+             . . B1 - - - - - . . B1 - - - F#1 -`,
             { gate: 0.95 },
           ),
         ),
@@ -162,7 +163,7 @@ export const DRUM_AND_BASS = defineStarter({
           line(
             4,
             `. . . . G#4 - - - - - - - - - - - |
-             . . . . . . . . E4 - - - - - - - |
+             . . . . . . . . F#4 - - - - - - - |
              . . . . . . . . C#5 - - - - - - - |
              . . . . B4 - - - - - - - . . . .`,
             { gate: 0.95, vel: 0.55 },

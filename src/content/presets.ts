@@ -17,7 +17,10 @@
  * Macros for synth presets:
  * - Tone sweeps the instrument's own cutoff geometrically around the designed
  *   value (about cutoff/4 at 0, the designed sound at 0.5, cutoff*4 at 1),
- *   plus a high-shelf lift above 0.6 on brighter sounds.
+ *   plus a high-shelf lift above 0.6 on brighter sounds. Sine and triangle
+ *   designs have few harmonics for a filter to remove, so Tone also moves
+ *   the control that carries their brightness (bell partial, octave layer,
+ *   breath noise, saturation), always through the designed value at 0.5.
  * - Motion fades in the part's tempo-synced LFO (default cable: LFO -> track
  *   filter cutoff). The track filter's cutoff glides from fully open down to
  *   a preset-specific centre over the first 40% of the knob so the sweep
@@ -89,6 +92,27 @@ function tone(specs: readonly ParamSpec[], cutoff: number, brightDb = 0): Preset
   return out;
 }
 
+/** Another instrument control Tone moves: its value on the dark (Tone 0) and bright (Tone 1) side. */
+interface ToneAlso {
+  param: string;
+  dark: number;
+  bright: number;
+}
+
+/**
+ * A linear Tone target that passes exactly through the designed value at
+ * Tone 0.5. The side that has further to travel starts later (or finishes
+ * earlier) on the knob, so the middle position is always the designed sound.
+ * Used where a low-pass sweep alone barely changes the sound (sines and
+ * triangles have few harmonics to filter): the bell partial, the breath
+ * noise, the octave layer or the saturation carry the brightness instead.
+ */
+function toneThrough(param: string, designed: number, dark: number, bright: number): PresetMacroTarget {
+  const k = Math.min(1, Math.max(0, (designed - dark) / (bright - dark)));
+  const range = k <= 0.5 ? { macroFrom: (0.5 - k) / (1 - k), macroTo: 1 } : { macroFrom: 0, macroTo: 0.5 / k };
+  return { slot: 'inst', param, min: dark, max: bright, curve: 'lin', ...range };
+}
+
 /** Motion: LFO depth 0..`depth`, track filter from open to `centre` Hz. */
 function motion(centre: number, depth: number): PresetMacroTarget[] {
   return [
@@ -137,6 +161,8 @@ interface PolyDesign {
 
 interface Extras {
   bright?: number;
+  /** Further instrument controls Tone moves around their designed values. */
+  toneAlso?: ToneAlso[];
   lfo: { wave: number; division: number; centre: number; depth: number };
   filter?: ParamValues;
   drive?: ParamValues;
@@ -155,9 +181,10 @@ function build(specs: readonly ParamSpec[], params: Record<string, number>, x: E
   const modules: PresetData['modules'] = { lfo: { wave: x.lfo.wave, division: x.lfo.division } };
   if (x.filter) modules.filter = { ...x.filter };
   if (x.drive) modules.drive = { ...x.drive };
+  const toneTargets = [...tone(specs, params.cutoff, x.bright), ...(x.toneAlso ?? []).map((t) => toneThrough(t.param, params[t.param], t.dark, t.bright))];
   const data: PresetData = {
     params: { ...params },
-    macroMap: { tone: tone(specs, params.cutoff, x.bright), motion: motion(x.lfo.centre, x.lfo.depth) },
+    macroMap: { tone: toneTargets, motion: motion(x.lfo.centre, x.lfo.depth) },
     modules,
   };
   if (x.macros) data.macros = { ...x.macros };
@@ -176,7 +203,13 @@ export const PRESETS: Record<string, PresetData> = {
   // weight without buzz, short release so fast lines stay clean.
   'bass-round-sub': bass(
     { wave: W.sine, sub: 0.35, cutoff: 420, resonance: 0.05, envAmount: 0.12, filterDecay: 0.18, attack: 0.005, decay: 0.4, sustain: 0.85, release: 0.07, glide: 0.03, drive: 0.1, velocity: 0.3, level: -4 },
-    { lfo: { wave: LFO.triangle, division: DIV.quarter, centre: 600, depth: 0.6 } },
+    {
+      toneAlso: [
+        { param: 'drive', dark: 0, bright: 0.6 },
+        { param: 'sub', dark: 0.6, bright: 0.2 },
+      ],
+      lfo: { wave: LFO.triangle, division: DIV.quarter, centre: 600, depth: 0.6 },
+    },
   ),
 
   // Hollow square with a quick, resonant filter "bow" and a low sustain: bounces.
@@ -219,7 +252,7 @@ export const PRESETS: Record<string, PresetData> = {
   // electric-piano tone with moderate sustain.
   'poly-glass-keys': poly(
     { osc1Wave: W.sine, osc2Wave: W.square, osc2Semi: 12, detune: 4, osc2Level: 0.2, noise: 0, width: 0.35, cutoff: 2000, resonance: 0.1, filterEnv: 0.5, filterDecay: 0.3, attack: 0.002, decay: 1.4, sustain: 0.3, release: 0.5, velocity: 0.65, level: -7 },
-    { bright: 4, lfo: { wave: LFO.sine, division: DIV.half, centre: 3000, depth: 0.45 } },
+    { bright: 4, toneAlso: [{ param: 'osc2Level', dark: 0.03, bright: 0.55 }], lfo: { wave: LFO.sine, division: DIV.half, centre: 3000, depth: 0.45 } },
   ),
 
   // Two saws detuned ~12 cents, spread wide, cutoff around 2.5 kHz and a soft
@@ -255,14 +288,21 @@ export const PRESETS: Record<string, PresetData> = {
   // 50 ms attack and very little filter movement.
   'poly-soft-whistle': poly(
     { osc1Wave: W.sine, osc2Wave: W.triangle, osc2Semi: 12, detune: 3, osc2Level: 0.12, noise: 0.15, width: 0.15, cutoff: 2200, resonance: 0.05, filterEnv: 0.08, filterDecay: 0.6, attack: 0.05, decay: 0.6, sustain: 0.85, release: 0.3, velocity: 0.35, level: -3.5 },
-    { bright: 3, lfo: { wave: LFO.sine, division: DIV.quarter, centre: 3500, depth: 0.4 } },
+    {
+      bright: 3,
+      toneAlso: [
+        { param: 'noise', dark: 0.04, bright: 0.4 },
+        { param: 'osc2Level', dark: 0.02, bright: 0.35 },
+      ],
+      lfo: { wave: LFO.sine, division: DIV.quarter, centre: 3500, depth: 0.4 },
+    },
   ),
 
   // Woody triangle strike plus a slightly detuned sine 19 semitones up (the
   // bell partial) and a tick of noise; no sustain, so arpeggios stay clear.
   'poly-mallet-bell': poly(
     { osc1Wave: W.triangle, osc2Wave: W.sine, osc2Semi: 19, detune: 9, osc2Level: 0.4, noise: 0.03, width: 0.4, cutoff: 3600, resonance: 0.06, filterEnv: 0.45, filterDecay: 0.07, attack: 0.001, decay: 0.55, sustain: 0, release: 0.4, velocity: 0.6, level: -1 },
-    { bright: 4, lfo: { wave: LFO.triangle, division: DIV.quarter, centre: 3000, depth: 0.45 } },
+    { bright: 4, toneAlso: [{ param: 'osc2Level', dark: 0.12, bright: 0.75 }], lfo: { wave: LFO.triangle, division: DIV.quarter, centre: 3000, depth: 0.45 } },
   ),
 
   /* ---------------- Poly: pads ---------------- */
@@ -277,7 +317,13 @@ export const PRESETS: Record<string, PresetData> = {
   // four-bar LFO so Motion makes it breathe.
   'poly-warm-drift': poly(
     { osc1Wave: W.triangle, osc2Wave: W.sine, osc2Semi: -12, detune: 7, osc2Level: 0.4, noise: 0.02, width: 0.6, cutoff: 2000, resonance: 0.05, filterEnv: 0.1, filterDecay: 2.5, attack: 0.9, decay: 1.6, sustain: 0.9, release: 1.8, velocity: 0.25, level: -10.5 },
-    { bright: 3, lfo: { wave: LFO.sine, division: DIV.bars4, centre: 1800, depth: 0.6 }, drive: { character: CHARACTER.warm, tone: 0.5 }, macros: { motion: 0.25 } },
+    {
+      bright: 3,
+      toneAlso: [{ param: 'osc2Level', dark: 0.75, bright: 0.1 }],
+      lfo: { wave: LFO.sine, division: DIV.bars4, centre: 1800, depth: 0.6 },
+      drive: { character: CHARACTER.warm, tone: 0.5 },
+      macros: { motion: 0.25 },
+    },
   ),
 
   /* ---------------- Poly: textures ---------------- */
@@ -294,14 +340,28 @@ export const PRESETS: Record<string, PresetData> = {
   // vowel-like drone; the resonant track filter makes Motion sound vocal.
   'poly-night-choir': poly(
     { osc1Wave: W.triangle, osc2Wave: W.square, osc2Semi: 7, detune: 8, osc2Level: 0.32, noise: 0.05, width: 0.7, cutoff: 1100, resonance: 0.45, filterEnv: 0.1, filterDecay: 1.5, attack: 0.7, decay: 1.2, sustain: 0.9, release: 1.6, velocity: 0.25, level: -8 },
-    { bright: 2, lfo: { wave: LFO.triangle, division: DIV.bars2, centre: 1600, depth: 0.55 }, filter: { resonance: 0.35 }, macros: { motion: 0.2 } },
+    {
+      bright: 2,
+      toneAlso: [{ param: 'osc2Level', dark: 0.12, bright: 0.55 }],
+      lfo: { wave: LFO.triangle, division: DIV.bars2, centre: 1600, depth: 0.55 },
+      filter: { resonance: 0.35 },
+      macros: { motion: 0.2 },
+    },
   ),
 
   // Triangle plus a detuned sine two octaves up, a hint of tape hiss, a
   // clear filter and a slow swell: a high, sparkling layer.
   'poly-tape-shimmer': poly(
     { osc1Wave: W.triangle, osc2Wave: W.sine, osc2Semi: 24, detune: 14, osc2Level: 0.55, noise: 0.08, width: 0.95, cutoff: 4500, resonance: 0.1, filterEnv: 0.05, filterDecay: 2, attack: 1.2, decay: 2, sustain: 0.8, release: 2.4, velocity: 0.2, level: -9 },
-    { bright: 4, lfo: { wave: LFO.sine, division: DIV.bar1, centre: 6000, depth: 0.6 }, macros: { motion: 0.25 } },
+    {
+      bright: 4,
+      toneAlso: [
+        { param: 'osc2Level', dark: 0.2, bright: 0.9 },
+        { param: 'noise', dark: 0.02, bright: 0.2 },
+      ],
+      lfo: { wave: LFO.sine, division: DIV.bar1, centre: 6000, depth: 0.6 },
+      macros: { motion: 0.25 },
+    },
   ),
 };
 

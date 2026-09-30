@@ -5,20 +5,28 @@
  */
 import { ROLE_DEFAULT_SOUND, createProject } from '../../project/factory';
 import type { TrackRole } from '../../project/types';
-import { assignSound, setChannel, starterSeed } from './dsl';
+import { assignSound, setChannel, setInstrumentParams, starterSeed } from './dsl';
 import type { StarterDef } from './index';
 
-/** Faders that let freshly written parts sit together without mixing first. */
+/**
+ * Faders (dB) that let freshly written parts sit together without mixing
+ * first. Like the starters, the synthesized kits are trimmed at the source
+ * (they play 10-13 dB hotter than the synth presets); the values come from
+ * offline renders of typical first parts (a four-on-the-floor beat, a bass
+ * line, chord stabs, a lead line, a sustained pad) measured against the drums
+ * with the same loudness targets the starters use.
+ */
 const BLANK_LEVELS: Record<TrackRole, number> = {
   drums: -3,
   percussion: -8,
-  bass: -4,
-  chords: -8,
-  lead: -9,
-  pad: -11,
-  texture: -15,
-  sampler: -10,
+  bass: -7,
+  chords: -3.5,
+  lead: -1,
+  pad: -5,
+  texture: -10,
+  sampler: -9,
 };
+const BLANK_KIT_TRIM: Partial<Record<TrackRole, number>> = { drums: -11, percussion: -4.5 };
 
 export const BLANK: StarterDef = {
   id: 'blank',
@@ -34,6 +42,8 @@ export const BLANK: StarterDef = {
     project.scale = 'minor';
     for (const track of project.tracks) {
       assignSound(project, track.id, ROLE_DEFAULT_SOUND[track.role]);
+      const trim = BLANK_KIT_TRIM[track.role];
+      if (trim !== undefined) setInstrumentParams(project, track.id, { level: trim });
       setChannel(project, track.id, { level: BLANK_LEVELS[track.role], pan: 0 });
     }
     project.arrangement = { blocks: [], tailSeconds: 3 };

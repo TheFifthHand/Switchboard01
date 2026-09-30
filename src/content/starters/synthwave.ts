@@ -129,9 +129,11 @@ export const SYNTHWAVE = defineStarter({
         clip(
           'Held',
           4,
+          // Dm7 without its ninth (the Breakdown pad holds F4) and Bb(add9) without its major
+          // seventh (the pad holds Bb4), so no voice sits a semitone under the pad.
           prog([
-            ['F3 A3 C4 E4', 0, 16, 0.6],
-            ['F3 A3 C4 D4', 16, 16, 0.58],
+            ['D3 F3 A3 C4', 0, 16, 0.6],
+            ['D3 F3 Bb3 C4', 16, 16, 0.58],
             ['F3 A3 C4 G4', 32, 16, 0.6],
             ['E3 G3 C4 D4', 48, 16, 0.58],
           ]),
@@ -178,9 +180,11 @@ export const SYNTHWAVE = defineStarter({
       macros: { space: 0.55, motion: 0.2 },
       lfo: { division: 1 },
       clips: [
-        clip('Glow Low', 4, line(4, 'D3+A3+D4+F4 Bb2+F3+D4+F4 A2+F3+C4+E4 C3+G3+C4+E4', { unit: 16, gate: 0.98, vel: 0.6 })),
+        // F/A with F4 on top: the Intro arpeggio keeps striking F4, which a held E4 would rub against.
+        clip('Glow Low', 4, line(4, 'D3+A3+D4+F4 Bb2+F3+D4+F4 A2+F3+C4+F4 C3+G3+C4+E4', { unit: 16, gate: 0.98, vel: 0.6 })),
         null,
-        clip('Glow Up', 4, line(4, 'A3+D4+F4+A4 Bb3+D4+F4+A4 G3+Bb3+D4+G4 G3+C4+E4+G4', { unit: 16, gate: 0.98, vel: 0.62 })),
+        // Top line A4, Bb4, G4: the Bb bar doubles the chords' Bb4 instead of holding A4 against it.
+        clip('Glow Up', 4, line(4, 'A3+D4+F4+A4 Bb3+D4+F4+Bb4 G3+Bb3+D4+G4 G3+C4+E4+G4', { unit: 16, gate: 0.98, vel: 0.62 })),
         clip('Glow High', 4, line(4, 'D4+F4+A4+D5 D4+F4+Bb4+D5 C4+F4+A4+C5 C4+E4+G4+C5', { unit: 16, gate: 0.98, vel: 0.64 })),
       ],
     },
@@ -218,8 +222,10 @@ export const SYNTHWAVE = defineStarter({
       name: 'Swell',
       level: -13.5,
       macros: { space: 0.4 },
-      // The 2 s reversed swell peaks at its end. Pitched to D it lasts about
-      // 12 steps at 100 BPM (to A, about 16), so these starts land it on the next downbeat.
+      // The 2 s reversed swell (open fifths) peaks at its end. Pitched to D it
+      // lasts about 12 steps at 100 BPM (to F, about 10), so these starts land
+      // it on the next downbeat. F and C sit over both the Bb it rises through
+      // and the F it lands on; D and A over the C and Dm around the loop point.
       clips: [
         null,
         null,
@@ -228,7 +234,7 @@ export const SYNTHWAVE = defineStarter({
           'Swell Twice',
           4,
           mel([
-            ['A3', 16, 16, 0.6],
+            ['F4', 22, 10, 0.6],
             ['D4', 52, 12, 0.75],
           ]),
         ),

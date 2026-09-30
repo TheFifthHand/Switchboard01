@@ -1,0 +1,8 @@
+.sound {
+  margin-top: 1px;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

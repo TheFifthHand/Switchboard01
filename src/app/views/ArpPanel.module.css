@@ -1,0 +1,112 @@
+/* Compact block in the keyboard strip */
+.strip {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  flex: none;
+  width: 172px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line-soft);
+  align-self: stretch;
+}
+.stripTitle {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.stripNote {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  color: var(--ink-3);
+}
+.summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, var(--shell-hi), var(--shell));
+  box-shadow: var(--shadow-raised);
+  color: var(--ink-3);
+  min-width: 0;
+}
+.summary:hover {
+  border-color: var(--line-strong);
+  color: var(--ink-2);
+}
+.summary[aria-expanded='true'] {
+  box-shadow: var(--shadow-pressed);
+  border-color: var(--teal);
+}
+.summary[data-on] {
+  color: var(--ink);
+}
+.summaryText {
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Settings popover */
+.popover {
+  width: 340px;
+  max-width: calc(100vw - 16px);
+  padding: 12px 14px 12px;
+}
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.eyebrow {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.title {
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  color: var(--ink);
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.label {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.gate {
+  flex: none;
+}
+.tip {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--teal-wash);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--teal-ink);
+}
