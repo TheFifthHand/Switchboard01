@@ -14,7 +14,7 @@ npm run build          # typecheck + production build into dist/
 npm run serve          # serve dist/ on http://127.0.0.1:4173 (loopback only)
 npm run test:browser   # Vitest in real headless Chromium (audio rendering tests)
 npm run test:e2e       # Playwright (Chromium) against dist/ — run `npm run build` first
-npm run package        # build the downloadable release zip into release/
+npm run package        # build, then the release zip (app + launcher + START HERE + source/)
 ```
 
 Cloud container: Chromium 141 lives in /opt/pw-browsers and matches the pinned `@playwright/test`

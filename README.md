@@ -16,6 +16,7 @@ knob's tip names it), or click a knob and type a value such as `2.5k` or `-6` fo
 setting. Arrow keys, Page Up/Down and Home/End work once a knob has focus.
 
 Target browsers: current Chrome and Edge on Windows desktop (Chromium-based browsers generally).
+New here? [`docs/GUIDE.md`](docs/GUIDE.md) walks through a first loop and a first recording.
 
 ## Run it
 
@@ -60,7 +61,9 @@ Local test runs need Playwright's Chromium once: `npx playwright install chromiu
 
 ## Documentation
 
+- `docs/GUIDE.md` — two short guides: make your first loop; record and export.
 - `PRODUCT_BRIEF.md` — the product brief.
 - `docs/ARCHITECTURE.md` — layers, contracts, timing model.
-- `BUILD_STATUS.md` — milestone progress. `TEST_REPORT.md` — evidence.
+- `BUILD_STATUS.md` — milestone progress. `TEST_REPORT.md` — test results and evidence.
+- `docs/ACCEPTANCE.md` — every requirement of the brief, with where it is checked.
 - `ASSETS.md` — asset provenance (all sounds are original synthesis).

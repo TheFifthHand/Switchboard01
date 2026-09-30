@@ -12,7 +12,7 @@ const bassNotes = (page: Page) =>
   page.evaluate(() => {
     const p = (window as any).__switchboard.project();
     const t = p.tracks.find((x: any) => x.id === 't3');
-    return JSON.stringify(t.clips[1].notes.map((n: any) => [n.start, n.pitch, n.length, n.velocity]));
+    return JSON.stringify(t.clips.map((c: any) => c && c.notes.map((n: any) => [n.tick, n.pitch, n.duration, n.velocity])));
   });
 
 test('play a starter, change a sound, Variation, a real cable edit, then reopen the edited project', async ({ page }) => {

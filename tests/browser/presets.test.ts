@@ -3,12 +3,11 @@
  * Chromium (OfflineAudioContext) and checks that each one is audible, finite,
  * level-matched within its group, and that the Tone macro really changes its
  * brightness.
- *
- * The engines are written concurrently with the preset library; while they
- * are absent this suite is skipped with an explanatory placeholder test.
  */
 import { describe, expect, it } from 'vitest';
-import type { InstrumentContext, InstrumentEngine, InstrumentFactory } from '../../src/audio/contracts';
+import type { InstrumentContext, InstrumentFactory } from '../../src/audio/contracts';
+import { MonoSynthEngine } from '../../src/audio/instruments/monoSynth';
+import { PolySynthEngine } from '../../src/audio/instruments/polySynth';
 import { PRESETS, applyPresetToProject } from '../../src/content/presets';
 import { SYNTH_PRESETS, type PresetInfo } from '../../src/content/catalog';
 import { parseChord, voiceLeadProgression } from '../../src/music/chords';
@@ -19,26 +18,13 @@ import { spectralCentroid } from '../../src/render/analysis';
 import { Rng } from '../../src/project/rng';
 import type { Instrument } from '../../src/project/types';
 
-type Loader = () => Promise<unknown>;
-const ENGINE_FILES = import.meta.glob('../../src/audio/instruments/{index,monoSynth,polySynth}.ts') as Record<string, Loader>;
-const INDEX = '../../src/audio/instruments/index.ts';
-const MONO = '../../src/audio/instruments/monoSynth.ts';
-const POLY = '../../src/audio/instruments/polySynth.ts';
-const ENGINES_PRESENT = INDEX in ENGINE_FILES || (MONO in ENGINE_FILES && POLY in ENGINE_FILES);
-
-type EngineCtor = new (ictx: InstrumentContext, instrument: Instrument) => InstrumentEngine;
-
+/** The real engines, as the instrument module builds them. */
 async function loadFactory(): Promise<InstrumentFactory> {
-  if (INDEX in ENGINE_FILES) {
-    const m = (await ENGINE_FILES[INDEX]()) as { createInstrumentEngine?: InstrumentFactory };
-    if (typeof m.createInstrumentEngine === 'function') return m.createInstrumentEngine;
-  }
-  const mono = (await ENGINE_FILES[MONO]()) as { MonoSynthEngine?: EngineCtor };
-  const poly = (await ENGINE_FILES[POLY]()) as { PolySynthEngine?: EngineCtor };
-  if (!mono.MonoSynthEngine || !poly.PolySynthEngine) throw new Error('Synth engine modules exist but do not export MonoSynthEngine / PolySynthEngine.');
-  const Mono = mono.MonoSynthEngine;
-  const Poly = poly.PolySynthEngine;
-  return (ictx, instrument) => (instrument.kind === 'bass' ? new Mono(ictx, instrument) : new Poly(ictx, instrument));
+  return (ictx, instrument) => {
+    if (instrument.kind === 'bass') return new MonoSynthEngine(ictx, instrument);
+    if (instrument.kind === 'poly') return new PolySynthEngine(ictx, instrument);
+    throw new Error(`not a synth preset: ${instrument.kind}`);
+  };
 }
 
 const SR = 48000;
@@ -195,7 +181,7 @@ const median = (xs: number[]) => {
   return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 };
 
-describe.skipIf(!ENGINES_PRESENT)('synth presets rendered through the real engines', () => {
+describe('synth presets rendered through the real engines', () => {
   it('every preset is audible, finite and level-matched within ±6 dB of its group median', async () => {
     const factory = await loadFactory();
     const results = new Map<string, Render>();
@@ -242,11 +228,5 @@ describe.skipIf(!ENGINES_PRESENT)('synth presets rendered through the real engin
       const inst = presetInstrument(info.id, 0.5);
       for (const [k, v] of Object.entries(PRESETS[info.id].params)) expect(inst.params[k], `${info.id}.${k}`).toBeCloseTo(v, 9);
     }
-  });
-});
-
-describe.runIf(!ENGINES_PRESENT)('synth presets rendered through the real engines', () => {
-  it('is skipped: src/audio/instruments/monoSynth.ts and polySynth.ts (or instruments/index.ts) are not present yet', () => {
-    expect(ENGINES_PRESENT).toBe(false);
   });
 });

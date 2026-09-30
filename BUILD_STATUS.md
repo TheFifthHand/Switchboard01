@@ -34,16 +34,27 @@ Key decisions:
 | 2. Approachable instrument | done | Drums/Notes/Steps modes, keyboard + Assist, clip/part/scene management, sound browser, arp, record options, library + starters, quick guide, tips |
 | 3. Sound shaping and patching | done | Shape view (macros with editable mappings, instrument panel, effects rack add/move/bypass/remove), SVG cable panel + Play-view cables drawer (drag, click-click, keyboard picker, validation, restore connection), real-engine signal tests for macros/cables/ceiling |
 | 4. Making and keeping music | done | Arrange view (scene blocks, repeats, reorder, song playback + export), performances panel (replay, edit events, export), sampler editor (import, trim, fades, pitch/rate, loop, tempo sync), Record Notes latency compensation, recording lock with allow-list |
-| 5. Product finish and handoff | in progress | responsive/200 % zoom and keyboard/axe passes done; evidence capture, release package, final report |
+| 5. Product finish and handoff | done | review at 1366×768 / 1920×1080 / 200 % zoom; keyboard-only and axe-core passes in Play, Shape, Arrange; acceptance audit of every brief requirement (45 gaps found and fixed, each independently reviewed); evidence (screenshots, WAV examples, launcher smoke test); release package with source |
+
+## State at handoff
+
+- Release package: `release/switchboard01-1.0.0.zip` (production build in `app/`, `Start
+  SWITCHBOARD.bat`, `START HERE.txt`, `launcher/`, `ASSETS.md`, and the repository source in
+  `source/`). Rebuild with `npm run package`.
+- Evidence: `TEST_REPORT.md` (results and measurements), `docs/ACCEPTANCE.md` (every requirement of
+  the brief with its evidence), `docs/screenshots/`, `evidence/wav/`, `evidence/launcher-smoke.txt`.
+- Guides: `docs/GUIDE.md` (make your first loop; record and export).
+- No failing checks. Remaining work is local only: listening, physical latency, the Windows
+  launcher on Windows, Chrome/Edge on Windows, real background-tab throttling (see TEST_REPORT.md).
 
 ## Next action
 
-Milestone 5: final review pass, evidence capture (`node scripts/evidence.mjs`), release package
-(`npm run package`), final TEST_REPORT.md and handoff notes.
+None required. For local verification: extract the release zip on Windows, double-click
+`Start SWITCHBOARD.bat`, press Jump In, then follow `docs/GUIDE.md`.
 
 ## Known limitations / environment notes
 
 - Cloud container: 4 CPUs, Chromium 141 (Playwright 1.56.1) preinstalled; no Windows host, so
-  the Windows launcher can only be checked statically here (see TEST_REPORT.md when written).
+  the Windows launcher was exercised under PowerShell 7 on Linux only (`evidence/launcher-smoke.txt`).
 - No listening test is possible in the cloud; audio is verified by offline renders and signal
   measurements only.

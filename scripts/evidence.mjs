@@ -67,6 +67,29 @@ async function tab(page, name) {
   await tab(page, 'Arrange');
   await shot(page, '06-arrange-1366');
   await tab(page, 'Play');
+  // The cable panel, opened from the Play view's drawer.
+  await page.getByRole('region', { name: 'Cables drawer' }).getByRole('button', { expanded: false }).click();
+  await page.waitForTimeout(400);
+  await shot(page, '07-play-cables-drawer-1366');
+  await page.getByRole('button', { name: 'Hide cables' }).click();
+  // Shape with its cable dock open, then the sampler part's editor.
+  await tab(page, 'Shape');
+  await page.getByRole('button', { name: 'Show cables' }).click();
+  await page.waitForTimeout(400);
+  await shot(page, '08-shape-cable-panel-1366');
+  await page.getByRole('radio', { name: /^8 / }).click();
+  await page.waitForTimeout(400);
+  await shot(page, '09-shape-sampler-1366');
+  await tab(page, 'Play');
+  // The sound browser and the project library.
+  await page.getByRole('button', { name: /^Sound: .*Change sound$/ }).click();
+  await page.waitForTimeout(400);
+  await shot(page, '13-sound-browser-1366');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: /^Projects \(open:/ }).click();
+  await page.waitForTimeout(400);
+  await shot(page, '14-project-library-1366');
+  await page.keyboard.press('Escape');
   if (errors.length) console.log('page errors:', errors);
   await ctx.close();
 }
@@ -80,6 +103,9 @@ async function tab(page, name) {
   await shot(page, '11-steps-1920');
   await tab(page, 'Shape');
   await shot(page, '12-shape-1920');
+  await page.getByRole('button', { name: 'Show cables' }).click();
+  await page.waitForTimeout(400);
+  await shot(page, '15-shape-cable-panel-1920');
   await ctx.close();
 }
 

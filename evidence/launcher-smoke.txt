@@ -1,0 +1,42 @@
+Launcher smoke test, 2026-09-30, in the cloud container (Linux, PowerShell 7.4.6, Node 22). This is not a Windows run; see TEST_REPORT.md.
+
+== Package: release/switchboard01-1.0.0.zip extracted to a path with spaces: .../Jo Ann Downloads/switchboard01
+== PowerShell: 7.4.6 (Linux). Same arguments as 'Start SWITCHBOARD.bat': -File launcher/serve.ps1 -Root <package>/app
+   ps> 
+   ps>   SWITCHBOARD / 01
+   ps>   Running at http://127.0.0.1:4410/  (this computer only)
+   ps>   Keep this window open while you play. Close it or press Ctrl+C to stop.
+   ps> 
+-- listening sockets on 4410:
+   GET / -> 200 text/html; charset=utf-8
+   GET /index.html -> 200 text/html; charset=utf-8
+   GET /manifest.webmanifest -> 200 application/manifest+json; charset=utf-8
+   GET /sw.js -> 200 text/javascript; charset=utf-8
+   GET /assets/ -> 404 text/plain
+   GET /..%2f..%2fSTART%20HERE.txt -> 403 text/plain
+   GET /../launcher/serve.ps1 -> 404 text/plain
+   GET /%2e%2e/%2e%2e/etc/passwd -> 403 text/plain
+   GET /no-such-file.js -> 404 text/plain
+   GET /some/deep/route -> 200 text/html; charset=utf-8
+-- a second start while the first runs (should reuse it, not move to a new address):
+   ps2> 
+   ps2>   SWITCHBOARD / 01 is already running at http://127.0.0.1:4410/
+   ps2>   The SWITCHBOARD window (or program) that started it keeps it running.
+   ps2>   Open http://127.0.0.1:4410/ in your browser.
+   ps2>   To start a different copy (for example a newer version), close the other window first.
+   ps2> 
+   (exit 0)
+-- listening socket(s) for port 4410 in /proc/net/tcp (0100007F = 127.0.0.1): 0100007F:113A
+   GET (as-is) /../launcher/serve.ps1 -> 403
+   GET (as-is) /../../../../etc/passwd -> 403
+   GET (as-is) /..\..\START%20HERE.txt -> 404
+-- from the container's non-loopback address 192.0.2.2: 000 (000 = refused)
+-- Jump In in Chromium against the package served by serve.ps1: {"audio":"running","project":"House Starter","masterRms":0.2083,"masterPeak":0.504,"pageErrors":0}
+== Node alternative from the package: node launcher/serve.mjs app --port 4420 (Node v22.22.2, no browser opener in this container)
+   node> SWITCHBOARD / 01 is running at http://127.0.0.1:4420/
+   node> Serving /tmp/claude-0/-home-user-Switchboard01/a0176528-76b6-575f-aa51-85be7164e446/scratchpad/Jo Ann Downloads/switchboard01/app on loopback only. Press Ctrl+C to stop.
+   node> Open http://127.0.0.1:4420/ in your browser.
+   GET (as-is) / -> 200
+   GET (as-is) /sw.js -> 200
+   GET (as-is) /../../START%20HERE.txt -> 404
+-- both launchers stopped (closing the window or Ctrl+C does this on Windows)
