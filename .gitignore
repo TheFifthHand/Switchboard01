@@ -1,0 +1,12 @@
+node_modules/
+dist/
+release/*.zip
+!release/switchboard01-*.zip
+test-results/
+playwright-report/
+blob-report/
+.vite/
+coverage/
+*.log
+.DS_Store
+evidence/tmp/

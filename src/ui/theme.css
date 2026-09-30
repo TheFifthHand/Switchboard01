@@ -1,0 +1,160 @@
+/*
+ * SWITCHBOARD / 01 — design tokens.
+ *
+ * Colour is information:
+ *   amber  = sound is playing / signal present / "on" (playing clips, lit steps, audio cables, meters)
+ *   teal   = selection, focus, modulation (selected part, focus rings, mod cables and sockets)
+ *   coral  = recording, muting, attention (Record, Mute All, errors, destructive actions)
+ * Every coloured state is also communicated with text or an icon.
+ */
+@import '@fontsource-variable/inter/wght.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+:root {
+  /* Shell & surfaces */
+  --shell: #ebe7df;
+  --shell-hi: #f5f2ec;
+  --shell-lo: #ddd8ce;
+  --surface: #dfe2e5;
+  --surface-hi: #eceef0;
+  --surface-lo: #d2d6da;
+  --sunk: #c9ced3;
+  --line: #c4c8cc;
+  --line-soft: #d6d9dc;
+  --line-strong: #a3a9af;
+
+  /* Text */
+  --ink: #26292d;
+  --ink-2: #4a5057;
+  --ink-3: #6c737b;
+  --ink-inverse: #f7f6f2;
+
+  /* Pads (silicone) */
+  --pad: #f3f4f4;
+  --pad-lo: #e3e6e8;
+  --pad-empty: #d9dde0;
+  --pad-edge: #bfc4c9;
+
+  /* Accents */
+  --amber: #e39b2f;
+  --amber-hi: #f6c56b;
+  --amber-ink: #7a4800;
+  --amber-glow: rgba(242, 166, 52, 0.55);
+  --amber-wash: rgba(242, 166, 52, 0.16);
+
+  --teal: #23958e;
+  --teal-hi: #5cc3bb;
+  --teal-ink: #0d5450;
+  --teal-glow: rgba(35, 149, 142, 0.45);
+  --teal-wash: rgba(35, 149, 142, 0.13);
+
+  --coral: #dc5f47;
+  --coral-hi: #f28b73;
+  --coral-ink: #8a2616;
+  --coral-glow: rgba(220, 95, 71, 0.5);
+  --coral-wash: rgba(220, 95, 71, 0.13);
+
+  /* Depth */
+  --shadow-raised: 0 1px 0 rgba(255, 255, 255, 0.85) inset, 0 -1px 0 rgba(0, 0, 0, 0.06) inset, 0 1px 2px rgba(20, 24, 28, 0.14), 0 2px 6px rgba(20, 24, 28, 0.06);
+  --shadow-pressed: 0 1px 2px rgba(20, 24, 28, 0.2) inset, 0 0 0 rgba(0, 0, 0, 0);
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 1px 3px rgba(20, 24, 28, 0.08);
+  --shadow-float: 0 8px 28px rgba(20, 24, 28, 0.18), 0 2px 6px rgba(20, 24, 28, 0.1);
+
+  /* Type */
+  --font-ui: 'Inter Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Cascadia Mono', Consolas, monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 19px;
+
+  /* Spacing & radii */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+
+  /* Motion */
+  --t-fast: 90ms;
+  --t-med: 160ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  /* Focus */
+  --focus-ring: 0 0 0 2px var(--shell-hi), 0 0 0 4px var(--teal);
+
+  /* Minimum click target */
+  --hit: 32px;
+
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--shell-lo);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+  overflow: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
