@@ -1,0 +1,74 @@
+SWITCHBOARD / 01 - START HERE
+=============================
+
+SWITCHBOARD / 01 is an electronic music console that runs entirely in your
+web browser, on your own computer. It needs no account and no internet
+connection once it is on your computer. Sound is made on your device.
+
+Recommended browser: Google Chrome or Microsoft Edge (current versions).
+Use headphones or speakers; start with a moderate volume.
+
+
+1. OPEN IT (Windows, no install needed)
+---------------------------------------
+  1. Extract this whole zip to a folder (right-click > Extract All...).
+     Double-clicking inside the zip without extracting will NOT work.
+  2. Double-click  "Start SWITCHBOARD.bat".
+     A small black window opens and your browser shows the instrument at
+     http://127.0.0.1:4173/  (the port may be 4174-4192 if 4173 is busy).
+     If Windows SmartScreen asks, choose "More info" > "Run anyway".
+     The window uses PowerShell, which is built into Windows 10 and 11.
+  3. Keep that small window open while you play.
+
+  To STOP: close the small black window (or press Ctrl+C in it).
+  The launcher only serves the "app" folder, and only to this computer
+  (loopback address 127.0.0.1). Nothing is uploaded.
+
+
+2. OTHER WAYS TO OPEN IT (any system)
+-------------------------------------
+  With Node.js 18+ installed:
+      node launcher/serve.mjs app
+  With Python 3 installed:
+      python -m http.server 4173 --bind 127.0.0.1 --directory app
+  then open http://127.0.0.1:4173/ in Chrome or Edge.
+
+  Why not just double-click app/index.html?  Browsers block the module
+  loading, storage and offline features the app needs on file:// pages,
+  so it must be served from a (local) web address.
+
+
+3. JUMP IN
+----------
+  Click "Jump In". A starter groove begins playing - this click is what
+  allows the browser to make sound. Then:
+    * Tap lit pads to stop/start parts; tap another pad in a column to
+      switch that part's pattern. Changes join on the next bar.
+    * Turn TONE and SPACE on the right to change the selected part.
+    * Play the little keyboard with the mouse or your computer keys
+      (A W S E D F T G Y H U J K ...). Musical Assist keeps you in key.
+    * Press "Record Performance", play for a while, press it again to
+      stop, then use Export to save a WAV file you can listen to anywhere.
+
+
+4. YOUR WORK
+------------
+  Projects save automatically in this browser (look for "Saved" at the
+  top). Browser storage is working storage: for a real backup, use
+  Project > Export project file (.sb01.zip). You can open that file again
+  on any computer with Project > Import project file.
+
+  After the first visit the app also works offline in the same browser.
+  You can install it as an app from the browser's address bar (optional).
+
+
+5. TROUBLESHOOTING
+------------------
+  * No sound: check the system volume and output device; press the
+    "Resume audio" button if the app shows one; make sure Mute All is off.
+  * "Port already in use": another copy is running - use that browser tab,
+    or close the other black window.
+  * The window closes immediately: right-click "Start SWITCHBOARD.bat" >
+    Edit is NOT needed; instead open PowerShell in this folder and run
+        powershell -ExecutionPolicy Bypass -File launcher\serve.ps1
+    to see the error message.
