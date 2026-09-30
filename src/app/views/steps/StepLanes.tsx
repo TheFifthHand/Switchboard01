@@ -11,10 +11,11 @@ import grid from './StepGrid.module.css';
 /** Step numbers 1-16, beat starts emphasised. The current step lights amber while the clip plays. */
 export const StepNumbers = memo(function StepNumbers(props: { label?: ReactNode; className?: string }) {
   return (
-    <div className={[grid.cols, grid.numbers, props.className].filter(Boolean).join(' ')} aria-hidden="true">
+    <div className={[grid.cols, grid.numbers, props.className].filter(Boolean).join(' ')}>
+      {/* The label may hold controls, so only the decorative numbers are hidden from assistive tech. */}
       <div className={grid.numbersLabel}>{props.label}</div>
       {STEP_INDICES.map((s) => (
-        <div key={s} className={grid.num} style={{ gridColumn: stepColumn(s) }} data-beat={s % 4 === 0 || undefined} data-ph-step={s}>
+        <div key={s} className={grid.num} style={{ gridColumn: stepColumn(s) }} data-beat={s % 4 === 0 || undefined} data-ph-step={s} aria-hidden="true">
           {s + 1}
         </div>
       ))}

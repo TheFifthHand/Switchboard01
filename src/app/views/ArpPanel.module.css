@@ -35,6 +35,9 @@
   color: var(--ink-3);
   min-width: 0;
 }
+.summary:focus-visible {
+  box-shadow: var(--focus-ring);
+}
 .summary:hover {
   border-color: var(--line-strong);
   color: var(--ink-2);

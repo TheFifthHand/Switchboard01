@@ -266,3 +266,10 @@
 .stopAll:active {
   box-shadow: var(--shadow-pressed);
 }
+
+/* Component shadows would otherwise hide the global focus ring. */
+.stopAll:focus-visible,
+.scene:focus-visible,
+.ms:focus-visible {
+  box-shadow: var(--focus-ring);
+}
