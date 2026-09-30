@@ -298,7 +298,7 @@
 .headRow,
 .row {
   display: grid;
-  grid-template-columns: 72px 86px minmax(0, 1fr) 36px;
+  grid-template-columns: 72px 86px minmax(0, 1fr) 64px;
   align-items: center;
   gap: 8px;
   padding: 0 4px 0 10px;
@@ -320,6 +320,17 @@
 }
 .row:last-child {
   border-bottom: 0;
+}
+/* An open value entry may show its reason below the field. */
+.row[data-editing] {
+  height: auto;
+  min-height: 30px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.row[data-editing] .detail {
+  overflow: visible;
+  white-space: normal;
 }
 .row:hover {
   background: rgba(35, 149, 142, 0.05);
@@ -357,10 +368,40 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.delCell {
+/* A value button truncates its own text; the cell must not clip its focus ring. */
+.detail[data-value] {
+  overflow: visible;
+}
+.actionCell {
   display: flex;
   justify-content: flex-end;
+  gap: 2px;
 }
+/* A recorded value reads as text and edits on click (like a take's name). */
+.valueButton {
+  max-width: 100%;
+  height: 24px;
+  margin: 0 0 0 -6px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+.valueButton:hover {
+  border-color: var(--line);
+  background: var(--shell-hi);
+}
+.valueButton:focus-visible {
+  border-color: var(--teal);
+}
+.rowAction,
 .del {
   display: grid;
   place-items: center;
@@ -373,16 +414,68 @@
   background: transparent;
   color: var(--ink-3);
 }
-.row:hover .del {
+.row:hover .del,
+.row:hover .rowAction {
   color: var(--ink-2);
 }
+.rowAction:hover:not(:disabled),
 .del:hover {
   border-color: var(--line);
   background: var(--shell-hi);
   color: var(--coral-ink);
 }
+.rowAction:focus-visible,
 .del:focus-visible {
   color: var(--coral-ink);
+}
+.rowAction:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Inline entry (a recorded value, the take's end). */
+.entry {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+.entryInput {
+  height: 24px;
+  max-width: 100%;
+  margin-left: -6px;
+  padding: 0 6px;
+  border: 1px solid var(--teal);
+  border-radius: var(--r-sm);
+  background: #fff;
+  box-shadow: 0 0 0 2px var(--teal-wash);
+  font-size: var(--fs-sm);
+  outline: none;
+}
+.entryError {
+  font-size: var(--fs-xs);
+  color: var(--coral-ink);
+  white-space: normal;
+}
+
+.endLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  max-width: 940px;
+  margin-top: 8px;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.endText {
+  color: var(--ink);
+}
+.endHint {
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
 }
 
 .more {

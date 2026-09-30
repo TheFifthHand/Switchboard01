@@ -14,10 +14,16 @@ import { RecordOptions } from '../../src/app/views/RecordOptions';
 import { TransportBar } from '../../src/app/views/TransportBar';
 import { getStarter } from '../../src/content/starters';
 import type { Id } from '../../src/project/types';
-import { setArp } from '../../src/state/commands';
+import { setArp, setSettings } from '../../src/state/commands';
 import { selectTrack, setKeyboardOctave, setPadMode, setTipsEnabled, uiStore } from '../../src/state/uiStore';
 import { TipsProvider } from '../../src/ui/components';
-import { cleanup, fire, key, mount } from './ui-harness';
+import { cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
+import '../../src/ui/theme.css';
+
+/** Text is measured in the app's own fonts (they load on first use). */
+async function appFonts(): Promise<void> {
+  await Promise.all(['600 10px "Inter Variable"', '400 11px "Inter Variable"'].map((f) => document.fonts.load(f)));
+}
 
 beforeEach(() => {
   session.store.replace(getStarter('house')!.build(), { resetHistory: true });
@@ -219,13 +225,144 @@ describe('Transport strip', () => {
     expect(group.querySelector('button[aria-label="Record Performance"]')).not.toBeNull();
     expect(group.textContent).toMatch(/^Record/);
     act(() => patchRuntime({ recording: 'notes', recordTarget: { trackId: 't3', slot: 0 } }));
-    expect(group.textContent).toContain('Recording notes · Bass');
+    expect(group.textContent).toContain('Recording · Bass');
     // The button now says what pressing it does.
     expect(group.querySelector('button[aria-label="Stop recording notes"]')).not.toBeNull();
     act(() => patchRuntime({ recording: 'performance', recordTarget: null }));
     expect(group.textContent).toContain('Recording performance');
     expect(group.querySelector('button[aria-label="Stop recording performance"]')).not.toBeNull();
     act(() => patchRuntime({ recording: 'off', recordTarget: null }));
+  });
+
+  it('shows the Record Notes grid while notes record (and once it is not the usual 1/16), never cut off', async () => {
+    await appFonts();
+    const m = mount(h(TipsProvider, { enabled: true, children: h(TransportBar, { onOpenLibrary: () => {}, onOpenExport: () => {} }) }), { width: 1366 });
+    const group = m.container.querySelector('[role="group"][aria-label="Recording"]')!;
+    expect(group.textContent).not.toMatch(/snap/i);
+    act(() => patchRuntime({ recording: 'notes', recordTarget: { trackId: 't4', slot: 1 } }));
+    expect(group.textContent).toContain('Recording · Chords · Snap 1/16');
+    const snap = [...group.querySelectorAll('span')].find((s) => s.textContent === ' · Snap 1/16')!;
+    const text = snap.previousElementSibling as HTMLElement;
+    // Both fit above the buttons for a usual part name; a longer name gives way first, never the grid.
+    expect(text.scrollWidth).toBeLessThanOrEqual(text.clientWidth + 1);
+    const caption = () => snap.parentElement!.getBoundingClientRect();
+    expect(snap.getBoundingClientRect().right).toBeLessThanOrEqual(caption().right + 1);
+    act(() => patchRuntime({ recordTarget: { trackId: 't2', slot: 1 } }));
+    expect(group.textContent).toContain('Recording · Percussion · Snap 1/16');
+    expect(snap.getBoundingClientRect().right).toBeLessThanOrEqual(caption().right + 1);
+    expect(snap.scrollWidth).toBeLessThanOrEqual(snap.clientWidth + 1);
+    // With the part's arpeggiator on, its notes are recorded on its own rate: that grid is shown instead.
+    act(() => void session.accepted(setArp(session.store, 't4', { enabled: true, division: '1/8T' })));
+    act(() => patchRuntime({ recordTarget: { trackId: 't4', slot: 1 } }));
+    expect(group.textContent).toContain('Recording · Chords · Arp 1/8T');
+    expect(group.textContent).not.toMatch(/snap/i);
+    expect(snap.getBoundingClientRect().right).toBeLessThanOrEqual(caption().right + 1);
+    act(() => patchRuntime({ recordTarget: { trackId: 't2', slot: 1 } }));
+    // The chosen clip is not the one playing yet: recording starts with it at the next bar.
+    act(() => patchRuntime({ playing: true, tracks: { t2: { playingSlot: 0, queued: { slot: 1, atTick: 384 } } } }));
+    expect(group.textContent).toContain('Next bar · Percussion');
+    act(() => patchRuntime({ tracks: { t2: { playingSlot: 1, queued: null } } }));
+    expect(group.textContent).toContain('Recording · Percussion');
+    act(() => patchRuntime({ playing: false, tracks: {} }));
+    act(() => void session.accepted(setSettings(session.store, { recordQuantize: 'off' })));
+    expect(group.textContent).toContain('No snap');
+    act(() => patchRuntime({ recording: 'off', recordTarget: null }));
+    expect(group.textContent).toContain('Record · No snap');
+  });
+});
+
+describe('Keyboard strip: held keys, drum parts and recordings', () => {
+  /** Stand in for the session's notes: the part and pitch each press and release goes to. */
+  function recordNotes() {
+    const played: string[] = [];
+    const realOn = session.noteOn;
+    const realOff = session.noteOff;
+    session.noteOn = (trackId, pitch) => void played.push(`on ${trackId} ${pitch}`);
+    session.noteOff = (trackId, pitch) => void played.push(`off ${trackId} ${pitch}`);
+    return {
+      played,
+      restore() {
+        session.noteOn = realOn;
+        session.noteOff = realOff;
+      },
+    };
+  }
+  const strip = () => mount(h('div', { style: { width: '1340px', height: '100px' } }, h(KeyboardStrip)), { width: 1366 });
+
+  it('a computer key held while the part or the octave changes is released on its own part and pitch', () => {
+    const rec = recordNotes();
+    try {
+      const m = strip();
+      key(document.body, 'keydown', { key: 'a', code: 'KeyA' });
+      act(() => selectTrack('t3'));
+      key(document.body, 'keyup', { key: 'a', code: 'KeyA' });
+      expect(rec.played).toEqual(['on t4 60', 'off t4 60']);
+
+      rec.played.length = 0;
+      key(document.body, 'keydown', { key: 's', code: 'KeyS' });
+      click(m.container.querySelector<HTMLButtonElement>('button[aria-label="Octave up (X)"]')!);
+      key(document.body, 'keyup', { key: 's', code: 'KeyS' });
+      expect(rec.played).toEqual(['on t3 62', 'off t3 62']);
+      // The next press plays in the new octave.
+      key(document.body, 'keydown', { key: 's', code: 'KeyS' });
+      key(document.body, 'keyup', { key: 's', code: 'KeyS' });
+      expect(rec.played.slice(2)).toEqual(['on t3 74', 'off t3 74']);
+    } finally {
+      rec.restore();
+    }
+  });
+
+  it('a mouse or touch key held while the part changes is released on its own part', () => {
+    const rec = recordNotes();
+    try {
+      const m = strip();
+      const board = m.container.querySelector<HTMLElement>('[role="group"][aria-label^="Keyboard playing"]')!;
+      const e4 = pointIn(board.querySelector('[data-midi="64"]')!, 0.85);
+      pointer(board, 'pointerdown', { ...e4, pointerId: 7, pointerType: 'touch' });
+      act(() => selectTrack('t5'));
+      pointer(board, 'pointerup', { ...e4, pointerId: 7, pointerType: 'touch' });
+      expect(rec.played).toEqual(['on t4 64', 'off t4 64']);
+    } finally {
+      rec.restore();
+    }
+  });
+
+  it('a drum part gets one key per kit sound and no octave to shift', () => {
+    const rec = recordNotes();
+    try {
+      act(() => selectTrack('t1'));
+      const m = strip();
+      const keys = m.container.querySelectorAll('[role="group"][aria-label^="Keyboard playing"] [data-midi]');
+      expect(keys).toHaveLength(16);
+      for (const label of ['Octave down (Z)', 'Octave up (X)', 'Reset octave to C4']) {
+        expect(m.container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.disabled).toBe(true);
+      }
+      // X would shift the octave on a melodic part: nothing changes for a kit.
+      const octave = uiStore.getState().keyboardOctave;
+      key(document.body, 'keydown', { key: 'x', code: 'KeyX' });
+      expect(uiStore.getState().keyboardOctave).toBe(octave);
+      // A = sound 1, K = sound 13; ";" is past the 16 sounds and plays nothing.
+      for (const code of ['KeyA', 'KeyK', 'Semicolon']) {
+        key(document.body, 'keydown', { key: 'x', code });
+        key(document.body, 'keyup', { key: 'x', code });
+      }
+      expect(rec.played).toEqual(['on t1 0', 'off t1 0', 'on t1 12', 'off t1 12']);
+    } finally {
+      rec.restore();
+    }
+  });
+
+  it('on a sampler part, says that Musical Assist leaves recordings at the key pressed', async () => {
+    await appFonts();
+    act(() => selectTrack('t8'));
+    const m = strip();
+    expect(m.container.textContent).toContain('Recordings play as pressed');
+    expect(m.container.textContent).not.toContain('Snapping to');
+    // The whole line is readable (it is not cut off with an ellipsis).
+    const note = [...m.container.querySelectorAll<HTMLElement>('p[aria-live="polite"]')].find((p) => p.textContent?.startsWith('Recordings'))!;
+    expect(note.scrollWidth).toBeLessThanOrEqual(note.clientWidth + 1);
+    act(() => selectTrack('t4'));
+    expect(m.container.textContent).toContain('Snapping to');
   });
 });
 

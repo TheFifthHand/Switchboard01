@@ -3,6 +3,11 @@
 # Serves ONLY the packaged app folder, ONLY on the loopback interface (127.0.0.1),
 # then opens your default browser. Nothing is uploaded anywhere.
 #
+# The browser keeps projects per address, and the port is part of the address,
+# so the launcher stays on one port: if SWITCHBOARD already runs there it opens
+# that copy and exits; if another program holds the port it explains what that
+# means for saved projects before using the next free port.
+#
 # Stop: close this window, or press Ctrl+C.
 param(
   [string]$Root = '',
@@ -27,29 +32,101 @@ $types = @{
   '.wav' = 'audio/wav'; '.map' = 'application/json; charset=utf-8'; '.txt' = 'text/plain; charset=utf-8'
 }
 
-# Find a free loopback port, starting at $Port.
-$listener = $null
-for ($p = $Port; $p -lt ($Port + 20); $p++) {
+function Start-Listener([int]$p) {
   try {
-    $candidate = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $p)
-    $candidate.Start()
-    $listener = $candidate
-    $Port = $p
-    break
-  } catch { }
+    $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $p)
+    $l.Start()
+    return $l
+  } catch { return $null }
+}
+
+# True when a SWITCHBOARD page answers on port $p (another launcher window, or any server of the app).
+# Another launcher window answers one connection at a time and gives an idle browser
+# connection up to 3 s, so wait longer than that for the page.
+function Test-Switchboard([int]$p) {
+  $client = New-Object System.Net.Sockets.TcpClient
+  try {
+    $pending = $client.BeginConnect([System.Net.IPAddress]::Loopback, $p, $null, $null)
+    if (-not $pending.AsyncWaitHandle.WaitOne(1500)) { return $false }
+    $client.EndConnect($pending)
+    $client.ReceiveTimeout = 6000
+    $net = $client.GetStream()
+    $ask = [System.Text.Encoding]::ASCII.GetBytes("GET / HTTP/1.0`r`nHost: 127.0.0.1:$p`r`nConnection: close`r`n`r`n")
+    $net.Write($ask, 0, $ask.Length)
+    $buffer = New-Object byte[] 16384
+    $text = ''
+    while ($text.Length -lt 262144) {
+      $n = $net.Read($buffer, 0, $buffer.Length)
+      if ($n -le 0) { break }
+      $text += [System.Text.Encoding]::UTF8.GetString($buffer, 0, $n)
+      if ($text.Contains('<title>SWITCHBOARD / 01</title>')) { return $true }
+    }
+    return $false
+  } catch {
+    return $false
+  } finally {
+    $client.Close()
+  }
+}
+
+function Open-Browser([string]$u) {
+  if ($NoOpen) { return }
+  try { Start-Process $u } catch { Write-Host "  Open $u in your browser." }
+}
+
+$usual = "http://127.0.0.1:$Port/"
+$listener = $null
+for ($p = $Port; $p -le ($Port + 19); $p++) {
+  $listener = Start-Listener $p
+  if ($listener) { break }
+  if (Test-Switchboard $p) {
+    $url = "http://127.0.0.1:$p/"
+    Write-Host ''
+    $note = if ($p -ne $Port) { " (not the usual $usual)" } else { '' }
+    Write-Host "  SWITCHBOARD / 01 is already running at $url$note" -ForegroundColor Yellow
+    Write-Host '  The SWITCHBOARD window (or program) that started it keeps it running.'
+    if ($NoOpen) { Write-Host "  Open $url in your browser." } else { Write-Host '  Opening it in your browser.' }
+    Write-Host '  To start a different copy (for example a newer version), close the other window first.'
+    Write-Host ''
+    Open-Browser $url
+    # Time to read this before the window closes by itself.
+    if (-not $NoOpen) { Start-Sleep -Seconds 4 }
+    exit 0
+  }
+  if ($p -eq $Port) {
+    Write-Host ''
+    Write-Host "  Port $p is used by another program (or reserved by Windows), so SWITCHBOARD" -ForegroundColor Yellow
+    Write-Host "  cannot open at its usual address $usual" -ForegroundColor Yellow
+    Write-Host '  Your browser keeps projects separately for each address. Projects saved at'
+    Write-Host "  $usual will not appear in My projects at another address (they are"
+    Write-Host '  not deleted), and projects saved at another address stay with that address.'
+    Write-Host "  To use the usual address: close this window, close the program that uses port $p"
+    Write-Host '  (or restart the computer), then start SWITCHBOARD again. To move a project between'
+    Write-Host '  addresses, use "Export this project" and "Import project file..." in the Project library.'
+    Write-Host ''
+    if (-not $NoOpen -and -not [Console]::IsInputRedirected) {
+      $null = Read-Host '  Press Enter to open SWITCHBOARD at another address, or close this window to stop'
+    }
+  }
 }
 if (-not $listener) {
   Write-Host "No free port between $Port and $($Port + 19). Close other copies of SWITCHBOARD and try again." -ForegroundColor Red
   exit 1
 }
+$preferred = $Port
+$Port = $p
 
 $url = "http://127.0.0.1:$Port/"
 Write-Host ''
 Write-Host '  SWITCHBOARD / 01' -ForegroundColor Yellow
-Write-Host "  Running at $url  (this computer only)"
+if ($Port -eq $preferred) {
+  Write-Host "  Running at $url  (this computer only)"
+} else {
+  Write-Host "  Running at $url  (this computer only; not the usual $usual)"
+}
 Write-Host '  Keep this window open while you play. Close it or press Ctrl+C to stop.'
 Write-Host ''
-if (-not $NoOpen) { Start-Process $url }
+Open-Browser $url
 
 function Send-Response($stream, [int]$code, [string]$status, [string]$type, [byte[]]$body, [bool]$headOnly) {
   $header = "HTTP/1.1 $code $status`r`nContent-Type: $type`r`nContent-Length: $($body.Length)`r`nCache-Control: no-cache`r`nX-Content-Type-Options: nosniff`r`nConnection: close`r`n`r`n"

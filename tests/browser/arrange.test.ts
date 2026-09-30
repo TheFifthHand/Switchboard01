@@ -15,7 +15,7 @@ import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { formatSeconds } from '../../src/app/session';
 import { ArrangeView } from '../../src/app/views/arrange/ArrangeView';
 import { EVENT_MORE, EVENT_PAGE } from '../../src/app/views/arrange/PerformancesPanel';
-import { formatPosition, performanceRows } from '../../src/app/views/arrange/perfEvents';
+import { formatPosition, parsePosition, performanceRows } from '../../src/app/views/arrange/perfEvents';
 import { BLOCK_GAP, MIN_BLOCK_WIDTH, SCROLL_MAX_PX_PER_BAR, gapAt, layoutSong, moveTarget, rulerMarks } from '../../src/app/views/arrange/songLayout';
 import { getStarter } from '../../src/content/starters';
 import type { Id, Performance, PerformanceEvent } from '../../src/project/types';
@@ -643,6 +643,125 @@ describe('Performances', () => {
     act(() => session.undo());
     expect(perfById(id)!.events.length).toBe(5);
     expect(rows().length).toBe(4);
+  });
+
+  it('changes a recorded macro or tempo value in place (typed in the units shown); undo restores it', async () => {
+    const start = 768;
+    const id = addTake([...sampleEvents(start), { t: start + 400, type: 'tempo', bpm: 124 }]);
+    await setup();
+    click(byLabel('Show the events of Take 1'));
+    const table = document.querySelector<HTMLElement>('[role="table"]')!;
+    const valueButtons = () => [...table.querySelectorAll<HTMLButtonElement>('button[aria-label^="Change the value"]')];
+    // Knob, macro and tempo changes carry a value; launches and notes do not.
+    expect(valueButtons().map((b) => b.textContent)).toEqual(['Bass · Tone 62%', expect.stringContaining('Cutoff'), 'Tempo 124 BPM']);
+
+    click(valueButtons()[0]);
+    let input = table.querySelector<HTMLInputElement>('input')!;
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('62%');
+    typeInto(input, '40');
+    key(input, 'keydown', { key: 'Enter' });
+    expect(perfById(id)!.events[2]).toMatchObject({ t: start + 192, type: 'macro', value: 0.4 });
+    expect(table.querySelector('input')).toBeNull();
+    expect(valueButtons()[0].textContent).toBe('Bass · Tone 40%');
+    expect(document.activeElement).toBe(valueButtons()[0]);
+    expect(runtimeStore.getState().notice).toMatchObject({ action: 'undo' });
+    expect(runtimeStore.getState().notice!.text).toContain('to 40%');
+
+    // Text that is not a value keeps the field open with the range; units may be typed.
+    click(valueButtons()[2]);
+    input = table.querySelector<HTMLInputElement>('input')!;
+    typeInto(input, 'faster');
+    key(input, 'keydown', { key: 'Enter' });
+    expect(table.querySelector('[role="alert"]')!.textContent).toBe('Type a value from 40 BPM to 220 BPM.');
+    expect(perfById(id)!.events[5]).toMatchObject({ bpm: 124 });
+    typeInto(input, '132 bpm');
+    key(input, 'keydown', { key: 'Enter' });
+    expect(perfById(id)!.events[5]).toMatchObject({ t: start + 400, type: 'tempo', bpm: 132 });
+    // Escape leaves the value as it was.
+    click(valueButtons()[2]);
+    typeInto(table.querySelector<HTMLInputElement>('input')!, '90');
+    key(table.querySelector('input')!, 'keydown', { key: 'Escape' });
+    expect(perfById(id)!.events[5]).toMatchObject({ bpm: 132 });
+
+    act(() => session.undo());
+    act(() => session.undo());
+    expect(perfById(id)!.events).toEqual([...sampleEvents(start), { t: start + 400, type: 'tempo', bpm: 124 }]);
+  });
+
+  it('a long recorded value stays in its column at a narrow width, and its focus ring is not cut off', async () => {
+    act(() => void cmd.renameTrack(session.store, 't3', 'Deep rolling sub bass line'));
+    addTake(sampleEvents(768));
+    await setup(560);
+    click(byLabel('Show the events of Take 1'));
+    const table = document.querySelector<HTMLElement>('[role="table"]')!;
+    const value = table.querySelector<HTMLButtonElement>('button[aria-label^="Change the value: Deep rolling"]')!;
+    const cell = value.closest<HTMLElement>('[role="cell"]')!;
+    const actions = value.closest<HTMLElement>('[role="row"]')!.querySelector<HTMLElement>('[data-evcol="end"]')!;
+    // Truncated inside its own column: it never runs under the row's buttons.
+    expect(value.scrollWidth).toBeGreaterThan(value.clientWidth);
+    expect(value.getBoundingClientRect().right).toBeLessThanOrEqual(cell.getBoundingClientRect().right + 0.5);
+    expect(value.getBoundingClientRect().right).toBeLessThan(actions.getBoundingClientRect().left);
+    // The cell does not clip the focus ring drawn around the button.
+    expect(getComputedStyle(cell).overflow).toBe('visible');
+  });
+
+  it('ends a take at a row or at a typed position: later actions go, the length shrinks, undo restores', async () => {
+    const start = 768;
+    const id = addTake(sampleEvents(start));
+    const bpm = perfById(id)!.snapshot.bpm;
+    await setup();
+    const panel = document.querySelector<HTMLElement>('section[aria-labelledby="perf-title"]')!;
+    click(byLabel('Show the events of Take 1'));
+    const table = () => document.querySelector<HTMLElement>('[role="table"]')!;
+    const rows = () => [...table().querySelectorAll<HTMLElement>('[role="rowgroup"] [role="row"]')];
+    expect(panel.textContent).toContain(`Ends at ${formatPosition(4 * 384)}`);
+
+    // End at the macro move (1.3.1): it and the knob move after it go; the launch and the note before it stay.
+    click(byLabel(`End Take 1 at ${formatPosition(192)}`, table()));
+    expect(perfById(id)!.endTick).toBe(start + 192);
+    expect(perfById(id)!.events.map((e) => e.type)).toEqual(['launch', 'noteOn']);
+    expect(rows().length).toBe(2);
+    expect(byLabel('Length', panel).textContent).toBe(`${ticksToSeconds(192, bpm).toFixed(1)} s`);
+    expect(runtimeStore.getState().notice!.text).toBe(`Take 1 now ends at ${formatPosition(192)}; 2 recorded actions from there on removed.`);
+    expect(runtimeStore.getState().notice!.action).toBe('undo');
+    act(() => session.undo());
+    expect(perfById(id)!.endTick).toBe(start + 4 * 384);
+    expect(perfById(id)!.events.length).toBe(5);
+    expect(rows().length).toBe(4);
+
+    // Typed end: a position past the end is refused with the allowed range; a valid one trims.
+    click([...panel.querySelectorAll('button')].find((b) => b.textContent === 'End earlier…')!);
+    const input = panel.querySelector<HTMLInputElement>('input[aria-label^="New end of Take 1"]')!;
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe(formatPosition(4 * 384));
+    typeInto(input, '9.1.1');
+    key(input, 'keydown', { key: 'Enter' });
+    expect(panel.querySelector('[role="alert"]')!.textContent).toBe(`Type a bar.beat.step position after 1.1.1 and before ${formatPosition(4 * 384)}.`);
+    expect(perfById(id)!.endTick).toBe(start + 4 * 384);
+    typeInto(input, '1.4');
+    key(input, 'keydown', { key: 'Enter' });
+    expect(perfById(id)!.endTick).toBe(start + 288);
+    // The knob move (tick 300) is after the new end (tick 288); the note's release (tick 200) is kept.
+    expect(perfById(id)!.events.map((e) => e.type)).toEqual(['launch', 'noteOn', 'macro', 'noteOff']);
+    expect(panel.textContent).toContain('Ends at 1.4.1');
+    expect(panel.querySelector('input')).toBeNull();
+
+    // Ending at the first action leaves none: keyboard focus stays in the take, on its end control.
+    click(byLabel(`End Take 1 at ${formatPosition(10)}`, table()));
+    expect(perfById(id)!.events).toEqual([]);
+    expect(perfById(id)!.endTick).toBe(start + 10);
+    expect(document.activeElement?.textContent).toBe('End earlier…');
+  });
+
+  it('reads typed positions as bar.beat.step', () => {
+    expect(parsePosition('5')).toBe(4 * 384);
+    expect(parsePosition('1.4')).toBe(288);
+    expect(parsePosition(' 2.2.3 ')).toBe(384 + 96 + 48);
+    expect(parsePosition('2.5')).toBeNull();
+    expect(parsePosition('0.1.1')).toBeNull();
+    expect(parsePosition('soon')).toBeNull();
+    for (const t of [0, 96, 384 + 24, 7 * 384 + 3 * 96 + 72]) expect(parsePosition(formatPosition(t))).toBe(t);
   });
 
   it('caps long takes and shows more on request', async () => {

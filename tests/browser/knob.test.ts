@@ -1,6 +1,6 @@
 import { createElement as h } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Knob, type KnobChangeInfo } from '../../src/ui/components';
+import { Knob, TipsProvider, type KnobChangeInfo } from '../../src/ui/components';
 import { BASS_PARAMS, CHANNEL_PARAMS, POLY_PARAMS, formatParam, fromNormalized, specById, toNormalized, type ParamSpec } from '../../src/project/params';
 import { actFrame, cleanup, fire, key, mount, pointer, pointIn, wait } from './ui-harness';
 
@@ -376,6 +376,72 @@ describe('Knob numeric entry', () => {
     // Explicit units always win.
     expect(typeInto(0.005, '1.5 s')).toBeCloseTo(1.5, 6);
     expect(typeInto(1.2, '80ms')).toBeCloseTo(0.08, 6);
+  });
+});
+
+describe('Knob tips name the gestures', () => {
+  const described = (el: Element) => document.getElementById(el.getAttribute('aria-describedby')!)?.textContent ?? '';
+
+  it('say how to turn it, what double-click restores and how to type an exact value; each works as described', () => {
+    const { calls, slider, m } = setup(CUTOFF, 3000);
+    const home = formatParam(CUTOFF, CUTOFF.default); // "700 Hz"
+    const text = described(slider);
+    expect(text).toContain('Drag up or down, or use the arrow keys; hold Shift for fine steps.');
+    expect(text).toContain(`Double-click resets it to ${home}.`);
+    expect(text).toContain('For an exact value, click the knob and type a number.');
+
+    // A mouse user: click the knob, then type.
+    const p = pointIn(slider);
+    pointer(slider, 'pointerdown', p);
+    pointer(slider, 'pointerup', p);
+    key(document.activeElement!, 'keydown', { key: '2' });
+    const input = m.container.querySelector('input')!;
+    expect(input).toBeTruthy();
+    setInput(input, '2.5k');
+    key(input, 'keydown', { key: 'Enter' });
+    expect(calls.at(-1)![0]).toBe(2500);
+
+    // Double-click goes back to the value the tip names.
+    fire(slider, new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    expect(formatParam(CUTOFF, calls.at(-1)![0])).toBe(home);
+  });
+
+  it('the hint comes after the technical detail in the visible tip', async () => {
+    const { m, slider } = setup(CUTOFF, 3000);
+    const other = document.createElement('button');
+    m.container.prepend(other);
+    other.focus();
+    key(other, 'keydown', { key: 'Tab' }); // keyboard focus shows the tip at once
+    slider.focus();
+    await actFrame();
+    const bubble = [...document.body.querySelectorAll<HTMLElement>('[aria-hidden="true"]')].find((el) => el.textContent?.includes('Drag up or down'));
+    expect(bubble).toBeTruthy();
+    const text = bubble!.textContent!;
+    expect(text.indexOf(CUTOFF.tip!)).toBeLessThan(text.indexOf(CUTOFF.detail!));
+    expect(text.indexOf(CUTOFF.detail!)).toBeLessThan(text.indexOf('Drag up or down'));
+  });
+
+  it('option knobs name the default option and do not offer number entry', () => {
+    const { slider } = setup(WAVE, 2);
+    const text = described(slider);
+    expect(text).toContain(`Double-click resets it to ${formatParam(WAVE, WAVE.default)}.`);
+    expect(text).not.toContain('type a number');
+  });
+
+  it('knobs that cannot be turned do not describe gestures they ignore', () => {
+    const readOnly = setup(CUTOFF, 3000, { controlledBy: 'Tone' });
+    expect(described(readOnly.slider)).toContain('Set by the Tone macro');
+    expect(described(readOnly.slider)).not.toContain('Drag up or down');
+    readOnly.m.unmount();
+    const disabled = setup(AMOUNT, 0.5, { disabled: true });
+    expect(described(disabled.slider)).not.toContain('Drag up or down');
+  });
+
+  it('with Tips off, only the name is given', () => {
+    const m = mount(h(TipsProvider, { enabled: false }, h(Knob, { spec: CUTOFF, value: 3000, onChange: () => {} })));
+    const slider = m.container.querySelector<HTMLElement>('[role="slider"]')!;
+    expect(described(slider)).toContain('Cutoff');
+    expect(described(slider)).not.toContain('Drag up or down');
   });
 });
 

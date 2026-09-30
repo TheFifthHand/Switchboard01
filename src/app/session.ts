@@ -19,23 +19,27 @@ import { SampleBank } from '../audio/instruments/sampleBank';
 import { BLANK_STARTER, JUMP_IN_SCENE_ROW, JUMP_IN_STARTER_ID, STARTERS, getStarter } from '../content/starters';
 import { snapToScale } from '../music/scales';
 import { uid } from '../project/factory';
-import { BASS_PARAMS, DRUM_KIT_PARAMS, POLY_PARAMS, SAMPLER_PARAMS } from '../project/params';
+import { BASS_PARAMS, DRUM_KIT_PARAMS, INSTRUMENT_PARAMS, POLY_PARAMS, SAMPLER_PARAMS, specById } from '../project/params';
+import { specsForModule } from '../project/resolve';
 import {
   MACRO_IDS,
   TICKS_PER_BAR,
+  TICKS_PER_STEP,
   type ClipBars,
   type Id,
   type MacroId,
   type Performance,
   type PerformanceEvent,
   type Project,
+  type QuantizeGrid,
   type SampleMeta,
+  type Track,
 } from '../project/types';
 import { computeRenderPlan, renderOffline, type RenderSource } from '../render/offline';
 import { encodeWav } from '../render/wav';
 import * as cmd from '../state/commands';
-import { ProjectStore } from '../state/projectStore';
-import { selectSlot, selectTrack, slotFor, uiStore } from '../state/uiStore';
+import { ProjectStore, type ApplyResult } from '../state/projectStore';
+import { selectSlot, selectTrack, setPadMode, setView, slotFor, uiStore } from '../state/uiStore';
 import { createAutosaver, type Autosaver } from '../persistence/autosave';
 import { decodeAudioFile, checkAudioFile } from '../persistence/audioImport';
 import { exportBundle, importBundle, bundleFileName } from '../persistence/bundle';
@@ -43,9 +47,9 @@ import * as db from '../persistence/db';
 import * as library from '../persistence/library';
 import type { LaunchResult } from '../time/contracts';
 import { makeSnapshot, projectFromSnapshot } from '../time/snapshot';
-import { Sequencer } from '../time/sequencer';
+import { Sequencer, type NoteEvent } from '../time/sequencer';
 import { RealtimeTransport } from '../time/transport';
-import { notify, patchRuntime, runtimeStore, setTrackRuntime } from './runtime';
+import { notify, patchRuntime, runtimeStore, setTrackRuntime, type PlayMode } from './runtime';
 
 /**
  * Where a live note comes from. 'preview' is an editor/browser audition: it
@@ -57,8 +61,19 @@ export type NoteSource = 'keyboard' | 'computer' | 'pad' | 'preview';
 export interface BootInfo {
   /** The project that was reopened from storage, if any. */
   lastProject: { id: Id; name: string } | null;
+  /** What the user should know about the reopen: a damaged project skipped, repairs made on load. */
   warnings: string[];
+  /** Browser storage itself failed (saving is unavailable in this window). */
   storageError: string | null;
+}
+
+export interface StarterOptions {
+  /**
+   * The user chose to replace the open project although its latest edits
+   * could not be stored. Without it, starting a starter refuses to take such
+   * a project off the screen.
+   */
+  discardCurrent?: boolean;
 }
 
 export interface ExportOptions {
@@ -82,14 +97,33 @@ const RECORDABLE_LABELS: ReadonlySet<string> = new Set([
 ]);
 const isRecordableLabel = (label: string) => label.startsWith('module:') || RECORDABLE_LABELS.has(label);
 
+/**
+ * Where the values a take records live in the project: tempo, swing, master
+ * volume, a part's mute, macros and instrument knobs, and module knobs. While
+ * a take records, only undo/redo steps that change nothing else go through.
+ */
+function isRecordablePath(path: readonly (string | number)[]): boolean {
+  const [a, b, c, d] = path;
+  if (path.length === 1) return a === 'bpm' || a === 'swing' || a === 'masterVolumeDb';
+  if (a === 'tracks' && typeof b === 'number') {
+    return (path.length === 3 && c === 'mute') || (path.length === 4 && c === 'macros') || (path.length === 5 && c === 'instrument' && d === 'params');
+  }
+  return a === 'patch' && b === 'modules' && typeof c === 'number' && path.length === 5 && d === 'params';
+}
+
 export const TAKE_LOCK_MESSAGE =
-  'Recording a performance: cables, clips, sounds, the song and saved takes are locked until you stop. Knobs, macros, mutes and tempo are recorded.';
+  'Recording a performance: cables, clips, sounds, the song and saved takes are locked until you stop. Knob, macro, mute and tempo changes are recorded, and so is undoing them.';
 
 interface HeldNote {
   trackId: Id;
   /** Pitch actually played (after Musical Assist). */
   pitch: number;
   velocity: number;
+  /**
+   * The key went to the arpeggiator (its part's arp was on when it was
+   * pressed), so its release goes there too, whatever the arp is set to by then.
+   */
+  viaArp: boolean;
   /** Transport tick when pressed (for Record Notes), or null when not recording notes. */
   recTick: number | null;
   /** Clip start tick when recording notes. */
@@ -109,7 +143,13 @@ interface NoteRecording {
   slot: number;
   gesture: string;
   added: number;
+  /** Arpeggiator notes played and not written into the clip yet (ticks from the clip's loop start). */
+  arpNotes: { tick: number; pitch: number; velocity: number; duration: number }[];
+  arpFlush: ReturnType<typeof setTimeout> | null;
 }
+
+/** Arpeggiator notes are written into the clip in batches (their ticks come from the audio clock). */
+const ARP_RECORD_BATCH_MS = 200;
 
 export class Session {
   readonly store: ProjectStore;
@@ -126,9 +166,13 @@ export class Session {
   private held = new Map<string, HeldNote>();
   private take: Take | null = null;
   private noteRec: NoteRecording | null = null;
-  /** Project that is not saved yet (the preview starter shown before Jump In). */
+  /** The open project is the preview starter shown on first launch: stored only once it is changed. */
   private previewOnly = false;
+  /** The open project is a starter that could not be stored when it was started: its first save adds it to the library. */
+  private unstored = false;
   private replayingId: Id | null = null;
+  /** What was playing when playback stalled, so Resume restarts the same thing. */
+  private stallResume: { mode: PlayMode; songBlock: number | null; replayId: Id | null } | null = null;
   private loadedSampleIds = new Set<Id>();
   /** Keys pressed before the engine existed: played as soon as audio is ready. */
   private pendingKeys = new Map<string, { released: boolean }>();
@@ -147,19 +191,22 @@ export class Session {
   /** Reopen the last project from storage, or show the Jump In starter as a preview. */
   async boot(): Promise<BootInfo> {
     const info: BootInfo = { lastProject: null, warnings: [], storageError: null };
+    this.unstored = false;
     try {
       const opened = await library.openLast();
       if (opened) {
         this.store.replace(opened.project);
         info.lastProject = { id: opened.project.id, name: opened.project.name };
         info.warnings = opened.warnings;
-        this.previewOnly = false;
+        this.setPreview(false);
       } else {
         this.loadPreview();
       }
       void db.garbageCollectSamples({ keep: db.sampleIdsOf(this.store.getState()) }).catch(() => undefined);
     } catch (e) {
-      info.storageError = e instanceof Error ? e.message : 'Browser storage is unavailable.';
+      // Stored projects that cannot be read are a problem with those projects, not with saving.
+      if (library.isUnreadableLibrary(e)) info.warnings = [e.message];
+      else info.storageError = e instanceof Error ? e.message : 'Browser storage is unavailable.';
       this.loadPreview();
     }
     this.startAutosave();
@@ -169,28 +216,50 @@ export class Session {
   private loadPreview(): void {
     const starter = getStarter(JUMP_IN_STARTER_ID) ?? STARTERS[0];
     this.store.replace(starter.build());
-    this.previewOnly = true;
+    this.setPreview(true);
+  }
+
+  private setPreview(preview: boolean): void {
+    this.previewOnly = preview;
+    if (runtimeStore.getState().preview !== preview) patchRuntime({ preview });
   }
 
   private startAutosave(): void {
-    void this.autosaver?.dispose();
+    // An earlier autosaver (booting again) still writes its pending edits, but not the state just loaded.
+    const previous = this.autosaver;
+    previous?.markSaved(this.store.getState());
+    void previous?.dispose();
     this.autosaver = createAutosaver({
       store: this.store,
       save: async (p) => {
-        if (this.previewOnly) return;
+        if ((this.previewOnly || this.unstored) && p.id === this.store.getState().id) {
+          // The first change turns the preview into a normal project: stored, and reopened next time.
+          // An untouched preview never gets here, so it is never stored. A starter that could not be
+          // stored when it was started is added the same way once storage works again.
+          await library.addToLibrary(p);
+          this.unstored = false;
+          this.setPreview(false);
+          return;
+        }
         await db.saveProject(p);
       },
     });
     this.autosaver.markSaved(this.store.getState());
   }
 
-  /** Load a project into the store (stops playback and recording first). */
-  private async loadProject(project: Project, opts: { preview?: boolean } = {}): Promise<void> {
+  /**
+   * Load a project into the store (stops playback and recording first).
+   * `unsaved`: it could not be stored, so autosave keeps trying (and shows
+   * "Not saved" while it fails) instead of treating it as saved; its first
+   * successful save adds it to the library as the project to reopen.
+   */
+  private async loadProject(project: Project, opts: { unsaved?: boolean } = {}): Promise<void> {
     this.stopEverything();
     await this.autosaver?.flush();
-    this.previewOnly = !!opts.preview;
+    this.setPreview(false);
+    this.unstored = !!opts.unsaved;
     this.store.replace(project);
-    this.autosaver?.markSaved(project);
+    if (!opts.unsaved) this.autosaver?.markSaved(project);
     this.resetRuntimeTracks();
     await this.loadProjectSamples(project);
     this.engine?.prepareInstruments();
@@ -198,12 +267,21 @@ export class Session {
 
   /**
    * Jump In: enable audio (this must run inside the click), save whatever is
-   * open, start a fresh House starter session and play its Groove scene.
+   * open, start a fresh House starter session and play its Groove scene on
+   * the Loops pads (whatever view was left open last time).
    */
   async jumpIn(): Promise<void> {
     const audio = this.startAudio();
     const starter = getStarter(JUMP_IN_STARTER_ID) ?? STARTERS[0];
-    await this.createFromStarter(starter.build());
+    try {
+      await this.createFromStarter(starter.build());
+    } catch (e) {
+      // The open project has edits that could not be stored: it stays on screen.
+      notify(e instanceof Error ? e.message : String(e), 'error');
+      return;
+    }
+    setView('play');
+    setPadMode('loops');
     selectTrack('t4');
     if (!(await audio)) return;
     this.transport!.launchScene(JUMP_IN_SCENE_ROW);
@@ -211,23 +289,39 @@ export class Session {
     await this.play();
   }
 
-  /** Start a new project from a starter (current project is saved first). */
-  async newFromStarter(starterId: string): Promise<void> {
+  /** Start a new project from a starter (current project is saved first; see StarterOptions). */
+  async newFromStarter(starterId: string, opts: StarterOptions = {}): Promise<void> {
     const def = starterId === 'blank' ? BLANK_STARTER : getStarter(starterId);
     if (!def) return;
-    await this.createFromStarter(def.build());
+    await this.createFromStarter(def.build(), opts);
   }
 
-  private async createFromStarter(starter: Project): Promise<void> {
+  /**
+   * Store the open project, then load the starter as a new stored project.
+   * Rejects, and leaves the open project on screen, when its latest edits
+   * could not be stored, unless `discardCurrent` is set. When only the new
+   * project cannot be stored, it still loads (with a warning) and autosave
+   * keeps trying: once storage works it is added to the library and reopened
+   * next time.
+   */
+  private async createFromStarter(starter: Project, opts: StarterOptions = {}): Promise<void> {
+    // Pending edits are written first; an edited preview becomes a stored project here.
+    await this.autosaver?.flush();
+    const saving = this.autosaver?.status.getState();
+    if (saving?.status === 'error' && !opts.discardCurrent) {
+      throw new db.StorageError(saving.lastError?.kind ?? 'unknown', saving.lastError?.message ?? 'The open project could not be saved.');
+    }
+    // Even when replacing it anyway, the open project is still kept if storage allows.
     const current = this.previewOnly ? null : this.store.getState();
     let project = starter;
+    let stored = true;
     try {
-      await this.autosaver?.flush();
       project = await library.createFromStarter(starter, current);
     } catch (e) {
+      stored = false;
       notify(`Could not save to browser storage: ${e instanceof Error ? e.message : String(e)}. You can keep playing; export the project file to keep a copy.`, 'warn');
     }
-    await this.loadProject(project);
+    await this.loadProject(project, { unsaved: !stored });
   }
 
   /** Continue the reopened project (audio starts from this gesture; nothing auto-plays). */
@@ -251,13 +345,14 @@ export class Session {
     } catch {
       /* the library list is only used to avoid duplicate names */
     }
+    // Pending edits first: an edited preview stored now must not become the project reopened next time.
+    await this.autosaver?.flush();
     try {
       for (const s of res.samples) await db.putSample(s.meta, s.blob);
       await library.addToLibrary(res.project);
     } catch (e) {
       return { ok: false, message: `The project file is fine, but it could not be stored in this browser: ${e instanceof Error ? e.message : String(e)}` };
     }
-    await this.autosaver?.flush();
     await this.loadProject(res.project);
     const extra = res.warnings.length ? ` (${res.warnings.length} note${res.warnings.length === 1 ? '' : 's'}: ${res.warnings[0]})` : '';
     return { ok: true, message: `Opened "${res.project.name}"${extra}.` };
@@ -270,7 +365,7 @@ export class Session {
     return { blob, filename: bundleFileName(project) };
   }
 
-  /** True while the open project is the unsaved Jump In preview shown before any choice. */
+  /** True while the open project is the Jump In preview shown on first launch and not changed yet. */
   get isPreview(): boolean {
     return this.previewOnly;
   }
@@ -312,6 +407,8 @@ export class Session {
       engine.setMasterVolume(project.masterVolumeDb);
       engine.setProject(project);
       engine.prepareInstruments();
+      // Mute All pressed before audio started still holds.
+      if (runtimeStore.getState().muteAll) engine.setMuteAll(true);
       const sequencer = new Sequencer({ getProject: () => this.store.getState() });
       const transport = new RealtimeTransport({ ctx, engine, sequencer });
       this.sequencer = sequencer;
@@ -322,11 +419,33 @@ export class Session {
       return true;
     })().catch((e: unknown) => {
       console.error(e);
+      this.discardFailedAudio(ctx);
       patchRuntime({ audio: 'error', audioMessage: `Audio could not start: ${e instanceof Error ? e.message : String(e)}` });
-      this.audioPromise = null;
       return false;
     });
     return this.audioPromise;
+  }
+
+  /**
+   * A start that failed leaves nothing behind: its context is closed (no
+   * second live context on the next try) and the sample bookkeeping is reset
+   * so the next start decodes recordings into its own bank again.
+   */
+  private discardFailedAudio(ctx: AudioContext): void {
+    this.audioPromise = null;
+    ctx.onstatechange = null;
+    void ctx.close().catch(() => undefined);
+    if (this.ctx !== ctx) return;
+    try {
+      this.engine?.dispose();
+    } catch {
+      /* the engine never finished setting up */
+    }
+    this.engine = null;
+    this.bank = null;
+    this.ctx = null;
+    this.loadedSampleIds.clear();
+    this.sampleLoads.clear();
   }
 
   /** "Resume audio" button: resume a suspended or interrupted context. */
@@ -366,12 +485,20 @@ export class Session {
         if (counting !== ev.countIn) patchRuntime({ countingIn: ev.countIn });
       }),
       t.on('end', () => this.stop()),
+      t.on('arpNote', (ev) => this.recordArpNote(ev)),
       t.on('stalled', (s) => {
+        const rt = runtimeStore.getState();
+        this.stallResume = { mode: rt.mode, songBlock: rt.songBlock, replayId: this.replayingId };
         this.finishTake('stalled');
         this.stopRecordNotes();
         this.releaseAllNotes();
+        // The transport is back on the live pads: pads, keys and knobs work again until Resume.
+        this.endReplay();
         patchRuntime({
           playing: false,
+          mode: 'live',
+          songBlock: null,
+          countingIn: false,
           stalled:
             s.reason === 'suspended'
               ? 'Playback stopped because the audio device paused.'
@@ -395,6 +522,13 @@ export class Session {
     if (this.transport && !this.replayingId) {
       if (p.bpm !== prev.bpm) this.transport.setTempo(p.bpm);
       if (p.swing !== prev.swing) this.transport.setSwing(p.swing);
+      // Switching a part's arpeggiator or its Latch off ends a latched pattern, so it never restarts on its own later.
+      if (p.tracks !== prev.tracks) {
+        for (const t of p.tracks) {
+          const was = prev.tracks.find((x) => x.id === t.id)?.arp;
+          if (was && was !== t.arp && ((was.enabled && !t.arp.enabled) || (was.latch && !t.arp.latch))) this.transport.clearArpLatch(t.id);
+        }
+      }
       if (musicChanged(p, prev)) this.transport.invalidate();
     }
     if (p.samples !== prev.samples) void this.loadProjectSamples(p);
@@ -431,7 +565,8 @@ export class Session {
           }
           const buffer = await ctx.decodeAudioData(await rec.blob.arrayBuffer());
           bank.add(meta.id, buffer);
-          this.loadedSampleIds.add(meta.id);
+          // A bank discarded by a failed audio start does not count as loaded.
+          if (this.bank === bank) this.loadedSampleIds.add(meta.id);
         })()
           .catch(() => notify(`The recording "${meta.name}" could not be decoded.`, 'warn'))
           .finally(() => {
@@ -459,6 +594,7 @@ export class Session {
     if (this.replayingId) this.endReplay();
     this.armDefaultSceneIfIdle();
     this.transport!.start({ mode: { kind: 'live' }, countInBars: 0 });
+    this.stallResume = null;
     patchRuntime({ playing: true, mode: 'live', stalled: null, songBlock: null });
     this.refreshLauncherRuntime();
   }
@@ -470,6 +606,7 @@ export class Session {
     this.releaseAllNotes();
     if (this.transport) this.transport.stop();
     if (this.replayingId) this.endReplay();
+    this.stallResume = null;
     patchRuntime({ playing: false, mode: 'live', songBlock: null, countingIn: false });
     this.refreshLauncherRuntime();
   }
@@ -490,6 +627,7 @@ export class Session {
       return;
     }
     this.transport!.start({ mode: { kind: 'song', fromBlock } });
+    this.stallResume = null;
     patchRuntime({ playing: true, mode: 'song', songBlock: fromBlock, stalled: null });
     this.refreshLauncherRuntime();
   }
@@ -519,10 +657,21 @@ export class Session {
     for (const t of this.store.getState().tracks) if (t.clips[row]) selectSlot(t.id, row);
   }
 
-  /** Resume after a stall: restart from the bar where playback stopped, same clips. */
+  /**
+   * Resume after a stall: start the same thing again. The live pads resume
+   * with the same clips, the song from the block that was playing, and a
+   * replayed take from its start.
+   */
   async resumeAfterStall(): Promise<void> {
+    const resume = this.stallResume;
+    this.stallResume = null;
     patchRuntime({ stalled: null });
-    await this.play();
+    // Playback was started again another way meanwhile (e.g. Record Notes): only the banner goes.
+    if (this.transport?.playing) return;
+    const replayId = resume?.mode === 'replay' ? resume.replayId : null;
+    if (resume?.mode === 'song') await this.playSong(resume.songBlock ?? 0);
+    else if (replayId && this.store.getState().performances.some((p) => p.id === replayId)) await this.replayPerformance(replayId);
+    else await this.play();
   }
 
   private stopEverything(): void {
@@ -666,9 +815,16 @@ export class Session {
     if (this.accepted(r)) this.recordControl('master', { t: this.currentTick(), type: 'master', volumeDb: this.store.getState().masterVolumeDb });
   }
 
-  /** Mute All: silence everything now, including held notes and effect tails. */
+  /**
+   * Mute All: silence everything now, including held notes and effect tails.
+   * It also ends a performance take there (keeping what came before): a take
+   * cannot hold the silence, so its replay and export would play on.
+   */
   setMuteAll(muted: boolean): void {
-    if (muted) this.releaseAllNotes();
+    if (muted) {
+      this.finishTake('muted');
+      this.releaseAllNotes();
+    }
     this.engine?.setMuteAll(muted);
     patchRuntime({ muteAll: muted });
   }
@@ -685,13 +841,53 @@ export class Session {
   }
 
   undo(): void {
-    const r = this.store.undo();
-    if (r.refused) notify(r.refused, 'warn');
+    this.stepHistory(() => this.store.undo());
   }
 
   redo(): void {
-    const r = this.store.redo();
+    this.stepHistory(() => this.store.redo());
+  }
+
+  /** Undo or redo. During a take the values it changes are heard at once, so the take records them. */
+  private stepHistory(step: () => ApplyResult): void {
+    const before = this.store.getState();
+    const r = step();
     if (r.refused) notify(r.refused, 'warn');
+    else if (r.changed && this.take) this.recordChangedValues(before, this.store.getState());
+  }
+
+  /**
+   * Record what an undo or redo changed during a take, as if the knob had
+   * been moved there. The take's lock only lets through steps that change
+   * such values (isRecordablePath), so nothing else can differ.
+   */
+  private recordChangedValues(prev: Project, next: Project): void {
+    const t = this.currentTick();
+    if (next.bpm !== prev.bpm) this.recordControl('tempo', { t, type: 'tempo', bpm: next.bpm });
+    if (next.swing !== prev.swing) this.recordControl('swing', { t, type: 'swing', swing: next.swing });
+    if (next.masterVolumeDb !== prev.masterVolumeDb) this.recordControl('master', { t, type: 'master', volumeDb: next.masterVolumeDb });
+    const params = (module: Id, now: Readonly<Record<string, number>>, was: Readonly<Record<string, number>>) => {
+      if (now === was) return;
+      for (const param of new Set([...Object.keys(now), ...Object.keys(was)])) {
+        if (now[param] === was[param]) continue;
+        // A value the undo removed is back to its default.
+        const value = now[param] ?? specById(specsForModule(next, module), param)?.default;
+        if (value !== undefined) this.recordControl(`param:${module}:${param}`, { t, type: 'param', module, param, value });
+      }
+    };
+    next.tracks.forEach((track, i) => {
+      const was = prev.tracks[i];
+      if (!was || was === track || was.id !== track.id) return;
+      if (track.mute !== was.mute) this.recordEvent({ t, type: 'mute', trackId: track.id, mute: track.mute });
+      for (const m of MACRO_IDS) {
+        if (track.macros[m] !== was.macros[m]) this.recordControl(`macro:${track.id}:${m}`, { t, type: 'macro', trackId: track.id, macro: m, value: track.macros[m] });
+      }
+      params(`${track.id}:inst`, track.instrument.params, was.instrument.params);
+    });
+    next.patch.modules.forEach((mod, i) => {
+      const was = prev.patch.modules[i];
+      if (was && was.id === mod.id) params(mod.id, mod.params, was.params);
+    });
   }
 
   /* ------------------------------------------------------------------ */
@@ -700,7 +896,9 @@ export class Session {
 
   /**
    * Play a note on a part. `rawPitch` is the key pressed (MIDI, or drum pad
-   * index); Musical Assist snaps melodic notes into the project scale.
+   * index); Musical Assist snaps synth notes into the project scale. Drums,
+   * samplers (a recording keeps its pitch unless its own Pitch is changed)
+   * and previews play exactly the key given.
    */
   noteOn(trackId: Id, rawPitch: number, velocity: number, source: NoteSource): void {
     if (this.replayingId) return;
@@ -723,21 +921,26 @@ export class Session {
     const track = p.tracks.find((t) => t.id === trackId);
     if (!track) return;
     if (this.held.has(key)) this.noteOff(trackId, rawPitch, source);
-    const drums = track.instrument.kind === 'drums';
+    const kind = track.instrument.kind;
     const preview = source === 'preview';
-    const pitch = !drums && !preview && p.assist ? snapToScale(rawPitch, p.root, p.scale) : rawPitch;
+    const exact = preview || kind === 'drums' || kind === 'sampler';
+    const pitch = !exact && p.assist ? snapToScale(rawPitch, p.root, p.scale) : rawPitch;
     const v = Math.max(0.05, Math.min(1, velocity));
-    const note: HeldNote = { trackId, pitch, velocity: v, recTick: null, recClipStart: null };
-    if (!preview && this.noteRec && this.noteRec.trackId === trackId && this.transport?.playing) {
+    const viaArp = track.arp.enabled && kind !== 'drums' && !preview;
+    const note: HeldNote = { trackId, pitch, velocity: v, viaArp, recTick: null, recClipStart: null };
+    // Record Notes keeps a played key as a note. With the arpeggiator on, the
+    // notes it plays are recorded instead (recordArpNote), not the key held.
+    if (!preview && !viaArp && this.noteRec && this.noteRec.trackId === trackId && this.transport?.playing) {
       const pos = this.recordingTick();
       const rt = this.sequencer?.getTrackState(trackId);
-      if (rt?.playing && rt.playing.slot === this.noteRec.slot) {
+      // From about the clip's first downbeat on (up to half a step early, like a pushed beat), so not during the count-in.
+      if (rt?.playing && rt.playing.slot === this.noteRec.slot && pos >= rt.playing.startTick - TICKS_PER_STEP / 2) {
         note.recTick = pos;
         note.recClipStart = rt.playing.startTick;
       }
     }
     this.held.set(key, note);
-    if (track.arp.enabled && !drums && !preview) {
+    if (viaArp) {
       this.transport?.setArpHeld(trackId, this.heldPitches(trackId, true), v);
     } else {
       this.engine.liveNoteOn(trackId, pitch, v, key);
@@ -753,8 +956,8 @@ export class Session {
     const note = this.held.get(key);
     if (!note) return;
     this.held.delete(key);
-    const track = this.store.getState().tracks.find((t) => t.id === trackId);
-    if (source !== 'preview' && track?.arp.enabled && track.instrument.kind !== 'drums') this.transport?.setArpHeld(trackId, this.heldPitches(trackId, true));
+    // Released where it was pressed: the arpeggiator switched on or off meanwhile changes nothing.
+    if (note.viaArp) this.transport?.setArpHeld(trackId, this.heldPitches(trackId, true));
     else this.engine?.liveNoteOff(trackId, key);
     if (source !== 'preview') this.recordEvent({ t: this.currentTick(), type: 'noteOff', trackId, pitch: note.pitch, key });
     if (note.recTick !== null && note.recClipStart !== null && this.noteRec) this.commitRecordedNote(note);
@@ -787,14 +990,15 @@ export class Session {
       this.noteOff(n.trackId, Number(raw), source as NoteSource);
     }
     this.engine?.releaseLive();
-    if (this.transport) for (const t of this.store.getState().tracks) this.transport.setArpHeld(t.id, []);
+    // A replayed take drives the arpeggiator itself (live keys are off then): it plays on.
+    if (this.transport && !this.replayingId) for (const t of this.store.getState().tracks) this.transport.setArpHeld(t.id, []);
     patchRuntime({ held: {} });
   }
 
-  /** Pitches held on a part; `forArp` leaves out previews, which never feed the arpeggiator. */
+  /** Pitches held on a part; `forArp`: only the keys that went to the arpeggiator. */
   private heldPitches(trackId: Id, forArp = false): number[] {
     const out: number[] = [];
-    for (const [key, n] of this.held) if (n.trackId === trackId && !(forArp && key.startsWith('preview:')) && !out.includes(n.pitch)) out.push(n.pitch);
+    for (const n of this.held.values()) if (n.trackId === trackId && (!forArp || n.viaArp) && !out.includes(n.pitch)) out.push(n.pitch);
     return out;
   }
 
@@ -822,7 +1026,9 @@ export class Session {
   /**
    * Record Notes into the selected part's selected clip (a new 2-bar clip is
    * created in an empty slot). Starts playback if needed (with the one-bar
-   * count-in when that option is on).
+   * count-in when that option is on); a selected clip that is not the one
+   * playing starts at the next bar, and recording begins there. With the
+   * part's arpeggiator on, the notes the arpeggiator plays are recorded.
    */
   async toggleRecordNotes(): Promise<void> {
     if (this.noteRec) {
@@ -839,21 +1045,26 @@ export class Session {
     const p = this.store.getState();
     const track = p.tracks.find((t) => t.id === trackId);
     if (!track) return;
-    const playingSlot = runtimeStore.getState().tracks[trackId]?.playingSlot ?? null;
-    const slot = playingSlot ?? slotFor(ui, trackId);
+    const rt = runtimeStore.getState();
+    const playingSlot = rt.tracks[trackId]?.playingSlot ?? null;
+    const chosen = ui.selectedSlot[trackId] as number | undefined;
+    // On the live pads the clip selected on the part (Steps, a pad tap or a scene launch choose it), else the one it plays.
+    const slot = rt.mode === 'live' && chosen !== undefined ? chosen : (playingSlot ?? slotFor(ui, trackId));
+    // The whole pass (a new clip, its notes, knob moves made meanwhile) is one undo step.
+    this.store.beginGroup('Record notes');
     if (!track.clips[slot]) {
       const bars: ClipBars = track.instrument.kind === 'drums' ? 1 : 2;
       cmd.createClip(this.store, trackId, slot, bars, 'Take');
     }
     selectSlot(trackId, slot);
-    this.noteRec = { trackId, slot, gesture: uid('rec'), added: 0 };
+    this.noteRec = { trackId, slot, gesture: uid('rec'), added: 0, arpNotes: [], arpFlush: null };
     patchRuntime({ recording: 'notes', recordTarget: { trackId, slot } });
     const seqState = this.sequencer!.getTrackState(trackId);
     if (!this.transport!.playing) {
       if (seqState.playing?.slot !== slot) this.transport!.launchClip(trackId, slot);
       const countIn = p.settings.countIn ? 1 : 0;
       this.transport!.start({ mode: { kind: 'live' }, countInBars: countIn });
-      patchRuntime({ playing: true, mode: 'live', countingIn: countIn > 0 });
+      patchRuntime({ playing: true, mode: 'live', countingIn: countIn > 0, stalled: null });
       this.refreshLauncherRuntime();
     } else if (seqState.playing?.slot !== slot) {
       this.applyLaunchResults([this.transport!.launchClip(trackId, slot)]);
@@ -862,30 +1073,65 @@ export class Session {
 
   stopRecordNotes(): void {
     if (!this.noteRec) return;
-    // Notes still held are committed with their length so far.
+    // Notes still held are committed with their length so far, and arpeggio notes already played.
     for (const n of this.held.values()) if (n.recTick !== null) this.commitRecordedNote(n);
+    this.flushArpNotes();
     const added = this.noteRec.added;
     this.noteRec = null;
-    this.store.endGesture();
+    this.store.endGroup();
     if (runtimeStore.getState().recording === 'notes') patchRuntime({ recording: 'off', recordTarget: null });
     else patchRuntime({ recordTarget: null });
-    if (added > 0) notify(`Recorded ${added} note${added === 1 ? '' : 's'} into the clip. Undo removes the whole take.`, 'info', 'undo');
+    if (added > 0) notify(`Recorded ${added} note${added === 1 ? '' : 's'} into the clip. Undo removes the whole pass, with any knob moves made during it.`, 'info', 'undo');
   }
 
   private commitRecordedNote(n: HeldNote): void {
+    if (!this.noteRec || n.recTick === null || n.recClipStart === null) return;
+    const duration = Math.max(6, this.recordingTick() - n.recTick);
+    this.addRecordedNote(n.recTick - n.recClipStart, n.pitch, n.velocity, duration, this.store.getState().settings.recordQuantize);
+    n.recTick = null;
+  }
+
+  /**
+   * Record Notes on a part whose arpeggiator plays: each note it plays goes
+   * into the clip where it sounded, as long as it sounded (called when the
+   * audio clock reaches it). They already sit on the arpeggiator's grid, so
+   * Record Notes timing does not move them (it would pull triplets and fast
+   * rates onto its own grid).
+   */
+  private recordArpNote(ev: NoteEvent): void {
     const rec = this.noteRec;
-    if (!rec || n.recTick === null || n.recClipStart === null) return;
-    const p = this.store.getState();
-    const clip = p.tracks.find((t) => t.id === rec.trackId)?.clips[rec.slot];
+    if (!rec || ev.trackId !== rec.trackId || !this.sequencer) return;
+    const at = this.sequencer.playingAt(ev.trackId, ev.tick);
+    // Only while the recorded clip plays, from its first downbeat (not during the count-in).
+    if (!at || at.slot !== rec.slot || ev.tick < at.startTick) return;
+    rec.arpNotes.push({ tick: ev.tick - at.startTick, pitch: ev.pitch, velocity: ev.velocity, duration: ev.durationTicks });
+    rec.arpFlush ??= setTimeout(() => this.flushArpNotes(), ARP_RECORD_BATCH_MS);
+  }
+
+  /** Write the arpeggio notes played so far into the clip (one store edit, part of the take's undo step). */
+  private flushArpNotes(): void {
+    const rec = this.noteRec;
+    if (!rec) return;
+    if (rec.arpFlush !== null) clearTimeout(rec.arpFlush);
+    rec.arpFlush = null;
+    const notes = rec.arpNotes.splice(0);
+    // A clip deleted meanwhile is not made again.
+    if (!notes.length || !this.store.getState().tracks.find((t) => t.id === rec.trackId)?.clips[rec.slot]) return;
+    const r = cmd.addRecordedNotes(this.store, rec.trackId, rec.slot, notes, { quantize: 'off', mode: 'overdub', gesture: rec.gesture });
+    if (r.changed) rec.added += r.added ?? notes.length;
+  }
+
+  /** Overdub one note into the clip being recorded; `tick` counts from the clip's loop start (wrapped into the loop). */
+  private addRecordedNote(tick: number, pitch: number, velocity: number, duration: number, quantize: QuantizeGrid): void {
+    const rec = this.noteRec;
+    if (!rec) return;
+    const clip = this.store.getState().tracks.find((t) => t.id === rec.trackId)?.clips[rec.slot];
     if (!clip) return;
     const len = clip.bars * TICKS_PER_BAR;
-    const now = this.recordingTick();
-    const duration = Math.max(6, now - n.recTick);
-    let local = (n.recTick - n.recClipStart) % len;
+    let local = tick % len;
     if (local < 0) local += len;
-    const r = cmd.addRecordedNotes(this.store, rec.trackId, rec.slot, [{ tick: local, pitch: n.pitch, velocity: n.velocity, duration: Math.min(duration, len) }], { quantize: p.settings.recordQuantize, mode: 'overdub', gesture: rec.gesture });
+    const r = cmd.addRecordedNotes(this.store, rec.trackId, rec.slot, [{ tick: local, pitch, velocity, duration: Math.min(duration, len) }], { quantize, mode: 'overdub', gesture: rec.gesture });
     if (r.changed) rec.added += 1;
-    n.recTick = null;
   }
 
   /* ------------------------------------------------------------------ */
@@ -899,6 +1145,11 @@ export class Session {
   async togglePerformance(): Promise<void> {
     if (this.take) {
       this.finishTake('button');
+      return;
+    }
+    if (runtimeStore.getState().muteAll) {
+      // A take cannot hold the silence: its replay and export would play at full level.
+      notify('Mute All is on. Turn it off to record a performance.', 'warn');
       return;
     }
     if (this.noteRec) this.stopRecordNotes();
@@ -920,11 +1171,49 @@ export class Session {
       events: [],
       lastControlTime: new Map(),
     };
-    this.store.setLock(TAKE_LOCK_MESSAGE, isRecordableLabel);
+    this.seedTake(this.take, project);
+    this.store.setLock(TAKE_LOCK_MESSAGE, isRecordableLabel, isRecordablePath);
     patchRuntime({ recording: 'performance' });
   }
 
-  private finishTake(reason: 'button' | 'stop' | 'stalled'): void {
+  /**
+   * Keys already down when a take starts belong in it: notes that keep
+   * sounding while held, and the arpeggiator's input (keys held, and notes
+   * kept by Latch), are written at the take's start, so the replay starts
+   * with the same sound. (A replayed pattern counts its steps from there.)
+   * A drum hit or a one-shot recording already played before the take and
+   * is left out.
+   */
+  private seedTake(take: Take, project: Project): void {
+    const seq = this.sequencer;
+    if (!seq) return;
+    const t = take.startTick;
+    const on = (trackId: Id, pitch: number, velocity: number, key: string) => take.events.push({ t, type: 'noteOn', trackId, pitch, velocity, key });
+    for (const track of project.tracks) {
+      const keys = [...this.held].filter(([key, n]) => n.trackId === track.id && !key.startsWith('preview:'));
+      if (!track.arp.enabled || track.instrument.kind === 'drums') {
+        // A key fed to an arpeggiator switched off since makes no sound.
+        if (soundsWhileHeld(track)) for (const [key, n] of keys) if (!n.viaArp) on(track.id, n.pitch, n.velocity, key);
+        continue;
+      }
+      const input = seq.getArpInput(track.id);
+      if (!input) continue;
+      // The arp's notes in its own order (the order they were played); a latched note no key holds
+      // is pressed and let go of at once, so the replayed latch keeps it as it did live.
+      const released: PerformanceEvent[] = [];
+      for (const pitch of track.arp.latch ? input.latched : input.held) {
+        const pressed = keys.filter(([, n]) => n.viaArp && n.pitch === pitch);
+        for (const [key] of pressed) on(track.id, pitch, input.velocity, key);
+        if (pressed.length) continue;
+        const key = `take:${track.id}:${pitch}`;
+        on(track.id, pitch, input.velocity, key);
+        released.push({ t, type: 'noteOff', trackId: track.id, pitch, key });
+      }
+      take.events.push(...released);
+    }
+  }
+
+  private finishTake(reason: 'button' | 'stop' | 'stalled' | 'muted'): void {
     const take = this.take;
     if (!take) return;
     this.take = null;
@@ -954,7 +1243,8 @@ export class Session {
       return;
     }
     cmd.addPerformance(this.store, perf);
-    const why = reason === 'stalled' ? ' (recording stopped early because playback was interrupted)' : '';
+    const why =
+      reason === 'stalled' ? ' (recording stopped early because playback was interrupted)' : reason === 'muted' ? ' (Mute All ended the recording there)' : '';
     notify(`Saved "${perf.name}" (${formatSeconds(seconds)})${why}. Replay or export it in Arrange.`, reason === 'stalled' ? 'warn' : 'info');
   }
 
@@ -1140,6 +1430,14 @@ function controlKey(ev: PerformanceEvent): string {
     default:
       return '';
   }
+}
+
+/** Does a key held on this part keep sounding while it is held (a synth note with sustain, a looping recording)? */
+function soundsWhileHeld(track: Track): boolean {
+  const inst = track.instrument;
+  if (inst.kind === 'drums') return false;
+  const value = (id: string) => inst.params[id] ?? specById(INSTRUMENT_PARAMS[inst.kind], id)?.default ?? 0;
+  return inst.kind === 'sampler' ? value('mode') >= 1 : value('sustain') > 0;
 }
 
 /** Did anything that changes generated notes change (clips, instrument kind, arp)? */

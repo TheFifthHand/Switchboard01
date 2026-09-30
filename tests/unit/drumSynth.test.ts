@@ -17,7 +17,7 @@ import {
 } from '../../src/audio/instruments/drumSynth';
 import { DEFAULT_KIT_ID, getKitRecipe, getKitVoiceNames } from '../../src/audio/instruments/kits';
 import { bandProfileDb, energy, fractionAbove, peakAbs, powerSpectrum, rms, rmsEnvelope, zeroCrossingFrequency } from '../../src/audio/dsp';
-import { CHOKE_GROUPS, DRUM_SLOTS, KITS } from '../../src/content/catalog';
+import { DRUM_SLOTS, KITS } from '../../src/content/catalog';
 
 const SR = 48000;
 const KIT_IDS = KITS.map((k) => k.id);
@@ -105,7 +105,7 @@ describe('kit recipes and names', () => {
     }
   });
 
-  it('standard kits follow the pad layout; hand percussion keeps a choke family on 4/5/6', () => {
+  it('standard kits follow the pad layout; only hats choke each other', () => {
     for (const id of STANDARD) {
       const n = getKitVoiceNames(id);
       expect(n[0]).toBe('Kick');
@@ -113,11 +113,22 @@ describe('kit recipes and names', () => {
       expect(n[4]).toBe('Closed Hat');
       expect(n[5]).toBe('Open Hat');
       expect(n.slice(8, 11)).toEqual(['Low Tom', 'Mid Tom', 'High Tom']);
+      // Every choke group is made of hats: the closed hat always chokes the open hat.
+      const groups = getKitRecipe(id).chokeGroups;
+      expect(groups.some((g) => g.includes(4) && g.includes(5))).toBe(true);
+      for (const g of groups) for (const slot of g) expect(n[slot]).toMatch(/Hat$/);
+    }
+    // Slot 6 is a pedal hat only in Tight Circuit; elsewhere a shaker that leaves the hats alone.
+    expect(getKitVoiceNames('tight-circuit')[6]).toBe('Pedal Hat');
+    expect(getKitRecipe('tight-circuit').chokeGroups).toEqual([[4, 5, 6]]);
+    for (const id of ['round-machine', 'dust-tape', 'bright-steel']) {
+      expect(getKitVoiceNames(id)[6]).toBe('Shaker');
+      expect(getKitRecipe(id).chokeGroups).toEqual([[4, 5]]);
     }
     const hp = getKitVoiceNames('hand-percussion');
     expect(hp.slice(4, 7)).toEqual(['Shaker', 'Tambourine', 'Cabasa']);
     expect(hp).toContain('Low Conga');
-    expect(CHOKE_GROUPS[0]).toEqual([4, 5, 6]);
+    expect(getKitRecipe('hand-percussion').chokeGroups).toEqual([]);
   });
 
   it('unknown kits fall back to the default kit', () => {

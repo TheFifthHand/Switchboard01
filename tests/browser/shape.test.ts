@@ -312,6 +312,54 @@ describe('Shape view', () => {
     expect(trackChain(project().patch, 't3')).toEqual(['t3:inst', 't3:drive', 't3:filter', 't3:ch']);
   });
 
+  it('the rack’s Restore Connection re-plugs the one missing cable and keeps an effect the user added', () => {
+    const m = setup('t3');
+    const find = (from: string, to: string) => project().patch.connections.find((c) => c.from.module === from && c.from.port === 'out' && c.to.module === to && c.to.port === 'in');
+    let chorus = '';
+    act(() => {
+      chorus = cmd.insertEffect(session.store, 't3', 'chorus').moduleId!;
+      void cmd.setModuleParam(session.store, chorus, 'depth', 0.9);
+      void cmd.disconnect(session.store, find('t3:drive', 't3:filter')!.id);
+    });
+    const rack = panel(m.container, 'Effects');
+    const warning = () => [...rack.querySelectorAll<HTMLElement>('[role="alert"]')].find((el) => el.textContent?.includes('This part has no path to the output.'));
+    // It says what it will do before it does it.
+    expect(warning()!.textContent).toContain('Restore Connection plugs in Drive Out → Filter In; everything else stays as you patched it.');
+    const cables = project().patch.connections.length;
+    click(button(warning()!, 'Restore Connection'));
+    expect(find('t3:drive', 't3:filter')).toBeDefined();
+    expect(project().patch.connections.length).toBe(cables + 1);
+    // The Chorus, its settings and its cables stay.
+    expect(trackChain(project().patch, 't3')).toEqual(['t3:inst', 't3:drive', 't3:filter', chorus, 't3:ch']);
+    expect(moduleParams(chorus).depth).toBe(0.9);
+    expect(warning()).toBeUndefined();
+    expect(runtimeStore.getState().notice).toMatchObject({ text: 'Connected Drive Out → Filter In: this part is heard again.', action: 'undo' });
+    act(() => session.undo());
+    expect(find('t3:drive', 't3:filter')).toBeUndefined();
+    expect(project().patch.modules.some((x) => x.id === chorus)).toBe(true);
+  });
+
+  it('the rack says when Restore Connection has to put the default cables back, and what that removes', () => {
+    const m = setup('t3');
+    const find = (from: string, to: string) => project().patch.connections.find((c) => c.from.module === from && c.from.port === 'out' && c.to.module === to && c.to.port === 'in');
+    let chorus = '';
+    act(() => {
+      chorus = cmd.insertEffect(session.store, 't3', 'chorus').moduleId!;
+      void cmd.disconnect(session.store, find('t3:inst', 't3:drive')!.id);
+      void cmd.disconnect(session.store, find('t3:ch', 'master')!.id);
+    });
+    const rack = panel(m.container, 'Effects');
+    const warning = [...rack.querySelectorAll<HTMLElement>('[role="alert"]')].find((el) => el.textContent?.includes('This part has no path to the output.'))!;
+    expect(warning.textContent).toContain('No single cable can reconnect it, so Restore Connection puts its default cables back: effects and LFOs you added to it, and its cables to other parts, are removed.');
+    click(button(warning, 'Restore Connection'));
+    expect(trackChain(project().patch, 't3')).toEqual(['t3:inst', 't3:drive', 't3:filter', 't3:ch']);
+    expect(project().patch.modules.some((x) => x.id === chorus)).toBe(false);
+    expect(runtimeStore.getState().notice).toMatchObject({ text: 'Restored this part’s default cables, so it reaches the output again.', action: 'undo' });
+    act(() => session.undo());
+    expect(project().patch.modules.some((x) => x.id === chorus)).toBe(true);
+    expect(find('t3:inst', 't3:drive')).toBeUndefined();
+  });
+
   it('drum voices: knobs edit the voice, the audition button plays and selects it', async () => {
     const m = setup('t1');
     const inst = track('t1').instrument;

@@ -217,6 +217,9 @@ export const BREAKBEAT = defineStarter({
       name: 'Rave Stab',
       level: -10.5,
       macros: { space: 0.3, echo: 0.15 },
+      // Stabs are as short as their notes: Loop plays the chord while a note lasts (One-shot would
+      // ring all 2.5 s of it). No note outlasts the pitched chord, so none repeats.
+      instrument: { mode: 1 },
       clips: [
         null,
         null,

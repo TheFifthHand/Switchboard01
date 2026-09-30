@@ -36,10 +36,15 @@ export function useBarClipboard(): BarClipboard | null {
 /** Minimum time an auditioned note sounds, so a quick click is still heard. */
 export const AUDITION_MIN_MS = 140;
 
-/** True when playing a note now would be written into the clip (Record Notes on this part). */
-function recordingInto(trackId: Id): boolean {
+/**
+ * True when a preview must stay silent: Record Notes on this part would
+ * write it into the clip, and a performance take would miss it (previews are
+ * never recorded, so its replay and export could not match what was heard).
+ * A replay pauses live notes anyway.
+ */
+function previewBlocked(trackId: Id): boolean {
   const s = runtimeStore.getState();
-  return s.recording === 'notes' && s.recordTarget?.trackId === trackId;
+  return s.recording === 'performance' || s.replayId !== null || (s.recording === 'notes' && s.recordTarget?.trackId === trackId);
 }
 
 export interface Audition {
@@ -51,10 +56,11 @@ const NO_AUDITION: Audition = { release() {} };
 
 /**
  * Let the user hear a note they just placed, at exactly its pitch (a preview:
- * no Musical Assist, no arpeggiator, never recorded).
+ * no Musical Assist, no arpeggiator, never recorded). It stays silent while
+ * a take records, or Record Notes records this part (see previewBlocked).
  */
 export function audition(trackId: Id, pitch: number, velocity: number): Audition {
-  if (recordingInto(trackId)) return NO_AUDITION;
+  if (previewBlocked(trackId)) return NO_AUDITION;
   session.noteOn(trackId, pitch, velocity, 'preview');
   const started = performance.now();
   let done = false;

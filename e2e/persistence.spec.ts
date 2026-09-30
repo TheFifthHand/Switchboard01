@@ -3,7 +3,10 @@
  *  - a project with a custom (imported) sample survives export → import into
  *    a FRESH browser profile → a second audio render that matches the first;
  *  - autosave reopens the last project;
- *  - a storage failure shows an understandable recovery path.
+ *  - the first-launch preview is stored on its first change (never before)
+ *    and is offered again after a reload;
+ *  - a storage failure shows an understandable recovery path, and the
+ *    recovery export downloads a project file and says so.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { jumpIn, openFresh, pageErrors } from './helpers';
@@ -128,6 +131,23 @@ test('autosave reopens the last project after a reload', async ({ page }) => {
   expect(await page.evaluate(() => (window as any).__switchboard.project().bpm)).toBe(97);
 });
 
+test('the preview from "Just look around" is stored on its first change and reopens after a reload', async ({ page }) => {
+  await openFresh(page);
+  await page.getByRole('button', { name: 'Just look around' }).click();
+  await expect(page.getByRole('button', { name: 'Autosave: Preview, not stored until you change it' })).toBeVisible();
+  // Looking around stores nothing.
+  await page.waitForTimeout(1200);
+  expect(await page.evaluate(() => (window as any).__switchboard.session.isPreview)).toBe(true);
+  // The first change makes it a normal, saved project.
+  await page.evaluate(() => (window as any).__switchboard.session.setBpm(97));
+  await expect(page.getByRole('button', { name: 'Autosave: Saved' })).toBeVisible({ timeout: 5000 });
+  const name = await page.evaluate(() => (window as any).__switchboard.project().name);
+  await page.reload();
+  await expect(page.getByRole('button', { name: `Continue “${name}”` })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__switchboard.project().bpm)).toBe(97);
+  expect(pageErrors(page)).toEqual([]);
+});
+
 test('a storage failure shows "Not saved" with Try again and Export project file', async ({ page }) => {
   await openFresh(page);
   await jumpIn(page);
@@ -147,7 +167,10 @@ test('a storage failure shows "Not saved" with Try again and Export project file
   const pop = page.getByRole('alertdialog', { name: 'Saving failed' });
   await expect(pop).toContainText('storage is full');
   await expect(pop.getByRole('button', { name: 'Try again' })).toBeVisible();
-  await expect(pop.getByRole('button', { name: 'Export project file' })).toBeVisible();
+  // The recovery export downloads the project file and says so.
+  const [download] = await Promise.all([page.waitForEvent('download'), pop.getByRole('button', { name: 'Export project file' }).click()]);
+  expect(download.suggestedFilename()).toMatch(/\.sb01\.zip$/);
+  await expect(page.getByText(`Saved “${download.suggestedFilename()}” to your downloads. Keep it as your backup.`)).toBeVisible();
   // Recovery: storage frees up, Try again saves.
   await page.evaluate(() => (window as any).__restorePut());
   await pop.getByRole('button', { name: 'Try again' }).click();

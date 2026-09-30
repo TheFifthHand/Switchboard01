@@ -180,6 +180,12 @@ export class InstrumentModule implements ModuleNode {
     this.current?.engine.releaseAll(t);
   }
 
+  /** Stop: end one-shots still playing out their sound (sampler One-shot); see InstrumentEngine.stopOneShots. */
+  stopOneShots(time: number, startedOnly = false): void {
+    const t = Math.max(Number.isFinite(time) ? time : 0, this.env.ctx.currentTime);
+    this.current?.engine.stopOneShots?.(t, startedOnly);
+  }
+
   /** Hard stop of every voice (current and fading engines). */
   kill(): void {
     this.current?.engine.kill();

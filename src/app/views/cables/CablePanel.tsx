@@ -19,13 +19,13 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Button, Dialog, Icon, IconButton, NumberField, useElementSize } from '../../../ui/components';
 import { isTypingTarget } from '../../../ui/hooks/useComputerKeyboard';
-import { compatibleSources, compatibleTargets, describePathProblem } from '../../../project/graph';
+import { compatibleSources, compatibleTargets } from '../../../project/graph';
 import type { Connection, Id, PortKind, PortRef, Project } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { useStore } from '../../../state/store';
 import { session, useProject, useUi } from '../../instance';
-import { notify } from '../../runtime';
 import { CableArtLayer, CableHitLayer, LiveCable, StubLabels, type CableLayerHandlers, type LiveRefs, type PlugGrab } from './CableLayer';
+import { restoreConnection as restoreFor, restorePlanFor } from './restore';
 import { ConnectionPicker } from './ConnectionPicker';
 import { ModuleBlock, type SocketHandlers, type SocketUi } from './ModuleBlock';
 import {
@@ -133,7 +133,7 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
   const lock = useStore(session.store.info, (s) => s.lock);
   const selectedModuleId = useUi((s) => s.selectedModuleId);
   const repair = useProject(
-    useCallback((p: Project) => (describePathProblem(p.patch, trackId) ? repairPlan(p.patch, trackId) : null), [trackId]),
+    useCallback((p: Project) => restorePlanFor(p, trackId), [trackId]),
     samePlan,
   );
   const locked = lock !== null;
@@ -149,6 +149,8 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
   const [status, setStatus] = useState('');
   const [picker, setPicker] = useState<string | null>(null);
   const [restoreOpen, setRestoreOpen] = useState(false);
+  /** The restore dialog was opened by Restore Connection because no single cable can reconnect the part. */
+  const [restoreForPath, setRestoreForPath] = useState(false);
   const [focusKey, setFocusKey] = useState<string | null>(null);
 
   const rootRef = useRef<HTMLDivElement>(null);
@@ -276,15 +278,21 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
     session.accepted(cmd.setConnectionAmount(session.store, id, amount, gestureId));
   }, []);
 
+  // Same action as the effects rack's Restore Connection (restore.ts). Putting the default cables back
+  // removes what the user added to the part, so that fallback asks first.
   const restoreConnection = () => {
-    const plan = repairPlan(session.store.getState().patch, trackId);
-    if (plan.kind === 'connect') {
-      const r = cmd.connect(session.store, plan.from, plan.to);
-      if (r.ok) setStatus(`Connected ${nameOf(plan)}: ${partName} is heard again. Ctrl+Z undoes it.`);
-      else notify(r.message, 'warn');
+    if (repairPlan(session.store.getState().patch, trackId).kind === 'restore') {
+      setRestoreForPath(true);
+      setRestoreOpen(true);
       return;
     }
-    if (session.accepted(cmd.restoreTrackPatch(session.store, trackId))) setStatus(`Restored ${possessive(partName)} default cables. Ctrl+Z undoes it.`);
+    const out = restoreFor(trackId);
+    if (out.changed) setStatus(`Connected ${out.cable}: ${partName} is heard again. Ctrl+Z undoes it.`);
+  };
+
+  const openRestore = () => {
+    setRestoreForPath(false);
+    setRestoreOpen(true);
   };
 
   const restorePart = () => {
@@ -843,7 +851,7 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
               tip={
                 repair.kind === 'connect'
                   ? `Adds one cable, ${nameOf(repair)}, so ${partName} is heard again. Everything else stays as you patched it.`
-                  : `No single cable can reconnect ${partName}, so this puts its default cables back. Effects and LFOs you added to it are removed.`
+                  : `No single cable can reconnect ${partName}, so this offers to put its default cables back. Effects and LFOs you added to it are removed.`
               }
               detail="Ctrl+Z undoes it."
             >
@@ -867,7 +875,7 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
           >
             Other parts{otherCount > 0 ? ` (${otherCount})` : ''}
           </Button>
-          <Button size="sm" icon="undo" disabled={locked} onClick={() => setRestoreOpen(true)} tip="Put the default cables back for this part or for every part. Asks first.">
+          <Button size="sm" icon="undo" disabled={locked} onClick={openRestore} tip="Put the default cables back for this part or for every part. Asks first.">
             Restore…
           </Button>
         </div>
@@ -938,7 +946,8 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
       <div className="visually-hidden">
         {repair && !locked && (
           <p role="alert">
-            This part has no path to the output. {repair.kind === 'connect' ? `Restore Connection adds ${nameOf(repair)}.` : `Restore Connection puts ${possessive(partName)} default cables back.`}
+            This part has no path to the output.{' '}
+            {repair.kind === 'connect' ? `Restore Connection adds ${nameOf(repair)}.` : `No single cable can reconnect it: Restore Connection offers to put ${possessive(partName)} default cables back.`}
           </p>
         )}
         <h3 id={`${listId}-h`}>Cables of {partName}</h3>
@@ -967,7 +976,7 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
         open={restoreOpen}
         onClose={() => setRestoreOpen(false)}
         title="Restore default cables?"
-        description="Puts the factory cables back. Modules keep their knob settings, bypassed ones are switched back on, and Ctrl+Z undoes it."
+        description={`${restoreForPath ? `No single cable can give ${partName} a path to the output again, so its default cables have to go back. ` : ''}Puts the factory cables back. Modules keep their knob settings, bypassed ones are switched back on, and Ctrl+Z undoes it.`}
         actions={
           <Button variant="ghost" onClick={() => setRestoreOpen(false)}>
             Cancel

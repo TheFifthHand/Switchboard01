@@ -1,5 +1,6 @@
 /** Recorded performances (takes): add, rename, delete, edit events, trim. */
-import type { Id, Performance, PerformanceEvent } from '../../project/types';
+import { BPM_SPEC, INSTRUMENT_PARAMS, MASTER_VOLUME_SPEC, MODULE_PARAMS, SWING_SPEC, clampParam, specById, type ParamSpec } from '../../project/params';
+import type { Id, MacroId, Performance, PerformanceEvent } from '../../project/types';
 import { VALIDATION_LIMITS, validatePerformance } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
 import { NOT_FOUND, cleanName, isFiniteNumber, refuse, run, type CommandResult } from './common';
@@ -70,18 +71,98 @@ export function deletePerformanceEvent(store: ProjectStore, perfId: Id, index: n
 }
 
 /**
- * Shorten a take so it ends at `endTick` (events after it are removed). Only
- * the end can be trimmed: the start is tied to the captured snapshot.
+ * Shorten a take so it ends at `endTick`. Events at or after the new end are
+ * removed (replay ignores them anyway: a take plays [startTick, endTick)); a
+ * note still held at the new end sounds until the end. Only the end can be
+ * trimmed: the start is tied to the captured snapshot.
  */
 export function trimPerformance(store: ProjectStore, perfId: Id, endTick: number): CommandResult {
   const perf = store.getState().performances.find((x) => x.id === perfId);
   if (!perf) return NOT_FOUND('performance');
-  if (!isFiniteNumber(endTick) || endTick <= perf.startTick) return refuse('invalid', 'The end must be after the start.');
-  if (endTick >= perf.endTick) return { changed: false };
+  if (!isFiniteNumber(endTick) || endTick <= perf.startTick) return refuse('invalid', 'The end must be after the start of the take.');
+  if (endTick === perf.endTick) return { changed: false };
+  if (endTick > perf.endTick) return refuse('invalid', 'A take can only be shortened: choose a point before its current end.');
   return run(store, 'performance:Trim performance', (d) => {
     const x = d.performances.find((q) => q.id === perfId);
     if (!x) return;
     x.endTick = endTick;
-    x.events = x.events.filter((e) => e.t <= endTick);
+    x.events = x.events.filter((e) => e.t < endTick);
+  });
+}
+
+const macroSpec = (macro: MacroId): ParamSpec => ({ id: macro, label: macro[0].toUpperCase() + macro.slice(1), min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: '' });
+
+/**
+ * The range and units of the value a recorded event carries: a macro or knob
+ * move, a tempo, swing or master volume change. Knob ranges come from the
+ * take's own snapshot (the modules and sounds it replays with). Null for
+ * events without an editable value (launches, notes, mutes) or a knob the
+ * registry does not know.
+ */
+export function performanceEventSpec(perf: Performance, e: PerformanceEvent): ParamSpec | null {
+  switch (e.type) {
+    case 'macro':
+      return macroSpec(e.macro);
+    case 'tempo':
+      return BPM_SPEC;
+    case 'swing':
+      return SWING_SPEC;
+    case 'master':
+      return MASTER_VOLUME_SPEC;
+    case 'param': {
+      const mod = perf.snapshot.patch.modules.find((m) => m.id === e.module);
+      let specs: readonly ParamSpec[] = [];
+      if (mod && mod.type !== 'instrument') specs = MODULE_PARAMS[mod.type] ?? [];
+      else {
+        const trackId = mod?.trackId ?? (e.module.endsWith(':inst') ? e.module.slice(0, -':inst'.length) : null);
+        const track = trackId ? perf.snapshot.tracks.find((t) => t.id === trackId) : undefined;
+        specs = track ? INSTRUMENT_PARAMS[track.instrument.kind] : [];
+      }
+      return specById(specs, e.param) ?? null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** The value a recorded event carries (see performanceEventSpec), or null. */
+export function performanceEventValue(e: PerformanceEvent): number | null {
+  switch (e.type) {
+    case 'macro':
+    case 'param':
+      return e.value;
+    case 'tempo':
+      return e.bpm;
+    case 'swing':
+      return e.swing;
+    case 'master':
+      return e.volumeDb;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Change the value of one recorded event (a knob or macro position, a tempo,
+ * swing or master volume) without moving it in time. The value is clamped to
+ * the control's range, like a knob.
+ */
+export function setPerformanceEventValue(store: ProjectStore, perfId: Id, index: number, value: number): CommandResult {
+  const perf = store.getState().performances.find((x) => x.id === perfId);
+  if (!perf) return NOT_FOUND('performance');
+  const e = Number.isInteger(index) ? perf.events[index] : undefined;
+  if (!e) return refuse('invalid', 'That event does not exist.');
+  const spec = performanceEventSpec(perf, e);
+  if (!spec) return refuse('invalid', 'Only knob, macro, tempo, swing and volume changes have a value to edit.');
+  if (!isFiniteNumber(value)) return refuse('invalid', 'Type a number.');
+  const v = clampParam(spec, value);
+  if (performanceEventValue(e) === v) return { changed: false };
+  return run(store, 'performance:Change recorded value', (d) => {
+    const x = d.performances.find((q) => q.id === perfId)?.events[index];
+    if (!x) return;
+    if (x.type === 'macro' || x.type === 'param') x.value = v;
+    else if (x.type === 'tempo') x.bpm = v;
+    else if (x.type === 'swing') x.swing = v;
+    else if (x.type === 'master') x.volumeDb = v;
   });
 }

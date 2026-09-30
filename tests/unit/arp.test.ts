@@ -221,4 +221,55 @@ describe('Sequencer arpeggiator', () => {
     seq.setArpHeld('t5', [60], 0);
     expect(notesOf(seq.process(1))).toHaveLength(0);
   });
+
+  it('letting go of one key keeps the velocity the pattern was played with', () => {
+    const p = arpProject({ division: '1/16' });
+    const seq = new Sequencer({ getProject: () => p });
+    seq.start(0);
+    seq.setArpHeld('t5', [60, 64], 0, 0.3);
+    seq.process(0.2);
+    seq.setArpHeld('t5', [64], 0.2); // a release: no velocity of its own
+    const later = notesOf(seq.process(0.6), 't5');
+    expect(later.length).toBeGreaterThan(2);
+    expect(later.every((n) => n.pitch === 64 && n.velocity === 0.3)).toBe(true);
+    expect(seq.getArpInput('t5')).toEqual({ held: [64], latched: [64], velocity: 0.3 });
+  });
+
+  it('Latch keeps notes only while it is on: switching Latch on later brings back nothing', () => {
+    const p = arpProject({ division: '1/8', latch: false });
+    let project = p;
+    const seq = new Sequencer({ getProject: () => project });
+    seq.start(0);
+    seq.setArpHeld('t5', [60, 64], 0);
+    seq.process(0.4);
+    seq.setArpHeld('t5', [], 0.4);
+    expect(seq.getArpInput('t5')).toMatchObject({ held: [], latched: [] });
+    project = { ...p, tracks: p.tracks.map((t) => (t.id === 't5' ? { ...t, arp: { ...t.arp, latch: true } } : t)) };
+    seq.invalidate(0.4);
+    expect(notesOf(seq.process(2), 't5')).toHaveLength(0);
+  });
+
+  it('clearArpLatch ends a latched pattern (the arp or its Latch was switched off); keys still held play on', () => {
+    const p = arpProject({ division: '1/8', latch: true });
+    const seq = new Sequencer({ getProject: () => p });
+    seq.start(0);
+    seq.setArpHeld('t5', [60, 64], 0);
+    seq.process(0.4);
+    seq.setArpHeld('t5', [], 0.4);
+    expect(notesOf(seq.process(0.8), 't5').length).toBeGreaterThan(0); // latched: still playing
+    expect(seq.clearArpLatch('t5', 0.8)).toBe(true);
+    seq.invalidate(0.8);
+    expect(notesOf(seq.process(2), 't5')).toHaveLength(0);
+    expect(seq.clearArpLatch('t5', 2)).toBe(false); // nothing left to drop
+
+    seq.setArpHeld('t5', [67], 2);
+    seq.setArpHeld('t5', [67, 72], 2.1);
+    seq.setArpHeld('t5', [72], 2.2);
+    expect(seq.getArpInput('t5')).toMatchObject({ held: [72], latched: [67, 72] });
+    expect(seq.clearArpLatch('t5', 2.2)).toBe(true);
+    seq.invalidate(2.2);
+    const held = notesOf(seq.process(3), 't5').filter((n) => n.time >= 2.2);
+    expect(held.length).toBeGreaterThan(0);
+    expect(held.every((n) => n.pitch === 72)).toBe(true);
+  });
 });

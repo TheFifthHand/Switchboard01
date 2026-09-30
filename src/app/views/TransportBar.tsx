@@ -1,11 +1,12 @@
-import { useRef, useState } from 'react';
-import { Button, IconButton, Knob, Meter, NumberField, SegmentedControl, Switch, Tooltip, useRafLoop } from '../../ui/components';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { Button, Icon, IconButton, Knob, Meter, NumberField, SegmentedControl, Switch, Tooltip, useRafLoop } from '../../ui/components';
 import { BPM_SPEC, MASTER_VOLUME_SPEC, SWING_SPEC } from '../../project/params';
 import { setTipsEnabled, setView, type View } from '../../state/uiStore';
 import { session, useAutosave, useHistory, useProject, useUi } from '../instance';
-import { useRuntime } from '../runtime';
+import { useOffline, useRuntime } from '../runtime';
 import type { MeterFrame } from '../../audio/contracts';
-import { RecordOptions, recordOptionsCaption } from './RecordOptions';
+import { OfflineMenuItems, OfflineStatus } from './OfflineStatus';
+import { RecordOptions, quantizeCaption, recordOptionsCaption } from './RecordOptions';
 import { MOD_ARIA, MOD_KEY, MenuItem, MenuSeparator, MoreIcon, Popover, anchorFromElement } from './ClipMenu';
 import styles from './TransportBar.module.css';
 
@@ -57,32 +58,73 @@ function Position() {
   );
 }
 
+/**
+ * "Saving failed" with its recovery actions. It stays while Try again or the
+ * export is writing, so keyboard focus stays on the pressed button; when
+ * saving works again it goes, and focus inside it returns to the save status.
+ */
+function SaveFailedPopover(props: { message?: string; returnFocus: RefObject<HTMLButtonElement | null> }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const { returnFocus } = props;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    return () => {
+      if (el?.contains(document.activeElement)) returnFocus.current?.focus();
+    };
+  }, [returnFocus]);
+  return (
+    <div ref={ref} className={styles.savePopover} role="alertdialog" aria-label="Saving failed">
+      <p>{props.message}</p>
+      <div className={styles.saveActions}>
+        <Button size="sm" onClick={() => void session.autosaver?.retry()}>
+          Try again
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => window.dispatchEvent(new CustomEvent('sb:export-project'))}>
+          Export project file
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Saved / Saving… / Not saved, or Preview for the untouched first-launch starter (stored on its first change). */
 function SaveStatus() {
   const save = useAutosave();
+  const preview = useRuntime((s) => s.preview);
   const [open, setOpen] = useState(false);
-  const text = save.status === 'error' ? 'Not saved' : save.status === 'saving' || save.dirty ? 'Saving…' : save.status === 'saved' ? 'Saved' : 'Saved';
-  const tone = save.status === 'error' ? styles.saveError : save.status === 'saving' || save.dirty ? styles.saveBusy : styles.saveOk;
+  const btnRef = useRef<HTMLButtonElement>(null);
+  // Set from a failed save until a save succeeds (also while Try again or the export is writing).
+  const failing = save.lastError !== null;
+  // Saving works again: the popover closes, and a later failure does not reopen it by itself.
+  useEffect(() => {
+    if (!failing) setOpen(false);
+  }, [failing]);
+  const error = save.status === 'error';
+  const busy = !error && (save.status === 'saving' || save.dirty);
+  const idlePreview = preview && !error && !busy;
+  const text = error ? 'Not saved' : busy ? 'Saving…' : idlePreview ? 'Preview' : 'Saved';
+  const tone = error ? styles.saveError : busy ? styles.saveBusy : idlePreview ? styles.savePreview : styles.saveOk;
+  const tip = error
+    ? save.lastError?.message
+    : idlePreview
+      ? 'This starter is a preview and is not stored yet. Your first change adds it to My projects; from then on it saves automatically in this browser.'
+      : 'Your project saves automatically in this browser.';
   return (
     <div className={styles.saveWrap}>
-      <Tooltip tip={save.status === 'error' ? save.lastError?.message : 'Your project saves automatically in this browser.'} detail="Browser storage is working storage. Export a project file for a portable backup.">
-        <button type="button" className={`${styles.save} ${tone}`} aria-live="polite" aria-label={`Autosave: ${text}`} onClick={() => setOpen(save.status === 'error' ? !open : false)}>
-          <span className={styles.saveDot} aria-hidden />
+      <Tooltip tip={tip} detail="Browser storage is working storage. Export a project file for a portable backup.">
+        <button
+          ref={btnRef}
+          type="button"
+          className={`${styles.save} ${tone}`}
+          aria-live="polite"
+          aria-label={idlePreview ? 'Autosave: Preview, not stored until you change it' : `Autosave: ${text}`}
+          onClick={() => setOpen(error ? !open : false)}
+        >
+          {error ? <Icon name="warning" size={13} /> : <span className={styles.saveDot} aria-hidden />}
           <span className={styles.saveText}>{text}</span>
         </button>
       </Tooltip>
-      {save.status === 'error' && open && (
-        <div className={styles.savePopover} role="alertdialog" aria-label="Saving failed">
-          <p>{save.lastError?.message}</p>
-          <div className={styles.saveActions}>
-            <Button size="sm" onClick={() => void session.autosaver?.retry()}>
-              Try again
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => window.dispatchEvent(new CustomEvent('sb:export-project'))}>
-              Export project file
-            </Button>
-          </div>
-        </div>
-      )}
+      {failing && open && <SaveFailedPopover message={save.lastError?.message} returnFocus={btnRef} />}
     </div>
   );
 }
@@ -92,23 +134,45 @@ function RecordGroup() {
   const recording = useRuntime((s) => s.recording);
   const countingIn = useRuntime((s) => s.countingIn);
   const targetId = useRuntime((s) => s.recordTarget?.trackId ?? null);
+  // The clip to record into was chosen while another one played: it (and recording) starts at the next bar.
+  const waiting = useRuntime((s) => s.recordTarget !== null && s.playing && (s.tracks[s.recordTarget.trackId]?.playingSlot ?? null) !== s.recordTarget.slot);
   const targetName = useProject((p) => (targetId ? (p.tracks.find((t) => t.id === targetId)?.name ?? '') : ''));
   const options = useProject((p) => recordOptionsCaption(p.settings));
+  const quantize = useProject((p) => p.settings.recordQuantize);
+  // With the part's arpeggiator on, the notes it plays are recorded on its own grid (Record Notes timing does not apply).
+  const arpGrid = useProject((p) => {
+    const t = targetId ? p.tracks.find((x) => x.id === targetId) : undefined;
+    return t && t.arp.enabled && t.instrument.kind !== 'drums' ? t.arp.division : null;
+  });
+  // Short enough to fit above the buttons with the grid: the pressed Notes key says what records.
   const caption =
     recording === 'notes'
       ? countingIn
-        ? `Count-in · then ${targetName}`
-        : `Recording notes · ${targetName}`
+        ? `Count-in · ${targetName}`
+        : waiting
+          ? `Next bar · ${targetName}`
+          : `Recording · ${targetName}`
       : recording === 'performance'
         ? 'Recording performance'
         : options
           ? `Record · ${options}`
           : 'Record';
+  // The grid notes land on is always in view while notes record (Record Notes timing, set in Recording
+  // options, or the arpeggiator's rate), and otherwise once the timing differs from the usual 1/16.
+  // It never gets cut off: the text before it does.
+  const snap =
+    recording === 'notes' && arpGrid
+      ? `Arp ${arpGrid}`
+      : recording === 'notes' || (recording === 'off' && quantize !== '1/16')
+        ? quantizeCaption(quantize)
+        : null;
   return (
     <div className={`${styles.group} ${styles.recGroup}`} role="group" aria-label="Recording">
       <span className={styles.recCaption} data-live={recording !== 'off' || undefined} aria-live="polite">
         {recording !== 'off' && <span className={styles.recDot} aria-hidden="true" />}
-        {caption}
+        <span className={styles.recText}>{caption}</span>
+        {/* The leading space keeps the words apart for screen readers; on screen the gap does. */}
+        {snap && <span className={styles.recSnap}>{` · ${snap}`}</span>}
       </span>
       <div className={styles.recButtons}>
         <Button
@@ -119,8 +183,8 @@ function RecordGroup() {
           aria-pressed={undefined}
           onClick={() => void session.toggleRecordNotes()}
           aria-label={recording === 'notes' ? 'Stop recording notes' : 'Record Notes'}
-          tip={recording === 'notes' ? 'Stop recording notes. Undo removes the whole take.' : 'Record what you play on the keyboard or drum pads into the selected clip.'}
-          detail="Timing, metronome and count-in are in Recording options (the metronome button)."
+          tip={recording === 'notes' ? 'Stop recording notes. Undo then removes the whole pass in one step.' : 'Record what you play on the keyboard or drum pads into the selected clip.'}
+          detail="Timing, metronome and count-in are in Recording options (the metronome button). With the part's arpeggiator on, the notes it plays are recorded."
           className={recording === 'notes' ? styles.recActive : undefined}
         >
           Notes
@@ -134,7 +198,7 @@ function RecordGroup() {
           onClick={() => void session.togglePerformance()}
           aria-label={recording === 'performance' ? 'Stop recording performance' : 'Record Performance'}
           tip={recording === 'performance' ? 'Stop and keep this performance. Replay or export it in Arrange.' : 'Capture everything you do — launches, notes, knob moves — as a replayable performance.'}
-          detail="Cables and sound choices are locked while recording so the take replays exactly."
+          detail="Cables and sound choices are locked while recording so the take replays exactly. Mute All ends the recording."
           className={recording === 'performance' ? styles.recActive : undefined}
         >
           Performance
@@ -146,33 +210,38 @@ function RecordGroup() {
 }
 
 /**
- * Narrow screens (below 1280 px, e.g. 200 % zoom): Undo, Redo, Tips,
+ * Narrow screens (below 1320 px, e.g. 200 % zoom): Undo, Redo, Tips,
  * Projects and Export move into this menu so every control stays reachable
- * without squeezing the always-visible transport controls.
+ * without squeezing the always-visible transport controls. It also lists the
+ * offline state and, when a new version waits, the Update action (marked on
+ * the key itself), for widths where the strip has no room for them.
  */
 function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; projectName: string }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const history = useHistory();
   const tipsEnabled = useUi((s) => s.tipsEnabled);
+  const updateReady = useOffline().state === 'update-ready';
   const close = () => setOpen(false);
   return (
     <>
-      <Tooltip name="More" tip="Undo, Redo, Tips, your projects and WAV export.">
+      <Tooltip name="More" tip={updateReady ? 'A new version is ready: Update is in this menu. Also Undo, Redo, Tips, your projects and WAV export.' : 'Undo, Redo, Tips, your projects and WAV export.'}>
         <button
           ref={btnRef}
           type="button"
           className={`${styles.more} ${styles.narrowOnly}`}
-          aria-label="More: undo, redo, tips, projects and export"
+          aria-label={updateReady ? 'More: update ready, undo, redo, tips, projects and export' : 'More: undo, redo, tips, projects and export'}
           aria-haspopup="menu"
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
         >
           <MoreIcon size={16} />
+          {updateReady && <span className={styles.moreBadge} aria-hidden="true" />}
         </button>
       </Tooltip>
       {open && (
         <Popover anchor={anchorFromElement(btnRef.current)} label="More" align="end" onClose={close} returnFocus={btnRef.current} ignore={btnRef.current}>
+          <OfflineMenuItems onDone={close} />
           <MenuItem
             icon="undo"
             hint={`${MOD_KEY}Z`}
@@ -246,6 +315,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
   const projectName = useProject((p) => p.name);
   const playing = useRuntime((s) => s.playing);
   const muteAll = useRuntime((s) => s.muteAll);
+  const takeRecording = useRuntime((s) => s.recording === 'performance');
   const tipsEnabled = useUi((s) => s.tipsEnabled);
   const history = useHistory();
 
@@ -319,7 +389,13 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           icon="mute"
           pressed={muteAll}
           onClick={() => session.toggleMuteAll()}
-          tip={muteAll ? 'Everything is silenced. Press to hear sound again.' : 'Silence everything at once, including echoes and held notes.'}
+          tip={
+            muteAll
+              ? 'Everything is silenced. Press to hear sound again.'
+              : takeRecording
+                ? 'Silence everything at once, including echoes and held notes. This also ends the performance recording, keeping what came before.'
+                : 'Silence everything at once, including echoes and held notes.'
+          }
           className={styles.muteAll}
         >
           {muteAll ? 'MUTED' : 'Mute All'}
@@ -383,6 +459,8 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           <span className={styles.exportText}>Export</span>
         </Button>
         <MoreMenu onOpenLibrary={props.onOpenLibrary} onOpenExport={props.onOpenExport} projectName={projectName} />
+        {/* The app's own state (offline copy, waiting update) closes the strip. */}
+        <OfflineStatus statusClassName={styles.offline} updateClassName={styles.update} />
       </div>
     </header>
   );

@@ -248,8 +248,9 @@ export const AMBIENT = defineStarter({
       clips: [
         // The bell's strongest overtones are a minor third and a fifth above
         // its note; on G#, C# and D# both stay inside E lydian. Each bell is
-        // chosen for the chord it rings over and stops at the bar line where
-        // the next chord would clash with it or its partials.
+        // chosen for the chord it rings over. One-shot plays the whole bell:
+        // by the bar line where the next chord would clash with it or its
+        // partials, it has decayed to a faint hum (30 dB or more below the strike).
         clip(
           'Bells',
           4,

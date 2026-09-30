@@ -67,7 +67,10 @@ function layoutKeys(baseNote: number, count: number): { keys: KeyGeom[]; whites:
   const start = BLACK_PCS.has(((baseNote % 12) + 12) % 12) ? baseNote - 1 : baseNote;
   const midis = Array.from({ length: count }, (_, i) => start + i);
   const whites = midis.filter((m) => !BLACK_PCS.has(m % 12)).length;
-  const ww = 1 / whites;
+  // A black key at the top end (e.g. a 16-key drum layout ending on D#) gets room to show in full.
+  const lastPc = midis[midis.length - 1] % 12;
+  const tail = BLACK_PCS.has(lastPc) ? Math.max(0, BLACK_OFFSET[lastPc] + BLACK_WIDTH / 2) : 0;
+  const ww = 1 / (whites + tail);
   const keys: KeyGeom[] = [];
   let wi = 0;
   for (const m of midis) {

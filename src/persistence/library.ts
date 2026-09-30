@@ -39,6 +39,8 @@ export async function setLastProject(id: Id): Promise<void> {
   await setMeta(META_LAST_PROJECT, id);
 }
 
+const UNREADABLE_LIBRARY_MESSAGE = 'None of the saved projects in this browser could be opened. They are still in the library.';
+
 /**
  * Reopen the last project, falling back to the most recently edited one.
  * Returns null when the library is empty. A stored project that can no longer
@@ -70,8 +72,16 @@ export async function openLast(): Promise<OpenedProject | null> {
     }
   }
   // Projects exist but none can be read: say so instead of looking like an empty library.
-  if (skipped.length) throw new StorageError('unknown', 'None of the saved projects in this browser could be opened. They are still in the library.', { cause: skipped });
+  if (skipped.length) throw new StorageError('unknown', UNREADABLE_LIBRARY_MESSAGE, { cause: skipped });
   return null;
+}
+
+/**
+ * True for openLast's rejection when projects are stored but none can be
+ * read. Storage itself works then, so saving is still possible.
+ */
+export function isUnreadableLibrary(e: unknown): e is StorageError {
+  return e instanceof StorageError && e.kind === 'unknown' && e.message === UNREADABLE_LIBRARY_MESSAGE;
 }
 
 /** Open a stored project and remember it as the last one. */

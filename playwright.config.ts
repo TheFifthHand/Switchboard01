@@ -24,7 +24,7 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 768 } } }],
   webServer: {
-    command: `node launcher/serve.mjs ${distDir} --port ${port} --no-open`,
+    command: `node launcher/serve.mjs ${distDir} --port ${port} --strict-port --no-open`,
     url: `http://127.0.0.1:${port}/`,
     reuseExistingServer: true,
     timeout: 30_000,

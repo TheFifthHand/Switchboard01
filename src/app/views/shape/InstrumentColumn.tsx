@@ -73,12 +73,29 @@ const SECTIONS: Record<SectionKind, { title: string; specs: ParamSpec[] }[]> = {
   drums: sectionsFor('drums'),
 };
 
-function ParamSections(props: { trackId: Id; kind: SectionKind }) {
-  const { trackId, kind } = props;
+/**
+ * A kit's Level resets (double-click) to the level that matches the kit to
+ * the synth parts, not to 0 dB, which would make the drums 10+ dB louder.
+ */
+function kitLevelSpec(spec: ParamSpec, kitId: string): ParamSpec {
+  const matched = kitInfo(kitId)?.level;
+  if (matched === undefined) return spec;
+  return { ...spec, default: matched, detail: `Output trim. The default, ${matched} dB, matches this kit to the other sounds.` };
+}
+
+function ParamSections(props: { trackId: Id; kind: SectionKind; kitId?: string }) {
+  const { trackId, kind, kitId } = props;
   const inst = moduleId.inst(trackId);
+  const sections = useMemo(
+    () =>
+      kind === 'drums' && kitId
+        ? SECTIONS.drums.map((s) => ({ ...s, specs: s.specs.map((spec) => (spec.id === 'level' ? kitLevelSpec(spec, kitId) : spec)) }))
+        : SECTIONS[kind],
+    [kind, kitId],
+  );
   return (
     <div className={styles.sections}>
-      {SECTIONS[kind].map((section) => (
+      {sections.map((section) => (
         <section key={section.title} className={styles.section} aria-label={section.title}>
           <h3 className={styles.sectionTitle}>{section.title}</h3>
           <div className={styles.knobs}>
@@ -298,7 +315,7 @@ export function InstrumentColumn(props: { trackId: Id; className?: string }) {
         <SamplerEditor trackId={trackId} />
       ) : (
         <>
-          <ParamSections trackId={trackId} kind={kind} />
+          <ParamSections trackId={trackId} kind={kind} kitId={kind === 'drums' ? header.soundId : undefined} />
           {kind === 'drums' && <DrumVoiceTable trackId={trackId} kitId={header.soundId} />}
         </>
       )}

@@ -45,6 +45,21 @@ export function formatPosition(relTick: number): string {
   return `${bar + 1}.${beat + 1}.${step + 1}`;
 }
 
+/**
+ * Parse a typed position ("5", "5.2" or "5.2.3": bar, beat, step, 1-based,
+ * as the Time column shows them) into a tick offset from the start of a take.
+ * Null when the text is not a position.
+ */
+export function parsePosition(text: string): number | null {
+  const m = /^\s*(\d{1,4})(?:[.:](\d{1,2}))?(?:[.:](\d{1,2}))?\s*$/.exec(text);
+  if (!m) return null;
+  const bar = Number(m[1]);
+  const beat = m[2] === undefined ? 1 : Number(m[2]);
+  const step = m[3] === undefined ? 1 : Number(m[3]);
+  if (bar < 1 || beat < 1 || beat > TICKS_PER_BAR / TICKS_PER_BEAT || step < 1 || step > TICKS_PER_BEAT / TICKS_PER_STEP) return null;
+  return (bar - 1) * TICKS_PER_BAR + (beat - 1) * TICKS_PER_BEAT + (step - 1) * TICKS_PER_STEP;
+}
+
 /** Tempo map of a take: its starting tempo plus its recorded tempo changes. */
 export function takeTempoMap(perf: Performance): TempoMap {
   const map = new TempoMap({ time: 0, tick: perf.startTick, bpm: perf.snapshot.bpm });

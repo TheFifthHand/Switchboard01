@@ -228,7 +228,11 @@ export async function renderOffline(req: RenderRequest): Promise<AudioBuffer> {
       metronome: () => false,
       countInClicks: false,
       at: (time, fn) => scheduler.at(time, fn),
-      onEvent: () => {},
+      // At the end of the music the live transport stops (sampler one-shots end, the take's
+      // automation hands back to the project's values); do the same so the tail matches.
+      onEvent: (ev) => {
+        if (ev.kind === 'end') scheduler.at(ev.time, () => engine.transportStopped(ev.time));
+      },
     });
 
     const { opts, endTick } = startOptions(project, source);

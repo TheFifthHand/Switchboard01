@@ -13,7 +13,7 @@ import { MACRO_SPECS } from '../../macros';
 interface Derived {
   controlled: Map<string, MacroControl>;
   resolved: Map<Id, ParamValues>;
-  /** "<module>.<port>" of every modulation input a cable reaches. */
+  /** "<module>.<port>" of every modulation input a cable from a running (not bypassed) LFO reaches. */
   modulated: Set<string>;
 }
 
@@ -23,7 +23,9 @@ export function derived(p: Project): Derived {
   let d = cache.get(p);
   if (!d) {
     const modulated = new Set<string>();
-    for (const c of p.patch.connections) modulated.add(`${c.to.module}.${c.to.port}`);
+    // An LFO switched Off moves nothing (the engine silences its cables).
+    const off = new Set(p.patch.modules.filter((m) => m.type === 'lfo' && m.bypass).map((m) => m.id));
+    for (const c of p.patch.connections) if (!off.has(c.from.module)) modulated.add(`${c.to.module}.${c.to.port}`);
     d = { controlled: macroControlledParams(p), resolved: resolveAllParams(p), modulated };
     cache.set(p, d);
   }

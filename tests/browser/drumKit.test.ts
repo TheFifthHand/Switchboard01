@@ -151,7 +151,7 @@ describe('DrumKitEngine', () => {
   describe('choke', () => {
     for (const [kitId, choker] of [
       ['round-machine', 4],
-      ['hand-percussion', 4],
+      ['tight-circuit', 4],
       ['tight-circuit', 6],
     ] as const) {
       it(`slot ${choker} cuts the open slot 5 with a short fade (${kitId})`, async () => {
@@ -178,6 +178,31 @@ describe('DrumKitEngine', () => {
         const to = sec(0.8);
         expect(energy(a.L, from, to)).toBeGreaterThan(0);
         expect(db(Math.sqrt(energy(residual, from, to) / energy(a.L, from, to)))).toBeLessThan(-40);
+      });
+    }
+
+    for (const [kitId, slot, name] of [
+      ['round-machine', 6, 'shaker'],
+      ['bright-steel', 6, 'shaker'],
+      ['hand-percussion', 4, 'shaker'],
+      ['hand-percussion', 6, 'cabasa'],
+    ] as const) {
+      it(`a ${name} (slot ${slot}) leaves the ringing slot 5 alone (${kitId})`, async () => {
+        const inst = drums(kitId);
+        const ring = await render({ seconds: 1, instrument: inst, play: (k) => void hit(k, 5, 0.05) });
+        const alone = await render({ seconds: 1, instrument: inst, play: (k) => void hit(k, slot, 0.25) });
+        const both = await render({
+          seconds: 1,
+          instrument: inst,
+          play: (k) => {
+            hit(k, 5, 0.05);
+            hit(k, slot, 0.25);
+          },
+        });
+        // The open hat (or tambourine) keeps ringing under the shaker: the mix is just the sum of both.
+        expect(energy(ring.L, sec(0.3), sec(0.6))).toBeGreaterThan(0);
+        const sum = ring.L.map((v, i) => v + alone.L[i]);
+        expect(peakAbs(diff(both.L, sum))).toBeLessThan(1e-5);
       });
     }
 
@@ -221,13 +246,13 @@ describe('DrumKitEngine', () => {
         play: (k) => {
           hit(k, 5, 0.05);
           pending = hit(k, 4, 0.3);
-          hit(k, 6, 0.4);
+          hit(k, 4, 0.4);
         },
         at: [[0.2, () => pending?.cancel()]],
       });
-      const shaker = await render({ seconds: 1, play: (k) => void hit(k, 6, 0.4) });
+      const closed = await render({ seconds: 1, play: (k) => void hit(k, 4, 0.4) });
       expect(peakAbs(diff(rechoked.L, open.L), 0, sec(0.4))).toBeLessThan(1e-6);
-      const residual = diff(rechoked.L, shaker.L);
+      const residual = diff(rechoked.L, closed.L);
       expect(db(Math.sqrt(energy(residual, sec(0.412), sec(0.7)) / energy(open.L, sec(0.412), sec(0.7))))).toBeLessThan(-40);
     });
 

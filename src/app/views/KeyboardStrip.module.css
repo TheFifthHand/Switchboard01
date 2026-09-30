@@ -40,6 +40,11 @@
   font-size: 11px;
   color: var(--ink-2);
 }
+/* A drum part has no octave to reset. */
+.reset:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 
 .keys {
   flex: 1;

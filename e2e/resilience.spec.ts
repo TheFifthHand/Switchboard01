@@ -1,7 +1,9 @@
 /**
  * Reliability evidence:
- *  - the production build works offline once cached (service worker),
- *  - background throttling stops playback coherently with a Resume action,
+ *  - the production build works offline once cached (service worker), and
+ *    the transport says so ("Offline ready"),
+ *  - background throttling stops playback coherently with a Resume action
+ *    that restarts what was playing (live pads, the song, or a take),
  *  - repeated Play/Stop does not accumulate voices, handles or listeners,
  *  - minutes of playback keep resources bounded and output within the ceiling.
  */
@@ -19,7 +21,9 @@ test('reopens and plays a built-in starter with the network unavailable', async 
   // A later visit is served by the service worker.
   await page.reload();
   await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
-  // The app reports that it is ready to work offline.
+  // The app reports that it is ready to work offline (the transport's status sits behind the Welcome card).
+  const offline = page.locator('header[aria-label="Transport"] [role="status"]', { hasText: 'Offline ready' });
+  await expect(offline).toBeVisible();
   await context.setOffline(true);
   await page.reload();
   await expect(page.getByRole('button', { name: 'Jump In' })).toBeVisible();
@@ -40,6 +44,44 @@ test('a stalled (throttled) tab stops coherently and offers Resume', async ({ pa
   await expect.poll(async () => (await stats(page)).transport.pendingHandles).toBe(0);
   await page.getByRole('button', { name: 'Resume' }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing)).toBe(true);
+  expect(pageErrors(page)).toEqual([]);
+});
+
+test('Resume after a stall restarts the song from its block, and a stalled take replay frees the keys', async ({ page }) => {
+  await openFresh(page);
+  await jumpIn(page);
+  const state = () => page.evaluate(() => {
+    const s = (window as any).__switchboard.runtime.getState();
+    return { playing: s.playing, mode: s.mode, songBlock: s.songBlock, replayId: s.replayId, held: Object.values(s.held).flat().length };
+  });
+
+  // The song: Resume plays the arrangement again from the block that was playing, not the live pads.
+  await page.evaluate(() => (window as any).__switchboard.session.playSong(1));
+  await expect.poll(async () => (await state()).mode).toBe('song');
+  await page.evaluate(() => (window as any).__switchboard.session.transport.simulateStall(1200));
+  await expect(page.getByRole('alert')).toContainText('Playback paused');
+  await page.getByRole('button', { name: 'Resume' }).click();
+  await expect.poll(state).toMatchObject({ playing: true, mode: 'song', songBlock: 1 });
+
+  // A take: record a short one, replay it, stall.
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await page.getByRole('button', { name: 'Record Performance' }).click();
+  await page.waitForTimeout(1500);
+  await page.getByRole('button', { name: 'Stop recording performance' }).click();
+  const perfId = await page.evaluate(() => (window as any).__switchboard.project().performances[0]?.id);
+  expect(perfId).toBeTruthy();
+  await page.evaluate((id) => (window as any).__switchboard.session.replayPerformance(id), perfId);
+  await expect.poll(async () => (await state()).mode).toBe('replay');
+  await page.evaluate(() => (window as any).__switchboard.session.transport.simulateStall(1200));
+  await expect(page.getByRole('alert')).toContainText('Playback paused');
+  // While the banner waits, the keyboard plays again (a replay would ignore it).
+  await page.locator('body').click({ position: { x: 5, y: 5 } }).catch(() => undefined);
+  await page.keyboard.down('KeyA');
+  await expect.poll(async () => (await state()).held).toBe(1);
+  await page.keyboard.up('KeyA');
+  // Resume replays the take.
+  await page.getByRole('button', { name: 'Resume' }).click();
+  await expect.poll(state).toMatchObject({ playing: true, mode: 'replay', replayId: perfId });
   expect(pageErrors(page)).toEqual([]);
 });
 

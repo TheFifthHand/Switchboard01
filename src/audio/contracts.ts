@@ -20,8 +20,17 @@ import type { Id, Instrument, InstrumentKind, MacroId, Project } from '../projec
 export interface VoiceHandle {
   /** Context time the voice starts. */
   readonly startTime: number;
-  /** Begin the release phase at `time`. No-op if already released. */
+  /**
+   * The note ends at `time`: begin the release phase. No-op if already
+   * released. A one-shot (sampler One-shot, drum hit) plays on regardless.
+   */
   release(time: number): void;
+  /**
+   * End the sound at `time` with its release even if it is a one-shot that
+   * release() lets play on (Stop, an editor preview being let go). Voices
+   * without it end on release().
+   */
+  stop?(time: number): void;
   /** Stop immediately and free nodes. A voice that has not started yet never sounds. */
   cancel(): void;
   /** True once the voice has ended and disconnected its nodes. */
@@ -73,8 +82,14 @@ export interface InstrumentEngine {
   update(instrument: Instrument, time: number): void;
   /** Start a note. Returns null if the note cannot sound (e.g. no sample loaded). */
   trigger(note: NoteTrigger): VoiceHandle | null;
-  /** Gently release every sounding voice at `time`. */
+  /** Gently release every sounding voice at `time` (one-shots included). */
   releaseAll(time: number): void;
+  /**
+   * Stop: end the one-shots that are playing out past their note (sampler
+   * One-shot); ones that start later never sound. With `startedOnly`, only
+   * the one-shots already sounding at `time` end and later ones still play.
+   */
+  stopOneShots?(time: number, startedOnly?: boolean): void;
   /** Hard stop of every voice, immediately (Mute All / panic). */
   kill(): void;
   activeVoices(): number;
@@ -157,10 +172,18 @@ export interface AudioEngineApi {
   transportStopped(time: number): void;
   tempoChanged(bpm: number, time: number): void;
 
-  /* Live input (immediate) */
+  /*
+   * Live input (immediate). `key` names the press; keys that start with one
+   * of PREVIEW_KEY_PREFIXES are editor previews: letting go of one ends it
+   * even on a one-shot, which otherwise plays its whole sound.
+   */
   liveNoteOn(trackId: Id, pitch: number, velocity: number, key: string): void;
   liveNoteOff(trackId: Id, key: string): void;
-  /** Release all live-held notes (window blur, pointer cancel, input change). */
+  /**
+   * Release all live-held notes and stop live one-shots still playing out
+   * (Stop, Mute All, window blur, pointer cancel, input change). With the
+   * transport stopped, one-shots the idle arpeggio started end too.
+   */
   releaseLive(trackId?: Id): void;
 
   /* Output */
@@ -176,6 +199,9 @@ export interface AudioEngineApi {
   getStats(): EngineStats;
   dispose(): void;
 }
+
+/** Live-note keys of editor previews (session NoteSource 'preview', session.audition). */
+export const PREVIEW_KEY_PREFIXES: readonly string[] = ['preview:', 'audition:'];
 
 /** Output ceiling enforced by the master limiter (linear, = -1 dBFS). */
 export const OUTPUT_CEILING = 0.8912509381337456;

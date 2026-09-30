@@ -10,7 +10,9 @@ import {
   slotModuleId,
   type TrackSlot,
 } from '../../src/content/presets';
-import { BUILTIN_SAMPLES, KITS, SYNTH_PRESETS } from '../../src/content/catalog';
+import { BUILTIN_SAMPLES, KITS, SYNTH_PRESETS, kitInfo } from '../../src/content/catalog';
+import { BLANK } from '../../src/content/starters/blank';
+import { HOUSE } from '../../src/content/starters/house';
 import { createProject, defaultMacroMap, defaultDrumVoices, moduleId } from '../../src/project/factory';
 import { DRUM_KIT_PARAMS, INSTRUMENT_PARAMS, MODULE_PARAMS, SAMPLER_PARAMS, clampParam, defaultParams, specById, toNormalized, type ParamSpec } from '../../src/project/params';
 import { resolveAllParams, specsForModule } from '../../src/project/resolve';
@@ -280,7 +282,8 @@ describe('applyKitToProject', () => {
     const before = produce(fresh(), (d) => applyPresetToProject(d, BASS_TRACK, 'bass-acid-line'));
     const after = produce(before, (d) => applyKitToProject(d, BASS_TRACK, 'tight-circuit'));
     const t = after.tracks.find((x) => x.id === BASS_TRACK)!;
-    expect(t.instrument).toEqual({ kind: 'drums', kitId: 'tight-circuit', params: defaultParams(DRUM_KIT_PARAMS), voices: defaultDrumVoices() });
+    // Kit Level starts at the kit's matched level, not at 0 dB (10+ dB hotter than the synths).
+    expect(t.instrument).toEqual({ kind: 'drums', kitId: 'tight-circuit', params: { ...defaultParams(DRUM_KIT_PARAMS), level: -11 }, voices: defaultDrumVoices() });
     expect(t.macroMap).toEqual(defaultMacroMap(BASS_TRACK));
     expect(after.patch).toEqual(before.patch);
     const v = validateProject(JSON.parse(JSON.stringify(after)));
@@ -300,6 +303,36 @@ describe('applyKitToProject', () => {
     expect(inst.kind === 'drums' && inst.kitId).toBe('dust-tape');
     expect(inst.params.level).toBe(-6);
     expect(inst.kind === 'drums' && inst.voices).toEqual(defaultDrumVoices());
+  });
+
+  it('a synth part switched to a kit plays at the level of the project\'s own kits', () => {
+    const blank = BLANK.build();
+    const level = (p: Project, id: string) => p.tracks.find((t) => t.id === id)!.instrument.params.level;
+    const drums = blank.tracks.find((t) => t.role === 'drums')!;
+    const perc = blank.tracks.find((t) => t.role === 'percussion')!;
+    const lead = blank.tracks.find((t) => t.role === 'lead')!;
+    expect(level(blank, drums.id)).toBe(kitInfo('round-machine')!.level);
+    expect(level(blank, perc.id)).toBe(kitInfo('hand-percussion')!.level);
+    for (const k of KITS) {
+      const p = produce(blank, (d) => applyKitToProject(d, lead.id, k.id));
+      expect(level(p, lead.id), k.id).toBe(k.level);
+    }
+    // Every standard kit shares the main drums' matched level; hand percussion needs less trim.
+    for (const k of KITS) expect(k.level, k.id).toBe(k.id === 'hand-percussion' ? -4.5 : -11);
+  });
+
+  it('keeps the user\'s trim relative to the matched level when changing between kit families', () => {
+    const house = HOUSE.build();
+    const perc = house.tracks.find((t) => t.instrument.kind === 'drums' && t.instrument.kitId === 'hand-percussion')!;
+    const trim = (perc.instrument.params.level as number) - kitInfo('hand-percussion')!.level;
+    const p = produce(house, (d) => applyKitToProject(d, perc.id, 'round-machine'));
+    expect(p.tracks.find((t) => t.id === perc.id)!.instrument.params.level).toBeCloseTo(kitInfo('round-machine')!.level + trim, 9);
+    // Stays within the Level range (-24 - 4.5 dB of trim would be below it).
+    const quiet = produce(house, (d) => {
+      d.tracks.find((t) => t.id === perc.id)!.instrument.params.level = -24;
+    });
+    const q = produce(quiet, (d) => applyKitToProject(d, perc.id, 'round-machine'));
+    expect(q.tracks.find((t) => t.id === perc.id)!.instrument.params.level).toBe(-24);
   });
 
   it('accepts every catalog kit and rejects unknown ones', () => {

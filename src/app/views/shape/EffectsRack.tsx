@@ -10,7 +10,7 @@
 import { memo, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Button, Icon, IconButton, Notice, Panel, Switch, Tooltip } from '../../../ui/components';
 import { DELAY_ID, MASTER_ID, REVERB_ID, moduleId as mid } from '../../../project/factory';
-import { connectionKind, describePathProblem, findModule, inputPortDef, trackChain } from '../../../project/graph';
+import { connectionKind, findModule, inputPortDef, trackChain } from '../../../project/graph';
 import { INSERTABLE_EFFECTS, MODULE_DEFS, PATCH_LIMITS } from '../../../project/modules';
 import { MODULE_PARAMS } from '../../../project/params';
 import type { Id, ModuleType, Patch } from '../../../project/types';
@@ -19,6 +19,8 @@ import { shallowEqual } from '../../../state/store';
 import { selectModule, setCablesOpen } from '../../../state/uiStore';
 import { session, useProject, useUi } from '../../instance';
 import { notify } from '../../runtime';
+import { samePlan, type RepairPlan } from '../cables/model';
+import { repairCableName, restoreConnection as restoreFor, restorePlanFor } from '../cables/restore';
 import { ParamKnob } from './ParamKnob';
 import { moduleName, sameItems } from './paramState';
 import styles from './EffectsRack.module.css';
@@ -332,7 +334,7 @@ function ReturnRow(props: { trackId: Id; id: Id }) {
           label={`Shared ${name}`}
           hideLabel
           checked={!bypass}
-          tip={bypass ? `Turn the shared ${name} back on (for every part).` : `Bypass the shared ${name} for every part.`}
+          tip={bypass ? `Turn the shared ${name} back on (for every part).` : `Turn the shared ${name} off for every part: they are heard without it.`}
           onChange={(on) => session.accepted(cmd.setBypass(session.store, id, !on))}
         />
       }
@@ -429,6 +431,13 @@ function Lfos(props: { trackId: Id }) {
 /* Column                                                              */
 /* ------------------------------------------------------------------ */
 
+interface RepairInfo {
+  plan: RepairPlan;
+  cable: string;
+}
+
+const sameRepair = (a: RepairInfo | null, b: RepairInfo | null) => a === b || (!!a && !!b && samePlan(a.plan, b.plan) && a.cable === b.cable);
+
 function FlowLine(props: { trackId: Id; chain: readonly Id[] }) {
   const { trackId, chain } = props;
   const names = useProject<string[]>(
@@ -460,13 +469,23 @@ export function EffectsRack(props: { trackId: Id; className?: string }) {
   const { trackId, className } = props;
   const chain = useProject((p) => trackChain(p.patch, trackId), sameItems);
   const partEffects = useProject<Id[]>((p) => p.patch.modules.filter((m) => m.trackId === trackId && MODULE_DEFS[m.type].family === 'effect').map((m) => m.id), sameItems);
-  const noPath = useProject((p) => describePathProblem(p.patch, trackId) !== null);
+  // What Restore Connection would do (null while the part is heard), and the cable it would add.
+  const repair = useProject<RepairInfo | null>((p) => {
+    const plan = restorePlanFor(p, trackId);
+    return plan && { plan, cable: plan.kind === 'connect' ? repairCableName(p, plan, trackId) : '' };
+  }, sameRepair);
   const linear = chain !== null;
   const effects = linear ? chain.slice(1, -1) : partEffects;
   // Effects of this part that its linear chain does not pass through (unpatched, or patched elsewhere with cables).
   const offPath = linear ? partEffects.filter((id) => !chain.includes(id)) : [];
   const restore = () => {
     if (session.accepted(cmd.restoreTrackPatch(session.store, trackId))) notify('Restored this part’s default routing.', 'info', 'undo');
+  };
+  // The same action as the cable panel's Restore Connection: one missing cable when that is enough.
+  const restoreConnection = () => {
+    const out = restoreFor(trackId);
+    if (!out.changed) return;
+    notify(out.plan.kind === 'connect' ? `Connected ${out.cable}: this part is heard again.` : 'Restored this part’s default cables, so it reaches the output again.', 'info', 'undo');
   };
 
   return (
@@ -478,9 +497,12 @@ export function EffectsRack(props: { trackId: Id; className?: string }) {
       dense
       actions={<AddEffectMenu trackId={trackId} disabled={!linear} disabledReason="This part has custom routing: add and place effects with the cable panel, or restore its default routing." />}
     >
-      {noPath && (
-        <Notice tone="warning" title="This part has no path to the output." action={{ label: 'Restore Connection', onAction: restore }}>
-          Its sound never reaches the master, so you will not hear it.
+      {repair && (
+        <Notice tone="warning" title="This part has no path to the output." action={{ label: 'Restore Connection', onAction: restoreConnection }}>
+          Its sound never reaches the master, so you will not hear it.{' '}
+          {repair.plan.kind === 'connect'
+            ? `Restore Connection plugs in ${repair.cable}; everything else stays as you patched it.`
+            : 'No single cable can reconnect it, so Restore Connection puts its default cables back: effects and LFOs you added to it, and its cables to other parts, are removed. Undo brings them back.'}
         </Notice>
       )}
       {linear ? (

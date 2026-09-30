@@ -179,6 +179,50 @@ describe('LFO', () => {
     expect(modulation(env(L, 1.2, 2.2), 2).depth).toBeCloseTo(0.25, 1);
   });
 
+  it('an LFO switched Off stops its movement; On brings it back on the same phase', async () => {
+    const lfoOff = (p: Project): Project => {
+      const q = clone(p);
+      q.patch.modules.find((m) => m.id === 't3:lfo')!.bypass = true;
+      return q;
+    };
+    const on = tremoloProject(120, 4);
+    const noCable = clone(on);
+    noCable.patch.connections.pop();
+
+    // Off from the start: exactly what the part sounds like with no cable at all.
+    const hOff = await harness(1.2, lfoOff(on));
+    hOff.engine.scheduleNote('t3', { pitch: TONE, velocity: 0.4, time: 0.01 });
+    const off = (await hOff.render()).L;
+    const hRef = await harness(1.2, noCable);
+    hRef.engine.scheduleNote('t3', { pitch: TONE, velocity: 0.4, time: 0.01 });
+    const ref = (await hRef.render()).L;
+    let diff = 0;
+    for (let i = 0; i < off.length; i++) diff = Math.max(diff, Math.abs(off[i] - ref[i]));
+    expect(diff).toBeLessThan(1e-4);
+    expect(modulation(env(off, 0.1, 1.1), 2).depth).toBeLessThan(0.01);
+
+    // Switched Off at 0.5 s and On again at 1.5 s, while it plays.
+    const h = await harness(2.7, on);
+    h.engine.scheduleNote('t3', { pitch: TONE, velocity: 0.4, time: 0.01 });
+    h.at(0.5, () => h.engine.setProject(lfoOff(on)));
+    h.at(1.5, () => h.engine.setProject(clone(on)));
+    const { L } = await h.render();
+    expect(modulation(env(L, 0.05, 0.55), 2).depth).toBeCloseTo(0.5, 1);
+    const still = env(L, 0.65, 1.5);
+    expect(Math.max(...still.map((x) => x.v)) - Math.min(...still.map((x) => x.v))).toBeLessThan(0.004);
+    expect(still[0].v).toBeCloseTo(0.4, 2);
+    // Back on: full depth again, minima still on phase 0.75 of the free-running cycle.
+    expect(modulation(env(L, 1.625, 2.625), 2).depth).toBeCloseTo(0.5, 1);
+    for (const tk of [1.875, 2.375].map((t) => t + LATENCY)) {
+      expect(Math.abs(argMin(env(L, 1.6, 2.65), tk - 0.12, tk + 0.12).t - tk)).toBeLessThan(0.002);
+    }
+    // Both switches glide: no jump between consecutive 1 ms cycles.
+    const all = env(L, 0.05, 2.65);
+    let maxStep = 0;
+    for (let i = 1; i < all.length; i++) maxStep = Math.max(maxStep, Math.abs(all[i].v - all[i - 1].v));
+    expect(maxStep).toBeLessThan(0.02);
+  });
+
   it('transportStarted aligns the LFO phase to the transport tick', async () => {
     const h = await harness(2.2, tremoloProject(120, 4));
     h.engine.scheduleNote('t3', { pitch: TONE, velocity: 0.4, time: 0.01 });

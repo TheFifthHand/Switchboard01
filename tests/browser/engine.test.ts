@@ -6,10 +6,13 @@
  */
 import { describe, expect, it } from 'vitest';
 import { AudioEngine, loadEngineWorklets } from '../../src/audio/engine';
-import { OUTPUT_CEILING, type EngineFactory, type MeterFrame } from '../../src/audio/contracts';
+import { OUTPUT_CEILING, type EngineFactory, type InstrumentFactory, type MeterFrame } from '../../src/audio/contracts';
+import { createInstrumentEngine } from '../../src/audio/instruments/index';
+import { SampleBank, audioBufferFromChannels } from '../../src/audio/instruments/sampleBank';
 import { MASTER_ID, conn, createClip, createInstrument, moduleId } from '../../src/project/factory';
+import { SAMPLER_PARAMS, defaultParams } from '../../src/project/params';
 import { Rng } from '../../src/project/rng';
-import type { Connection, Project } from '../../src/project/types';
+import type { Connection, Instrument, Project } from '../../src/project/types';
 import {
   LATENCY,
   SR,
@@ -379,6 +382,86 @@ describe('AudioEngine project updates', () => {
     const a = toneAmp(L, 440, 0.1, 0.45);
     const b = toneAmp(L, 440, 0.6, 0.95);
     expect(20 * Math.log10(b / a)).toBeCloseTo(-12, 1);
+  });
+});
+
+describe('AudioEngine sampler one-shots', () => {
+  /** t8 plays a 1.5 s, 480 Hz one-shot (real SamplerEngine); every other part is silent. */
+  async function oneShot(seconds: number) {
+    const bank = new SampleBank(SR);
+    const x = new Float32Array(Math.round(1.5 * SR));
+    for (let i = 0; i < x.length; i++) x[i] = 0.5 * Math.sin((2 * Math.PI * 480 * i) / SR);
+    bank.add('tone', audioBufferFromChannels([x], SR));
+    const p = coreProject(120);
+    p.tracks[7].instrument = { ...createInstrument('sampler', 'tone'), params: { ...defaultParams(SAMPLER_PARAMS), fadeOut: 15 } } as Instrument;
+    const factory: InstrumentFactory = (ictx, inst) => createInstrumentEngine({ ...ictx, samples: bank }, inst);
+    return harness(seconds, p, factory);
+  }
+  /** RMS of the output around `t` (the limiter delays everything by LATENCY). */
+  const level = (L: Float32Array, t0: number, t1: number) => rms(L, t0 + LATENCY, t1 + LATENCY);
+
+  it('a one-step note and a tapped pad play the whole recording', async () => {
+    const h = await oneShot(2);
+    h.engine.scheduleNote('t8', { pitch: 60, velocity: 1, time: 0.05, duration: 0.125 });
+    h.at(0.1, () => h.engine.liveNoteOn('t8', 60, 1, 'pad:t8:60'));
+    h.at(0.2, () => h.engine.liveNoteOff('t8', 'pad:t8:60'));
+    const { L } = await h.render();
+    expect(level(L, 1.2, 1.5)).toBeGreaterThan(0.2);
+    expect(level(L, 1.7, 1.95)).toBeLessThan(1e-4);
+  });
+
+  it('Stop ends them: transport Stop, a Stop with the transport already stopped, and Mute All', async () => {
+    // Sequenced note, transport stopped at 0.6 s.
+    const seq = await oneShot(1.2);
+    seq.engine.scheduleNote('t8', { pitch: 60, velocity: 1, time: 0.05, duration: 0.125 });
+    seq.at(0.6, () => seq.engine.transportStopped(0.6));
+    const a = (await seq.render()).L;
+    expect(level(a, 0.3, 0.55)).toBeGreaterThan(0.2);
+    expect(level(a, 0.7, 1.1)).toBeLessThan(1e-4);
+    // A pad tapped with the transport stopped: Stop releases live notes (releaseLive).
+    const live = await oneShot(1.2);
+    live.at(0.05, () => live.engine.liveNoteOn('t8', 60, 1, 'pad:t8:60'));
+    live.at(0.1, () => live.engine.liveNoteOff('t8', 'pad:t8:60'));
+    live.at(0.6, () => live.engine.releaseLive());
+    const b = (await live.render()).L;
+    expect(level(b, 0.3, 0.55)).toBeGreaterThan(0.2);
+    expect(level(b, 0.7, 1.1)).toBeLessThan(1e-4);
+    // Mute All.
+    const mute = await oneShot(1.2);
+    mute.engine.scheduleNote('t8', { pitch: 60, velocity: 1, time: 0.05, duration: 0.125 });
+    mute.at(0.6, () => mute.engine.setMuteAll(true));
+    const c = (await mute.render()).L;
+    expect(level(c, 0.7, 1.1)).toBeLessThan(1e-4);
+  });
+
+  it('with the transport stopped, Stop also ends the idle arpeggio’s one-shots; while it plays, a blur leaves the sequence alone', async () => {
+    // Transport stopped: a note the idle arpeggio played is ringing at 0.6 s, the next one is due at 0.9 s.
+    const idle = await oneShot(1.2);
+    idle.engine.scheduleNote('t8', { pitch: 60, velocity: 1, time: 0.05, duration: 0.1 });
+    idle.engine.scheduleNote('t8', { pitch: 60, velocity: 1, time: 0.9, duration: 0.1 });
+    idle.at(0.6, () => idle.engine.releaseLive());
+    const a = (await idle.render()).L;
+    expect(level(a, 0.3, 0.55)).toBeGreaterThan(0.2);
+    expect(level(a, 0.7, 0.88)).toBeLessThan(1e-4);
+    // The later note is the transport's to cancel (Stop does); a blur with a latched arpeggio keeps it.
+    expect(level(a, 0.95, 1.15)).toBeGreaterThan(0.2);
+
+    // Transport running: releaseLive (a window blur) ends live notes only, not the sequence's one-shots.
+    const running = await oneShot(1.2);
+    running.engine.transportStarted(0, 0, 120);
+    running.engine.scheduleNote('t8', { pitch: 60, velocity: 1, time: 0.05, duration: 0.125 });
+    running.at(0.6, () => running.engine.releaseLive());
+    const b = (await running.render()).L;
+    expect(level(b, 0.7, 1.1)).toBeGreaterThan(0.2);
+  });
+
+  it('an editor preview ends when it is let go', async () => {
+    const h = await oneShot(1.2);
+    h.at(0.05, () => h.engine.liveNoteOn('t8', 60, 1, 'preview:t8:60'));
+    h.at(0.4, () => h.engine.liveNoteOff('t8', 'preview:t8:60'));
+    const { L } = await h.render();
+    expect(level(L, 0.1, 0.35)).toBeGreaterThan(0.2);
+    expect(level(L, 0.5, 1.1)).toBeLessThan(1e-4);
   });
 });
 

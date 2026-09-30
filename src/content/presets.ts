@@ -462,18 +462,24 @@ export function applyPresetToProject(project: Project, trackId: Id, presetId: st
 }
 
 /**
- * Assign a drum kit to a track. Keeps the previous kit level when the track
- * already played drums; voices start from their defaults. Mutates `project`.
+ * Assign a drum kit to a track; voices start from their defaults. The kit
+ * Level starts at the new kit's matched level (KitInfo.level). When the
+ * track already played drums, the user's trim relative to the old kit's
+ * matched level is kept. Mutates `project`.
  */
 export function applyKitToProject(project: Project, trackId: Id, kitId: string): void {
-  if (!kitInfo(kitId)) throw new Error(`Unknown drum kit "${kitId}".`);
+  const info = kitInfo(kitId);
+  if (!info) throw new Error(`Unknown drum kit "${kitId}".`);
   const track = findTrack(project, trackId);
   const params = defaultParams(DRUM_KIT_PARAMS);
+  const spec = specById(DRUM_KIT_PARAMS, 'level') as ParamSpec;
+  let level = info.level;
   if (track.instrument.kind === 'drums') {
-    const level = track.instrument.params.level;
-    const spec = specById(DRUM_KIT_PARAMS, 'level') as ParamSpec;
-    if (typeof level === 'number') params.level = clampParam(spec, level);
+    const old = track.instrument.params.level;
+    const oldRef = kitInfo(track.instrument.kitId)?.level;
+    if (typeof old === 'number' && Number.isFinite(old)) level += old - (oldRef ?? info.level);
   }
+  params.level = clampParam(spec, level);
   track.instrument = { kind: 'drums', kitId, params, voices: defaultDrumVoices() };
   track.macroMap = keepExisting(project, defaultMacroMap(trackId));
 }

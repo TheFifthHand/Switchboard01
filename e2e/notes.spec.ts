@@ -1,6 +1,7 @@
 /**
  * Held notes never get stuck: they stop on key release, window blur, pointer
- * cancel, Stop and Mute All.
+ * cancel, Stop and Mute All, also when the part, the octave or the
+ * arpeggiator changes while a key is down.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { jumpIn, openFresh, pageErrors } from './helpers';
@@ -57,6 +58,36 @@ test('mouse notes release on pointer up and on pointer cancel', async ({ page })
   });
   await expect.poll(() => held(page)).toBe(0);
   await page.mouse.up();
+});
+
+test('a key held while the part or the octave changes stops when it is let go', async ({ page }) => {
+  await page.keyboard.down('KeyA');
+  await expect.poll(() => held(page)).toBe(1);
+  // Another part is chosen with the mouse while A is still down.
+  await page.getByRole('button', { name: /^Select Bass/ }).click();
+  await page.keyboard.up('KeyA');
+  await expect.poll(() => held(page)).toBe(0);
+  expect(await held(page, 't3')).toBe(0);
+
+  // Now on Bass: the octave changes under a held key.
+  await page.keyboard.down('KeyS');
+  await expect.poll(() => held(page, 't3')).toBe(1);
+  await page.getByRole('button', { name: 'Octave up (X)' }).click();
+  await page.keyboard.up('KeyS');
+  await expect.poll(() => held(page, 't3')).toBe(0);
+  await expect.poll(() => liveVoices(page), { timeout: 5000 }).toBe(0);
+  expect(pageErrors(page)).toEqual([]);
+});
+
+test('switching the arpeggiator on while a key is held does not leave the note sounding', async ({ page }) => {
+  await page.keyboard.down('KeyA');
+  await expect.poll(() => held(page)).toBe(1);
+  await page.getByRole('switch', { name: 'Arp', exact: true }).click();
+  await expect(page.getByRole('switch', { name: 'Arp', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.up('KeyA');
+  await expect.poll(() => held(page)).toBe(0);
+  await expect.poll(() => liveVoices(page), { timeout: 5000 }).toBe(0);
+  expect(pageErrors(page)).toEqual([]);
 });
 
 test('Stop and Mute All silence held notes and effect tails', async ({ page }) => {

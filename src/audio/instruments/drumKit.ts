@@ -15,23 +15,23 @@
  * level) -> low-pass (kit cutoff, detune <- cutoffMod) -> level (kit dB)
  * -> output.
  *
- * Choke: CHOKE_GROUPS (catalog). Of two hits in a group, the later one (by
- * start time, then trigger order) fades the earlier one over 8 ms when it
- * starts. A slot chokes its own previous hit only for SELF_CHOKE_SLOTS
- * (4/5/6), so tails of repeated kicks overlap.
+ * Choke: each kit's chokeGroups (kits.ts), e.g. closed hat -> open hat. Of
+ * two hits in a group, the later one (by start time, then trigger order)
+ * fades the earlier one over 8 ms when it starts. A slot chokes its own
+ * previous hit only for SELF_CHOKE_SLOTS (4/5/6: hats, shakers, tambourine),
+ * so tails of repeated kicks overlap.
  * Polyphony: at most DRUM_MAX_HITS hits sound at once; the oldest is stolen
  * with a 5 ms fade.
  * Cancelling a hit before it sounds (the transport does this whenever it
  * regenerates upcoming notes) undoes the chokes and steals it had scheduled,
  * so a ringing open hat is not cut by a closed hat that never plays.
  */
-import { CHOKE_GROUPS } from '../../content/catalog';
 import { DRUM_KIT_PARAMS, DRUM_VOICE_PARAM_SPECS, clampParam, dbToGain, readParam } from '../../project/params';
 import { DRUM_VOICES, type DrumVoiceSettings, type DrumsInstrument, type Instrument } from '../../project/types';
 import type { InstrumentContext, InstrumentEngine, NoteTrigger, VoiceHandle } from '../contracts';
 import { PARAM_SMOOTHING } from '../modules/types';
 import { drumVoiceKey, getDrumVoice, quantizeDrumDecay } from './drumSynth';
-import { resolveKitId } from './kits';
+import { DEFAULT_KIT_ID, getKitRecipe, resolveKitId } from './kits';
 
 /** Maximum simultaneously sounding hits per kit. */
 export const DRUM_MAX_HITS = 40;
@@ -58,12 +58,21 @@ const RESTORE_MARGIN = 0.008;
 /** Stop time used to let a restored hit play to the end of its buffer (sources end there by themselves). */
 const NO_STOP_SECONDS = 1e5;
 
-/** CHOKES[a][b]: a hit on slot a and a hit on slot b cut each other (the later one wins). */
-const CHOKES: readonly (readonly boolean[])[] = Array.from({ length: DRUM_VOICES }, (_, a) =>
-  Array.from({ length: DRUM_VOICES }, (_, b) =>
-    a === b ? SELF_CHOKE_SLOTS.includes(a) && CHOKE_GROUPS.some((g) => g.includes(a)) : CHOKE_GROUPS.some((g) => g.includes(a) && g.includes(b)),
-  ),
-);
+type ChokeTable = readonly (readonly boolean[])[];
+const chokeTables = new Map<string, ChokeTable>();
+
+/** chokeTable(kit)[a][b]: a hit on slot a and a hit on slot b cut each other (the later one wins). */
+function chokeTable(kitId: string): ChokeTable {
+  let table = chokeTables.get(kitId);
+  if (!table) {
+    const groups = getKitRecipe(kitId).chokeGroups;
+    table = Array.from({ length: DRUM_VOICES }, (_, a) =>
+      Array.from({ length: DRUM_VOICES }, (_, b) => (a === b ? SELF_CHOKE_SLOTS.includes(a) : groups.some((g) => g.includes(a) && g.includes(b)))),
+    );
+    chokeTables.set(kitId, table);
+  }
+  return table;
+}
 
 function finiteOr(v: number, fallback: number): number {
   return Number.isFinite(v) ? v : fallback;
@@ -195,6 +204,7 @@ export class DrumKitEngine implements InstrumentEngine {
   private readonly slotBuffers: (SlotBuffer | null)[] = Array.from({ length: DRUM_VOICES }, () => null);
   private instrument: DrumsInstrument | null = null;
   private kitId = '';
+  private chokes: ChokeTable = chokeTable(DEFAULT_KIT_ID);
   private tune = 0;
   private decay = 1;
   private velocitySens = 0.6;
@@ -231,6 +241,7 @@ export class DrumKitEngine implements InstrumentEngine {
     this.instrument = instrument;
     const p = instrument.params;
     this.kitId = resolveKitId(instrument.kitId);
+    this.chokes = chokeTable(this.kitId);
     this.tune = readParam(DRUM_KIT_PARAMS, p, 'tune');
     this.decay = readParam(DRUM_KIT_PARAMS, p, 'decay');
     this.velocitySens = readParam(DRUM_KIT_PARAMS, p, 'velocity');
@@ -320,7 +331,7 @@ export class DrumKitEngine implements InstrumentEngine {
 
   /** Choke-group interaction between a new hit and the hits already scheduled. */
   private choke(hit: DrumHit): void {
-    const chokes = CHOKES[hit.slot];
+    const chokes = this.chokes[hit.slot];
     for (const other of this.hits) {
       if (other.ended || !chokes[other.slot]) continue;
       // The later hit wins, whichever order the triggers arrived in.
@@ -351,7 +362,7 @@ export class DrumKitEngine implements InstrumentEngine {
   private undoCuts(cancelled: DrumHit): void {
     for (const h of this.hits) {
       if (h.cutBy !== cancelled || !h.restore()) continue;
-      const chokes = CHOKES[h.slot];
+      const chokes = this.chokes[h.slot];
       for (const other of this.hits) {
         if (other !== h && !other.ended && chokes[other.slot] && other.isLaterThan(h)) h.fadeOut(other.startTime, DRUM_CHOKE_FADE, other);
       }

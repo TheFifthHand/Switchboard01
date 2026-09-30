@@ -146,6 +146,20 @@ describe('Cable panel layout', () => {
     fire(sw, new MouseEvent('click', { bubbles: true }));
     expect(drive().bypass).toBe(false);
   });
+
+  it('the shared Reverb switch says the parts are heard without it (a return does not pass its send through)', () => {
+    const { root } = setup('t3');
+    const sw = root.querySelector<HTMLButtonElement>('[data-module="fx:reverb"] [role="switch"]')!;
+    const described = () =>
+      (sw.getAttribute('aria-describedby') ?? '')
+        .split(' ')
+        .map((id) => document.getElementById(id)?.textContent ?? '')
+        .join(' ');
+    expect(described()).toContain('Off turns the shared Reverb off for every part: they are heard without it.');
+    expect(described()).not.toContain('passes through');
+    fire(sw, new MouseEvent('click', { bubbles: true }));
+    expect(session.store.getState().patch.modules.find((m) => m.id === 'fx:reverb')!.bypass).toBe(true);
+  });
 });
 
 describe('LFO depth', () => {
@@ -440,6 +454,39 @@ describe('No path to the output', () => {
     session.undo();
     expect(find('t3:drive', 'out', 't3:filter', 'in')).toBeUndefined();
     expect(session.store.getState().patch.modules.some((m) => m.id === chorus)).toBe(true);
+  });
+
+  it('when no single cable can reconnect the part, Restore Connection asks before putting the default cables back', () => {
+    const { root } = setup('t3');
+    let chorus = '';
+    act(() => {
+      chorus = cmd.insertEffect(session.store, 't3', 'chorus').moduleId!;
+      void cmd.disconnect(session.store, find('t3:inst', 'out', 't3:drive', 'in')!.id);
+      void cmd.disconnect(session.store, find('t3:ch', 'out', 'master', 'in')!.id);
+    });
+    expect(root.textContent).toContain('This part has no path to the output.');
+    expect(alerts().some((t) => t.includes('No single cable can reconnect it: Restore Connection offers to put Bass’ default cables back.'))).toBe(true);
+    const before = JSON.stringify(session.store.getState().patch);
+    const restore = [...root.querySelectorAll('button')].find((b) => b.textContent === 'Restore Connection')!;
+    fire(restore, new MouseEvent('click', { bubbles: true }));
+    // Nothing is removed until the user confirms; the dialog says why the defaults are needed.
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('No single cable can give Bass a path to the output again');
+    expect(dialog.textContent).toContain('Effects and LFOs you added to Bass');
+    expect(JSON.stringify(session.store.getState().patch)).toBe(before);
+    fire([...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')!, new MouseEvent('click', { bubbles: true }));
+    expect(JSON.stringify(session.store.getState().patch)).toBe(before);
+
+    fire(restore, new MouseEvent('click', { bubbles: true }));
+    const again = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    fire([...again.querySelectorAll('button')].find((b) => b.textContent === 'Restore Bass’ cables')!, new MouseEvent('click', { bubbles: true }));
+    expect(find('t3:inst', 'out', 't3:drive', 'in')).toBeDefined();
+    expect(find('t3:ch', 'out', 'master', 'in')).toBeDefined();
+    expect(session.store.getState().patch.modules.some((m) => m.id === chorus)).toBe(false);
+    expect(root.textContent).not.toContain('This part has no path to the output.');
+    // One undo step brings the user's patch back, Chorus included.
+    session.undo();
+    expect(JSON.stringify(session.store.getState().patch)).toBe(before);
   });
 
   it('restores the part’s default cables after confirmation', () => {

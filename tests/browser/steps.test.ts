@@ -315,6 +315,23 @@ describe('melodic pitch lane', () => {
     });
   });
 
+  it('the note names play their pitch, but stay silent while a performance take records (the take could not keep it)', () => {
+    const { roll } = setup();
+    const name = roll.querySelector<HTMLElement>('[data-row-label="48"]')!;
+    press(name);
+    expect(noteOn).toHaveBeenCalledWith('t3', 48, 0.8, 'preview');
+    noteOn.mockClear();
+    patchRuntime({ recording: 'performance' });
+    try {
+      press(name);
+      expect(noteOn).not.toHaveBeenCalled();
+    } finally {
+      patchRuntime({ recording: 'off' });
+    }
+    press(name);
+    expect(noteOn).toHaveBeenCalledTimes(1);
+  });
+
   it('click adds a one-step note (and plays it), click on the note removes it', () => {
     const { roll, cell } = setup();
     pointer(roll, 'pointerdown', cell(4, 48));

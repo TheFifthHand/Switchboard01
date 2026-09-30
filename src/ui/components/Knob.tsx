@@ -18,6 +18,9 @@
  *   store it as one undo step; the last call of a gesture has final: true
  *   (pointer up, blur, or ~0.7 s after the last key). During a drag onChange
  *   is coalesced to at most once per animation frame.
+ * - While the knob can be changed, its tip ends with these gestures and the
+ *   value double-click returns to, so mouse users can find fine drag and
+ *   typed entry too.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import { clampParam, formatParam, fromNormalized, toNormalized, type ParamSpec } from '../../project/params';
@@ -93,6 +96,13 @@ function isBipolar(spec: ParamSpec): boolean {
 }
 
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+
+/** The tip's last line: how to turn this knob, what double-click restores, how to type a value. */
+function knobGestureHint(spec: ParamSpec): string {
+  const home = formatParam(spec, clampParam(spec, spec.default));
+  if (spec.curve === 'enum' || spec.curve === 'bool') return `Drag up or down, or use the arrow keys. Double-click resets it to ${home}.`;
+  return `Drag up or down, or use the arrow keys; hold Shift for fine steps. Double-click resets it to ${home}. For an exact value, click the knob and type a number.`;
+}
 
 /**
  * Move a value by a fraction of the control's normalised travel. Stepped
@@ -502,7 +512,7 @@ export function Knob(props: KnobProps) {
       data-dragging={dragging || undefined}
       data-tone={arcTone}
     >
-      <Tooltip name={name} tip={tip ?? spec.tip} detail={tipDetail}>
+      <Tooltip name={name} tip={tip ?? spec.tip} detail={tipDetail} hint={interactive ? knobGestureHint(spec) : undefined}>
         <div
           ref={sliderRef}
           id={id}

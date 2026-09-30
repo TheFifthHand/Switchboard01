@@ -3,7 +3,9 @@
  *
  * - Starters: the eight curated starters and a blank project. Starting one
  *   saves the open project first (it stays in My projects) and loads the new
- *   one without playing it — the user presses Play or taps a pad.
+ *   one without playing it — the user presses Play or taps a pad. When the
+ *   open project cannot be kept (storage down, or its latest edits failed to
+ *   save), the dialog asks first and offers to export it.
  * - My projects: every project stored in this browser, the open one marked,
  *   with Open, Rename, Duplicate and Delete (to Recently deleted, where it can
  *   be restored or deleted forever). The open project cannot be deleted while
@@ -23,8 +25,8 @@ import type { ProjectSummary, TrashSummary } from '../../persistence/library';
 import { StorageError } from '../../persistence/db';
 import { BUNDLE_EXTENSION } from '../../persistence/bundle';
 import { renameProject as renameProjectCmd } from '../../state/commands';
-import { session, useProject } from '../instance';
-import { notify, runtimeStore } from '../runtime';
+import { session, useAutosave, useProject } from '../instance';
+import { notify, runtimeStore, useRuntime } from '../runtime';
 import { downloadBlob } from '../download';
 import styles from './Library.module.css';
 
@@ -142,6 +144,9 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
   const [busy, setBusy] = useState<string | null>(null);
   const [row, setRow] = useState<RowMode | null>(null);
   const [confirmStart, setConfirmStart] = useState<StarterDef | null>(null);
+  // The open project's latest edits could not be stored (e.g. storage full).
+  const saveFailing = useAutosave().status === 'error';
+  const preview = useRuntime((s) => s.preview);
   const alive = useRef(true);
   const busyRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -238,12 +243,13 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
 
   /* ---------- starters ---------- */
 
-  const startStarter = (def: StarterDef) =>
+  /** `discardCurrent`: the user confirmed replacing a project whose latest edits could not be stored. */
+  const startStarter = (def: StarterDef, discardCurrent = false) =>
     run(`start:${def.id}`, 'Starting the project', async () => {
       const previous = session.store.getState().name;
-      const keptPrevious = stored;
+      const keptPrevious = stored && !discardCurrent;
       const before = lastNoticeId();
-      await session.newFromStarter(def.id);
+      await session.newFromStarter(def.id, { discardCurrent });
       // The project is on screen now, even if the dialog was closed meanwhile.
       const name = session.store.getState().name;
       announceLoaded(`Started ${quote(name)}.`, before, keptPrevious ? `${quote(previous)} is still in My projects.` : '');
@@ -252,8 +258,8 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
 
   const pickStarter = (def: StarterDef) => {
     if (busyRef.current) return;
-    // Without working storage the open project cannot be kept: ask first.
-    if (storageDown) setConfirmStart(def);
+    // Without working storage, or with edits that failed to save, the open project cannot be kept: ask first.
+    if (storageDown || saveFailing) setConfirmStart(def);
     else void startStarter(def);
   };
 
@@ -464,12 +470,13 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
               loaded={projects !== null}
               stored={stored}
               storageDown={storageDown}
+              saveFailing={saveFailing}
               busy={busy}
               confirm={confirmStart}
               onPick={pickStarter}
               onConfirm={(def) => {
                 setConfirmStart(null);
-                void startStarter(def);
+                void startStarter(def, true);
               }}
               onCancelConfirm={() => setConfirmStart(null)}
               onExport={() => void exportCurrent()}
@@ -478,11 +485,13 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
             <p className={styles.empty}>Loading your projects…</p>
           ) : (
             <>
-              {!stored && !listError && (
+              {!listError && (saveFailing || preview) && (
                 <p className={styles.previewNote}>
                   <Icon name="info" size={14} className={styles.noteIcon} />
                   <span>
-                    {quote(currentName)} on screen is a preview: changes to it are not saved. Start a project from Starters to have your work saved automatically, or export this one as a file to keep it.
+                    {saveFailing
+                      ? `The latest changes to ${quote(currentName)} could not be saved in this browser. Export it as a file to keep them.`
+                      : `${quote(currentName)} on screen is a preview. As soon as you change it, it is added to My projects and saved automatically.`}
                   </span>
                 </p>
               )}
@@ -574,6 +583,8 @@ function StartersPanel(props: {
   loaded: boolean;
   stored: boolean;
   storageDown: boolean;
+  /** The open project's latest edits could not be saved. */
+  saveFailing: boolean;
   busy: string | null;
   confirm: StarterDef | null;
   onPick(def: StarterDef): void;
@@ -581,7 +592,7 @@ function StartersPanel(props: {
   onCancelConfirm(): void;
   onExport(): void;
 }) {
-  const { currentName, loaded, stored, storageDown, busy, confirm } = props;
+  const { currentName, loaded, stored, storageDown, saveFailing, busy, confirm } = props;
   const confirmRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (confirm) confirmRef.current?.focus();
@@ -590,6 +601,7 @@ function StartersPanel(props: {
   let intro: string;
   if (!loaded) intro = 'Pick a starting point.';
   else if (storageDown) intro = `Starting a project replaces ${quote(currentName)} on screen, and it cannot be kept in this browser right now.`;
+  else if (saveFailing) intro = `Starting a project replaces ${quote(currentName)} on screen, and its latest changes could not be saved in this browser.`;
   else if (stored) intro = `Pick a starting point. Your current project ${quote(currentName)} stays in My projects.`;
   else intro = `Pick a starting point. It loads without playing: ${HEAR_IT.toLowerCase()}`;
 
@@ -600,7 +612,10 @@ function StartersPanel(props: {
       {confirm && (
         <div className={styles.confirm} role="group" aria-label={`Start ${confirm.name}?`}>
           <p className={styles.confirmText}>
-            Replace {quote(currentName)} with {confirm === BLANK_STARTER ? 'a blank project' : quote(confirm.name)}? Browser storage is not working, so {quote(currentName)} will be lost unless you export it first.
+            Replace {quote(currentName)} with {confirm === BLANK_STARTER ? 'a blank project' : quote(confirm.name)}?{' '}
+            {storageDown
+              ? `Browser storage is not working, so ${quote(currentName)} will be lost unless you export it first.`
+              : 'Its latest changes could not be saved in this browser. Export it first if you want to keep them.'}
           </p>
           <div className={styles.confirmActions}>
             <Button size="sm" variant="ghost" onClick={props.onCancelConfirm}>

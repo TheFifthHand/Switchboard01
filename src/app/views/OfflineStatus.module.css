@@ -1,23 +1,21 @@
+/* Icon-only status: its words are the tooltip and the accessible text. */
 .status {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 6px;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 28px;
+  flex: none;
   border-radius: var(--r-sm);
-  font-size: 11px;
   color: var(--ink-3);
-  white-space: nowrap;
 }
-.dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--line-strong);
+.ready {
+  color: var(--teal-ink);
 }
-.ready .dot {
-  background: var(--teal);
+.icon {
+  display: block;
+  flex: none;
 }
 .update {
   white-space: nowrap;
+  flex: none;
 }

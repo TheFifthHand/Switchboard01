@@ -32,6 +32,11 @@ export function quantizeWord(q: QuantizeGrid): string {
   return q === 'off' ? 'off' : q;
 }
 
+/** The Record Notes grid in a word or two, for captions: "Snap 1/16", or "No snap" when off. */
+export function quantizeCaption(q: QuantizeGrid): string {
+  return q === 'off' ? 'No snap' : `Snap ${q}`;
+}
+
 /** Short text of the options that are on, for the record group caption ('' when none). */
 export function recordOptionsCaption(s: ProjectSettings): string {
   return [s.metronome ? 'Click' : null, s.countIn ? 'Count-in' : null].filter(Boolean).join(' · ');
@@ -64,6 +69,7 @@ export function RecordOptionsPanel() {
         <p className={styles.help} aria-live="polite">
           <strong>{quantize === 'off' ? 'Off' : quantize}:</strong> {QUANTIZE_EXPLAINED[quantize]}
         </p>
+        <p className={styles.help}>Notes the arpeggiator plays are recorded on its own grid, as you heard them.</p>
       </div>
     </div>
   );

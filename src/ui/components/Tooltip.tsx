@@ -8,6 +8,8 @@
  *   focus, never intercepts the pointer (pointer-events: none), hides the
  *   moment anything is pressed so it never gets in the way of playing,
  *   closes on Escape wherever focus is, and is kept inside the viewport.
+ * - An optional `hint` says how to operate the control (gestures, shortcuts);
+ *   it comes last and, like the explanations, follows the Tips setting.
  * - When Tips are off, a tooltip still shows a control's `name` if it has one
  *   (icon-only buttons need their name), but no explanations.
  * - The trigger is linked with aria-describedby to a hidden description, so
@@ -76,6 +78,8 @@ export interface TooltipProps {
   tip?: ReactNode;
   /** Technical detail, shown second in smaller type. */
   detail?: ReactNode;
+  /** How to operate the control, shown last in smaller type. */
+  hint?: ReactNode;
   /** Preferred side; flips when there is no room. */
   placement?: 'top' | 'bottom';
   disabled?: boolean;
@@ -89,9 +93,9 @@ interface Pos {
   side: 'top' | 'bottom';
 }
 
-export function Tooltip({ name, tip, detail, placement = 'top', disabled, children }: TooltipProps) {
+export function Tooltip({ name, tip, detail, hint, placement = 'top', disabled, children }: TooltipProps) {
   const { enabled } = useTips();
-  const showTip = enabled && (tip !== undefined || detail !== undefined);
+  const showTip = enabled && (tip !== undefined || detail !== undefined || hint !== undefined);
   const hasContent = !disabled && (Boolean(name) || showTip);
 
   const descId = useId();
@@ -161,7 +165,7 @@ export function Tooltip({ name, tip, detail, placement = 'top', disabled, childr
     let left = r.left + r.width / 2 - bw / 2;
     left = Math.max(MARGIN, Math.min(vw - MARGIN - bw, left));
     setPos({ left: Math.round(left), top: Math.round(top), side });
-  }, [open, placement, name, tip, detail]);
+  }, [open, placement, name, tip, detail, hint]);
 
   if (!isValidElement(children)) return children;
   if (!hasContent) return children;
@@ -209,7 +213,7 @@ export function Tooltip({ name, tip, detail, placement = 'top', disabled, childr
   const describedBy = [childProps['aria-describedby'], descId].filter(Boolean).join(' ');
   const trig = cloneElement(children as ReactElement<{ 'aria-describedby'?: string }>, { 'aria-describedby': describedBy });
 
-  const descText = [name, showTip ? tip : null, showTip ? detail : null].filter((x) => x !== undefined && x !== null && x !== '');
+  const descText = [name, showTip ? tip : null, showTip ? detail : null, showTip ? hint : null].filter((x) => x !== undefined && x !== null && x !== '');
 
   return (
     <span
@@ -244,6 +248,7 @@ export function Tooltip({ name, tip, detail, placement = 'top', disabled, childr
             {name && <div className={styles.name}>{name}</div>}
             {showTip && tip !== undefined && <div className={styles.tip}>{tip}</div>}
             {showTip && detail !== undefined && <div className={styles.detail}>{detail}</div>}
+            {showTip && hint !== undefined && <div className={styles.detail}>{hint}</div>}
           </div>,
           document.body,
         )}

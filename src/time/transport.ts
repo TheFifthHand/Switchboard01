@@ -5,7 +5,8 @@
  * event up to `ctx.currentTime + lookahead` and schedules it on the engine.
  * The audio clock is the only timing authority: the ticker only decides
  * *when we look ahead*, never when anything sounds. UI events (launch, block,
- * end, beat) are held until the audio clock reaches their time.
+ * end, beat, and arp notes for Record Notes) are held until the audio clock
+ * reaches their time.
  *
  * Voice handles are kept from scheduling until the note's gate ends, so that
  * not-yet-started voices can be cancelled on invalidation, sounding ones can
@@ -55,6 +56,8 @@ export interface DispatcherOptions {
   at: (time: number, fn: () => void) => void;
   /** launch / block / end / beat events, for the UI or the driver. */
   onEvent: (e: SeqEvent) => void;
+  /** Every note sent to the engine (after it is scheduled). */
+  onNote?: (e: NoteEvent) => void;
 }
 
 interface HeldVoice {
@@ -84,6 +87,11 @@ export class EngineDispatcher {
     return this.voices.size;
   }
 
+  /** True while the note's voice is held: scheduled and not cancelled (it may have started). */
+  holds(note: NoteEvent): boolean {
+    return this.voices.has(note);
+  }
+
   counts(now: number): { pending: number; sounding: number } {
     let pending = 0;
     for (const v of this.voices.values()) if (v.handle.startTime > now) pending++;
@@ -97,6 +105,7 @@ export class EngineDispatcher {
         case 'note': {
           const h = engine.scheduleNote(ev.trackId, { pitch: ev.pitch, velocity: ev.velocity, time: ev.time, duration: ev.duration, legato: ev.legato });
           if (h) this.voices.set(ev, { handle: h, trackId: ev.trackId, time: ev.time, end: ev.time + ev.duration });
+          this.o.onNote?.(ev);
           break;
         }
         case 'beat':
@@ -181,6 +190,11 @@ export interface TransportEventMap {
   block: Extract<SeqEvent, { kind: 'block' }>;
   end: Extract<SeqEvent, { kind: 'end' }>;
   beat: BeatEvent;
+  /**
+   * An arpeggiator note starts sounding now (on the transport, not the idle
+   * clock). Notes cancelled before their time (new keys, Stop) never arrive.
+   */
+  arpNote: NoteEvent;
   /** The audio context changed state (e.g. suspended / interrupted while playing). */
   state: { state: string; playing: boolean };
   /** Playback stopped because the scheduler fell behind; offer Resume. */
@@ -260,6 +274,13 @@ export class RealtimeTransport {
       countInClicks: true,
       at: (time, fn) => this.enqueue(time, fn),
       onEvent: (e) => this.enqueue(e.time, () => this.deliver(e)),
+      onNote: (e) => {
+        if (e.source !== 'arp' || !seq.playing || !this.listeners.get('arpNote')?.size) return;
+        // Delivered when it sounds, and only if its voice was not cancelled meanwhile.
+        this.enqueue(e.time, () => {
+          if (this.dispatcher.holds(e)) this.emit('arpNote', e);
+        });
+      },
     });
     this.lastState = this.ctx.state;
     this.ctx.addEventListener('statechange', this.onStateChange);
@@ -387,6 +408,19 @@ export class RealtimeTransport {
     // The input changes exactly where regeneration starts; with an earlier
     // change time, a first arp step falling between the two would be lost.
     this.sequencer.setArpHeld(trackId, pitches, at, velocity);
+    if (this.sequencer.playing || this.sequencer.idleActive) {
+      if (this.horizon < now) this.horizon = now;
+      this.invalidateFrom(at, now);
+    }
+    this.ensureTicker();
+  }
+
+  /** A track's arpeggiator or its Latch was switched off: the latched notes end (keys still held play on). */
+  clearArpLatch(trackId: Id): void {
+    this.assertAlive();
+    const now = this.ctx.currentTime;
+    const at = now + INVALIDATE_MARGIN;
+    if (!this.sequencer.clearArpLatch(trackId, at)) return;
     if (this.sequencer.playing || this.sequencer.idleActive) {
       if (this.horizon < now) this.horizon = now;
       this.invalidateFrom(at, now);

@@ -234,6 +234,9 @@ export const HOUSE = defineStarter({
       level: -20.5,
       pan: 0.1,
       macros: { echo: 0.3, space: 0.3 },
+      // Chops are as long as their notes: Loop plays the "oh" while a note lasts (One-shot would
+      // always play all of it). Every note ends before the pitched region does, so none repeats.
+      instrument: { mode: 1 },
       clips: [
         null,
         null,
@@ -256,7 +259,7 @@ export const HOUSE = defineStarter({
           // Near C4, where the built-in "oh" was recorded, so the voice keeps its natural formants;
           // D and G are tones of the held Gm9 underneath.
           mel([
-            ['D4', 8, 8, 0.7],
+            ['D4', 8, 7, 0.7],
             ['G3', 40, 8, 0.65],
           ]),
         ),

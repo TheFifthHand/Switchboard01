@@ -108,8 +108,9 @@ export function keyLabel(root: number, scale: ScaleId): string {
 
 /**
  * Standard kit voice names mapped to DRUM_SLOTS indices (src/content/catalog.ts).
- * Slot 6 is a shaker in most kits and a pedal hat in 'tight-circuit'; it
- * chokes the open hat like the closed hat does.
+ * Slot 6 is a shaker in most kits and a pedal hat in 'tight-circuit'. The
+ * closed hat chokes the open hat in every standard kit; the pedal hat does
+ * too, a shaker does not.
  */
 export const DRUM = {
   kick: 0,

@@ -12,21 +12,29 @@ export interface KitInfo {
   id: string;
   name: string;
   description: string;
+  /**
+   * Kit Level (dB) that matches this kit to the synth presets. The
+   * synthesized kits are peak-normalised, so at 0 dB a typical beat plays
+   * 10-13 dB hotter than a synth part; a part switched to this kit starts
+   * here, and double-clicking the kit's Level knob returns here.
+   */
+  level: number;
 }
 
 export const KITS: readonly KitInfo[] = [
-  { id: 'round-machine', name: 'Round Machine', description: 'Warm analog-style kit: deep round kick, noisy snare, silky hats.' },
-  { id: 'tight-circuit', name: 'Tight Circuit', description: 'Short, punchy machine kit for house and techno.' },
-  { id: 'dust-tape', name: 'Dust Tape', description: 'Soft, saturated, slightly lo-fi kit for downtempo and breaks.' },
-  { id: 'bright-steel', name: 'Bright Steel', description: 'Crisp, snappy kit with bright metals for garage and drum & bass.' },
-  { id: 'hand-percussion', name: 'Hand Percussion', description: 'Congas, bongos, shakers, woodblocks and bells for the percussion part.' },
+  { id: 'round-machine', name: 'Round Machine', description: 'Warm analog-style kit: deep round kick, noisy snare, silky hats.', level: -11 },
+  { id: 'tight-circuit', name: 'Tight Circuit', description: 'Short, punchy machine kit for house and techno.', level: -11 },
+  { id: 'dust-tape', name: 'Dust Tape', description: 'Soft, saturated, slightly lo-fi kit for downtempo and breaks.', level: -11 },
+  { id: 'bright-steel', name: 'Bright Steel', description: 'Crisp, snappy kit with bright metals for garage and drum & bass.', level: -11 },
+  // Sparser, quieter hits: less trim for the same loudness.
+  { id: 'hand-percussion', name: 'Hand Percussion', description: 'Congas, bongos, shakers, woodblocks and bells for the percussion part.', level: -4.5 },
 ];
 
 /**
  * Standard 16-voice layout. Pad index 0 is the bottom-left pad of the 4×4
  * Drums grid. Every kit fills every slot with a sound of the stated role (the
- * hand-percussion kit substitutes percussion for kit pieces but keeps the
- * choke group on slots 4/5/6).
+ * hand-percussion kit substitutes percussion for kit pieces). Which slots
+ * choke each other is part of each kit's recipe (kits.ts chokeGroups).
  */
 export const DRUM_SLOTS = [
   { slot: 0, role: 'kick', name: 'Kick' },
@@ -46,9 +54,6 @@ export const DRUM_SLOTS = [
   { slot: 14, role: 'perc', name: 'Perc' },
   { slot: 15, role: 'fx', name: 'Snap FX' },
 ] as const;
-
-/** Voices in the same choke group cut each other off (closed/pedal hat choke the open hat). */
-export const CHOKE_GROUPS: readonly (readonly number[])[] = [[4, 5, 6]];
 
 export interface PresetInfo {
   id: string;

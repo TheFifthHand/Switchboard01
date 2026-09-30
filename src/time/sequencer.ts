@@ -552,6 +552,25 @@ export class Sequencer {
     return { playing: rt.playing ? { ...rt.playing } : null, queued };
   }
 
+  /**
+   * The clip a track played at `tick` (its slot and loop start), looking back
+   * through the applied switches still in the history (HISTORY_TICKS), or
+   * null when it played nothing then.
+   */
+  playingAt(trackId: Id, tick: number): { slot: number; startTick: number } | null {
+    const rt = this.tracks.get(trackId);
+    if (!rt) return null;
+    let p = rt.playing;
+    for (let i = rt.history.length - 1; i >= 0 && rt.history[i].appliedTick > tick; i--) p = rt.history[i].prev;
+    return p ? { slot: p.slot, startTick: p.startTick } : null;
+  }
+
+  /** A track's arpeggiator input now: keys held, notes kept by latch, and the velocity it plays at (null before any input). */
+  getArpInput(trackId: Id): { held: readonly number[]; latched: readonly number[]; velocity: number } | null {
+    const arp = this.arps.get(trackId);
+    return arp ? { held: arp.latch.held, latched: arp.latch.latched, velocity: arp.velocity } : null;
+  }
+
   /** What plays now (or will play when Play is pressed, while stopped). */
   getLauncherSnapshot(): LauncherSnapshotEntry[] {
     return this.activeProject().tracks.map((t) => {
@@ -878,11 +897,14 @@ export class Sequencer {
 
   /**
    * Keys held for a track's arpeggiator, in the order played (already
-   * scale-snapped). Uses the track's ArpSettings; latch is applied here.
+   * scale-snapped). Uses the track's ArpSettings; latch is applied here, and
+   * only keeps notes while the arp is on with Latch on (so switching Latch on
+   * later never brings back keys let go of long ago). `velocity` comes with a
+   * press; a release passes none and keeps the velocity in effect.
    * While the transport is stopped the arp runs on a free clock anchored at
    * the first press.
    */
-  setArpHeld(trackId: Id, pitches: readonly number[], time: number, velocity = DEFAULT_ARP_VELOCITY): void {
+  setArpHeld(trackId: Id, pitches: readonly number[], time: number, velocity?: number): void {
     const project = this.activeProject();
     const track = project.tracks.find((t) => t.id === trackId);
     if (!track) return;
@@ -892,8 +914,30 @@ export class Sequencer {
       arp = { latch: EMPTY_LATCH, velocity: DEFAULT_ARP_VELOCITY, changes: [], replayDriven: false };
       this.arps.set(trackId, arp);
     }
-    arp.latch = updateLatch(arp.latch, pitches);
-    arp.velocity = clamp01(velocity);
+    arp.latch = updateLatch(track.arp.enabled && track.arp.latch ? arp.latch : EMPTY_LATCH, pitches);
+    if (velocity !== undefined) arp.velocity = clamp01(velocity);
+    this.applyArpInput(track, arp, t);
+  }
+
+  /**
+   * Drop the notes latch keeps on a track (its arpeggiator or its Latch was
+   * switched off): keys still held keep playing. Returns true when something
+   * was dropped (the caller regenerates from `time`).
+   */
+  clearArpLatch(trackId: Id, time: number): boolean {
+    const arp = this.arps.get(trackId);
+    const track = this.activeProject().tracks.find((x) => x.id === trackId);
+    if (!arp || !track || arp.replayDriven) return false;
+    const { held, latched } = arp.latch;
+    if (latched.length === held.length && latched.every((p) => held.includes(p))) return false;
+    arp.latch = { held, latched: [...held] };
+    this.applyArpInput(track, arp, Number.isFinite(time) ? time : 0);
+    return true;
+  }
+
+  /** New arp input at `t`: on the transport grid while playing, else on the free clock (started if needed). */
+  private applyArpInput(track: Track, arp: ArpRt, t: number): void {
+    const project = this.activeProject();
     if (this._playing) {
       this.pushLiveArpChange(track, arp, this.clock.tickAt(t));
       return;

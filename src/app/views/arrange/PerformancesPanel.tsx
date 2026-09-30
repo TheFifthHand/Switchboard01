@@ -5,19 +5,22 @@
  * - Replay uses the take's snapshot and events (session.replayPerformance);
  *   the replaying row shows its real progress read from the transport.
  * - The event list shows bar.beat.step from the start of the take, the kind
- *   of action and what it did in words. Deleting an event is an undoable
- *   command; a note's press and release are deleted together.
+ *   of action and what it did in words. Every edit is an undoable command:
+ *   delete an event (a note's press and release go together), change the
+ *   value of a knob, macro, tempo, swing or volume change, or end the take
+ *   earlier (at a row, or at a typed position).
  * - Long takes render the first rows and grow on "Show more".
  */
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Button, Icon, Led, Tooltip, useRafLoop } from '../../../ui/components';
+import { Button, Icon, Led, Tooltip, parseParamInput, useRafLoop } from '../../../ui/components';
+import { formatParam, type ParamSpec } from '../../../project/params';
 import type { Id, Performance } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { setView } from '../../../state/uiStore';
 import { session, useProject } from '../../instance';
 import { notify, useRuntime } from '../../runtime';
 import { formatSeconds } from '../../session';
-import { eventCounts, performanceRows, performanceSeconds, takeTempoMap, type EventKind, type EventRow } from './perfEvents';
+import { eventCounts, formatPosition, parsePosition, performanceRows, performanceSeconds, takeTempoMap, type EventKind, type EventRow } from './perfEvents';
 import styles from './PerformancesPanel.module.css';
 
 /** Rows shown when a take is opened, and how many more each "Show more" adds. */
@@ -197,23 +200,168 @@ function ReplayProgress(props: { perf: Performance; seconds: number }) {
 /* Event list                                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Inline text entry used to change a recorded value and the take's end.
+ * Enter applies (a refusal keeps the field open with the reason), Escape
+ * cancels, leaving the field applies a valid entry and drops an invalid one.
+ */
+function InlineEntry(props: { label: string; initial: string; className?: string; chars: number; onApply(text: string): string | null; onClose(refocus: boolean): void }) {
+  const { label, initial, className, chars, onApply, onClose } = props;
+  const [value, setValue] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  const errorId = useId();
+
+  useLayoutEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  const finish = (apply: boolean, keepOpenOnError: boolean) => {
+    if (done.current) return;
+    if (apply && value.trim() !== initial.trim()) {
+      const why = onApply(value);
+      if (why && keepOpenOnError) {
+        setError(why);
+        return;
+      }
+    }
+    done.current = true;
+    // Enter and Escape hand focus back to the control that opened the entry; a click elsewhere keeps its focus.
+    onClose(keepOpenOnError || !apply);
+  };
+
+  return (
+    <span className={[styles.entry, className].filter(Boolean).join(' ')}>
+      <input
+        ref={inputRef}
+        className={`${styles.entryInput} mono`}
+        style={{ width: `${chars + 2}ch` }}
+        value={value}
+        maxLength={24}
+        spellCheck={false}
+        autoComplete="off"
+        aria-label={label}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        onChange={(e) => {
+          setValue(e.currentTarget.value);
+          if (error) setError(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            finish(true, true);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            finish(false, false);
+          }
+        }}
+        onBlur={() => finish(true, false)}
+      />
+      {error && (
+        <span id={errorId} className={styles.entryError} role="alert">
+          {error}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** A row's value that can be edited: its range and its current value. */
+interface EditableValue {
+  spec: ParamSpec;
+  value: number;
+}
+
+type EventCol = 'value' | 'end' | 'del';
+
+/** "1 recorded action", "3 recorded actions". */
+const actionsText = (n: number) => `${n} recorded ${n === 1 ? 'action' : 'actions'}`;
+
+/** Shorten a take to end at `endTick` (one undo step) and say what went. */
+function trimTake(perf: Performance, rows: readonly EventRow[], endTick: number, at: string): boolean {
+  const removed = rows.filter((r) => r.tick >= endTick).length;
+  if (!session.accepted(cmd.trimPerformance(session.store, perf.id, endTick))) return false;
+  notify(`${perf.name} now ends at ${at}${removed ? `; ${actionsText(removed)} from there on removed` : ''}.`, 'info', 'undo');
+  return true;
+}
+
+/** Where the take ends, with an entry to end it earlier. */
+function TakeEnd(props: { perf: Performance; rows: readonly EventRow[] }) {
+  const { perf, rows } = props;
+  const [editing, setEditing] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const endText = formatPosition(perf.endTick - perf.startTick);
+  const close = (refocus: boolean) => {
+    setEditing(false);
+    if (refocus) requestAnimationFrame(() => buttonRef.current?.focus({ preventScroll: true }));
+  };
+  const apply = (text: string): string | null => {
+    const rel = parsePosition(text);
+    const help = `Type a bar.beat.step position after 1.1.1 and before ${endText}.`;
+    if (rel === null) return help;
+    if (rel <= 0 || perf.startTick + rel >= perf.endTick) return help;
+    trimTake(perf, rows, perf.startTick + rel, formatPosition(rel));
+    return null;
+  };
+  return (
+    <div className={styles.endLine}>
+      <span className={styles.endText}>
+        Ends at <span className="mono">{endText}</span>
+      </span>
+      {editing ? (
+        <>
+          <InlineEntry label={`New end of ${perf.name}, as bar.beat.step`} initial={endText} chars={8} onApply={apply} onClose={close} />
+          <span className={styles.endHint}>Enter shortens the take; actions from that point on are removed. Esc cancels.</span>
+        </>
+      ) : (
+        <Button ref={buttonRef} size="sm" variant="ghost" icon="stop" data-take-end="" onClick={() => setEditing(true)} tip="End the take earlier: type where it should stop. Actions from that point on are removed; Undo brings them back.">
+          End earlier…
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function EventList(props: { perf: Performance; replaying: boolean; listId: string }) {
   const { perf, replaying, listId } = props;
   const rows = useMemo(() => performanceRows(perf), [perf]);
+  // Knob, macro, tempo, swing and volume changes carry a value that can be changed.
+  const editable = useMemo(() => {
+    const out = new Map<number, EditableValue>();
+    for (const r of rows) {
+      const e = perf.events[r.index];
+      const spec = e ? cmd.performanceEventSpec(perf, e) : null;
+      const value = e ? cmd.performanceEventValue(e) : null;
+      if (spec && value !== null) out.set(r.index, { spec, value });
+    }
+    return out;
+  }, [rows, perf]);
   const [limit, setLimit] = useState(EVENT_PAGE);
   const [active, setActive] = useState(0);
+  const [editing, setEditing] = useState<number | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const pendingFocus = useRef<number | null>(null);
+  const pendingFocus = useRef<{ row: number; col: EventCol } | null>(null);
   const shown = rows.length > limit ? rows.slice(0, limit) : rows;
   const activeIndex = Math.min(active, Math.max(0, shown.length - 1));
 
   useLayoutEffect(() => {
-    const i = pendingFocus.current;
-    if (i === null) return;
+    const f = pendingFocus.current;
+    if (f === null) return;
     pendingFocus.current = null;
-    const buttons = bodyRef.current?.querySelectorAll<HTMLButtonElement>('[data-evdel]');
-    if (!buttons || buttons.length === 0) return;
-    buttons[Math.min(i, buttons.length - 1)].focus({ preventScroll: false });
+    const rowEls = bodyRef.current?.querySelectorAll<HTMLElement>('[role="row"]');
+    if (!rowEls || rowEls.length === 0) {
+      // The last action went: keep focus in this take, on its end control.
+      listRef.current?.querySelector<HTMLButtonElement>('[data-take-end]')?.focus({ preventScroll: true });
+      return;
+    }
+    const row = rowEls[Math.min(f.row, rowEls.length - 1)];
+    const target = row.querySelector<HTMLButtonElement>(`[data-evcol="${f.col}"]:not(:disabled)`) ?? row.querySelector<HTMLButtonElement>('[data-evcol="del"]');
+    target?.focus({ preventScroll: false });
   });
 
   const remove = (row: EventRow, at: number) => {
@@ -222,13 +370,39 @@ function EventList(props: { perf: Performance; replaying: boolean; listId: strin
     const what = row.kind === 'Note' && row.pairIndex !== undefined ? `the note at ${row.time} (its press and release)` : `the ${row.kind.toLowerCase()} event at ${row.time}`;
     notify(`Deleted ${what} from ${perf.name}.`, 'info', 'undo');
     setActive(at);
-    pendingFocus.current = at;
+    pendingFocus.current = { row: at, col: 'del' };
+  };
+
+  const endHere = (row: EventRow, at: number) => {
+    if (!trimTake(perf, rows, row.tick, row.time)) return;
+    const next = Math.max(0, at - 1);
+    setActive(next);
+    pendingFocus.current = { row: next, col: 'end' };
+  };
+
+  const applyValue = (row: EventRow, text: string): string | null => {
+    const ed = editable.get(row.index);
+    if (!ed) return null;
+    const { spec } = ed;
+    const v = parseParamInput(spec, text, ed.value);
+    if (v === null) return `Type a value from ${formatParam(spec, spec.min)} to ${formatParam(spec, spec.max)}.`;
+    const r = cmd.setPerformanceEventValue(session.store, perf.id, row.index, v);
+    if (r.changed) notify(`Changed ${spec.label} at ${row.time} in ${perf.name} to ${formatParam(spec, v)}.`, 'info', 'undo');
+    else if (r.refused || r.message) return r.refused ?? r.message ?? null;
+    return null;
+  };
+
+  const closeValue = (at: number, refocus: boolean) => {
+    setEditing(null);
+    setActive(at);
+    if (refocus) pendingFocus.current = { row: at, col: 'value' };
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
-    if (!t.dataset.evdel) return;
-    const i = Number(t.dataset.evdel);
+    const col = t.dataset.evcol as EventCol | undefined;
+    if (!col) return;
+    const i = Number(t.dataset.evrow);
     let next = -1;
     if (e.key === 'ArrowDown') next = Math.min(shown.length - 1, i + 1);
     else if (e.key === 'ArrowUp') next = Math.max(0, i - 1);
@@ -239,20 +413,25 @@ function EventList(props: { perf: Performance; replaying: boolean; listId: strin
       const row = shown[i];
       if (row) remove(row, i);
       return;
+    } else if (e.key === 'F2' && col === 'value') {
+      e.preventDefault();
+      const row = shown[i];
+      if (row) setEditing(row.index);
+      return;
     }
     if (next < 0) return;
     e.preventDefault();
     setActive(next);
-    pendingFocus.current = next;
+    pendingFocus.current = { row: next, col };
   };
 
   const counts = eventCounts(perf);
   const notes = counts.find((c) => c.key === 'note');
 
   return (
-    <div id={listId} className={styles.events}>
+    <div ref={listRef} id={listId} className={styles.events}>
       <p className={styles.eventsHint}>
-        Times are <span className="mono">bar.beat.step</span> from the start of the take.{notes ? ' Deleting a note removes its press and release together.' : ''} Undo brings back anything you delete.
+        Times are <span className="mono">bar.beat.step</span> from the start of the take. Click a knob, macro, tempo, swing or volume value to change it.{notes ? ' Deleting a note removes its press and release together.' : ''} Undo brings back anything you change.
         {replaying && <strong className={styles.replayNote}> Edits apply the next time you replay this take.</strong>}
       </p>
       {rows.length === 0 ? (
@@ -264,37 +443,83 @@ function EventList(props: { perf: Performance; replaying: boolean; listId: strin
             <span role="columnheader">Type</span>
             <span role="columnheader">What happened</span>
             <span role="columnheader">
-              <span className="visually-hidden">Delete</span>
+              <span className="visually-hidden">Actions</span>
             </span>
           </div>
           <div ref={bodyRef} role="rowgroup" onKeyDown={onKeyDown}>
-            {shown.map((r, i) => (
-              <div key={`${r.index}:${r.tick}:${r.kind}`} className={styles.row} role="row" aria-rowindex={i + 2}>
-                <span role="cell" className={`${styles.time} mono`}>
-                  {r.time}
-                </span>
-                <span role="cell" className={styles.kind} data-tone={KIND_TONE[r.kind]}>
-                  <span className={styles.kindDot} aria-hidden="true" />
-                  {r.kind}
-                </span>
-                <span role="cell" className={styles.detail} title={r.detail}>
-                  {r.detail}
-                </span>
-                <span role="cell" className={styles.delCell}>
-                  <button
-                    type="button"
-                    className={styles.del}
-                    data-evdel={i}
-                    tabIndex={i === activeIndex ? 0 : -1}
-                    aria-label={`Delete ${r.kind.toLowerCase()} at ${r.time}: ${r.detail}${r.kind === 'Note' && r.pairIndex !== undefined ? ' (press and release)' : ''}`}
-                    onClick={() => remove(r, i)}
-                    onFocus={() => setActive(i)}
-                  >
-                    <Icon name="trash" size={13} />
-                  </button>
-                </span>
-              </div>
-            ))}
+            {shown.map((r, i) => {
+              const ed = editable.get(r.index);
+              const tab = i === activeIndex ? 0 : -1;
+              const canEnd = r.tick > perf.startTick && r.tick < perf.endTick;
+              return (
+                <div key={`${r.index}:${r.tick}:${r.kind}`} className={styles.row} role="row" aria-rowindex={i + 2} data-editing={editing === r.index || undefined}>
+                  <span role="cell" className={`${styles.time} mono`}>
+                    {r.time}
+                  </span>
+                  <span role="cell" className={styles.kind} data-tone={KIND_TONE[r.kind]}>
+                    <span className={styles.kindDot} aria-hidden="true" />
+                    {r.kind}
+                  </span>
+                  <span role="cell" className={styles.detail} data-value={ed ? '' : undefined} title={editing === r.index ? undefined : r.detail}>
+                    {ed && editing === r.index ? (
+                      <InlineEntry
+                        label={`New ${ed.spec.label} value at ${r.time}`}
+                        initial={formatParam(ed.spec, ed.value)}
+                        chars={10}
+                        onApply={(text) => applyValue(r, text)}
+                        onClose={(refocus) => closeValue(i, refocus)}
+                      />
+                    ) : ed ? (
+                      <Tooltip tip="Click to change the recorded value (F2 on a focused value too)." detail={`${ed.spec.label}: ${formatParam(ed.spec, ed.spec.min)} to ${formatParam(ed.spec, ed.spec.max)}.`}>
+                        <button
+                          type="button"
+                          className={styles.valueButton}
+                          data-evrow={i}
+                          data-evcol="value"
+                          tabIndex={tab}
+                          aria-label={`Change the value: ${r.detail}, at ${r.time}`}
+                          onClick={() => setEditing(r.index)}
+                          onFocus={() => setActive(i)}
+                        >
+                          {r.detail}
+                        </button>
+                      </Tooltip>
+                    ) : (
+                      r.detail
+                    )}
+                  </span>
+                  <span role="cell" className={styles.actionCell}>
+                    <Tooltip name="End take here" tip="The take ends here: this action and everything after it are removed. Undo brings them back.">
+                      <button
+                        type="button"
+                        className={styles.rowAction}
+                        data-evrow={i}
+                        data-evcol="end"
+                        tabIndex={tab}
+                        disabled={!canEnd}
+                        aria-label={`End ${perf.name} at ${r.time}, removing this ${r.kind.toLowerCase()} and everything after it`}
+                        onClick={() => endHere(r, i)}
+                        onFocus={() => setActive(i)}
+                      >
+                        <Icon name="stop" size={12} />
+                      </button>
+                    </Tooltip>
+                    <button
+                      type="button"
+                      className={styles.del}
+                      data-evrow={i}
+                      data-evcol="del"
+                      tabIndex={tab}
+                      aria-label={`Delete ${r.kind.toLowerCase()} at ${r.time}: ${r.detail}${r.kind === 'Note' && r.pairIndex !== undefined ? ' (press and release)' : ''}`}
+                      onClick={() => remove(r, i)}
+                      onFocus={() => setActive(i)}
+                    >
+                      <Icon name="trash" size={13} />
+                    </button>
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -308,6 +533,7 @@ function EventList(props: { perf: Performance; replaying: boolean; listId: strin
           </Button>
         </div>
       )}
+      <TakeEnd perf={perf} rows={rows} />
     </div>
   );
 }

@@ -61,6 +61,18 @@ Rules:
   routing, clips/steps, sound choices, drum voices, arp and macro assignments are refused with an
   explanation, because replay uses the take's snapshot and could not reproduce them. A replayed
   noteOn pairs with the next noteOff of the same track and key.
+  - Undo/redo during a take go through only when the step changes nothing but recordable values
+    (`ProjectStore.setLock(reason, allows, paths)`); the resulting value changes are recorded as take
+    events, so replay matches what was heard.
+  - What already sounds when a take starts (held keys, a latched arpeggio) is written at the take's
+    first tick (latched-only notes use keys `take:<trackId>:<pitch>`). Known limit: a latched pattern
+    already running restarts from its first step in the replay, so its first notes can come in a
+    different order than live.
+  - Mute All ends a take (the notice says so), and a take cannot start while Mute All is on.
+  - Editor previews and auditions (`NoteSource 'preview'`) play the exact pitch, skip Musical Assist
+    and the arpeggiator, are never recorded, and are blocked while a take records or replays.
+- Musical Assist snaps melodic notes into the key; drums, sampler parts (recordings keep their
+  pitch) and previews play the key as pressed.
 
 ## Audio engine
 
@@ -76,7 +88,12 @@ Rules:
 - Master: sum → master volume → Mute All gain → look-ahead peak limiter (AudioWorklet, ceiling
   −1 dBFS) → final safety clipper (WaveShaper bounded to the ceiling) → destination.
 - Tempo-synced modules (delay, LFO, pump) follow `tempoChanged()`; LFO phase aligns on
-  `transportStarted()`.
+  `transportStarted()`. An LFO switched Off keeps its phase but its cables glide to 0 (it moves
+  nothing); a shared return switched Off mutes its output.
+- Drum kits define their own choke groups (open hat choked by the closed hat, and by the pedal hat
+  where the kit has one). Sampler One-shot plays the whole trimmed region whatever the note length
+  (Stop, Mute All, steals and released previews end it); Loop bakes an end-of-loop crossfade into
+  the audio leading into the region start, so every repeat keeps the region's own attack.
 - Deterministic: noise, impulse responses, random LFO steps and drum synthesis are seeded. Renders of
   the same project match to within float rounding (Chromium sums a node's inputs in an unspecified
   order, so the last bits can differ, ~1e-7 ≈ −140 dBFS).
@@ -101,14 +118,22 @@ Rules:
 - Stall policy: if the ticker falls more than 250 ms behind (background throttling, suspended
   context) the transport stops coherently (no backlog is played) and raises a `stalled` state that
   the UI shows with a Resume button.
+- `RealtimeTransport` emits `arpNote` when the audio clock reaches an arpeggiator note that was not
+  cancelled; Record Notes records those (at their real grid tick and gate) on arp parts.
+- After a stall, Resume restarts what was playing: the song from its block, a replay from its start,
+  otherwise the live pads.
 - `renderOffline()` (src/render/offline.ts) drives the same Sequencer + AudioEngine on an
-  `OfflineAudioContext`, in chunks via `suspend()` for progress and cancellation.
+  `OfflineAudioContext`, in chunks via `suspend()` for progress and cancellation. At the end of the
+  music it calls `transportStopped()` like the live transport (sampler one-shots end, take
+  automation hands back), then renders the tail.
 
 ## State, commands, undo
 
 - `ProjectStore` (src/state/) holds the current Project immutably. Every edit is a named command
   run through immer `produceWithPatches`; history stores patches + inverse patches.
 - Continuous gestures (knob drags) pass a gesture id so one drag = one undo step.
+- An undo group (`beginGroup(label)` / `endGroup()`) merges every recorded edit into one step; a
+  Record Notes pass uses it, so Undo removes the pass (new clip, notes, knob moves made meanwhile).
 - UI-only state (selected track, view, pad mode, octave, tips) lives in a separate UI store and is
   remembered in `localStorage`, never in the Project.
 

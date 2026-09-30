@@ -185,6 +185,36 @@ describe('performance replay', () => {
     ]);
   });
 
+  it('keys down and latched notes written at the take start replay the arpeggio from the start', () => {
+    // As Session.seedTake writes them: a key (k1, 60) still down, and a latched note (64) no key holds,
+    // pressed and let go of at once. The key is released later in the take; Latch keeps both.
+    const base = makeProject(120);
+    base.tracks[4].arp = { enabled: true, division: '1/16', mode: 'up', octaves: 1, latch: true, gate: 0.5 };
+    const start = 768;
+    const perf: Performance = {
+      id: 'perf1',
+      name: 'Latched take',
+      createdAt: 0,
+      startTick: start,
+      endTick: start + 384,
+      snapshot: makeSnapshot(base, [], start),
+      events: [
+        { t: start, type: 'noteOn', trackId: 't5', pitch: 60, velocity: 0.6, key: 'computer:t5:60' },
+        { t: start, type: 'noteOn', trackId: 't5', pitch: 64, velocity: 0.6, key: 'take:t5:64' },
+        { t: start, type: 'noteOff', trackId: 't5', pitch: 64, key: 'take:t5:64' },
+        { t: start + 100, type: 'noteOff', trackId: 't5', pitch: 60, key: 'computer:t5:60' },
+      ],
+    };
+    const live = { ...base, performances: [perf] };
+    const seq = new Sequencer({ getProject: () => live });
+    seq.start(0, { mode: { kind: 'replay', performanceId: 'perf1' } });
+    const notes = notesOf(runTo(seq, 0, 3), 't5');
+    // Every 16th of the take, both notes in turn, at the recorded velocity: nothing is left out.
+    expect(notes.map((n) => n.tick)).toEqual(Array.from({ length: 16 }, (_, i) => start + i * 24));
+    expect(notes.map((n) => n.pitch)).toEqual(Array.from({ length: 16 }, (_, i) => (i % 2 ? 64 : 60)));
+    expect(notes.every((n) => n.source === 'arp' && n.velocity === 0.6)).toBe(true);
+  });
+
   /** A take whose pad note (tick 0-768) spans a recorded slow-down to 60 BPM at tick 384. */
   function slowDownTake(): Project {
     const base = setClip(makeProject(120), 't6', 0, makeClip(2, [[0, 60, 768]], 'pad'));

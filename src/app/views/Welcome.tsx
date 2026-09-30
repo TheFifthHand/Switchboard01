@@ -10,6 +10,8 @@ import styles from './Welcome.module.css';
 
 export interface WelcomeProps {
   lastProject: { id: string; name: string } | null;
+  /** What happened on reopen (a damaged project skipped, repairs made on load). */
+  warnings?: readonly string[];
   storageError: string | null;
   onClose(): void;
   /** Open the project library (Starters tab). */
@@ -18,7 +20,7 @@ export interface WelcomeProps {
   onJumpedIn?(): void;
 }
 
-export function Welcome({ lastProject, storageError, onClose, onBrowse, onJumpedIn }: WelcomeProps) {
+export function Welcome({ lastProject, warnings = [], storageError, onClose, onBrowse, onJumpedIn }: WelcomeProps) {
   const jumpRef = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
   // Continue resumes the loaded project; the library may have renamed or switched it meanwhile.
@@ -63,6 +65,15 @@ export function Welcome({ lastProject, storageError, onClose, onBrowse, onJumped
           <Button variant="secondary" onClick={continueLast} className={styles.secondary}>
             Continue “{openName}”
           </Button>
+        )}
+        {warnings.length > 0 && (
+          <div className={styles.warn} role="status">
+            {warnings.map((w, i) => (
+              <p key={i} className={styles.warnLine}>
+                {w}
+              </p>
+            ))}
+          </div>
         )}
         <div className={styles.links}>
           <button type="button" className={styles.link} onClick={onBrowse} aria-haspopup="dialog">

@@ -92,7 +92,10 @@ class ClickEngine implements AudioEngineApi {
   transportStarted(time: number, tick: number, bpm: number): void {
     this.started = { time, tick, bpm };
   }
-  transportStopped(): void {}
+  readonly stops: number[] = [];
+  transportStopped(time: number): void {
+    this.stops.push(time);
+  }
   tempoChanged(bpm: number, time: number): void {
     this.tempos.push({ bpm, time });
   }
@@ -200,12 +203,16 @@ describe('renderOffline', () => {
     p = withClip(p, 't1', 0, 1, [[0, 0]]);
     p = withClip(p, 't1', 1, 1, [[192, 1]]);
     p.arrangement = { tailSeconds: 1, blocks: [{ id: 'a', sceneId: p.scenes[0].id, repeats: 2 }, { id: 'b', sceneId: p.scenes[1].id, repeats: 1 }] };
-    const buf = await renderOffline({ project: p, source: { kind: 'song' }, sampleRate: SR, tailSeconds: 1, ...factory() });
+    const f = factory();
+    const buf = await renderOffline({ project: p, source: { kind: 'song' }, sampleRate: SR, tailSeconds: 1, ...f });
     expect(buf.length).toBe(Math.ceil((RENDER_START_OFFSET + 6 + 1) * SR));
     const found = onsets(buf);
     const expected = [0, 384, 768 + 192].map(at120);
     expect(found).toHaveLength(3);
     found.forEach((s, i) => expect(Math.abs(s - expected[i])).toBeLessThanOrEqual(MS));
+    // Like live playback, the transport stops when the music ends (one-shots end, automation hands back); the tail rings on.
+    expect(f.engines[0].stops).toHaveLength(1);
+    expect(f.engines[0].stops[0]).toBeCloseTo(RENDER_START_OFFSET + 6, 6);
   });
 
   it('replays a performance with its tempo change, automation and master volume', async () => {

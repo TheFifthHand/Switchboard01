@@ -21,6 +21,7 @@ import type {
   NoteTrigger,
   VoiceHandle,
 } from './contracts';
+import { PREVIEW_KEY_PREFIXES } from './contracts';
 import { PPQ, type Connection, type Id, type Instrument, type MacroId, type ModuleType, type ParamValues, type PatchModule, type PortKind, type Project, type Track } from '../project/types';
 import { MODULE_DEFS, portDef } from '../project/modules';
 import { BPM_SPEC, INSTRUMENT_PARAMS, MASTER_VOLUME_SPEC, MODULE_PARAMS, clampParam, dbToGain, specById, type ParamSpec } from '../project/params';
@@ -123,6 +124,16 @@ function isOfflineContext(ctx: BaseAudioContext): boolean {
 
 function liveKey(trackId: Id, key: string): string {
   return `${trackId}\u0000${key}`;
+}
+
+function isPreviewKey(key: string): boolean {
+  return PREVIEW_KEY_PREFIXES.some((p) => key.startsWith(p));
+}
+
+/** Let go of a live note: an editor preview stops outright, anything else releases (a one-shot plays on). */
+function letGo(handle: VoiceHandle, key: string, time: number): void {
+  if (handle.stop && isPreviewKey(key)) handle.stop(time);
+  else handle.release(time);
 }
 
 interface ModRec {
@@ -234,6 +245,8 @@ export class AudioEngine implements AudioEngineApi {
   /** Timed master volume automation (time ascending), for cancellation. */
   private masterAuto: { time: number; db: number }[] = [];
   private readonly live = new Map<string, LiveNote>();
+  /** Live one-shots let go of but still playing out their sound: Stop (releaseLive) ends them. */
+  private readonly playingOn = new Set<LiveNote>();
   /**
    * Tempo map of the running transport (null while stopped), so modules
    * created during playback (an LFO patched in, an undo restoring one) start
@@ -585,6 +598,10 @@ export class AudioEngine implements AudioEngineApi {
 
   private reconcileConnections(project: Project, now: number, immediate: boolean): void {
     const mutedReturns = this.bypassedReturns(project);
+    // A bypassed LFO stops moving its targets: its cables glide to 0 and stay
+    // patched. Silencing the cables (not the LFO's Depth) keeps recorded or
+    // macro-driven Depth changes from switching the movement back on.
+    const stoppedLfos = new Set(project.patch.modules.filter((m) => m?.type === 'lfo' && m.bypass).map((m) => m.id));
     const desired = new Map<Id, DesiredConn>();
     const edges = new Map<Id, Set<Id>>();
     const pairs = new Set<string>();
@@ -593,6 +610,7 @@ export class AudioEngine implements AudioEngineApi {
       const d = this.resolveConnection(c);
       if (!d) continue;
       if (d.kind === 'audio' && mutedReturns.has(c.from.module)) d.target = 0;
+      if (d.kind === 'mod' && stoppedLfos.has(c.from.module)) d.target = 0;
       const pair = `${c.from.module}\u0000${c.from.port}\u0000${c.to.module}\u0000${c.to.port}`;
       if (pairs.has(pair)) continue;
       // Never build a feedback loop: reject any edge that closes a cycle.
@@ -696,7 +714,7 @@ export class AudioEngine implements AudioEngineApi {
     const prev = this.live.get(k);
     if (prev) {
       this.live.delete(k);
-      prev.handle.release(now);
+      this.letGoLive(prev, now);
     }
     let legato = false;
     for (const v of this.live.values()) {
@@ -716,16 +734,23 @@ export class AudioEngine implements AudioEngineApi {
     const entry = this.live.get(k);
     if (entry) {
       this.live.delete(k);
-      entry.handle.release(now);
+      this.letGoLive(entry, now);
       return;
     }
     // The key went down on another track (selection changed while held): release it there.
     for (const [lk, v] of this.live) {
       if (v.key === key) {
         this.live.delete(lk);
-        v.handle.release(now);
+        this.letGoLive(v, now);
       }
     }
+  }
+
+  /** Release a live note; a one-shot that plays on is remembered so Stop can still end it. */
+  private letGoLive(note: LiveNote, now: number): void {
+    letGo(note.handle, note.key, now);
+    for (const n of this.playingOn) if (n.handle.ended) this.playingOn.delete(n);
+    if (note.handle.stop && !note.handle.ended && !isPreviewKey(note.key)) this.playingOn.add(note);
   }
 
   releaseLive(trackId?: Id): void {
@@ -733,7 +758,19 @@ export class AudioEngine implements AudioEngineApi {
     for (const [lk, v] of this.live) {
       if (trackId !== undefined && v.trackId !== trackId) continue;
       this.live.delete(lk);
-      v.handle.release(now);
+      if (v.handle.stop) v.handle.stop(now);
+      else v.handle.release(now);
+    }
+    for (const n of this.playingOn) {
+      if (trackId !== undefined && n.trackId !== trackId) continue;
+      this.playingOn.delete(n);
+      n.handle.stop?.(now);
+    }
+    // With the transport stopped, the only other notes are the idle arpeggio's:
+    // its one-shots that are playing out end too. Later ones are the transport's
+    // to cancel (Stop does; a latched arpeggio keeps going after a window blur).
+    if (this.transport === null) {
+      for (const [id, inst] of this.instByTrack) if (trackId === undefined || id === trackId) inst.stopOneShots(now, true);
     }
   }
 
@@ -915,6 +952,8 @@ export class AudioEngine implements AudioEngineApi {
     this.transport = null;
     for (const ch of this.channels) ch.cancelAfter(t);
     for (const lfo of this.lfos) lfo.transportStopped(t);
+    // Sampler one-shots play out past their notes' ends: Stop ends them.
+    for (const inst of this.instByTrack.values()) inst.stopOneShots(t);
     this.cancelClicksAfter(t);
     // Mutes and master moves belonged to the take that was playing.
     this.cancelMuteAndMasterAfter(t, true);
@@ -1037,6 +1076,7 @@ export class AudioEngine implements AudioEngineApi {
 
   private killAndFlush(): void {
     this.live.clear();
+    this.playingOn.clear();
     for (const rec of this.mods.values()) {
       if (rec.node instanceof InstrumentModule) rec.node.kill();
     }
@@ -1123,6 +1163,7 @@ export class AudioEngine implements AudioEngineApi {
     this.flushTimer = null;
     this.flushAfter = null;
     this.live.clear();
+    this.playingOn.clear();
     this.overlay.clear();
 
     for (const rec of this.conns.values()) this.disconnectConnection(rec);

@@ -353,7 +353,9 @@ export class LfoModule implements ModuleNode {
   }
 
   setBypass(_bypass: boolean, _time: number): void {
-    // Modulation sources have no bypass; Depth 0 silences the output.
+    // Nothing to do here: the engine glides a bypassed LFO's cables to 0
+    // (AudioEngine.reconcileConnections), so the LFO keeps its phase and
+    // resumes in step when switched back on.
   }
 
   setTempo(bpm: number, time: number): void {

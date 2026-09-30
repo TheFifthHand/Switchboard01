@@ -323,5 +323,9 @@ describe('library', () => {
     const err = await library.openLast().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StorageError);
     expect(err).toMatchObject({ kind: 'unknown', cause: [expect.stringMatching(/^"Broken" could not be opened/)] });
+    // Boot tells this apart from a storage failure: storage works, so saving is still possible.
+    expect(library.isUnreadableLibrary(err)).toBe(true);
+    expect(library.isUnreadableLibrary(new StorageError('quota', 'Browser storage is full.'))).toBe(false);
+    expect(library.isUnreadableLibrary(await loadProject(broken.id).catch((e: unknown) => e))).toBe(false);
   });
 });

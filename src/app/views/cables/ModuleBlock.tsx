@@ -165,7 +165,7 @@ export const ModuleBlock = memo(function ModuleBlock(props: ModuleBlockProps) {
     geom.type === 'lfo'
       ? `Off stops ${name}'s movement; its cables stay in place.`
       : shared
-        ? `Off bypasses the shared ${name} for every part: sound passes through unchanged.`
+        ? `Off turns the shared ${name} off for every part: they are heard without it.`
         : `Off bypasses the ${name}: the sound passes through unchanged.`;
   const tip = shared ? `Shared by all parts: ${def.description}` : (TITLE_TIP[geom.type] ?? def.description);
   const sockets = geom.sockets.map((s) => <Socket key={s.key} s={s} ui={ui} handlers={handlers} aria={socketAria[s.key] ?? s.label} count={socketCount[s.key] ?? 0} />);

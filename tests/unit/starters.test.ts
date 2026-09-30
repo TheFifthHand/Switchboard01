@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BUILTIN_DURATIONS } from '../../src/audio/instruments/builtinSamples';
 import { BUILTIN_SAMPLES, KITS, SYNTH_PRESETS } from '../../src/content/catalog';
 import { clip, drums, line, midi, parseGrid, seq, stabs, strum } from '../../src/content/starters/dsl';
 import { BLANK_STARTER, JUMP_IN_SCENE_ROW, JUMP_IN_STARTER_ID, STARTERS, getStarter } from '../../src/content/starters/index';
@@ -281,6 +282,24 @@ describe.each(STARTERS.map((s) => [s.name, s] as const))('%s starter', (_name, s
           expect(n.duration).toBeGreaterThan(0);
           expect(n.velocity).toBeGreaterThan(0);
           expect(n.velocity).toBeLessThanOrEqual(1);
+        }
+      }
+    }
+  });
+
+  it('plays each sampler note as the part’s mode means it: a Loop part’s notes never outlast one pass', () => {
+    // Loop parts are the gated ones (chops, stabs): a note lasts as long as it is held, and no
+    // note may be held past the end of the pitched region, or it would start repeating.
+    for (const t of project.tracks) {
+      const inst = t.instrument;
+      if (inst.kind !== 'sampler' || !inst.sampleId || inst.params.mode !== 1) continue;
+      const p = inst.params;
+      const region = BUILTIN_DURATIONS[inst.sampleId] * Math.abs((p.end ?? 1) - (p.start ?? 0));
+      for (const c of t.clips) {
+        for (const n of c?.notes ?? []) {
+          const rate = Math.pow(2, (n.pitch - (p.rootNote ?? 60) + (p.pitch ?? 0) + (p.fine ?? 0) / 100) / 12);
+          const held = (n.duration / TICKS_PER_BEAT) * (60 / project.bpm);
+          expect(held, `${t.name} ${c!.name} note ${n.pitch}`).toBeLessThan(region / rate);
         }
       }
     }

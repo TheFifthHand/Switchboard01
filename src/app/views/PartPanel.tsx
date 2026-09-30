@@ -10,7 +10,7 @@ import { MACRO_IDS, type MacroId } from '../../project/types';
 import { applyVariation, setLocked } from '../../state/commands';
 import { hashString } from '../../project/rng';
 import { describeVariation } from '../../music/variation';
-import { setView, slotFor, uiStore } from '../../state/uiStore';
+import { setView, uiStore } from '../../state/uiStore';
 import { session, useProject, useUi } from '../instance';
 import { notify, runtimeStore } from '../runtime';
 import { INSTRUMENT_LABEL, soundName } from '../labels';
@@ -29,6 +29,8 @@ function MacroKnob(props: { trackId: string; macro: MacroId }) {
     return t ? describeMacro(p, t, macro).map((d) => d.label).join(', ') : '';
   });
   const spec = MACRO_SPECS[macro];
+  // The detail lists what this part's macro really moves (its live mappings), never a fixed description.
+  const moves = targets ? `Moves: ${targets}.` : 'No mappings: this macro does nothing.';
   return (
     <Knob
       spec={spec}
@@ -36,16 +38,23 @@ function MacroKnob(props: { trackId: string; macro: MacroId }) {
       size="md"
       onChange={(v, info) => session.setMacro(trackId, macro, v, info.gesture)}
       tip={spec.tip}
-      detail={targets ? `Moves: ${targets}. ${spec.detail ?? ''}` : spec.detail}
+      detail={`${moves} ${spec.detail ? `${spec.detail} ` : ''}Shape shows and edits what it moves.`}
       id={`macro-${macro}`}
     />
   );
 }
 
-/** Clip Variation should change: the part's playing clip, else its selected slot. */
+/**
+ * Clip Variation changes: the part's selected clip (the one Steps shows and
+ * the Loops pad ring marks), else its playing clip, else its first clip.
+ */
 function variationSlot(trackId: string): number {
+  const chosen = uiStore.getState().selectedSlot[trackId];
+  if (chosen !== undefined) return chosen;
   const playing = runtimeStore.getState().tracks[trackId]?.playingSlot;
-  return playing ?? slotFor(uiStore.getState(), trackId);
+  if (playing != null) return playing;
+  const first = session.store.getState().tracks.find((t) => t.id === trackId)?.clips.findIndex((c) => !!c) ?? -1;
+  return first < 0 ? 0 : first;
 }
 
 function vary(trackId: string): void {
@@ -55,7 +64,7 @@ function vary(trackId: string): void {
   const slot = variationSlot(trackId);
   const clip = track.clips[slot];
   if (!clip) {
-    notify('Select a clip on this part first — Variation changes a pattern.', 'warn');
+    notify(`Slot ${slot + 1} of ${track.name} is empty. Select a clip with notes: Variation changes a pattern.`, 'warn');
     return;
   }
   const generation = (clip.variation?.generation ?? 0) + 1;
@@ -64,7 +73,14 @@ function vary(trackId: string): void {
   const r = applyVariation(session.store, trackId, slot, seed);
   if (!session.accepted(r)) return;
   const after = session.store.getState().tracks.find((t) => t.id === trackId)?.clips[slot]?.notes ?? before;
-  notify(`Variation on ${track.name} · ${clip.name}: ${describeVariation(before, after)}.`, 'info', 'undo');
+  // Varying a clip other than the one playing is silent until it is launched: say so
+  // (unless it is already queued to start).
+  const rt = runtimeStore.getState();
+  const tr = rt.tracks[trackId];
+  const playingSlot = rt.playing && tr?.queued?.slot !== slot ? (tr?.playingSlot ?? null) : null;
+  const playingClip = playingSlot !== null && playingSlot !== slot ? track.clips[playingSlot] : null;
+  const elsewhere = playingClip ? ` ${playingClip.name} is playing: launch ${clip.name} to hear it.` : '';
+  notify(`Variation on ${track.name} · ${clip.name}: ${describeVariation(before, after)}.${elsewhere}`, 'info', 'undo');
 }
 
 export function PartPanel() {
@@ -112,7 +128,7 @@ export function PartPanel() {
       </div>
 
       <div className={styles.actions}>
-        <Button icon="dice" onClick={() => vary(trackId)} disabled={header.locked} tip="Make a new variation of this part's pattern. Undo brings the old one back." detail="Deterministic: the seed is stored, so saved projects and exports reproduce it.">
+        <Button icon="dice" onClick={() => vary(trackId)} disabled={header.locked} tip="Make a new variation of this part's selected clip (the one Steps shows). Undo brings the old one back." detail="Deterministic: the seed is stored, so saved projects and exports reproduce it.">
           Variation
         </Button>
         <Tooltip tip={header.locked ? 'This part is locked: Variation will not change it.' : 'Lock this part so Variation never changes it.'}>

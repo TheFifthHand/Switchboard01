@@ -4,13 +4,16 @@
  * Every edit is a named recipe run through immer's produceWithPatches; the
  * undo history stores forward and inverse patches, never whole copies.
  * Consecutive edits that carry the same gesture id (one knob drag) merge into
- * one history entry. `updatedAt` is stamped outside the recorded patches, so
+ * one history entry, and while an undo group is open (one Record Notes pass)
+ * every recorded edit joins the group's entry. `updatedAt` is stamped outside the recorded patches, so
  * undo/redo count as fresh edits for autosave instead of rewinding the clock.
  *
  * The edit lock refuses routing edits (labels starting with "patch:") while a
  * performance take is recording, including undo/redo of such edits and of
- * undoable whole-project swaps (which replace the patch as well). `replace()`
- * itself is not locked: stop the take before loading another project.
+ * undoable whole-project swaps (which replace the patch as well). A lock can
+ * narrow this to an allow-list of labels, and hold back undo/redo steps by the
+ * paths they change. `replace()` itself is not locked: stop the take before
+ * loading another project.
  */
 import { applyPatches, enablePatches, freeze, produce, produceWithPatches, type Draft, type Patch as ImmerPatch } from 'immer';
 import type { Project } from '../project/types';
@@ -102,9 +105,13 @@ export class ProjectStore implements ReadableStore<Project> {
   private redoStack: HistoryEntry[] = [];
   /** Gesture of the most recent recorded apply; cleared by anything that ends the gesture. */
   private openGesture: string | null = null;
+  /** Open undo group: its label, and its history entry once something was recorded. */
+  private group: { label: string; entry: HistoryEntry | null } | null = null;
   private lock: string | null = null;
   /** While locked: which edits are still allowed (default: everything except routing edits). */
   private lockAllows: ((label: string) => boolean) | null = null;
+  /** While locked: the paths an undo/redo step may change (default: any path of an allowed step). */
+  private lockPaths: ((path: readonly (string | number)[]) => boolean) | null = null;
   private readonly now: () => number;
   private readonly limit: number;
   /** History and lock state, for undo buttons and lock banners. */
@@ -149,12 +156,15 @@ export class ProjectStore implements ReadableStore<Project> {
       }
     } else {
       const top = this.undoStack[this.undoStack.length - 1];
-      if (opts.gesture !== undefined && top && top.gesture === opts.gesture && this.openGesture === opts.gesture) {
+      const inGroup = !!this.group && !!top && this.group.entry === top;
+      if (inGroup || (opts.gesture !== undefined && top && top.gesture === opts.gesture && this.openGesture === opts.gesture)) {
         top.patches.push(...patches);
         // Inverses run newest-first.
         top.inverse = [...inverse, ...top.inverse];
       } else {
-        this.undoStack.push({ label, gesture: opts.gesture, patches, inverse });
+        const entry: HistoryEntry = { label: this.group?.label ?? label, gesture: opts.gesture, patches, inverse };
+        this.undoStack.push(entry);
+        if (this.group) this.group.entry = entry;
         if (this.undoStack.length > this.limit) this.undoStack.splice(0, this.undoStack.length - this.limit);
       }
       this.openGesture = opts.gesture ?? null;
@@ -166,6 +176,22 @@ export class ProjectStore implements ReadableStore<Project> {
 
   /** Close the current gesture so the next edit with the same id starts a new undo step. */
   endGesture(): void {
+    this.openGesture = null;
+  }
+
+  /**
+   * Open an undo group: until endGroup(), every recorded edit, whatever its
+   * gesture, joins one undo step labelled `label` (a Record Notes pass with
+   * any knob moves made during it). An undo inside the group removes what was
+   * recorded so far; later edits start the group's step again.
+   */
+  beginGroup(label: string): void {
+    this.group = { label, entry: null };
+    this.openGesture = null;
+  }
+
+  endGroup(): void {
+    this.group = null;
     this.openGesture = null;
   }
 
@@ -247,11 +273,15 @@ export class ProjectStore implements ReadableStore<Project> {
   /**
    * Lock edits (reason shown to the user), or unlock with null. By default only
    * routing edits are refused; `allows` narrows the lock to an allow-list of
-   * labels (a performance take allows only the edits it records).
+   * labels (a performance take allows only the edits it records). `paths`
+   * also holds back undo/redo steps that change anything outside those paths
+   * (a take can only record value changes, so an undo it could not record
+   * waits until the take ends), whatever their label says.
    */
-  setLock(reason: string | null, allows?: (label: string) => boolean): void {
+  setLock(reason: string | null, allows?: (label: string) => boolean, paths?: (path: readonly (string | number)[]) => boolean): void {
     this.lock = reason;
     this.lockAllows = reason === null ? null : (allows ?? null);
+    this.lockPaths = reason === null ? null : (paths ?? null);
     this.info.setState(this.computeInfo());
   }
 
@@ -260,7 +290,9 @@ export class ProjectStore implements ReadableStore<Project> {
   }
 
   private entryLocked(entry: HistoryEntry): boolean {
-    return lockedEntry(entry) || !this.allowedWhileLocked(entry.label);
+    if (lockedEntry(entry) || !this.allowedWhileLocked(entry.label)) return true;
+    const paths = this.lockPaths;
+    return !!paths && ![...entry.patches, ...entry.inverse].every((p) => paths(p.path));
   }
 
   getLock(): string | null {

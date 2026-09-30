@@ -74,6 +74,15 @@
 .recCaption[data-live] {
   color: var(--coral-ink);
 }
+/* The status text gives way (ellipsis) before the Record Notes grid does. */
+.recText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recSnap {
+  flex: none;
+}
 .recDot {
   width: 7px;
   height: 7px;
@@ -210,12 +219,14 @@
   /* Movement tells "saving" from "saved" when only the lamp is shown. */
   animation: recBlink 0.9s ease-in-out infinite;
 }
+.savePreview .saveDot {
+  /* Hollow: nothing is stored yet (the word "Preview" says so). */
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ink-3);
+}
 .saveError {
   color: var(--coral-ink);
   background: var(--coral-wash);
-}
-.saveError .saveDot {
-  background: var(--coral);
 }
 .savePopover {
   position: absolute;
@@ -242,8 +253,9 @@
   flex: none;
 }
 
-/* The More key replaces Undo, Redo, Tips, Projects and Export below 1280 px. */
+/* The More key replaces Undo, Redo, Tips, Projects and Export below 1320 px. */
 .more {
+  position: relative;
   display: grid;
   place-items: center;
   width: 32px;
@@ -265,23 +277,63 @@
   box-shadow: var(--shadow-pressed);
   color: var(--ink);
 }
-@media (min-width: 1280px) {
+/* An update is waiting (shown on the key where the strip has no room for the Update key itself); coral = attention. */
+.moreBadge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 0 1.5px var(--shell-hi);
+}
+@media (min-width: 1320px) {
   .right .narrowOnly {
     display: none;
   }
 }
-@media (max-width: 1279px) {
+@media (max-width: 1319px) {
   .right .wideOnly {
     display: none;
   }
 }
-/* A failed save spells out "Not saved"; on narrower screens the More key makes room for it. */
+/* "Not saved" needs room: on narrower screens the More key makes it. */
 @media (max-width: 1439px) {
   .right:has(.saveError) .wideOnly {
     display: none;
   }
   .right:has(.saveError) .narrowOnly {
     display: grid;
+  }
+}
+/* So does a waiting Update key, until the strip is wide enough for everything. */
+@media (max-width: 1799px) {
+  .right:has(.update) .wideOnly {
+    display: none;
+  }
+  .right:has(.update) .narrowOnly {
+    display: grid;
+  }
+}
+/* 1024-1179 px: no room for the offline state or the Update key; both are in the More menu. */
+@media (min-width: 1024px) and (max-width: 1179px) {
+  .right .offline,
+  .right .update {
+    display: none;
+  }
+  .moreBadge {
+    display: block;
+  }
+  /* A failed save shows as its coral warning key; "Not saved" is its name and the popover says why. */
+  .saveError .saveText {
+    display: none;
+  }
+}
+@media (min-width: 1180px) and (max-width: 1319px) {
+  .right:has(.update) .saveError .saveText {
+    display: none;
   }
 }
 /* Smallest supported width (1024 px, also 200 % zoom): the bar.beat readout gives way. */
@@ -292,7 +344,7 @@
 }
 
 /* Narrow desktop: hide secondary text, keep every control reachable. */
-@media (max-width: 1640px) {
+@media (max-width: 1759px) {
   .projectName {
     display: none;
   }
@@ -310,12 +362,12 @@
     white-space: nowrap;
   }
 }
-@media (max-width: 1540px) {
+@media (max-width: 1599px) {
   .brand {
     display: none;
   }
 }
-@media (min-width: 1541px) {
+@media (min-width: 1600px) {
   .bar {
     gap: 12px;
   }
@@ -324,8 +376,8 @@
   }
 }
 
-/* Below 1366 px: tighter spacing; the save state shows as its lamp (words return on errors). */
-@media (max-width: 1365px) {
+/* Below 1440 px: tighter spacing, so the save and offline states fit beside Undo, Redo, Tips, Projects and Export. */
+@media (max-width: 1439px) {
   .bar {
     gap: 6px;
   }
@@ -335,8 +387,12 @@
   .play {
     min-width: 78px;
   }
+}
+/* Below 1366 px the save state shows as its lamp (words return on errors). */
+@media (max-width: 1365px) {
   .saveOk .saveText,
-  .saveBusy .saveText {
+  .saveBusy .saveText,
+  .savePreview .saveText {
     display: none;
   }
 }
@@ -351,5 +407,18 @@
   }
   .right {
     margin-left: auto;
+  }
+}
+
+/*
+ * When the page scrolls (narrow or short windows), the strip stays at the top
+ * so Play/Stop and Mute All are always one press away. It stacks above the
+ * panels scrolling beneath it, below menus, the guide and dialogs.
+ */
+@media (max-width: 1023px), (max-height: 559px) {
+  .bar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
   }
 }

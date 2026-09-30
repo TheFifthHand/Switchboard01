@@ -5,7 +5,9 @@
  * and a summary key ("1/16 · Up · 1 oct") that opens `ArpSettings` above it
  * (rate, pattern, octave range, latch, gate). The arp itself runs in the
  * sequencer on the audio clock, so it follows the transport and tempo; the
- * notes it receives are already snapped by Musical Assist.
+ * notes it receives are already snapped by Musical Assist (a sampler part's
+ * are the keys as pressed: recordings are never re-pitched by Assist).
+ * Record Notes records the notes it plays.
  */
 import { useRef, useState, type RefObject } from 'react';
 import { Icon, Knob, SegmentedControl, Switch } from '../../ui/components';
@@ -61,10 +63,17 @@ function update(trackId: Id, partial: Partial<ArpSettingsData>): void {
   session.accepted(setArp(session.store, trackId, partial));
 }
 
+/** What Musical Assist does to the notes the arp plays, in one sentence. */
+function assistLine(assist: boolean, sampler: boolean, keyName: string): string {
+  if (!assist) return 'Musical Assist is off, so it plays exactly the keys you hold.';
+  return sampler ? 'Recordings are never re-pitched by Musical Assist, so it plays exactly the keys you hold.' : `Musical Assist keeps every note in ${keyName}.`;
+}
+
 /** Full settings, shown in a popover above the keyboard strip. */
 export function ArpSettings({ trackId }: { trackId: Id }) {
   const arp = useProject((p) => p.tracks.find((t) => t.id === trackId)?.arp ?? null);
   const name = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const sampler = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind === 'sampler');
   const assist = useProject((p) => p.assist);
   const keyName = useProject((p) => keyLabel(p.root, p.scale));
   // Gate knob: shown live while dragging, stored once when the gesture ends (one undo step).
@@ -124,11 +133,11 @@ export function ArpSettings({ trackId }: { trackId: Id }) {
         onChange={(on) => update(trackId, { latch: on })}
         size="sm"
         tip="Keeps the pattern going after you let go of the keys. Press new keys to change it; switch Latch off to end it."
-        detail="Stopping playback also ends a latched pattern."
+        detail="Stopping playback or switching the arpeggiator off also ends a latched pattern."
       />
       <p className={styles.tip}>
-        Hold keys and the arpeggiator plays them one at a time, in time with the beat — it keeps time even while playback is stopped.{' '}
-        {assist ? `Musical Assist keeps every note in ${keyName}.` : 'Musical Assist is off, so it plays exactly the keys you hold.'}
+        Hold keys and the arpeggiator plays them one at a time, in time with the beat — it keeps time even while playback is stopped. {assistLine(assist, sampler, keyName)} Record Notes records the
+        notes it plays, exactly on its grid.
       </p>
     </div>
   );
@@ -138,7 +147,9 @@ export function ArpSettings({ trackId }: { trackId: Id }) {
 export function ArpStrip({ trackId, stripRef }: { trackId: Id; stripRef?: RefObject<HTMLElement | null> }) {
   const arp = useProject((p) => p.tracks.find((t) => t.id === trackId)?.arp ?? null);
   const isDrums = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind === 'drums');
+  const sampler = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind === 'sampler');
   const name = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const assist = useProject((p) => p.assist);
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   // Selecting a drum part closes the settings, so they do not pop up again later on their own.
@@ -163,7 +174,7 @@ export function ArpStrip({ trackId, stripRef }: { trackId: Id; stripRef?: RefObj
         checked={arp.enabled}
         onChange={(on) => update(trackId, { enabled: on })}
         tip="Turns held keys into a rhythmic pattern that plays in time with the beat."
-        detail={`Musical Assist keeps it in key. Settings: ${summary}.`}
+        detail={`${assist && !sampler ? 'Musical Assist keeps it in key.' : 'It plays exactly the keys you hold.'} Settings: ${summary}.`}
       />
       <button
         ref={btnRef}

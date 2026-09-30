@@ -7,14 +7,14 @@ import { Button, TipsProvider, ToastProvider, useToasts } from '../ui/components
 import { isTypingTarget } from '../ui/hooks/useComputerKeyboard';
 import { setTipsEnabled } from '../state/uiStore';
 import { session, useUi } from './instance';
-import { useRuntime } from './runtime';
+import { notify, useRuntime } from './runtime';
 import type { BootInfo } from './session';
 import { TransportBar } from './views/TransportBar';
 import { PlayView } from './views/PlayView';
 import { KeyboardStrip } from './views/KeyboardStrip';
 import { Welcome } from './views/Welcome';
 import { ExportDialog } from './views/ExportDialog';
-import { Library, type LibraryTab } from './views/Library';
+import { Library, storageMessage, type LibraryTab } from './views/Library';
 import { Guide } from './views/Guide';
 import { uiStore } from '../state/uiStore';
 import { ShapeView } from './views/shape/ShapeView';
@@ -129,8 +129,15 @@ export function App({ boot }: { boot: BootInfo }) {
     window.addEventListener('keydown', onKey);
     window.addEventListener('blur', release);
     document.addEventListener('visibilitychange', onVis);
+    // The recovery export offered when saving fails: say whether it worked.
     const onExportProject = () => {
-      void session.exportProjectFile().then(({ blob, filename }) => downloadBlob(blob, filename));
+      session
+        .exportProjectFile()
+        .then(({ blob, filename }) => {
+          downloadBlob(blob, filename);
+          notify(`Saved “${filename}” to your downloads. Keep it as your backup.`);
+        })
+        .catch((e: unknown) => notify(storageMessage(e, 'Exporting the project file'), 'error'));
     };
     window.addEventListener('sb:export-project', onExportProject);
     // Any view can open the export dialog with a preselected source ('song', 'perf:<id>', 'scene:<row>', 'now').
@@ -168,6 +175,7 @@ export function App({ boot }: { boot: BootInfo }) {
         {welcome && (
           <Welcome
             lastProject={boot.lastProject}
+            warnings={boot.warnings}
             storageError={boot.storageError}
             onClose={() => setWelcome(false)}
             onBrowse={() => setLibrary({ tab: 'starters', fromWelcome: true })}

@@ -15,7 +15,7 @@ Use headphones or speakers; start with a moderate volume.
      Double-clicking inside the zip without extracting will NOT work.
   2. Double-click  "Start SWITCHBOARD.bat".
      A small black window opens and your browser shows the instrument at
-     http://127.0.0.1:4173/  (the port may be 4174-4192 if 4173 is busy).
+     http://127.0.0.1:4173/
      If Windows SmartScreen asks, choose "More info" > "Run anyway".
      The window uses PowerShell, which is built into Windows 10 and 11.
   3. Keep that small window open while you play.
@@ -24,6 +24,15 @@ Use headphones or speakers; start with a moderate volume.
   The launcher only serves the "app" folder, and only to this computer
   (loopback address 127.0.0.1). Nothing is uploaded.
 
+  Already running? Double-clicking "Start SWITCHBOARD.bat" again just opens
+  the running copy in your browser; the new window closes by itself after a
+  few seconds.
+
+  Your browser keeps projects separately for each address, and the port
+  number (4173) is part of the address. The launcher always uses
+  http://127.0.0.1:4173/ unless another program is using that port; then
+  it explains what that means before it opens anywhere else (see 5).
+
 
 2. OTHER WAYS TO OPEN IT (any system)
 -------------------------------------
@@ -31,7 +40,8 @@ Use headphones or speakers; start with a moderate volume.
       node launcher/serve.mjs app
   With Python 3 installed:
       python -m http.server 4173 --bind 127.0.0.1 --directory app
-  then open http://127.0.0.1:4173/ in Chrome or Edge.
+  then open http://127.0.0.1:4173/ in Chrome or Edge. Keep port 4173 so
+  you find the same projects every time.
 
   Why not just double-click app/index.html?  Browsers block the module
   loading, storage and offline features the app needs on file:// pages,
@@ -44,31 +54,75 @@ Use headphones or speakers; start with a moderate volume.
   allows the browser to make sound. Then:
     * Tap lit pads to stop/start parts; tap another pad in a column to
       switch that part's pattern. Changes join on the next bar.
-    * Turn TONE and SPACE on the right to change the selected part.
+    * Turn the Tone and Space knobs on the right to change the selected
+      part.
+    * Knobs: drag up or down (hold Shift for fine steps). Double-click
+      puts a knob back to its default. For an exact value, click a knob,
+      type a number and press Enter. Arrow keys work too.
     * Play the little keyboard with the mouse or your computer keys
       (A W S E D F T G Y H U J K ...). Musical Assist keeps you in key.
-    * Press "Record Performance", play for a while, press it again to
-      stop, then use Export to save a WAV file you can listen to anywhere.
+    * Record a performance: press "Performance" (under "Record" at the
+      top), play for a while, then press it again to stop. To save it as
+      a WAV file you can listen to anywhere, press "Export" (top right),
+      choose your performance under "What to export" and press
+      "Export WAV".
+    * Point at any control to see what it does. The "Tips" switch at the
+      top turns these explanations on or off.
+  In a narrower window (or while an "Update" or "Not saved" button needs
+  the room), Tips, your projects and Export are in the More menu (the
+  button with three dots, top right). There, your projects open with
+  "Projects...".
 
 
 4. YOUR WORK
 ------------
   Projects save automatically in this browser (look for "Saved" at the
-  top). Browser storage is working storage: for a real backup, use
-  Project > Export project file (.sb01.zip). You can open that file again
-  on any computer with Project > Import project file.
+  top right; an untouched starter shows "Preview" until your first
+  change). Browser storage is working storage: for a real backup, click
+  the folder button with your project's name (top right, or More >
+  "Projects...") to open the Project library, then press
+  "Export this project". It saves one .sb01.zip file. To open that
+  file on any computer, press "Import project file..." in the same
+  Project library.
 
-  After the first visit the app also works offline in the same browser.
-  You can install it as an app from the browser's address bar (optional).
+  After the first visit the app also works offline in the same browser,
+  at the same address. You can install it as an app from the browser's
+  address bar (optional).
 
 
 5. TROUBLESHOOTING
 ------------------
   * No sound: check the system volume and output device; press the
     "Resume audio" button if the app shows one; make sure Mute All is off.
-  * "Port already in use": another copy is running - use that browser tab,
-    or close the other black window.
-  * The window closes immediately: right-click "Start SWITCHBOARD.bat" >
-    Edit is NOT needed; instead open PowerShell in this folder and run
+  * The black window says port 4173 is used by another program: it waits
+    for you to press Enter, then opens SWITCHBOARD at another address
+    (for example http://127.0.0.1:4174/). There, My projects starts
+    empty. Your projects are not lost: they stay with
+    http://127.0.0.1:4173/. To get back to them, close the black window,
+    close the other program (or restart the computer) and start
+    SWITCHBOARD again. To find the other program, open Command Prompt and
+    run   netstat -ano | findstr :4173   - the last number is its PID,
+    which Task Manager shows on the Details tab. To move a project from
+    one address to the other, use "Export this project" and
+    "Import project file...".
+  * My projects looks empty: check that the address bar shows
+    http://127.0.0.1:4173/. Projects belong to the browser and the
+    address they were saved at; another browser, or a private window,
+    has its own separate storage.
+  * The window closes immediately: open PowerShell in this folder (in
+    File Explorer, click the address bar, type  powershell  and press
+    Enter) and run
         powershell -ExecutionPolicy Bypass -File launcher\serve.ps1
     to see the error message.
+
+
+6. WHAT IS IN THIS FOLDER
+-------------------------
+  Start SWITCHBOARD.bat   starts SWITCHBOARD (Windows)
+  START HERE.txt          this guide
+  app\                    the instrument itself (the built web app)
+  launcher\               the small local web servers that open it
+  ASSETS.md               where every sound and font comes from
+  source\                 the full source code, to study it or build it
+                          yourself (see source\README.md). Not needed to
+                          play.

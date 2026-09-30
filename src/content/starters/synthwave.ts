@@ -69,8 +69,8 @@ export const SYNTHWAVE = defineStarter({
       macros: { space: 0.25 },
       clips: [
         clip('Shaker', 1, drums(1, { shaker: SHAKER })),
-        clip('Tambourine', 2, drums(2, { shaker: SHAKER, clap: '....x.......x...', perc: '..........o.....|..........o...o.' })),
-        clip('Tambourine Up', 2, drums(2, { shaker: '5363536353635363', clap: '....x.......x...', perc: '..........o.....|..........o...o.', rim: '...o............|...o.......o....' })),
+        clip('Shaker & Clap', 2, drums(2, { shaker: SHAKER, clap: '....x.......x...', perc: '..........o.....|..........o...o.' })),
+        clip('Shaker & Clap Up', 2, drums(2, { shaker: '5363536353635363', clap: '....x.......x...', perc: '..........o.....|..........o...o.', rim: '...o............|...o.......o....' })),
         null,
       ],
     },

@@ -1,7 +1,9 @@
 /**
  * Mouse-free use: the essential controls are reachable with the keyboard,
  * have readable accessible names and a visible focus indicator, and the main
- * views pass an automated axe-core audit (serious/critical rules).
+ * views pass an automated axe-core audit (serious/critical rules). At 200 %
+ * zoom the transport strip, with Mute All, stays on screen while the page
+ * scrolls.
  */
 import { createRequire } from 'node:module';
 import { expect, test, type Page } from '@playwright/test';
@@ -72,7 +74,8 @@ test('keyboard only: Jump In, reach every essential control, play a note, change
     await expect(skip).toBeHidden();
   }
 
-  const tour = await tabTour(page, 140);
+  // The strip's offline status is a Tab stop too (its tooltip explains it).
+  const tour = await tabTour(page, 150);
   const names = tour.map((t) => t.name);
   const reach = (re: RegExp) => expect(names.some((n) => re.test(n)), `${re} not reachable by Tab. Seen: ${names.join(' / ')}`).toBe(true);
   reach(/^Play$|^Stop$/);
@@ -150,4 +153,26 @@ test('automated accessibility audit of the main views has no serious or critical
   await audit(page, 'shape');
   await page.getByRole('tab', { name: 'Arrange', exact: true }).click();
   await audit(page, 'arrange');
+});
+
+test('200 % zoom: the transport strip with Mute All stays on screen while the page scrolls', async ({ page }) => {
+  // 1920 x 1080 at 200 % zoom is about 960 x 470 CSS pixels: the page scrolls vertically.
+  await page.setViewportSize({ width: 960, height: 470 });
+  await openFresh(page);
+  await page.getByRole('button', { name: 'Jump In' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing)).toBe(true);
+  // The quick guide opens after the first Jump In; skip it so its callout does not sit over the strip.
+  const skip = page.getByRole('button', { name: /Skip/ });
+  await expect(skip).toBeVisible();
+  await skip.click();
+  await expect(skip).toBeHidden();
+  // Scroll to the keyboard strip at the bottom of the page.
+  await page.evaluate(() => window.scrollTo(0, document.scrollingElement!.scrollHeight));
+  expect(await page.evaluate(() => document.scrollingElement!.scrollTop)).toBeGreaterThan(100);
+  const mute = page.getByRole('button', { name: 'Mute All' });
+  await expect(mute).toBeInViewport();
+  await mute.click();
+  await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().muteAll)).toBe(true);
+  await expect(page.getByRole('button', { name: 'MUTED' })).toBeInViewport();
+  expect(pageErrors(page)).toEqual([]);
 });

@@ -18,7 +18,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button, Icon, NumberField, SegmentedControl, Select, Switch, noteName, type SelectOption } from '../../../ui/components';
 import { BUILTIN_SAMPLES, builtinSampleInfo } from '../../../content/catalog';
-import { snapToScale } from '../../../music/scales';
 import { moduleId } from '../../../project/factory';
 import type { Id, Project } from '../../../project/types';
 import * as cmd from '../../../state/commands';
@@ -46,6 +45,7 @@ import {
   formatSampleRate,
   formatSemitones,
   formatTime,
+  MIN_LOOP_CROSSFADE_MS,
   rateToSemitones,
   noteRate,
   suggestedBars,
@@ -114,11 +114,6 @@ const AUDITION_IDS = ['start', 'end', 'mode', 'pitch', 'fine', 'sync', 'original
 /** Longest one-shot audition before the key releases by itself (seconds). */
 const MAX_AUDITION_SECONDS = 60;
 
-/** The pitch a pad plays for `key` on this project (Musical Assist keeps it in the key). */
-function heardPitch(p: Project, key: number): number {
-  return p.assist ? snapToScale(key, p.root, p.scale) : key;
-}
-
 /** True when the part's arpeggiator keeps playing released notes (Latch on). */
 function latchedArp(p: Project, trackId: Id): boolean {
   const t = p.tracks.find((x) => x.id === trackId);
@@ -133,12 +128,16 @@ function auditionBlock(s: { recording: string; recordTarget: { trackId: Id } | n
   return null;
 }
 
+/**
+ * Audition holds exactly the root key as a session preview, which plays the
+ * recording at its own pitch (previews bypass Musical Assist), and lets go of
+ * it on Stop or, for a one-shot, after the trimmed region has played.
+ */
 function Audition(props: { trackId: Id; sampleId: Id; duration: number; available: boolean }) {
   const { trackId, sampleId, duration, available } = props;
   const root = useProject((p) => Math.round(readSamplerValues(p, trackId, ['rootNote']).rootNote));
-  const heard = useProject((p) => heardPitch(p, root));
   const blocked = useRuntime((s) => auditionBlock(s, trackId));
-  /** The pitch this audition holds (as the session publishes it), or null. */
+  /** The root key this audition holds (as the session publishes it), or null. */
   const [holding, setHolding] = useState<number | null>(null);
   // The session releases every held note on Stop, Mute All, window blur and pointer cancel:
   // the button follows the real note, so it never says "Stop" over silence.
@@ -195,15 +194,14 @@ function Audition(props: { trackId: Id; sampleId: Id; duration: number; availabl
       const p = session.store.getState();
       const v = readSamplerValues(p, trackId, AUDITION_IDS);
       const key = Math.round(v.rootNote);
-      const pitch = heardPitch(p, key);
       session.noteOn(trackId, key, 0.85, 'preview');
-      if (!runtimeStore.getState().held[trackId]?.includes(pitch)) return;
+      if (!runtimeStore.getState().held[trackId]?.includes(key)) return;
       // One-shot: the voice ends by itself at the region end; the key is released after it.
       // Loop: it repeats until Stop.
-      const seconds = (Math.abs(v.end - v.start) * duration) / noteRate(v, pitch, p.bpm);
+      const seconds = (Math.abs(v.end - v.start) * duration) / noteRate(v, key, p.bpm);
       const timer = v.mode === 1 ? 0 : window.setTimeout(stop, Math.min(MAX_AUDITION_SECONDS, seconds) * 1000 + 150);
       current.current = { key, timer };
-      setHolding(pitch);
+      setHolding(key);
     });
   };
 
@@ -218,39 +216,18 @@ function Audition(props: { trackId: Id; sampleId: Id; duration: number; availabl
       tone="amber"
       className={styles.audition}
       disabled={off}
-      aria-label={playing ? `Stop audition (playing ${noteName(heard)})` : `Audition: play ${rootName}${off ? ' (unavailable)' : ''}`}
+      aria-label={playing ? `Stop audition (playing ${noteName(holding ?? root)})` : `Audition: play ${rootName}${off ? ' (unavailable)' : ''}`}
       onClick={() => (playing ? stop() : start())}
       tip={
         playing
           ? 'Stops the audition.'
           : !available
             ? 'This recording’s audio is not in this browser, so there is nothing to play.'
-            : (blocked ??
-              (heard === root
-                ? `Plays the trimmed recording at its root note (${rootName}). One-shot plays it once; Loop repeats until you press Stop.`
-                : `Plays the trimmed recording on its root key. Musical Assist keeps played notes in the key, so ${rootName} sounds as ${noteName(heard)}.`))
+            : (blocked ?? `Plays the trimmed recording at its own pitch on its root key (${rootName}). One-shot plays it once; Loop repeats until you press Stop.`)
       }
     >
       {playing ? 'Stop' : 'Audition'}
     </Button>
-  );
-}
-
-/** Shown when Musical Assist moves the root key: the recording is heard off its own pitch. */
-function AssistNote(props: { trackId: Id }) {
-  const { trackId } = props;
-  const root = useProject((p) => Math.round(readSamplerValues(p, trackId, ['rootNote']).rootNote));
-  const heard = useProject((p) => heardPitch(p, root));
-  if (heard === root) return null;
-  const diff = heard - root;
-  return (
-    <p className={styles.assistNote}>
-      <Icon name="info" size={12} className={styles.explainIcon} />
-      <span>
-        Root {noteName(root)} is outside the key, so Musical Assist plays it as {noteName(heard)} ({diff > 0 ? '+' : '−'}
-        {Math.abs(diff)} st). Turn Assist off to hear the recording at its own pitch.
-      </span>
-    </p>
   );
 }
 
@@ -303,7 +280,9 @@ function TrimFooter(props: { trackId: Id; duration: number }) {
       </dl>
       {knob(trackId, 'fadeOut', 'Fade out', {
         className: styles.fadeOut,
-        tip: loop ? 'In Loop mode, sets the shortest fade after you let go of the note.' : 'Softens the end of the region to avoid clicks.',
+        tip: loop
+          ? `In Loop mode, crossfades the loop point over this time (at least ${MIN_LOOP_CROSSFADE_MS} ms) so repeats never click, and sets the shortest fade after you let go of the note.`
+          : 'Softens the end of the region to avoid clicks.',
       })}
     </div>
   );
@@ -324,8 +303,8 @@ function metaText(info: { duration: number; channels: number } | null, rate: num
 
 type ModeValue = 'oneshot' | 'loop';
 const MODE_OPTIONS = [
-  { value: 'oneshot', label: 'One-shot', tip: 'Each note plays the region once, to its end.' },
-  { value: 'loop', label: 'Loop', tip: 'Each note repeats the region for as long as it is held.' },
+  { value: 'oneshot', label: 'One-shot', tip: 'Each note plays the whole trimmed region once, however short the note. Stop and Mute All cut it short.' },
+  { value: 'loop', label: 'Loop', tip: 'Each note repeats the region for as long as it is held, with a short crossfade at the loop point.' },
 ] as const;
 
 const PLAY_READ_IDS = ['mode', 'rootNote'] as const;
@@ -374,7 +353,9 @@ function PlaybackSection(props: { trackId: Id }) {
         {knob(trackId, 'pitch', 'Pitch', { detail: 'Playback-rate transposition: speed changes with pitch (no time-stretch).' })}
         {knob(trackId, 'fine', 'Fine')}
         {knob(trackId, 'attack', 'Attack')}
-        {knob(trackId, 'release', 'Release')}
+        {knob(trackId, 'release', 'Release', {
+          tip: v.mode === 1 ? 'How long notes fade after they end.' :'How long the sound fades when Stop cuts a one-shot short (it otherwise plays to the region end).',
+        })}
         {knob(trackId, 'cutoff', 'Cutoff')}
       </div>
     </section>
@@ -558,7 +539,6 @@ function RecordingEditor(props: { trackId: Id; sampleId: Id; name: string; partN
           <SamplePicker trackId={trackId} sampleId={sampleId} label={`Recording for ${partName}`} />
           <Audition trackId={trackId} sampleId={sampleId} duration={duration} available={!missing} />
         </div>
-        <AssistNote trackId={trackId} />
         <WaveformTrim trackId={trackId} name={name} overview={overview} status={status} duration={duration} />
         <TrimFooter trackId={trackId} duration={duration} />
       </section>

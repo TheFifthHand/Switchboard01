@@ -3,6 +3,9 @@
  * recording, audio device status). Not part of the Project and never saved.
  * Updated at musical-event rate (launches, start/stop), never per frame —
  * playheads and meters read the transport/engine directly in rAF loops.
+ *
+ * Also the offline readiness of the installed app (fed by pwa.ts), kept here
+ * so views can show it without loading the service-worker module.
  */
 import { createStore, useStore, shallowEqual } from '../state/store';
 import type { Id } from '../project/types';
@@ -35,6 +38,8 @@ export interface RuntimeState {
   /** Transport stopped itself because scheduling could not keep up (background tab, device). */
   stalled: string | null;
   muteAll: boolean;
+  /** The open project is the Jump In starter shown as a preview: not stored until it is changed. */
+  preview: boolean;
   /** Notes currently held per track (keyboard/pad highlighting). */
   held: Record<Id, readonly number[]>;
   /** One-line status message shown in the transport (e.g. "Variation: 5 notes changed"). */
@@ -56,6 +61,7 @@ export const runtimeStore = createStore<RuntimeState>({
   countingIn: false,
   stalled: null,
   muteAll: false,
+  preview: false,
   held: {},
   notice: null,
 });
@@ -80,4 +86,17 @@ export function notify(text: string, tone: 'info' | 'warn' | 'error' = 'info', a
 
 export function useRuntime<S>(selector: (s: RuntimeState) => S, equality?: (a: S, b: S) => boolean): S {
   return useStore(runtimeStore, selector, equality);
+}
+
+/* ------------------------------------------------------------------ */
+/* Offline readiness (service worker)                                  */
+/* ------------------------------------------------------------------ */
+
+export type OfflineState = 'unsupported' | 'installing' | 'ready' | 'update-ready' | 'error';
+
+/** `apply` installs a waiting new version (the page reloads); set only in 'update-ready'. */
+export const offlineStore = createStore<{ state: OfflineState; apply: (() => void) | null }>({ state: 'unsupported', apply: null });
+
+export function useOffline() {
+  return useStore(offlineStore, (s) => s);
 }

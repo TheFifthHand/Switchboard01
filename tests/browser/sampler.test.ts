@@ -327,13 +327,100 @@ describe('SamplerEngine', () => {
     expect(r.engine.activeVoices()).toBe(0);
   });
 
-  it('releasing a one-shot early ends it with the release envelope', async () => {
-    const r = await render(1, sampler({ start: 0, end: 0.8 }), (e) => void e.trigger({ pitch: 60, velocity: 1, time: 0.1, duration: 0.2 }));
-    expect(rms(r.L, idx(0.15), idx(0.29))).toBeGreaterThan(0.3);
-    // Release 50 ms (longer than the 15 ms fade-out) from 0.3 s.
-    expect(peak(r.L, idx(0.355))).toBe(0);
+  it('a one-shot plays its whole region however short the note; stop() ends it early with the release', async () => {
+    // A one-step note (0.125 s) on a 0.8 s region: the whole region still plays.
+    const short = await render(1, sampler({ start: 0, end: 0.8 }), (e) => {
+      const v = e.trigger({ pitch: 60, velocity: 1, time: 0.1, duration: 0.125 });
+      v?.release(0.15); // a pad let go early changes nothing either
+    });
+    expect(rms(short.L, idx(0.6), idx(0.85))).toBeGreaterThan(0.3);
+    const { off } = extent(short.L);
+    expect(off).toBeGreaterThan(0.898);
+    expect(off).toBeLessThanOrEqual(0.9);
+    expect(short.engine.activeVoices()).toBe(0);
+
+    // Stop: the release envelope (50 ms, longer than the 15 ms fade-out) from 0.3 s, no click.
+    const stopped = await render(1, sampler({ start: 0, end: 0.8 }), (e) => void e.trigger({ pitch: 60, velocity: 1, time: 0.1 })?.stop?.(0.3));
+    expect(rms(stopped.L, idx(0.15), idx(0.29))).toBeGreaterThan(0.3);
+    expect(peak(stopped.L, idx(0.355))).toBe(0);
     const natural = (2 * Math.PI * TONE_HZ * TONE_AMP) / SR;
-    expect(maxStep(r.L, idx(0.29), idx(0.36))).toBeLessThan(natural * 1.3);
+    expect(maxStep(stopped.L, idx(0.29), idx(0.36))).toBeLessThan(natural * 1.3);
+  });
+
+  it('transport Stop (stopOneShots) ends playing one-shots but leaves held loops; releaseAll ends both', async () => {
+    const run = (mode: number, stop: (e: SamplerEngine) => void) =>
+      render(1, sampler({ mode, start: 0, end: 0.8 }), (e, _ctx, at) => {
+        e.trigger({ pitch: 60, velocity: 1, time: 0.05, duration: 0.1 });
+        e.trigger({ pitch: 72, velocity: 1, time: 0.7 }); // starts after the stop: never sounds
+        at(0.25, () => stop(e));
+      });
+    const shot = await run(0, (e) => e.stopOneShots(0.3));
+    expect(rms(shot.L, idx(0.1), idx(0.29))).toBeGreaterThan(0.3);
+    expect(peak(shot.L, idx(0.3 + 0.05 + 0.003))).toBe(0);
+    expect(shot.engine.activeVoices()).toBe(0);
+    // A held loop (the 0.7 s note has no duration) keeps going: stopOneShots is not a note-off for it.
+    const held = await render(1, sampler({ mode: 1, start: 0.2, end: 0.3 }), (e, _ctx, at) => {
+      e.trigger({ pitch: 60, velocity: 1, time: 0.05 });
+      at(0.25, () => e.stopOneShots(0.3));
+    });
+    expect(rms(held.L, idx(0.5), idx(0.95))).toBeGreaterThan(0.3);
+    const all = await run(0, (e) => e.releaseAll(0.3));
+    expect(peak(all.L, idx(0.3 + 0.05 + 0.003))).toBe(0);
+  });
+
+  it('a loop whose ends do not meet crossfades at the loop point: no click, and the loop keeps its exact length', async () => {
+    const natural = (2 * Math.PI * TONE_HZ * TONE_AMP) / SR;
+    // 0.2 s .. 0.3 s + 0.37 cycle: the region ends mid-cycle, so a plain loop jumps at every repeat.
+    const odd = 0.3 + 0.37 / TONE_HZ;
+    const r = await render(1.2, sampler({ mode: 1, start: 0.2, end: odd }), (e) => void e.trigger({ pitch: 60, velocity: 1, time: 0.05, duration: 1 }));
+    expect(maxStep(r.L, idx(0.06), idx(1.04))).toBeLessThan(natural * 1.3);
+    // Every repeat is the same stretch of audio, exactly one region apart.
+    const L = Math.round((odd - 0.2) * SR);
+    const a = idx(0.05) + L + 100;
+    let diff = 0;
+    for (let i = 0; i < L; i++) diff = Math.max(diff, Math.abs(r.L[a + i] - r.L[a + L + i]));
+    expect(diff).toBeLessThan(1e-5);
+    // The first pass is the region as trimmed, up to the crossfade over its last Fade Out (15 ms).
+    const first = await render(0.4, sampler({ start: 0.2, end: odd }), (e) => void e.trigger({ pitch: 60, velocity: 1, time: 0.05 }));
+    let pass = 0;
+    for (let i = idx(0.06); i < idx(0.05) + L - 800; i++) pass = Math.max(pass, Math.abs(r.L[i] - first.L[i]));
+    expect(pass).toBeLessThan(1e-5);
+
+    // A region that is the whole recording (nothing after it to borrow) loops click-free too.
+    const bank = makeBank();
+    bank.add('odd', audioBufferFromChannels(toneChannels(0.9 + 0.37 / TONE_HZ), SR));
+    const whole = await render(2.2, sampler({ mode: 1 }, 'odd'), (e) => void e.trigger({ pitch: 60, velocity: 1, time: 0.05, duration: 2 }), { bank });
+    expect(rms(whole.L, idx(1.0), idx(1.9))).toBeGreaterThan(0.3);
+    expect(maxStep(whole.L, idx(0.06), idx(2.04))).toBeLessThan(natural * 1.5);
+  });
+
+  it('every repeat of a loop keeps the region’s own attack (a drum loop’s downbeat is not softened)', async () => {
+    // A "drum loop": two sharp noise hits 0.2 s apart, each decaying, after 0.1 s of silence.
+    const hits = (lead: number) => {
+      const x = new Float32Array(Math.round((lead + 0.4) * SR));
+      for (const at of [lead, lead + 0.2]) {
+        const rng = new Rng(9); // identical hits
+        for (let i = 0; i < idx(0.15); i++) x[idx(at) + i] = 0.8 * Math.exp(-i / idx(0.02)) * rng.noise();
+      }
+      return audioBufferFromChannels([x], SR);
+    };
+    const attack = (x: Float32Array, at: number) => peak(x, idx(at), idx(at + 0.003));
+    const bank = makeBank();
+    bank.add('loop-lead', hits(0.1));
+    bank.add('loop-whole', hits(0));
+    // Region with audio (silence) before it, and a region that starts at the very beginning of the recording.
+    const cases: { id: string; params: Record<string, number> }[] = [
+      { id: 'loop-lead', params: { mode: 1, start: 0.1 / 0.5, end: 1 } },
+      { id: 'loop-whole', params: { mode: 1 } },
+    ];
+    for (const c of cases) {
+      const r = await render(1.5, sampler(c.params, c.id), (e) => void e.trigger({ pitch: 60, velocity: 1, time: 0.05, duration: 1.3 }), { bank });
+      // Reference: the second hit of the first pass (away from the note start and the loop point).
+      const ref = attack(r.L, 0.05 + 0.2);
+      expect(ref).toBeGreaterThan(0.1);
+      // Repeats start 0.4 s apart and their downbeat hits exactly as hard.
+      for (const n of [1, 2]) expect(Math.abs(attack(r.L, 0.05 + n * 0.4) - ref) / ref).toBeLessThan(0.02);
+    }
   });
 
   it('returns null without a sample', async () => {

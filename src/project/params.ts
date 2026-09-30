@@ -80,14 +80,14 @@ export const SAMPLER_PARAMS: readonly ParamSpec[] = [
   p({ id: 'gain', label: 'Gain', min: -24, max: 12, default: 0, unit: 'dB', curve: 'lin', tip: 'Makes the recording louder or quieter.', detail: 'Sample playback gain.' }),
   p({ id: 'pitch', label: 'Pitch', min: -24, max: 24, default: 0, unit: 'st', curve: 'int', tip: 'Plays the recording higher or lower. Speed changes with it.', detail: 'Playback-rate transposition. Pitch and speed change together in this version.' }),
   p({ id: 'fine', label: 'Fine', min: -100, max: 100, default: 0, unit: 'ct', curve: 'lin', tip: 'Small tuning adjustment.', detail: 'Fine tuning in cents (also changes speed).' }),
-  p({ id: 'mode', label: 'Mode', min: 0, max: 1, default: 0, unit: '', curve: 'enum', options: ['One-shot', 'Loop'], tip: 'One-shot plays once per note; Loop repeats while the note is held.', detail: 'Playback mode.' }),
+  p({ id: 'mode', label: 'Mode', min: 0, max: 1, default: 0, unit: '', curve: 'enum', options: ['One-shot', 'Loop'], tip: 'One-shot plays the whole region once per note, however short the note; Loop repeats it while the note is held.', detail: 'Playback mode.' }),
   p({ id: 'fadeIn', label: 'Fade In', short: 'FIN', min: 0, max: 500, default: 3, unit: 'ms', curve: 'lin', tip: 'Softens the start to avoid clicks.', detail: 'Fade-in time at the trim start.' }),
-  p({ id: 'fadeOut', label: 'Fade Out', short: 'FOUT', min: 0, max: 2000, default: 15, unit: 'ms', curve: 'lin', tip: 'Softens the end to avoid clicks.', detail: 'Fade-out time at the trim end / note release.' }),
+  p({ id: 'fadeOut', label: 'Fade Out', short: 'FOUT', min: 0, max: 2000, default: 15, unit: 'ms', curve: 'lin', tip: 'Softens the end to avoid clicks.', detail: 'One-shot: fade-out at the trim end. Loop: crossfade at the loop point (at least 5 ms) and the shortest release.' }),
   p({ id: 'sync', label: 'Tempo Sync', short: 'SYNC', min: 0, max: 1, default: 0, unit: '', curve: 'enum', options: ['Off', 'Speed'], tip: 'Speeds the loop up or down to follow the project tempo. Pitch changes with speed.', detail: 'rate = project BPM / original BPM. Not pitch-preserving.' }),
   p({ id: 'originalBpm', label: 'Original BPM', short: 'OBPM', min: 40, max: 220, default: 120, unit: 'bpm', curve: 'lin', tip: 'The tempo the recording was made at.', detail: 'Used by Tempo Sync.' }),
   p({ id: 'rootNote', label: 'Root Note', short: 'ROOT', min: 24, max: 96, default: 60, unit: '', curve: 'int', tip: 'The key that plays the recording at its original pitch.', detail: 'MIDI note number with no transposition.' }),
   p({ id: 'attack', label: 'Attack', short: 'ATK', min: 0.001, max: 2, default: 0.002, unit: 's', curve: 'exp', tip: 'Fades each note in.', detail: 'Amplitude envelope attack.' }),
-  p({ id: 'release', label: 'Release', short: 'REL', min: 0.005, max: 4, default: 0.05, unit: 's', curve: 'exp', tip: 'How long notes fade after they end.', detail: 'Amplitude envelope release.' }),
+  p({ id: 'release', label: 'Release', short: 'REL', min: 0.005, max: 4, default: 0.05, unit: 's', curve: 'exp', tip: 'How long notes fade after they end (a one-shot only when Stop cuts it short).', detail: 'Amplitude envelope release.' }),
   p({ id: 'cutoff', label: 'Cutoff', short: 'CUT', min: 60, max: 20000, default: 20000, unit: 'Hz', curve: 'exp', tip: 'Darkens the recording.', detail: 'Per-voice 12 dB/oct low-pass.' }),
 ];
 

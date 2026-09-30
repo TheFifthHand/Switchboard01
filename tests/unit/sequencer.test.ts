@@ -163,6 +163,28 @@ describe('Sequencer: live launcher', () => {
     }
   });
 
+  it('playingAt tells which clip (and loop start) a track played at an earlier tick, across switches and restarts', () => {
+    let p = makeProject();
+    p = setClip(p, 't4', 0, makeClip(1, [[0, 60]], 'A'));
+    p = setClip(p, 't4', 1, makeClip(1, [[0, 62]], 'B'));
+    const seq = new Sequencer({ getProject: () => p });
+    seq.launchClip('t4', 0, 0);
+    // Armed while stopped, with a count-in: it plays from tick 0, and the count-in counts as before it.
+    seq.start(0, { countInBars: 1 });
+    expect(seq.playingAt('t4', -200)).toEqual({ slot: 0, startTick: 0 });
+    runTo(seq, 0, 2.5); // tick 96
+    seq.launchClip('t4', 1, 2.5); // at 384
+    runTo(seq, 2.5, 4.5); // tick 480
+    seq.launchClip('t4', 1, 4.5); // restart at 768
+    runTo(seq, 4.5, 6.1); // past 768
+    expect(seq.playingAt('t4', 100)).toEqual({ slot: 0, startTick: 0 });
+    expect(seq.playingAt('t4', 383)).toEqual({ slot: 0, startTick: 0 });
+    expect(seq.playingAt('t4', 384)).toEqual({ slot: 1, startTick: 384 });
+    expect(seq.playingAt('t4', 767)).toEqual({ slot: 1, startTick: 384 });
+    expect(seq.playingAt('t4', 800)).toEqual({ slot: 1, startTick: 768 });
+    expect(seq.playingAt('t9', 800)).toBeNull();
+  });
+
   it('launching the playing slot with nothing queued restarts it at the next bar', () => {
     let p = makeProject();
     const A = makeClip(2, [[0, 60, 24], [384, 62, 24]], 'A');

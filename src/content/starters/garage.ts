@@ -221,6 +221,9 @@ export const GARAGE = defineStarter({
       level: -22,
       pan: 0.1,
       macros: { echo: 0.3, space: 0.25 },
+      // Chops are as long as their notes: Loop plays the "oh" while a note lasts (One-shot would
+      // always play all of it). Every note ends before the pitched region does, so none repeats.
+      instrument: { mode: 1 },
       clips: [
         null,
         null,

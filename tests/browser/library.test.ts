@@ -2,7 +2,10 @@
  * Project library dialog in real Chromium with real IndexedDB: the starter
  * list, starting a starter (the previous project stays in the library),
  * rename / duplicate / delete / restore / delete forever, the open project's
- * delete guard, import errors and export.
+ * delete guard, import errors and export; a project whose edits could not be
+ * saved is never replaced without asking; the first-launch preview becomes a
+ * stored project on its first change; reopen warnings reach the Welcome card;
+ * the recovery export reports its outcome.
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -13,12 +16,24 @@ import { session } from '../../src/app/instance';
 import { runtimeStore } from '../../src/app/runtime';
 import { Library, type LibraryProps, type LibraryTab } from '../../src/app/views/Library';
 import { BLANK_STARTER, STARTERS } from '../../src/content/starters';
-import { closeDb, deleteDb, saveProject } from '../../src/persistence/db';
+import { exportBundle } from '../../src/persistence/bundle';
+import { closeDb, deleteDb, putSample, saveProject } from '../../src/persistence/db';
 import * as library from '../../src/persistence/library';
 import { createProject } from '../../src/project/factory';
 import type { Project } from '../../src/project/types';
 import { setGuideDone, setView, uiStore } from '../../src/state/uiStore';
 import { cleanup, key, mount, wait } from './ui-harness';
+
+/** Make every IndexedDB write fail as if browser storage were full; returns the undo. */
+function failWrites(): () => void {
+  const put = IDBObjectStore.prototype.put;
+  IDBObjectStore.prototype.put = function () {
+    throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+  };
+  return () => {
+    IDBObjectStore.prototype.put = put;
+  };
+}
 
 let loaded: string[] = [];
 let closed = 0;
@@ -389,6 +404,54 @@ describe('Project library', () => {
     expect(typeof indexedDB).toBe('object');
   });
 
+  it('never replaces a project whose latest edits could not be saved without asking; Cancel keeps it', async () => {
+    const jam = project('Jam', Date.now() - 1000);
+    await saveProject(jam);
+    await library.setLastProject(jam.id);
+    await session.boot();
+    expect(session.store.getState().id).toBe(jam.id);
+    const restore = failWrites();
+    try {
+      act(() => session.setBpm(101));
+      await session.autosaver!.flush();
+      expect(session.autosaver!.status.getState().status).toBe('error');
+      // The session itself refuses to take such a project off the screen.
+      await expect(session.newFromStarter('techno')).rejects.toMatchObject({ name: 'StorageError', kind: 'quota' });
+      expect(session.store.getState()).toMatchObject({ id: jam.id, bpm: 101 });
+
+      open('starters');
+      await until(() => dialog().textContent?.includes('Starting a project replaces “Jam” on screen, and its latest changes could not be saved in this browser.'), 'intro');
+      await click(buttonNamed(/^Start Garage/));
+      let confirm = dialog().querySelector<HTMLElement>('[role="group"][aria-label="Start Garage?"]')!;
+      expect(confirm.textContent).toContain('Its latest changes could not be saved in this browser. Export it first if you want to keep them.');
+      expect(buttonNamed('Export it first', confirm)).not.toBeNull();
+      await click(buttonNamed('Cancel', confirm));
+      expect(loaded).toEqual([]);
+      expect(session.store.getState()).toMatchObject({ id: jam.id, bpm: 101 });
+
+      // Replace it: the user chose to let the unsaved edits go.
+      await click(buttonNamed(/^Start Garage/));
+      confirm = dialog().querySelector<HTMLElement>('[role="group"][aria-label="Start Garage?"]')!;
+      await click(buttonNamed('Replace it', confirm));
+      await until(() => loaded.length > 0, 'starter loaded');
+      expect(session.store.getState().starterId).toBe('garage');
+      const toast = runtimeStore.getState().notice!;
+      expect(toast.tone).toBe('warn');
+      expect(toast.text).toContain('Could not save to browser storage');
+      expect(toast.text).not.toContain('still in My projects');
+      // The new project is not stored either, and the save state says so instead of "Saved".
+      await until(() => session.autosaver!.status.getState().status === 'error', 'save failure of the new project', 3000);
+    } finally {
+      restore();
+    }
+    // Storage works again (Try again): both are stored, and the new project is the one reopened next time.
+    await session.autosaver!.retry();
+    expect(session.autosaver!.status.getState()).toMatchObject({ status: 'saved', dirty: false });
+    const garage = session.store.getState();
+    expect((await library.listProjects()).map((p) => p.id).sort()).toEqual([jam.id, garage.id].sort());
+    expect((await library.openLast())?.project.id).toBe(garage.id);
+  });
+
   it('replays the quick guide from the dialog', async () => {
     open('starters');
     await click(buttonNamed('Show the quick guide again'));
@@ -512,6 +575,157 @@ describe('Project library in the app', () => {
     } finally {
       session.togglePlay = realToggle;
     }
+  });
+});
+
+describe('The first-launch preview and reopening', () => {
+  beforeEach(() => {
+    act(() => {
+      setGuideDone(true);
+      setView('play');
+    });
+  });
+
+  const saveStatus = () => document.querySelector<HTMLButtonElement>('button[aria-label^="Autosave: "]')?.getAttribute('aria-label') ?? '';
+
+  it('an untouched preview is not stored; its first change stores it, and reopening offers it', async () => {
+    const boot = await session.boot();
+    expect(boot.lastProject).toBeNull();
+    mount(h(App, { boot }));
+    await click(buttonNamed('Just look around'));
+    const preview = session.store.getState();
+    expect(saveStatus()).toBe('Autosave: Preview, not stored until you change it');
+
+    // Looking around stores nothing, and My projects says what the preview is.
+    await click(buttonNamed(/^Projects \(open:/), 'transport project button');
+    await until(() => libraryDialog()?.textContent?.includes('No saved projects yet'), 'empty project list');
+    expect(libraryDialog()!.textContent).toContain(`“${preview.name}” on screen is a preview. As soon as you change it, it is added to My projects and saved automatically.`);
+    await click(buttonNamed('Close the project library'));
+    expect(await library.listProjects()).toEqual([]);
+
+    // The first change makes it a normal project: stored and saved from then on.
+    act(() => session.setBpm(97));
+    await until(() => saveStatus() === 'Autosave: Saved', 'Saved', 5000);
+    expect((await library.listProjects()).map((p) => [p.id, p.bpm])).toEqual([[preview.id, 97]]);
+    await click(buttonNamed(/^Projects \(open:/), 'transport project button');
+    const openRow = await until(() => libraryDialog()?.querySelector<HTMLElement>('li[aria-current="true"]'), 'open project row');
+    expect(openRow.textContent).toContain(preview.name);
+    expect(libraryDialog()!.textContent).not.toContain('is a preview');
+
+    // Reopening offers it.
+    cleanup();
+    const again = await session.boot();
+    expect(again.lastProject?.id).toBe(preview.id);
+    mount(h(App, { boot: again }));
+    expect(buttonNamed(`Continue “${preview.name}”`)).not.toBeNull();
+    expect(session.store.getState().bpm).toBe(97);
+  });
+
+  it('starting a starter right after editing the preview keeps the edited preview', async () => {
+    await session.boot();
+    const preview = session.store.getState();
+    act(() => session.setBpm(97));
+    await session.newFromStarter('techno');
+    expect(session.store.getState().starterId).toBe('techno');
+    const stored = await library.listProjects();
+    expect(stored.find((p) => p.id === preview.id)?.bpm).toBe(97);
+    expect(stored.some((p) => p.id === session.store.getState().id)).toBe(true);
+  });
+
+  it('importing a project file right after editing the preview keeps both, and reopens the import', async () => {
+    await session.boot();
+    const preview = session.store.getState();
+    const song = createProject({ name: 'Imported Song' });
+    const file = new File([await exportBundle(song, async () => null)], 'Imported-Song.sb01.zip', { type: 'application/zip' });
+    // The edit is still waiting to be saved when the file is imported.
+    act(() => session.setBpm(97));
+    const res = await session.importProjectFile(file);
+    expect(res.ok, res.message).toBe(true);
+    const open = session.store.getState();
+    expect(open.name).toBe('Imported Song');
+    const stored = await library.listProjects();
+    expect(stored.find((p) => p.id === preview.id)?.bpm).toBe(97);
+    expect(stored.some((p) => p.id === open.id)).toBe(true);
+    expect((await library.openLast())?.project.id).toBe(open.id);
+  });
+
+  it('reopening skips a damaged project and says why on the Welcome card', async () => {
+    const good = createProject({ name: 'Good' });
+    const broken = createProject({ name: 'Broken' });
+    await saveProject(good);
+    await saveProject({ ...broken, tracks: broken.tracks.slice(0, 5) });
+    await library.setLastProject(broken.id);
+    const boot = await session.boot();
+    expect(boot.storageError).toBeNull();
+    mount(h(App, { boot }));
+    expect(buttonNamed('Continue “Good”')).not.toBeNull();
+    const card = document.getElementById('welcome-title')!.closest('[role="dialog"]')!;
+    const note = [...card.querySelectorAll('[role="status"]')].find((el) => el.textContent?.includes('"Broken" could not be opened'));
+    expect(note?.textContent).toContain('so the most recent readable project was opened instead');
+  });
+
+  it('when no saved project can be read, the Welcome card says so, and saving still works', async () => {
+    const broken = createProject({ name: 'Broken' });
+    await saveProject({ ...broken, tracks: broken.tracks.slice(0, 5) });
+    const boot = await session.boot();
+    expect(boot.storageError).toBeNull();
+    mount(h(App, { boot }));
+    const card = document.getElementById('welcome-title')!.closest('[role="dialog"]')!;
+    expect(card.textContent).toContain('None of the saved projects in this browser could be opened. They are still in the library.');
+    expect(card.textContent).not.toContain('Saving is unavailable');
+    // Storage works: the preview is stored as soon as it changes.
+    await click(buttonNamed('Just look around'));
+    act(() => session.setBpm(98));
+    await session.autosaver!.flush();
+    expect((await library.listProjects()).some((p) => p.id === session.store.getState().id)).toBe(true);
+  });
+
+  it('the recovery export offered when saving fails says whether it worked', async () => {
+    const boot = await session.boot();
+    mount(h(App, { boot }));
+    await click(buttonNamed('Just look around'));
+    let saved: string | null = null;
+    const realClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      saved = this.download;
+    };
+    const restore = failWrites();
+    try {
+      act(() => session.setBpm(103));
+      const status = await until(() => document.querySelector<HTMLButtonElement>('button[aria-label="Autosave: Not saved"]'), 'Not saved', 5000);
+      await click(status);
+      const pop = document.querySelector<HTMLElement>('[role="alertdialog"][aria-label="Saving failed"]')!;
+      // Pressed from the keyboard: the export tries to save first, and focus stays on the button meanwhile.
+      const exportButton = buttonNamed('Export project file', pop)!;
+      exportButton.focus();
+      await click(exportButton);
+      await until(() => saved, 'download');
+      expect(saved).toMatch(/\.sb01\.zip$/);
+      await until(() => runtimeStore.getState().notice?.text === `Saved “${saved}” to your downloads. Keep it as your backup.`, 'success message');
+      expect(document.activeElement).toBe(exportButton);
+
+      // A recording missing from storage would make the backup incomplete: the user is told instead.
+      const meta = { id: 'smp_missing', name: 'Lost take', mime: 'audio/wav', byteLength: 3, duration: 0.1, sampleRate: 44100, channels: 1 };
+      act(() => session.store.replace({ ...session.store.getState(), samples: [meta] }));
+      await session.autosaver!.flush();
+      saved = null;
+      const again = await until(() => document.querySelector<HTMLElement>('[role="alertdialog"][aria-label="Saving failed"]'), 'popover');
+      await click(buttonNamed('Export project file', again));
+      const notice = await until(() => (runtimeStore.getState().notice?.tone === 'error' ? runtimeStore.getState().notice : null), 'error message');
+      expect(notice.text).toBe('Exporting the project file failed: The recording "Lost take" is missing from this browser\'s storage, so the project file would be incomplete.');
+      expect(saved).toBeNull();
+    } finally {
+      restore();
+      HTMLAnchorElement.prototype.click = realClick;
+    }
+    // Storage is back: Try again writes the pending edits, the popover goes and focus returns to the save status.
+    await putSample({ id: 'smp_missing', name: 'Lost take', mime: 'audio/wav', byteLength: 3, duration: 0.1, sampleRate: 44100, channels: 1 }, new Blob([new Uint8Array([1, 2, 3])]));
+    const tryAgain = buttonNamed('Try again', document.querySelector<HTMLElement>('[role="alertdialog"][aria-label="Saving failed"]')!)!;
+    tryAgain.focus();
+    await click(tryAgain);
+    await until(() => saveStatus() === 'Autosave: Saved', 'Saved', 5000);
+    expect(document.querySelector('[role="alertdialog"][aria-label="Saving failed"]')).toBeNull();
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Autosave: Saved');
   });
 });
 

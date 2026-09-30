@@ -14,8 +14,11 @@
  * - Bright Steel — crisp and bright with a tight low end.
  * - Hand Percussion — congas, bongos, shakers, woods and bells.
  *
- * Slots 4/5/6 are the choke family in every kit (CHOKE_GROUPS): closed /
- * open / pedal hat, or shaker / tambourine / cabasa in Hand Percussion.
+ * Each kit lists its own choke groups (KitRecipe.chokeGroups): the closed
+ * hat chokes the open hat (and the pedal hat does too in Tight Circuit, the
+ * only kit with one on slot 6). Shakers, tambourine and cabasa choke nothing
+ * else; a new hit on slot 4, 5 or 6 still cuts that slot's own previous hit
+ * (see drumKit.ts).
  */
 import { DRUM_SLOTS } from '../../content/catalog';
 
@@ -253,7 +256,12 @@ export interface KitRecipe {
   character: KitCharacter;
   /** Exactly 16 voices in DRUM_SLOTS order. */
   voices: readonly VoiceRecipe[];
+  /** Slots that cut each other off (the later hit wins), e.g. closed and open hat. */
+  chokeGroups: readonly (readonly number[])[];
 }
+
+/** Closed hat (slot 4) chokes the open hat (slot 5). */
+const HAT_CHOKE: readonly (readonly number[])[] = [[4, 5]];
 
 /* ------------------------------------------------------------------ */
 /* Shared tunings                                                      */
@@ -333,6 +341,7 @@ const ROUND_MACHINE: KitRecipe = {
     v('Conga', 0.7, { model: 'membrane', hz: 311.1, bend: 0.05, bendTime: 0.015, decay: 0.32, modes: [[1.5, 0.15, 0.5]], noise: 0.18, noiseHz: 2200, noiseQ: 1.2, noiseDecay: 0.03, click: 0.08, drive: 0.6 }),
     v('Zap', 0.45, { model: 'zap', startHz: 2600, endHz: 95, sweep: 0.02, decay: 0.24, wave: 'sine', drive: 1.5 }),
   ],
+  chokeGroups: HAT_CHOKE,
 };
 
 const TIGHT_CIRCUIT: KitRecipe = {
@@ -357,6 +366,8 @@ const TIGHT_CIRCUIT: KitRecipe = {
     v('Blip', 0.7, { model: 'membrane', hz: 587.3, bend: 0.45, bendTime: 0.004, decay: 0.14, modes: [], noise: 0, noiseHz: 3000, noiseQ: 1, noiseDecay: 0.01, click: 0.05, drive: 0.8 }),
     v('Zap', 0.65, { model: 'zap', startHz: 4200, endHz: 140, sweep: 0.011, decay: 0.13, wave: 'triangle', drive: 1.2 }),
   ],
+  // The pedal hat on slot 6 chokes the open hat as well.
+  chokeGroups: [[4, 5, 6]],
 };
 
 /** Dust Tape hats/cymbals keep a little more top than the kit's dark tape roll-off. */
@@ -385,6 +396,7 @@ const DUST_TAPE: KitRecipe = {
     v('Perc', 0.7, { model: 'membrane', hz: 370, bend: 0.08, bendTime: 0.012, decay: 0.24, modes: [[1.47, 0.2, 0.5]], noise: 0.25, noiseHz: 1700, noiseQ: 1.1, noiseDecay: 0.025, click: 0.05, drive: 1.2 }),
     v('Snap', 0.65, { model: 'snap', band: 2100, q: 2.2, decay: 0.075, tone: 1750, toneLevel: 0.35, toneDecay: 0.03 }, 0.3),
   ],
+  chokeGroups: HAT_CHOKE,
 };
 
 const BRIGHT_STEEL: KitRecipe = {
@@ -400,7 +412,7 @@ const BRIGHT_STEEL: KitRecipe = {
       { decay: 0.46, splash: { level: 0.45, decay: 0.05 } },
       null,
     ),
-    // Garage shaker in the pedal slot (still in the hat choke group).
+    // Garage shaker in the pedal slot (it does not choke the hats).
     v('Shaker', 0.4, { model: 'shaker', attack: 0.008, decay: 0.08, band: 9500, bandQ: 1, highpass: 6500, grain: 0.4, density: 2600 }),
     v('Rim', 0.7, { model: 'modal', hz: 560, partials: [[1, 0.4, 0.016], [3.1, 1, 0.034], [5.9, 0.45, 0.02]], noise: 0.5, noiseHz: 5000, noiseQ: 0.9, noiseDecay: 0.006, highpass: 350 }),
     ...toms([130.8, 174.6, 233.1], [0.46, 0.41, 0.36], { bend: 0.25, bendTime: 0.028, modes: [[1.59, 0.1, 0.45]], noise: 0.1, noiseHz: 2500, noiseQ: 0.9, noiseDecay: 0.025, click: 0.18, drive: 1.2 }),
@@ -410,6 +422,7 @@ const BRIGHT_STEEL: KitRecipe = {
     v('Perc', 0.7, { model: 'membrane', hz: 494, bend: 0.14, bendTime: 0.006, decay: 0.18, modes: [[1.5, 0.18, 0.5]], noise: 0.3, noiseHz: 3200, noiseQ: 1.4, noiseDecay: 0.02, click: 0.1, drive: 1.0 }),
     v('Snap', 0.65, { model: 'snap', band: 2900, q: 2.6, decay: 0.06, tone: 2300, toneLevel: 0.3, toneDecay: 0.025 }, 0.2),
   ],
+  chokeGroups: HAT_CHOKE,
 };
 
 /** Conga/bongo family: same membrane, different sizes. */
@@ -478,6 +491,8 @@ const HAND_PERCUSSION: KitRecipe = {
     v('Cajon', 0.9, { model: 'membrane', hz: 82.4, bend: 0.14, bendTime: 0.025, decay: 0.34, modes: [[1.59, 0.1, 0.5]], noise: 0.3, noiseHz: 3200, noiseQ: 0.7, noiseDecay: 0.09, click: 0.12, drive: 1.0 }),
     v('Finger Snap', 0.65, { model: 'snap', band: 2400, q: 2.4, decay: 0.065, tone: 1950, toneLevel: 0.3, toneDecay: 0.03 }, 0.2),
   ],
+  // Shaker, tambourine and cabasa are separate instruments: none cuts another.
+  chokeGroups: [],
 };
 
 /* ------------------------------------------------------------------ */

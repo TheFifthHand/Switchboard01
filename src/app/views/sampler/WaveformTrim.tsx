@@ -5,7 +5,8 @@
  *   zoom level) from the recording's min/max overview.
  * - The region that plays is drawn in amber (audio signal) and shaped by the
  *   edge fades exactly as the engine applies them; the rest of the file is
- *   grey and hatched. Fade ramps are drawn at the region edges.
+ *   grey and hatched. Fade ramps are drawn at the region edges; in Loop
+ *   mode a crossfade mark shows where the loop's end blends into its start.
  * - Handles (teal = selection) are real sliders: drag them (Shift = fine),
  *   press anywhere on the waveform to move the nearest one there, use the
  *   arrow keys (Shift = fine, PageUp/PageDown = 10%, Home/End), or
@@ -246,6 +247,15 @@ function drawWave(canvas: HTMLCanvasElement, input: DrawInput, pal: Palette): vo
     g.moveTo(toX(fades.zeroAt - fades.fadeOut), 2);
     g.lineTo(toX(fades.zeroAt), h - 2);
   }
+  // Loop: a crossfade mark where the end of the loop blends into its start.
+  if (fades.seam > 0) {
+    const x1 = toX(fades.zeroAt);
+    const x0 = Math.min(x1 - 3, toX(fades.zeroAt - fades.seam));
+    g.moveTo(x0, 2);
+    g.lineTo(x1, h - 2);
+    g.moveTo(x0, h - 2);
+    g.lineTo(x1, 2);
+  }
   g.stroke();
 }
 
@@ -279,7 +289,7 @@ export function WaveformTrim({ trackId, name, overview, status, duration }: Wave
     if (!canvas || !box) return;
     drawWave(canvas, { width: size.width, height: size.height, dpr, overview, lo, hi, fades }, readPalette(box));
     // fades is derived from the values listed here.
-  }, [overview, size.width, size.height, dpr, lo, hi, fades.fadeIn, fades.fadeOut, fades.zeroAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [overview, size.width, size.height, dpr, lo, hi, fades.fadeIn, fades.fadeOut, fades.zeroAt, fades.seam]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Never leave a drag frame pending after unmount.
   useEffect(

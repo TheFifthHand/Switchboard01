@@ -314,7 +314,7 @@ const RIDE = 13;
 const isKick = (p: number) => p === KICK || p === KICK2;
 const isBackbeat = (p: number) => p === SNARE || p === CLAP;
 const isToms = (p: number) => p === LOW_TOM || p === MID_TOM || p === HIGH_TOM;
-/** Hats that choke the open hat (catalog choke group). */
+/** Closed hat and slot 6 (a pedal hat in Tight Circuit, a shaker in other kits): kept off the open-hat steps either way. */
 const isChoker = (p: number) => p === CLOSED_HAT || p === PEDAL_HAT;
 const HAT_LANES = [CLOSED_HAT, PEDAL_HAT, RIDE];
 /** Percussion lanes that may be shifted, echoed or thinned (kicks, anchors and crash are handled separately). */

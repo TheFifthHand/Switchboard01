@@ -119,6 +119,39 @@ describe('ProjectStore history', () => {
     expect(s2.historySize().undo).toBe(2);
   });
 
+  it('an undo group (one Record Notes pass) is one undo step, even with knob moves in between', () => {
+    const store = new ProjectStore(createProject({ now: 0 }));
+    store.apply('project:Change tempo', (d) => void (d.bpm = 100));
+    store.beginGroup('Record notes');
+    store.apply('clip:Record notes', (d) => void (d.tracks[0].clips[0] = createClip('Take', 1)), { gesture: 'rec' });
+    store.apply('track:Change Tone', (d) => void (d.tracks[0].macros.tone = 0.9), { gesture: 'knob' });
+    store.apply('clip:Record notes', (d) => void (d.tracks[0].clips[0]!.name = 'Take 2'), { gesture: 'rec' });
+    store.endGroup();
+    expect(store.historySize().undo).toBe(2);
+    expect(store.undoLabel()).toBe('Record notes');
+    store.undo();
+    expect(store.getState().tracks[0].clips[0]).toBeNull();
+    expect(store.getState().tracks[0].macros.tone).not.toBe(0.9);
+    expect(store.getState().bpm).toBe(100);
+    store.redo();
+    expect(store.getState().tracks[0].clips[0]!.name).toBe('Take 2');
+    // After the group, edits are separate steps again.
+    store.apply('track:Change Tone', (d) => void (d.tracks[0].macros.tone = 0.2), { gesture: 'knob' });
+    expect(store.historySize().undo).toBe(3);
+    // Undo inside an open group removes what was recorded so far; later edits start the group's step again.
+    store.beginGroup('Record notes');
+    store.apply('project:Change tempo', (d) => void (d.bpm = 120));
+    store.undo();
+    expect(store.getState().bpm).toBe(100);
+    store.apply('project:Change tempo', (d) => void (d.bpm = 130));
+    store.apply('project:Change swing', (d) => void (d.swing = 0.5));
+    store.endGroup();
+    expect(store.historySize().undo).toBe(4);
+    store.undo();
+    expect(store.getState().bpm).toBe(100);
+    expect(store.getState().swing).not.toBe(0.5);
+  });
+
   it('keeps at most HISTORY_LIMIT steps and clears redo on a new edit', () => {
     const store = new ProjectStore(createProject({ now: 0 }));
     for (let i = 0; i < HISTORY_LIMIT + 20; i++) store.apply('project:Change tempo', (d) => void (d.bpm = 40 + (i % 150)));
@@ -204,6 +237,36 @@ describe('ProjectStore history', () => {
     store.setLock(null);
     expect(store.undo().changed).toBe(true);
     expect(store.getState().name).toBe('A');
+  });
+
+  it('a lock with a path filter lets through only undo steps that change allowed paths, whatever their label', () => {
+    const store = new ProjectStore(createProject({ now: 0 }));
+    const valuesOnly = (path: readonly (string | number)[]) => path[0] === 'bpm' || (path[0] === 'tracks' && path[2] === 'macros');
+    // Before the lock: a tempo change, and a gesture that moved a macro and (same gesture) renamed the part.
+    store.apply('project:Change tempo', (d) => void (d.bpm = 99));
+    store.apply('track:Change Tone', (d) => void (d.tracks[0].macros.tone = 0.9), { gesture: 'g' });
+    store.apply('track:Change Tone', (d) => void (d.tracks[0].name = 'Renamed'), { gesture: 'g' });
+    store.setLock('Recording a performance', (label) => label === 'track:Change Tone' || label === 'project:Change tempo', valuesOnly);
+    // The label is allowed, but undoing it would also rename the part: held back, and Undo shows as unavailable.
+    expect(store.canUndo()).toBe(false);
+    expect(store.info.getState().canUndo).toBe(false);
+    expect(store.undo()).toEqual({ changed: false, refused: 'Recording a performance' });
+    expect(store.getState().tracks[0].name).toBe('Renamed');
+    // An allowed edit made during the lock applies, and its undo only changes a macro: it goes through.
+    expect(store.apply('track:Change Tone', (d) => void (d.tracks[0].macros.tone = 0.2)).changed).toBe(true);
+    expect(store.canUndo()).toBe(true);
+    expect(store.undo()).toEqual({ changed: true });
+    expect(store.getState().tracks[0].macros.tone).toBe(0.9);
+    expect(store.redo()).toEqual({ changed: true });
+    expect(store.getState().tracks[0].macros.tone).toBe(0.2);
+    // Unlocked, everything can be undone again.
+    const original = createProject({ now: 0 });
+    store.setLock(null);
+    store.undo();
+    expect(store.undo().changed).toBe(true);
+    expect(store.getState().tracks[0].name).toBe(original.tracks[0].name);
+    expect(store.undo().changed).toBe(true);
+    expect(store.getState().bpm).toBe(original.bpm);
   });
 
   it('publishes history info and freezes states', () => {

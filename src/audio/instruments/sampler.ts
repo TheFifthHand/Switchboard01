@@ -14,9 +14,12 @@
  *
  * - Region = [start, end] as fractions of the buffer; end > start is
  *   enforced with a minimum region of 5 ms.
- * - One-shot: plays the region once. Fade-in at the start, and a fade-out
- *   that ends at the region end (at the unmodulated rate: region / rate in
- *   output time). The note ends at the region end, or earlier on release.
+ * - One-shot: plays the whole region once, however short the note: the
+ *   note's release does not cut it (like a drum hit). Only a stop ends it
+ *   early, with the release envelope: VoiceHandle.stop (transport Stop via
+ *   stopOneShots, releaseAll, an editor preview being let go), kill() (Mute
+ *   All) or a voice steal. Fade-in at the start, and a fade-out that ends at
+ *   the region end (at the unmodulated rate: region / rate in output time).
  *   The fade-out has a 1 ms floor, so even Fade Out 0 never ends on a click.
  * - One-shot edge fades are locked to the playhead, not to the clock:
  *   pitchMod (cents on the source's detune) changes speed as well as pitch,
@@ -25,9 +28,12 @@
  *   region, in buffer time) with the same playbackRate and the same pitchMod
  *   link as the sample, into the edge gain. Both playheads advance
  *   identically, so the fade always completes exactly as the sample runs out.
- * - Loop: loops the region (loopStart/loopEnd) until release, then the
- *   release envelope. Fade In applies at the note start; Fade Out acts as the
- *   minimum release.
+ * - Loop: loops the region until release, then the release envelope. Fade
+ *   In applies at the note start; Fade Out acts as the minimum release and
+ *   sets the loop crossfade (see loopBuffer): the region's last frames blend
+ *   into the audio that leads into its start, so the loop point never
+ *   clicks, every repeat starts with the region's own attack, and the loop
+ *   keeps the region's exact length.
  * - At most SAMPLER_MAX_VOICES voices; the oldest is stolen with a 6 ms fade.
  */
 import { SAMPLER_PARAMS, dbToGain, readParam } from '../../project/params';
@@ -73,6 +79,11 @@ const EDGE_ENV_ZERO_FRAMES = 2;
 /** Per-engine edge envelope cache: at most this many buffers / frames in total (~8 MB). */
 const EDGE_CACHE_ENTRIES = 16;
 const EDGE_CACHE_FRAMES = 2_000_000;
+/** Shortest loop crossfade (buffer seconds): Fade Out 0 still gives a click-free loop point. */
+export const MIN_LOOP_CROSSFADE = 0.005;
+/** Per-engine loop buffer cache: at most this many buffers / samples in total (~32 MB). */
+const LOOP_CACHE_ENTRIES = 8;
+const LOOP_CACHE_SAMPLES = 8_000_000;
 
 /**
  * Fill `out` (sampled at EDGE_ENV_RATE in buffer time from the region start)
@@ -137,6 +148,113 @@ class EdgeEnvelopeCache {
   clear(): void {
     this.buffers.clear();
     this.frames = 0;
+  }
+}
+
+/** Loop crossfade length (buffer seconds) for a region: Fade Out, at least 5 ms, at most half the region. */
+export function loopCrossfade(regionLen: number, fadeOut: number): number {
+  return Math.min(Math.max(finiteOr(fadeOut, 0), MIN_LOOP_CROSSFADE), Math.max(0, regionLen) / 2);
+}
+
+/**
+ * The buffer a Loop voice plays, with the crossfade baked in: region frames
+ * [s0, e0) of `src` (length L), whose last X frames blend into Q, the audio
+ * that leads into the region start:
+ *
+ *   out[i] = R[i] (i < L - X),  out[L - X + i] = a(i) * R[L - X + i] + b(i) * Q[i]
+ *
+ * played from 0 and looped over [0, L): the loop lasts exactly L, the step
+ * from the last frame back to R[0] is seamless (Q ends just before R[0] in
+ * the recording), and every repeat starts with the region's own attack, so a
+ * drum loop's downbeat stays crisp. When the region starts at the beginning
+ * of the recording nothing leads into it, and Q holds R[0]: the tail settles
+ * on the value the loop restarts from. a/b are equal-power (cos/sin) scaled
+ * for the correlation of the tail and Q, so matching material (a region of
+ * whole cycles) keeps a constant level too.
+ */
+export function loopBuffer(src: AudioBuffer, s0: number, e0: number, xf: number): AudioBuffer {
+  const L = Math.max(1, e0 - s0);
+  const X = Math.max(1, Math.min(xf, Math.floor(L / 2)));
+  const channels = src.numberOfChannels;
+  const out = new AudioBuffer({ length: L, numberOfChannels: channels, sampleRate: src.sampleRate });
+  const leadIn = s0 >= X;
+  const data = Array.from({ length: channels }, (_, c) => src.getChannelData(c));
+  const lead = (c: number, i: number) => (leadIn ? data[c][s0 - X + i] : data[c][s0]);
+  const tail = s0 + L - X;
+  let dot = 0;
+  let qq = 0;
+  let rr = 0;
+  for (let c = 0; c < channels; c++) {
+    for (let i = 0; i < X; i++) {
+      const q = lead(c, i);
+      const r = data[c][tail + i];
+      dot += q * r;
+      qq += q * q;
+      rr += r * r;
+    }
+  }
+  const corr = qq > 0 && rr > 0 ? clamp(dot / Math.sqrt(qq * rr), 0, 1) : 0;
+  for (let c = 0; c < channels; c++) {
+    const ch = out.getChannelData(c);
+    ch.set(data[c].subarray(s0, s0 + L));
+    for (let i = 0; i < X; i++) {
+      const th = ((i + 0.5) / X) * (Math.PI / 2);
+      const a = Math.cos(th);
+      const b = Math.sin(th);
+      const k = 1 / Math.sqrt(1 + 2 * a * b * corr);
+      ch[L - X + i] = k * (a * data[c][tail + i] + b * lead(c, i));
+    }
+  }
+  return out;
+}
+
+/** Region and crossfade in frames of `buffer` for a Loop voice (the arguments of loopBuffer). */
+function loopFrames(buffer: AudioBuffer, s: SamplerSettings): { s0: number; e0: number; xf: number } {
+  const region = samplerRegion(buffer.duration, s.start, s.end);
+  const sr = buffer.sampleRate;
+  const s0 = Math.round(region.start * sr);
+  const e0 = Math.min(buffer.length, Math.max(s0 + 2, Math.round(region.end * sr)));
+  return { s0, e0, xf: Math.max(1, Math.round(loopCrossfade(region.end - region.start, s.fadeOut) * sr)) };
+}
+
+/** Small LRU of loop buffers (per recording, region and crossfade), so repeated notes do not rebuild them. */
+class LoopBufferCache {
+  private readonly ids = new WeakMap<AudioBuffer, number>();
+  private nextId = 1;
+  private readonly buffers = new Map<string, AudioBuffer>();
+  private samples = 0;
+
+  get(src: AudioBuffer, s: SamplerSettings): { buffer: AudioBuffer; loopStart: number } {
+    const { s0, e0, xf } = loopFrames(src, s);
+    return { buffer: this.buffer(src, s0, e0, xf), loopStart: 0 };
+  }
+
+  private buffer(src: AudioBuffer, s0: number, e0: number, xf: number): AudioBuffer {
+    let id = this.ids.get(src);
+    if (id === undefined) this.ids.set(src, (id = this.nextId++));
+    const key = `${id}|${s0}|${e0}|${xf}`;
+    const hit = this.buffers.get(key);
+    if (hit) {
+      this.buffers.delete(key);
+      this.buffers.set(key, hit);
+      return hit;
+    }
+    const buffer = loopBuffer(src, s0, e0, xf);
+    this.buffers.set(key, buffer);
+    this.samples += buffer.length * buffer.numberOfChannels;
+    // Evict the least recently used. The newest always stays, so even a loop
+    // over the size budget is built once, not again for every note.
+    for (const [k, b] of this.buffers) {
+      if (this.buffers.size <= 1 || (this.samples <= LOOP_CACHE_SAMPLES && this.buffers.size <= LOOP_CACHE_ENTRIES)) break;
+      this.buffers.delete(k);
+      this.samples -= b.length * b.numberOfChannels;
+    }
+    return buffer;
+  }
+
+  clear(): void {
+    this.buffers.clear();
+    this.samples = 0;
   }
 }
 
@@ -216,10 +334,13 @@ interface SamplerVoiceInit {
   pitchMod: AudioNode;
   cutoffMod: AudioNode;
   envelopes: EdgeEnvelopeCache;
+  loops: LoopBufferCache;
 }
 
 class SamplerVoice extends BaseVoice {
   private readonly filter: BiquadFilterNode;
+  /** One-shot: plays the whole region; release() does not end it, stop() does. */
+  readonly oneShot: boolean;
 
   constructor(ctx: BaseAudioContext, init: SamplerVoiceInit, hooks: VoiceHooks) {
     const s = init.settings;
@@ -231,8 +352,11 @@ class SamplerVoice extends BaseVoice {
     const vca = new GainNode(ctx, { gain: 0 });
     const amp = new GainEnvelope(vca.gain);
     super(ctx, T, amp, Math.max(s.release, s.fadeOut), naturalEnd, hooks);
+    this.oneShot = !s.loop;
 
-    const src = new AudioBufferSourceNode(ctx, { buffer: init.buffer, playbackRate: init.rate });
+    // Loop: the region with its loop crossfade baked in (see loopBuffer).
+    const looped = s.loop ? init.loops.get(init.buffer, s) : null;
+    const src = new AudioBufferSourceNode(ctx, { buffer: looped?.buffer ?? init.buffer, playbackRate: init.rate });
     this.filter = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: s.cutoff, Q: BUTTERWORTH_Q_DB });
     // Edge fades after the filter, so the output is exactly zero whatever the filter still rings.
     const edges = new GainNode(ctx, { gain: 0 });
@@ -244,7 +368,7 @@ class SamplerVoice extends BaseVoice {
     const peak = velocityGain(init.velocity, SAMPLER_VELOCITY_SENS);
     amp.start(T, 0, peak, s.attack, peak, 1);
 
-    if (s.loop) {
+    if (looped) {
       // Fade in at the note start (output time); the loop ends on its release envelope.
       const edge = new ParamTimeline([edges.gain], 0);
       if (s.fadeIn > 0) {
@@ -253,10 +377,12 @@ class SamplerVoice extends BaseVoice {
       } else {
         edge.set(T, 1);
       }
+      // Plays from 0 and repeats over the whole buffer: exactly the region's length.
+      const sr = looped.buffer.sampleRate;
       src.loop = true;
-      src.loopStart = region.start;
-      src.loopEnd = region.end;
-      src.start(T, region.start);
+      src.loopStart = looped.loopStart / sr;
+      src.loopEnd = looped.buffer.length / sr;
+      src.start(T, 0);
       this.addSource(src);
     } else {
       // Playhead-locked edge fades (see the file comment). Fade times are output seconds at the
@@ -271,6 +397,16 @@ class SamplerVoice extends BaseVoice {
       this.addSource(src);
       this.addSource(envSrc);
     }
+  }
+
+  /** A one-shot plays its whole region: the note's release does not end it (stop() does). */
+  override release(time: number): void {
+    if (!this.oneShot) super.release(time);
+  }
+
+  /** End the note at `time` with the release envelope, one-shot or not. */
+  stop(time: number): void {
+    super.release(time);
   }
 
   applyLive(s: SamplerSettings, time: number): void {
@@ -290,6 +426,7 @@ export class SamplerEngine implements InstrumentEngine {
   private readonly getBpm: () => number;
   private readonly voices = new Set<SamplerVoice>();
   private readonly envelopes = new EdgeEnvelopeCache();
+  private readonly loops = new LoopBufferCache();
   private instrument: SamplerInstrument;
   private settings: SamplerSettings;
   private disposed = false;
@@ -323,6 +460,13 @@ export class SamplerEngine implements InstrumentEngine {
     if (next.cutoff !== prev.cutoff) for (const v of this.voices) v.applyLive(next, t);
   }
 
+  /** Build the loop buffer for the current settings now, outside the scheduling path. */
+  prepare(): void {
+    const id = this.instrument.sampleId;
+    const buffer = id && !this.disposed && this.settings.loop ? this.samples.get(id) : null;
+    if (buffer && buffer.length >= 2) this.loops.get(buffer, this.settings);
+  }
+
   trigger(note: NoteTrigger): VoiceHandle | null {
     if (this.disposed) return null;
     const id = this.instrument.sampleId;
@@ -346,20 +490,36 @@ export class SamplerEngine implements InstrumentEngine {
         pitchMod: this.pitchMod,
         cutoffMod: this.cutoffMod,
         envelopes: this.envelopes,
+        loops: this.loops,
       },
       this.hooks,
     );
     this.voices.add(voice);
+    // A one-shot ignores this: it plays its whole region.
     if (note.duration !== undefined && Number.isFinite(note.duration)) voice.release(T + Math.max(0, note.duration));
     return voice;
   }
 
+  /** Release every voice at `time`, one-shots included; notes that start later never sound. */
   releaseAll(time: number): void {
+    this.stopVoices(time, () => true);
+  }
+
+  /**
+   * Stop: end the one-shots still playing out their region (held loops end on
+   * their note-off). `startedOnly`: leave one-shots that start after `time`.
+   */
+  stopOneShots(time: number, startedOnly = false): void {
+    this.stopVoices(time, (v, t) => v.oneShot && (!startedOnly || v.startTime < t));
+  }
+
+  private stopVoices(time: number, which: (v: SamplerVoice, t: number) => boolean): void {
     if (this.disposed) return;
     const t = Math.max(finiteOr(time, 0), this.ctx.currentTime);
     for (const v of [...this.voices]) {
+      if (!which(v, t)) continue;
       if (v.startTime >= t) v.cancel();
-      else v.release(t);
+      else v.stop(t);
     }
   }
 
@@ -381,6 +541,7 @@ export class SamplerEngine implements InstrumentEngine {
     for (const v of [...this.voices]) v.cancel();
     this.voices.clear();
     this.envelopes.clear();
+    this.loops.clear();
     this.pitchMod.disconnect();
     this.cutoffMod.disconnect();
     this.output.disconnect();

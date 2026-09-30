@@ -11,7 +11,6 @@ import { session } from '../../src/app/instance';
 import { runtimeStore } from '../../src/app/runtime';
 import { snapToScale } from '../../src/music/scales';
 import * as cmd from '../../src/state/commands';
-import { noteName } from '../../src/ui/components';
 import { ImportSampleButton, SamplerEditor } from '../../src/app/views/sampler';
 import { importStore } from '../../src/app/views/sampler/importState';
 import { headerSampleRate } from '../../src/app/views/sampler/samplerMath';
@@ -124,13 +123,14 @@ const isGrey = ([r, g, b, a]: number[]) => a > 40 && Math.abs(r - g) < 25 && Mat
 
 /**
  * Stand-ins for the session's live-note path (no audio device in this test): they publish
- * the held pitch exactly as the session does, Musical Assist included.
+ * the held pitch exactly as the session does. A 'preview' plays exactly the key given (the
+ * session never applies Musical Assist to previews).
  */
 function fakeNotes() {
   vi.spyOn(session, 'startAudio').mockResolvedValue(true);
-  const noteOn = vi.spyOn(session, 'noteOn').mockImplementation((trackId, key) => {
+  const noteOn = vi.spyOn(session, 'noteOn').mockImplementation((trackId, key, _velocity, source) => {
     const p = project();
-    const pitch = p.assist ? snapToScale(key, p.root, p.scale) : key;
+    const pitch = source !== 'preview' && p.assist ? snapToScale(key, p.root, p.scale) : key;
     runtimeStore.setState((s) => ({ ...s, held: { ...s.held, [trackId]: [pitch] } }));
   });
   const noteOff = vi.spyOn(session, 'noteOff').mockImplementation((trackId) => {
@@ -315,6 +315,22 @@ describe('Sampler editor: playback and tempo controls', () => {
     await act(async () => wait(800)); // let the field's key burst end
   });
 
+  it('says what One-shot and Loop do with the note length and the loop point', () => {
+    act(() => {
+      session.store.replace(createProject({ name: 'Sampler UI test', now: 1 }));
+    });
+    const m = mount(h(TipsProvider, { enabled: true }, h(SamplerEditor, { trackId: 't8' })), { width: 420 });
+    const described = (el: Element) =>
+      (el.getAttribute('aria-describedby') ?? '')
+        .split(' ')
+        .map((id) => document.getElementById(id)?.textContent ?? '')
+        .join(' ');
+    expect(described(radio(m.container, 'One-shot'))).toContain('plays the whole trimmed region once, however short the note');
+    expect(described(radio(m.container, 'Loop'))).toContain('crossfade at the loop point');
+    click(radio(m.container, 'Loop'));
+    expect(described(slider(m.container, 'Fade out'))).toContain('crossfades the loop point');
+  });
+
   it('knobs edit gain, pitch, fine, attack, release, cutoff, fade in and fade out', () => {
     const m = setup('t8');
     const cases: [string, string][] = [
@@ -372,14 +388,19 @@ describe('Sampler editor: playback and tempo controls', () => {
     expect(noteOff).toHaveBeenCalledWith('t8', 60, 'preview');
     expect(button(m.container, 'Audition: play C4').getAttribute('aria-pressed')).toBe('false');
 
-    // A root outside the key: Musical Assist moves it, and the editor says so in words.
+    // A root outside the project's key: the recording still plays at its own pitch on exactly that key,
+    // and Stop lets go of it.
     act(() => session.setInstrumentParam('t8', 'rootNote', 61));
-    const heard = snapToScale(61, project().root, project().scale);
-    expect(heard).not.toBe(61);
-    expect(m.container.textContent).toContain(`Root C#4 is outside the key, so Musical Assist plays it as ${noteName(heard)}`);
+    expect(snapToScale(61, project().root, project().scale)).not.toBe(61);
+    expect(m.container.textContent).not.toContain('Musical Assist plays it as');
     await press(button(m.container, 'Audition: play C#4'));
     expect(noteOn).toHaveBeenLastCalledWith('t8', 61, 0.85, 'preview');
-    expect(button(m.container, `Stop audition (playing ${noteName(heard)})`)).toBeTruthy();
+    const stopKey = button(m.container, 'Stop audition (playing C#4)');
+    expect(stopKey.getAttribute('aria-pressed')).toBe('true');
+    click(stopKey);
+    expect(noteOff).toHaveBeenLastCalledWith('t8', 61, 'preview');
+    expect(button(m.container, 'Audition: play C#4').getAttribute('aria-pressed')).toBe('false');
+    await press(button(m.container, 'Audition: play C#4'));
 
     // A performance starting mid-audition ends it; Audition stays off during the take.
     noteOff.mockClear();
@@ -391,6 +412,13 @@ describe('Sampler editor: playback and tempo controls', () => {
     expect(button(m.container, /^Audition: play C#4/).disabled).toBe(true);
     act(() => runtimeStore.setState((s) => ({ ...s, recordTarget: { trackId: 't1', slot: 0 } })));
     expect(button(m.container, 'Audition: play C#4').disabled).toBe(false);
+
+    // Leaving the editor mid-audition lets go of the key.
+    act(() => runtimeStore.setState((s) => ({ ...s, recording: 'off', recordTarget: null })));
+    await press(button(m.container, 'Audition: play C#4'));
+    noteOff.mockClear();
+    cleanup();
+    expect(noteOff).toHaveBeenCalledWith('t8', 61, 'preview');
   });
 
   it('a recording whose audio is not in this browser says so and cannot be auditioned', async () => {

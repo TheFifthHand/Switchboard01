@@ -5,7 +5,7 @@
  * The fade and region rules mirror src/audio/instruments/sampler.ts so the
  * waveform shows what is actually heard.
  */
-import { MIN_REGION_SECONDS, samplerRate } from '../../../audio/instruments/sampler';
+import { MIN_LOOP_CROSSFADE, MIN_REGION_SECONDS, loopCrossfade, samplerRate } from '../../../audio/instruments/sampler';
 import { SAMPLER_PARAMS, specById } from '../../../project/params';
 
 const OBPM = specById(SAMPLER_PARAMS, 'originalBpm')!;
@@ -18,6 +18,8 @@ export const BARS_MIN = 0.25;
 export const BARS_MAX = 64;
 export const BARS_STEP = 0.25;
 
+/** Shortest loop crossfade the engine uses (ms). */
+export const MIN_LOOP_CROSSFADE_MS = MIN_LOOP_CROSSFADE * 1000;
 /** One-shot fade-out floor used by the engine (seconds of output). */
 const MIN_FADE_OUT = 0.001;
 /** The engine's edge envelope reaches zero this long before the region end (buffer seconds). */
@@ -75,18 +77,22 @@ export interface EdgeFades {
   fadeOut: number;
   /** Buffer seconds from the region start where the one-shot envelope reaches zero. */
   zeroAt: number;
+  /** Loop mode: length of the crossfade at the loop point in buffer seconds (0 for One-shot). */
+  seam: number;
 }
 
 /**
  * The edge fades in buffer time, as the engine plays them at `rate`:
  * one-shot fades are output seconds × rate, the fade-out has a 1 ms floor,
  * and overlapping fades are scaled to fit the region. In Loop mode the fade
- * in applies at the note start only and Fade Out acts as the release.
+ * in applies at the note start only, and Fade Out sets the crossfade at the
+ * loop point (buffer seconds, at least 5 ms, at most half the region) and
+ * the shortest release.
  */
 export function edgeFades(regionLen: number, fadeInMs: number, fadeOutMs: number, rate: number, loop: boolean): EdgeFades {
   const len = Math.max(0, regionLen);
   const r = rate > 0 && Number.isFinite(rate) ? rate : 1;
-  if (loop) return { fadeIn: Math.min(len, Math.max(0, fadeInMs / 1000) * r), fadeOut: 0, zeroAt: len };
+  if (loop) return { fadeIn: Math.min(len, Math.max(0, fadeInMs / 1000) * r), fadeOut: 0, zeroAt: len, seam: loopCrossfade(len, fadeOutMs / 1000) };
   const zeroAt = Math.max(0, len - Math.min(EDGE_ZERO_SECONDS, len / 4));
   let fi = Math.max(0, fadeInMs / 1000) * r;
   let fo = Math.max(MIN_FADE_OUT, fadeOutMs / 1000) * r;
@@ -95,7 +101,7 @@ export function edgeFades(regionLen: number, fadeInMs: number, fadeOutMs: number
     fi *= k;
     fo *= k;
   }
-  return { fadeIn: fi, fadeOut: fo, zeroAt };
+  return { fadeIn: fi, fadeOut: fo, zeroAt, seam: 0 };
 }
 
 /** Edge gain (0..1) at `t` buffer seconds after the region start. */

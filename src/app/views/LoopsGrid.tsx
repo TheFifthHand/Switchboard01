@@ -280,10 +280,28 @@ function SceneButton(props: { row: number; scene: Scene; columns: ColumnSummary[
   );
 }
 
+/**
+ * Stops one part at the next bar. For a part that is only queued to start
+ * (a pad tapped on a silent part), it cancels that start instead; either
+ * way the other parts keep playing.
+ */
 function StopButton(props: { trackId: Id; name: string }) {
-  const active = useRuntime((s) => s.tracks[props.trackId]?.playingSlot != null);
+  const state = useRuntime((s) => {
+    const t = s.tracks[props.trackId];
+    return t?.playingSlot != null ? 'playing' : t?.queued?.slot != null ? 'queued' : 'idle';
+  });
+  const queued = state === 'queued';
   return (
-    <IconButton icon="stop" label={`Stop ${props.name} at the next bar`} size="sm" variant="ghost" disabled={!active} onClick={() => session.stopTrack(props.trackId)} className={styles.stop} />
+    <IconButton
+      icon={queued ? 'close' : 'stop'}
+      label={queued ? `Cancel the queued start of ${props.name}` : `Stop ${props.name} at the next bar`}
+      tip={queued ? `${props.name} is waiting to start at the next bar. This cancels only that start.` : 'Stops only this part; the others carry on.'}
+      size="sm"
+      variant="ghost"
+      disabled={state === 'idle'}
+      onClick={() => session.stopTrack(props.trackId)}
+      className={styles.stop}
+    />
   );
 }
 
