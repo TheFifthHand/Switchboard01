@@ -77,6 +77,16 @@ describe('Pad', () => {
     expect(b.log.map((e) => e[0])).toEqual(['press', 'release']);
   });
 
+  it('a pad disabled while held is released at once (it will never see its pointerup)', () => {
+    const { log, m, pad, el } = setup();
+    pointer(pad, 'pointerdown', pointIn(pad));
+    m.rerender(el({ disabled: true }));
+    expect(log.map((e) => e[0])).toEqual(['press', 'release']);
+    expect(pad.hasAttribute('data-pressed')).toBe(false);
+    pointer(pad, 'pointerup', pointIn(pad));
+    expect(log).toHaveLength(2);
+  });
+
   it('a disabled pad does nothing', () => {
     const { log, pad } = setup({ disabled: true });
     pointer(pad, 'pointerdown', pointIn(pad));
@@ -102,9 +112,23 @@ describe('Pad', () => {
     }
   });
 
+  it('on a narrow pad the state icon stays whole and the caption words stay inside the pad', () => {
+    const m = mount(h(Pad, { state: 'stopping', label: 'Grain', sublabel: '2 bars', caption: 'Stops next bar', onPress: () => {} }), { width: 64 });
+    const pad = m.container.querySelector('button')!;
+    const box = pad.getBoundingClientRect();
+    const words = [...pad.querySelectorAll('span')].find((s) => s.textContent === 'Stops next bar' && s.children.length === 0)!;
+    const icon = pad.querySelector('svg[data-icon="stop"]')!.getBoundingClientRect();
+    expect(icon.width).toBeGreaterThan(0);
+    expect(icon.right).toBeLessThanOrEqual(box.right);
+    expect(words.getBoundingClientRect().right).toBeLessThanOrEqual(box.right);
+    expect(words.scrollWidth).toBeGreaterThan(words.clientWidth); // shortened with an ellipsis, not cut mid-letter
+  });
+
   it('shows the selection in the accessible name and the key hint on the pad', () => {
     const { pad } = setup({ selected: true, keyHint: 'Z', caption: null, state: 'ready', label: 'Kick', sublabel: undefined });
     expect(pad.getAttribute('aria-label')).toBe('Kick, ready, selected');
     expect(pad.textContent).toContain('Z');
+    // The computer key is announced as the pad's shortcut.
+    expect(pad.getAttribute('aria-keyshortcuts')).toBe('Z');
   });
 });

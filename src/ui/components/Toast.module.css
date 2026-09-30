@@ -1,8 +1,10 @@
 /* ---------- inline notice ---------- */
 .notice {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
-  gap: 10px;
+  /* Row gap offsets the buttons' negative margins when they wrap. */
+  gap: 14px 10px;
   padding: 10px 10px 10px 12px;
   border-radius: var(--r-md);
   background: var(--surface-hi);
@@ -45,6 +47,20 @@
   flex: 1 1 auto;
   min-width: 0;
   padding-top: 0;
+}
+
+/* The message keeps a readable measure; below it the controls drop to
+   their own line, right-aligned. */
+.notice .content {
+  flex: 1 1 200px;
+}
+
+.controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
 }
 
 .title {

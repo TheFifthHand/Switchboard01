@@ -75,6 +75,32 @@
   align-items: center;
   gap: 4px;
 }
+.toolSpacer {
+  flex: 1;
+}
+.headerMore {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 20px;
+  flex: none;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-3);
+}
+.headerMore:hover,
+.headerMore[aria-expanded='true'] {
+  border-color: var(--line);
+  background: var(--pad);
+  color: var(--ink);
+  box-shadow: var(--shadow-raised);
+}
+.headerMore[aria-expanded='true'] {
+  border-color: var(--teal);
+  color: var(--teal-ink);
+}
 .ms {
   width: 22px;
   height: 20px;
@@ -101,16 +127,79 @@
   box-shadow: var(--shadow-pressed);
 }
 .meter {
-  flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
+  padding: 1px 1px 0;
 }
 .meterOff {
   opacity: 0.35;
 }
 
+/* Clip pad cell: the pad fills it; the selected pad carries a '⋯' key. */
+.cell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+.more {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: linear-gradient(180deg, #ffffff, var(--pad-lo));
+  box-shadow: var(--shadow-raised);
+  color: var(--ink-2);
+}
+.more:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.more[aria-expanded='true'] {
+  border-color: var(--teal);
+  color: var(--teal-ink);
+  box-shadow: var(--shadow-pressed);
+}
+
 /* Scenes */
+.sceneCell {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+.sceneMore {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-3);
+}
+.sceneMore:hover,
+.sceneMore[aria-expanded='true'] {
+  border-color: var(--line);
+  background: var(--shell-hi);
+  color: var(--ink);
+  box-shadow: var(--shadow-raised);
+}
+.sceneMore[aria-expanded='true'] {
+  border-color: var(--teal);
+  color: var(--teal-ink);
+}
 .sceneHeader {
   align-self: end;
   font-size: 10px;

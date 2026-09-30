@@ -428,8 +428,8 @@ export interface StubGeom {
 
 export const SIDE_ANGLE: Record<Side, number> = { left: Math.PI, right: 0, bottom: Math.PI / 2 };
 
-const MAX_BEND = (50 * Math.PI) / 180;
-const MIN_SEP = (21 * Math.PI) / 180;
+const MAX_BEND = (60 * Math.PI) / 180;
+const MIN_SEP = (34 * Math.PI) / 180;
 
 function wrap(a: number): number {
   while (a > Math.PI) a -= 2 * Math.PI;
@@ -437,19 +437,38 @@ function wrap(a: number): number {
   return a;
 }
 
-/** Fan out several plugs on one socket so each stays visible and grabbable. */
+/**
+ * Fan out several plugs on one socket so each stays visible and grabbable:
+ * each plug starts bent a little toward its cable, then neighbours closer
+ * than MIN_SEP are pushed apart symmetrically (so the fan stays centred on
+ * where the cables actually go) within ±MAX_BEND of the socket's edge normal.
+ */
 export function fanAngles(base: number, desired: readonly number[]): number[] {
   const n = desired.length;
   const rel = desired.map((d) => Math.max(-MAX_BEND, Math.min(MAX_BEND, wrap(d - base) * 0.4)));
   if (n === 1) return [base + rel[0]];
   const order = rel.map((r, i) => ({ r, i })).sort((a, b) => a.r - b.r || a.i - b.i);
   const vals = order.map((o) => o.r);
-  for (let i = 1; i < n; i++) vals[i] = Math.max(vals[i], vals[i - 1] + MIN_SEP);
-  const over = vals[n - 1] - MAX_BEND;
-  if (over > 0) for (let i = 0; i < n; i++) vals[i] -= over;
-  if (vals[0] < -MAX_BEND) {
+  if ((n - 1) * MIN_SEP >= 2 * MAX_BEND) {
     const span = (2 * MAX_BEND) / (n - 1);
     for (let i = 0; i < n; i++) vals[i] = -MAX_BEND + i * span;
+  } else {
+    for (let iter = 0; iter < 24; iter++) {
+      let moved = false;
+      for (let i = 1; i < n; i++) {
+        const gap = vals[i] - vals[i - 1];
+        if (gap >= MIN_SEP - 1e-6) continue;
+        const push = (MIN_SEP - gap) / 2;
+        vals[i - 1] -= push;
+        vals[i] += push;
+        moved = true;
+      }
+      const lo = -MAX_BEND - vals[0];
+      const hi = vals[n - 1] - MAX_BEND;
+      if (lo > 0) for (let i = 0; i < n; i++) vals[i] += lo;
+      else if (hi > 0) for (let i = 0; i < n; i++) vals[i] -= hi;
+      if (!moved && lo <= 0 && hi <= 0) break;
+    }
   }
   const out = new Array<number>(n);
   order.forEach((o, k) => (out[o.i] = base + vals[k]));
@@ -553,7 +572,8 @@ export function computeCables({ layout, connections, modules, tracks, trackId }:
   for (const [key, g] of stubGroups) {
     const a = stubAnchor(layout, g.socket);
     stubInfo.set(key, a);
-    want(g.socket, a.anchor, `stub:${key}`);
+    // A single off-panel cable has its own plug; a bundle is drawn plug-less behind the plugs.
+    if (g.conns.length === 1) want(g.socket, a.anchor, `stub:${key}`);
   }
   const angles = new Map<string, number>();
   for (const list of reqs.values()) {
@@ -589,7 +609,9 @@ export function computeCables({ layout, connections, modules, tracks, trackId }:
   for (const [key, g] of stubGroups) {
     const s = g.socket;
     const info = stubInfo.get(key)!;
-    const angle = angles.get(`stub:${key}`)!;
+    const bundle = g.conns.length > 1;
+    const base = SIDE_ANGLE[s.side];
+    const angle = bundle ? base + Math.max(-MAX_BEND, Math.min(MAX_BEND, wrap(Math.atan2(info.anchor.y - s.y, info.anchor.x - s.x) - base) * 0.5)) : angles.get(`stub:${key}`)!;
     const far = g.conns.map((c) => (s.dir === 'in' ? c.from.module : c.to.module));
     const farMods = far.map((id) => modules.find((m) => m.id === id));
     const parts = [...new Set(farMods.map((m) => m?.trackId ?? ''))];
@@ -606,7 +628,7 @@ export function computeCables({ layout, connections, modules, tracks, trackId }:
       else e.from = s.key;
       ends.set(c.id, e);
     }
-    const back = plugBack(s, angle);
+    const back = bundle ? { x: s.x + Math.cos(angle) * GEOM.socketR, y: s.y + Math.sin(angle) * GEOM.socketR } : plugBack(s, angle);
     // Tangent at the label end points back along the cable (down from a top label, up from a bottom one).
     const anchorAngle = info.align === 'center' ? (info.anchor.y < s.y ? Math.PI / 2 : -Math.PI / 2) : Math.PI;
     const endPt = info.align === 'center' ? { x: info.anchor.x, y: info.anchor.y + (info.anchor.y < s.y ? 9 : -9) } : info.anchor;

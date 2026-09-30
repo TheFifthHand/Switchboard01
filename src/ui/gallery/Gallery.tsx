@@ -256,7 +256,10 @@ function GalleryPage({ tips, setTips }: { tips: boolean; setTips(v: boolean): vo
             <span className={styles.subtitle}>Component gallery</span>
           </div>
           <p className={styles.note}>
-            <Icon name="info" size={14} /> Visual review page. Nothing here makes sound; meters follow the <strong>Demo signal</strong> knob.
+            <Icon name="info" size={14} />
+            <span>
+              Visual review page. Nothing here makes sound; meters follow the <strong>Demo signal</strong> knob.
+            </span>
           </p>
           <Switch label="Tips" checked={tips} onChange={setTips} tone="teal" tip="Explains what each control does to the sound." detail="Remembered setting. Tips appear on hover and keyboard focus." />
         </header>

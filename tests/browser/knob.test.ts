@@ -1,7 +1,7 @@
 import { createElement as h } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Knob, type KnobChangeInfo } from '../../src/ui/components';
-import { BASS_PARAMS, CHANNEL_PARAMS, formatParam, fromNormalized, specById, toNormalized, type ParamSpec } from '../../src/project/params';
+import { BASS_PARAMS, CHANNEL_PARAMS, POLY_PARAMS, formatParam, fromNormalized, specById, toNormalized, type ParamSpec } from '../../src/project/params';
 import { actFrame, cleanup, fire, key, mount, pointer, pointIn, wait } from './ui-harness';
 
 const AMOUNT: ParamSpec = { id: 'amount', label: 'Amount', min: 0, max: 1, default: 0.25, unit: '%', curve: 'lin', tip: 'How much.' };
@@ -199,13 +199,68 @@ describe('Knob wheel', () => {
     pointer(slider, 'pointerdown', p);
     pointer(slider, 'pointerup', p);
     expect(document.activeElement).toBe(slider);
-    fire(slider, new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }));
-    expect(calls).toEqual([]);
-    // Using the keyboard on it arms the wheel.
+    const wheel = (deltaY: number) => fire(slider, new WheelEvent('wheel', { deltaY, bubbles: true, cancelable: true }));
+    expect(wheel(-100).defaultPrevented).toBe(false);
+    // Keys that are not "using this knob" keep it disarmed: Shift alone, Space (Play), a note letter.
     key(slider, 'keydown', { key: 'Shift', shiftKey: true });
-    fire(slider, new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true }));
+    key(slider, 'keydown', { key: ' ', code: 'Space' });
+    key(slider, 'keydown', { key: 'a', code: 'KeyA' });
+    expect(wheel(-100).defaultPrevented).toBe(false);
+    expect(calls).toEqual([]);
+    // Turning it with the keyboard arms the wheel.
+    key(slider, 'keydown', { key: 'ArrowUp' });
     expect(calls).toHaveLength(1);
-    expect(calls[0][0]).toBeLessThan(0.5);
+    expect(wheel(100).defaultPrevented).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls[1][0]).toBeLessThan(calls[0][0]);
+  });
+
+  it('a right-click (which focuses natively) does not arm the wheel', () => {
+    const { calls, slider } = setup(AMOUNT, 0.5);
+    const p = pointIn(slider);
+    pointer(slider, 'pointerdown', { ...p, button: 2, buttons: 2 });
+    // The browser focuses the element during the same press.
+    slider.focus();
+    const ev = fire(slider, new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }));
+    expect(ev.defaultPrevented).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  it('the wheel never changes a read-only (macro-controlled) knob, even with keyboard focus', () => {
+    const { calls, slider } = setup(CUTOFF, 3000, { controlledBy: 'Tone' });
+    slider.focus();
+    const ev = fire(slider, new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }));
+    expect(ev.defaultPrevented).toBe(false);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('Knob lifecycle', () => {
+  it('unmounting mid-drag closes the gesture with a final call', () => {
+    const { calls, slider, m } = setup(AMOUNT, 0.5);
+    const start = pointIn(slider);
+    pointer(slider, 'pointerdown', start);
+    pointer(slider, 'pointermove', { ...start, clientY: start.clientY - 20 });
+    m.unmount();
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBeCloseTo(0.6, 5);
+    expect(calls[0][1].final).toBe(true);
+  });
+
+  it('becoming macro-controlled mid-drag ends the gesture and ignores further moves', () => {
+    const calls: Call[] = [];
+    const onChange = (v: number, info: KnobChangeInfo) => calls.push([v, info]);
+    const m = mount(h(Knob, { spec: AMOUNT, value: 0.5, onChange }));
+    const slider = m.container.querySelector<HTMLElement>('[role="slider"]')!;
+    const start = pointIn(slider);
+    pointer(slider, 'pointerdown', start);
+    pointer(slider, 'pointermove', { ...start, clientY: start.clientY - 20 });
+    m.rerender(h(Knob, { spec: AMOUNT, value: 0.5, onChange, controlledBy: 'Drive' }));
+    expect(calls.at(-1)![1].final).toBe(true);
+    const n = calls.length;
+    pointer(slider, 'pointermove', { ...start, clientY: start.clientY - 60 });
+    pointer(slider, 'pointerup', { ...start, clientY: start.clientY - 60 });
+    expect(calls).toHaveLength(n);
   });
 });
 
@@ -299,6 +354,28 @@ describe('Knob numeric entry', () => {
     setInput(input, '450');
     key(input, 'keydown', { key: 'Enter' });
     expect(calls.at(-1)![0]).toBeCloseTo(0.45, 6);
+  });
+
+  it('a small number on a time shown in ms stays ms; a large one on a time shown in s becomes ms', () => {
+    const attack = specById(POLY_PARAMS, 'attack')!; // 1 ms .. 4 s
+    const typeInto = (value: number, text: string) => {
+      const { calls, slider, m } = setup(attack, value);
+      slider.focus();
+      key(slider, 'keydown', { key: 'Enter' });
+      const input = m.container.querySelector('input')!;
+      setInput(input, text);
+      key(input, 'keydown', { key: 'Enter' });
+      m.unmount();
+      return calls.at(-1)![0];
+    };
+    // The knob reads "5 ms": typing 2 means 2 ms, not a 2-second swell.
+    expect(typeInto(0.005, '2')).toBeCloseTo(0.002, 6);
+    // It reads "1.20 s": 2 means 2 s, and 500 (beyond the range in seconds) means 500 ms.
+    expect(typeInto(1.2, '2')).toBeCloseTo(2, 6);
+    expect(typeInto(1.2, '500')).toBeCloseTo(0.5, 6);
+    // Explicit units always win.
+    expect(typeInto(0.005, '1.5 s')).toBeCloseTo(1.5, 6);
+    expect(typeInto(1.2, '80ms')).toBeCloseTo(0.08, 6);
   });
 });
 

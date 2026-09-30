@@ -1,7 +1,8 @@
 /**
  * The selected part's sound controls: six macros, Variation, lock, level/pan.
  */
-import { Button, Knob, Tooltip } from '../../ui/components';
+import { useState } from 'react';
+import { Button, Icon, Knob, Tooltip } from '../../ui/components';
 import { CHANNEL_PARAMS, specById } from '../../project/params';
 import { moduleId } from '../../project/factory';
 import { describeMacro } from '../../project/resolve';
@@ -14,6 +15,7 @@ import { session, useProject, useUi } from '../instance';
 import { notify, runtimeStore } from '../runtime';
 import { INSTRUMENT_LABEL, soundName } from '../labels';
 import { MACRO_SPECS } from '../macros';
+import { SoundBrowser } from './SoundBrowser';
 import styles from './PartPanel.module.css';
 
 const LEVEL_SPEC = specById(CHANNEL_PARAMS, 'level')!;
@@ -76,6 +78,7 @@ export function PartPanel() {
   );
   const level = useProject((p) => p.patch.modules.find((m) => m.id === moduleId.channel(trackId))?.params.level ?? 0);
   const pan = useProject((p) => p.patch.modules.find((m) => m.id === moduleId.channel(trackId))?.params.pan ?? 0);
+  const [soundOpen, setSoundOpen] = useState(false);
   if (!header) return null;
   return (
     <section className={styles.panel} aria-labelledby="part-title">
@@ -85,14 +88,22 @@ export function PartPanel() {
           <h2 id="part-title" className={styles.title}>
             {header.name}
           </h2>
-          <div className={styles.sound}>
-            {header.sound} · {INSTRUMENT_LABEL[header.kind]}
-          </div>
         </div>
         <Button size="sm" variant="ghost" icon="settings" onClick={() => setView('shape')} tip="Open the Shape view: all sound settings, effects and cables for this part.">
           Shape
         </Button>
       </div>
+
+      <Tooltip tip="Choose a different drum kit, synth preset or recording for this part. Undo brings the old one back.">
+        <button type="button" className={styles.soundButton} onClick={() => setSoundOpen(true)} aria-haspopup="dialog" aria-label={`Sound: ${header.sound}, ${INSTRUMENT_LABEL[header.kind]}. Change sound`}>
+          <span className={styles.soundKind}>{INSTRUMENT_LABEL[header.kind]}</span>
+          <span className={styles.sound}>{header.sound}</span>
+          <span className={styles.soundAction} aria-hidden="true">
+            Change
+            <Icon name="chevronDown" size={12} />
+          </span>
+        </button>
+      </Tooltip>
 
       <div className={styles.macros} role="group" aria-label={`${header.name} macros`}>
         {MACRO_IDS.map((m) => (
@@ -115,6 +126,7 @@ export function PartPanel() {
         <Knob spec={LEVEL_SPEC} value={level} size="sm" onChange={(v, info) => session.setModuleParam(moduleId.channel(trackId), 'level', v, info.gesture)} />
         <Knob spec={PAN_SPEC} value={pan} size="sm" onChange={(v, info) => session.setModuleParam(moduleId.channel(trackId), 'pan', v, info.gesture)} />
       </div>
+      <SoundBrowser open={soundOpen} trackId={trackId} onClose={() => setSoundOpen(false)} />
     </section>
   );
 }

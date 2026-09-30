@@ -14,6 +14,9 @@ import { PlayView } from './views/PlayView';
 import { KeyboardStrip } from './views/KeyboardStrip';
 import { Welcome } from './views/Welcome';
 import { ExportDialog } from './views/ExportDialog';
+import { Library, type LibraryTab } from './views/Library';
+import { Guide } from './views/Guide';
+import { uiStore } from '../state/uiStore';
 import { ShapeView } from './views/shape/ShapeView';
 import { ArrangeView } from './views/arrange/ArrangeView';
 import { downloadBlob } from './download';
@@ -82,6 +85,13 @@ export function App({ boot }: { boot: BootInfo }) {
   const [exportOpen, setExportOpen] = useState(false);
   const [exportSource, setExportSource] = useState<string | undefined>(undefined);
   const tips = useUi((s) => s.tipsEnabled);
+  // Project library (transport project button → My projects; Welcome → Starters) and the quick guide.
+  const [library, setLibrary] = useState<{ tab: LibraryTab; fromWelcome: boolean } | null>(null);
+  const [guide, setGuide] = useState(false);
+  // The guide is offered once, after the first Jump In (or first starter picked from Welcome).
+  const offerGuide = () => {
+    if (!uiStore.getState().guideDone) setGuide(true);
+  };
 
   // Global shortcuts: Space = play/stop, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y = undo/redo.
   useEffect(() => {
@@ -102,7 +112,7 @@ export function App({ boot }: { boot: BootInfo }) {
       if (e.code === 'Space' && !mod && !e.altKey && !e.repeat) {
         const t = e.target as HTMLElement | null;
         // Space on a focused button or slider activates that control instead.
-        if (t && t !== document.body && t.closest('button, [role="slider"], [role="tab"], [role="radio"], a, summary')) return;
+        if (t && t !== document.body && t.closest('button, [role="tab"], [role="radio"], a, summary')) return;
         e.preventDefault();
         void session.togglePlay();
       }
@@ -137,8 +147,10 @@ export function App({ boot }: { boot: BootInfo }) {
   return (
     <TipsProvider enabled={tips} onEnabledChange={(on) => setTipsEnabled(on)}>
       <ToastProvider>
+        {/* Before the instrument in the DOM so Tab reaches the guide first; it never blocks the pads. */}
+        <Guide open={guide} onClose={() => setGuide(false)} />
         <div className={styles.app} inert={welcome ? true : undefined}>
-          <TransportBar onOpenLibrary={() => setWelcome(true)} onOpenExport={() => { setExportSource(undefined); setExportOpen(true); }} />
+          <TransportBar onOpenLibrary={() => setLibrary({ tab: 'projects', fromWelcome: false })} onOpenExport={() => { setExportSource(undefined); setExportOpen(true); }} />
           <div className={styles.bannerSlot}>
             <AudioBanner />
           </div>
@@ -149,7 +161,31 @@ export function App({ boot }: { boot: BootInfo }) {
             <KeyboardStrip />
           </footer>
         </div>
-        {welcome && <Welcome lastProject={boot.lastProject} storageError={boot.storageError} onClose={() => setWelcome(false)} onBrowse={() => setWelcome(false)} />}
+        {welcome && (
+          <Welcome
+            lastProject={boot.lastProject}
+            storageError={boot.storageError}
+            onClose={() => setWelcome(false)}
+            onBrowse={() => setLibrary({ tab: 'starters', fromWelcome: true })}
+            onJumpedIn={offerGuide}
+          />
+        )}
+        <Library
+          open={library !== null}
+          initialTab={library?.tab}
+          onClose={() => setLibrary(null)}
+          onLoaded={(how) => {
+            const firstStart = !!library?.fromWelcome && how === 'starter';
+            setLibrary(null);
+            setWelcome(false);
+            if (firstStart) offerGuide();
+          }}
+          onShowGuide={() => {
+            setLibrary(null);
+            setWelcome(false);
+            setGuide(true);
+          }}
+        />
         <ExportDialog open={exportOpen} initialSource={exportSource} onClose={() => { setExportOpen(false); setExportSource(undefined); }} />
         <Notices />
       </ToastProvider>

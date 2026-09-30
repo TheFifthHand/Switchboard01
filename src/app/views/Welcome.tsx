@@ -1,22 +1,28 @@
 /**
  * The first screen: the real instrument behind a small card with Jump In.
- * Jump In is the user gesture that enables browser audio.
+ * Jump In is the user gesture that enables browser audio. "Other starters &
+ * projects" opens the project library on its Starters tab.
  */
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../ui/components';
-import { session } from '../instance';
+import { session, useProject } from '../instance';
 import styles from './Welcome.module.css';
 
 export interface WelcomeProps {
   lastProject: { id: string; name: string } | null;
   storageError: string | null;
   onClose(): void;
+  /** Open the project library (Starters tab). */
   onBrowse(): void;
+  /** Jump In finished loading its starter (after onClose). */
+  onJumpedIn?(): void;
 }
 
-export function Welcome({ lastProject, storageError, onClose, onBrowse }: WelcomeProps) {
+export function Welcome({ lastProject, storageError, onClose, onBrowse, onJumpedIn }: WelcomeProps) {
   const jumpRef = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
+  // The reopened project may have been renamed in the library meanwhile.
+  const lastName = useProject((p) => (lastProject && p.id === lastProject.id ? p.name : null)) ?? lastProject?.name;
   useEffect(() => {
     jumpRef.current?.focus();
   }, []);
@@ -25,7 +31,10 @@ export function Welcome({ lastProject, storageError, onClose, onBrowse }: Welcom
     if (busy) return;
     setBusy(true);
     // Must run synchronously inside the click so the browser allows audio.
-    void session.jumpIn().finally(() => onClose());
+    void session.jumpIn().finally(() => {
+      onClose();
+      onJumpedIn?.();
+    });
   };
   const continueLast = () => {
     void session.continueProject();
@@ -52,11 +61,11 @@ export function Welcome({ lastProject, storageError, onClose, onBrowse }: Welcom
         </p>
         {lastProject && (
           <Button variant="secondary" onClick={continueLast} className={styles.secondary}>
-            Continue “{lastProject.name}”
+            Continue “{lastName}”
           </Button>
         )}
         <div className={styles.links}>
-          <button type="button" className={styles.link} onClick={onBrowse}>
+          <button type="button" className={styles.link} onClick={onBrowse} aria-haspopup="dialog">
             Other starters & projects
           </button>
           <span aria-hidden>·</span>

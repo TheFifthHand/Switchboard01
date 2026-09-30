@@ -67,12 +67,12 @@ export function soundIdOf(inst: Instrument): string {
 function synthSections(kind: 'bass' | 'poly', role: TrackRole): Section[] {
   const all = SYNTH_PRESETS.filter((p) => p.kind === kind).map((p) => ({ kind, id: p.id, name: p.name, description: p.description, roles: p.roles }));
   const suggested = all.filter((p) => p.roles.includes(role));
+  const rest = all.filter((p) => !suggested.includes(p));
   const label = kind === 'bass' ? 'bass' : 'poly synth';
-  if (suggested.length === 0 || suggested.length === all.length) return [{ heading: `All ${label} presets`, entries: all }];
-  return [
-    { heading: `Suggested for ${ROLE_WORDS[role]}`, entries: suggested },
-    { heading: `All other ${label} presets`, entries: all.filter((p) => !suggested.includes(p)) },
-  ];
+  if (suggested.length === 0) return [{ heading: `All ${label} presets`, entries: all }];
+  const out: Section[] = [{ heading: `Suggested for ${ROLE_WORDS[role]}`, entries: suggested }];
+  if (rest.length) out.push({ heading: `Other ${label} presets`, entries: rest });
+  return out;
 }
 
 function sectionsFor(kind: InstrumentKind, role: TrackRole, samples: readonly SampleMeta[]): Section[] {

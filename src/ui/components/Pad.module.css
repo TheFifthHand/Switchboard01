@@ -249,12 +249,25 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
+  min-width: 0;
+  /* The caption row may use most of the right padding (the key hint sits in
+     the top corner), so "Stopping" fits a Loops pad at 1366 px. */
+  max-width: calc(100% + 6px);
+  margin-right: -6px;
   color: var(--ink-3);
   font-size: var(--fs-xs);
   font-weight: 500;
   line-height: 14px;
   white-space: nowrap;
+}
+
+/* On narrow pads (small windows, 200% zoom) the state icon always stays
+   whole and only the words shorten, so the state never depends on colour. */
+.capText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pad[data-state='playing'] .caption,

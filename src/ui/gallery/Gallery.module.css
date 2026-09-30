@@ -64,7 +64,7 @@
 .note {
   display: flex;
   flex: 1 1 320px;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   min-width: 0;
   margin: 0;
@@ -74,6 +74,11 @@
 
 .note strong {
   font-weight: 620;
+}
+
+/* Align the icon with the first line of text when the note wraps. */
+.note > svg {
+  margin-top: 1px;
 }
 
 /* ---------- transport ---------- */

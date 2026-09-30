@@ -63,14 +63,16 @@ export function isMenuKey(e: { key: string; shiftKey: boolean }): boolean {
   return e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10');
 }
 
-let lastKeyboardMenuAt = 0;
-/** Mark that a keyboard shortcut just opened a menu (the browser may follow with its own contextmenu event). */
-export function noteKeyboardMenu(): void {
-  lastKeyboardMenuAt = performance.now();
+let lastKeyboardMenu: { at: number; el: Element | null } = { at: -Infinity, el: null };
+/** Mark that a keyboard shortcut just opened a menu for `el` (the browser may follow with its own contextmenu event). */
+export function noteKeyboardMenu(el: Element | null): void {
+  lastKeyboardMenu = { at: performance.now(), el };
 }
-/** True when a contextmenu event merely repeats a menu the keyboard handler already opened. */
-export function isEchoOfKeyboardMenu(): boolean {
-  return performance.now() - lastKeyboardMenuAt < 400;
+/** True when a contextmenu event on `target` merely repeats a menu the keyboard handler already opened. */
+export function isEchoOfKeyboardMenu(target: EventTarget | null): boolean {
+  const { at, el } = lastKeyboardMenu;
+  if (!el || !(target instanceof Node) || performance.now() - at > 400) return false;
+  return el === target || el.contains(target) || target.contains(el);
 }
 
 export interface PopoverProps {
@@ -110,6 +112,8 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
   });
   const focusInside = useRef(false);
   const restoreTo = useRef<HTMLElement | null>(null);
+  /** Set while unmounting, so giving focus back does not count as "focus left the popover". */
+  const unmounting = useRef(false);
 
   // Position next to the anchor, inside the viewport; follow size changes (e.g. switching to a rename field).
   useLayoutEffect(() => {
@@ -140,13 +144,15 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    restoreTo.current = returnFocus ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    unmounting.current = false;
+    restoreTo.current = returnFocus ?? restoreTo.current ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     if (!el.contains(document.activeElement)) {
       const target = el.querySelector<HTMLElement>('[data-autofocus]') ?? el.querySelector<HTMLElement>(`${ITEM_SELECTOR}, input, button:not([disabled]), [tabindex="0"]`) ?? el;
       target.focus({ preventScroll: true });
     }
     focusInside.current = true;
     return () => {
+      unmounting.current = true;
       const active = document.activeElement;
       if (focusInside.current || !active || active === document.body) {
         const r = restoreTo.current;
@@ -262,7 +268,7 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
       }}
       onBlur={(e) => {
         const to = e.relatedTarget as Node | null;
-        if (to && ref.current?.contains(to)) return;
+        if (unmounting.current || (to && ref.current?.contains(to))) return;
         focusInside.current = false;
         // A non-modal panel closes when keyboard focus moves on to the rest of the page.
         if (role === 'dialog' && to && !(ignore && ignore.contains(to))) onCloseRef.current();

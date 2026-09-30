@@ -61,9 +61,9 @@ function SaveStatus() {
   return (
     <div className={styles.saveWrap}>
       <Tooltip tip={save.status === 'error' ? save.lastError?.message : 'Your project saves automatically in this browser.'} detail="Browser storage is working storage. Export a project file for a portable backup.">
-        <button type="button" className={`${styles.save} ${tone}`} aria-live="polite" onClick={() => setOpen(save.status === 'error' ? !open : false)}>
+        <button type="button" className={`${styles.save} ${tone}`} aria-live="polite" aria-label={`Autosave: ${text}`} onClick={() => setOpen(save.status === 'error' ? !open : false)}>
           <span className={styles.saveDot} aria-hidden />
-          {text}
+          <span className={styles.saveText}>{text}</span>
         </button>
       </Tooltip>
       {save.status === 'error' && open && (
@@ -112,8 +112,9 @@ function RecordGroup() {
           size="sm"
           tone="coral"
           pressed={recording === 'notes'}
+          aria-pressed={undefined}
           onClick={() => void session.toggleRecordNotes()}
-          aria-label="Record Notes"
+          aria-label={recording === 'notes' ? 'Stop recording notes' : 'Record Notes'}
           tip={recording === 'notes' ? 'Stop recording notes. Undo removes the whole take.' : 'Record what you play on the keyboard or drum pads into the selected clip.'}
           detail="Timing, metronome and count-in are in Recording options (the metronome button)."
           className={recording === 'notes' ? styles.recActive : undefined}
@@ -125,8 +126,9 @@ function RecordGroup() {
           size="sm"
           tone="coral"
           pressed={recording === 'performance'}
+          aria-pressed={undefined}
           onClick={() => void session.togglePerformance()}
-          aria-label="Record Performance"
+          aria-label={recording === 'performance' ? 'Stop recording performance' : 'Record Performance'}
           tip={recording === 'performance' ? 'Stop and keep this performance. Replay or export it in Arrange.' : 'Capture everything you do — launches, notes, knob moves — as a replayable performance.'}
           detail="Cables and sound choices are locked while recording so the take replays exactly."
           className={recording === 'performance' ? styles.recActive : undefined}
@@ -258,7 +260,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
         >
           <span className={styles.projectName}>{projectName}</span>
         </Button>
-        <Button variant="primary" size="sm" icon="download" onClick={props.onOpenExport} aria-label="Export WAV" tip="Save your song, a scene or a recorded performance as a WAV file." className={styles.export}>
+        <Button variant="primary" size="sm" icon="download" onClick={props.onOpenExport} tip="Export a WAV file: your song, a scene or a recorded performance." className={styles.export}>
           <span className={styles.exportText}>Export</span>
         </Button>
       </div>

@@ -1,6 +1,7 @@
-import { act, createElement as h, Fragment, useState } from 'react';
+import { act, createElement as h, Fragment, useRef, useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Button, Dialog, Meter, NumberField, SegmentedControl, Switch, TipsProvider, ToastProvider, Tooltip, useToasts, type ToastApi } from '../../src/ui/components';
+import { Button, Dialog, Meter, Notice, NumberField, SegmentedControl, Switch, TipsProvider, ToastProvider, Tooltip, TOOLTIP_DELAY_MS, useToasts, type ToastApi } from '../../src/ui/components';
+import { useElementSize } from '../../src/ui/hooks/useElementSize';
 import { useRafLoop } from '../../src/ui/hooks/useRafLoop';
 import { actFrame, cleanup, fire, frames, key, mount, pointer, pointIn, wait } from './ui-harness';
 
@@ -58,6 +59,28 @@ describe('Meter', () => {
     expect(m.container.querySelectorAll('[data-band][data-on="1"]')).toHaveLength(0);
     await wait(300);
     expect(m.container.querySelector('[role="meter"]')!.getAttribute('aria-valuetext')).toBe('Silent');
+  });
+});
+
+describe('useElementSize', () => {
+  it('reports the content box from the first measurement and follows resizes', async () => {
+    const seen: { width: number; height: number }[] = [];
+    function Host({ width }: { width: number }) {
+      const ref = useRef<HTMLDivElement>(null);
+      const size = useElementSize(ref);
+      seen.push(size);
+      return h('div', { ref, style: { width: `${width}px`, height: '50px', padding: '10px', border: '2px solid', boxSizing: 'content-box' } });
+    }
+    const m = mount(h(Host, { width: 200 }));
+    await actFrame();
+    await actFrame();
+    // Never the padded/bordered box (224 x 74), not even for one render.
+    expect(seen.filter((s) => s.width > 0)).not.toContainEqual({ width: 224, height: 74 });
+    expect(seen.at(-1)).toEqual({ width: 200, height: 50 });
+    m.rerender(h(Host, { width: 320 }));
+    await actFrame();
+    await actFrame();
+    expect(seen.at(-1)).toEqual({ width: 320, height: 50 });
   });
 });
 
@@ -202,6 +225,29 @@ describe('Tooltip', () => {
     expect(desc.textContent).toContain('Adds a room around this sound.');
   });
 
+  it('Escape dismisses a hover tooltip wherever focus is; it returns only after the pointer leaves', async () => {
+    const m = mount(h(TipHost, { enabled: true }));
+    const trigger = m.container.querySelector<HTMLElement>('[data-testid="trigger"]')!;
+    const hover = () => pointer(trigger, 'pointerover', { ...pointIn(trigger), buttons: 0 });
+    hover();
+    await wait(TOOLTIP_DELAY_MS + 100);
+    await actFrame();
+    expect(bubble()).not.toBeNull();
+    expect(document.activeElement).not.toBe(trigger);
+    key(document.body, 'keydown', { key: 'Escape' });
+    expect(bubble()).toBeNull();
+    // Still hovering: moving over the control again does not bring it back.
+    hover();
+    await wait(TOOLTIP_DELAY_MS + 100);
+    expect(bubble()).toBeNull();
+    // After leaving and coming back it works again.
+    pointer(trigger, 'pointerout', { ...pointIn(trigger), buttons: 0, relatedTarget: document.body });
+    hover();
+    await wait(TOOLTIP_DELAY_MS + 100);
+    await actFrame();
+    expect(bubble()).not.toBeNull();
+  });
+
   it('with Tips off, only the name is available', async () => {
     const m = mount(h(TipHost, { enabled: false }));
     const trigger = m.container.querySelector<HTMLElement>('[data-testid="trigger"]')!;
@@ -254,6 +300,25 @@ describe('SegmentedControl', () => {
     key(radios()[3], 'keydown', { key: 'ArrowRight' }); // wraps
     key(radios()[0], 'keydown', { key: 'ArrowLeft' });
     expect(log).toEqual(['drums', 'steps', 'loops', 'steps']);
+  });
+
+  it('stays reachable by Tab when the engaged option is disabled, and shows nothing engaged for an unknown value', () => {
+    const opts = [
+      { value: 'loops', label: 'Loops' },
+      { value: 'drums', label: 'Drums', disabled: true },
+      { value: 'notes', label: 'Notes' },
+    ] as const;
+    const noop = () => {};
+    const a = mount(h(SegmentedControl<'loops' | 'drums' | 'notes'>, { label: 'Pad mode', options: opts, value: 'drums', onChange: noop }));
+    const ra = [...a.container.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+    expect(ra[1].getAttribute('aria-checked')).toBe('true');
+    expect(ra.map((r) => r.tabIndex)).toEqual([0, -1, -1]);
+    expect(ra[0].disabled).toBe(false);
+
+    const b = mount(h(SegmentedControl<'loops' | 'drums' | 'notes'>, { label: 'Pad mode', options: opts, value: 'steps' as never, onChange: noop }));
+    const rb = [...b.container.querySelectorAll<HTMLElement>('[role="radio"]')];
+    expect(rb.filter((r) => r.getAttribute('aria-checked') === 'true')).toHaveLength(0);
+    expect(rb.map((r) => r.tabIndex)).toEqual([0, -1, -1]);
   });
 
   it('tabs: tablist semantics, aria-selected and aria-controls; clicks select', () => {
@@ -334,6 +399,17 @@ describe('NumberField', () => {
     expect(document.activeElement).toBe(input);
   });
 
+  it('Escape reverts typed text without committing it', () => {
+    const { calls, input } = setup();
+    input.focus();
+    setInput(input, '150');
+    const esc = key(input, 'keydown', { key: 'Escape' });
+    expect(esc.defaultPrevented).toBe(true);
+    expect(input.value).toBe('120');
+    input.blur();
+    expect(calls).toEqual([]);
+  });
+
   it('exposes spinbutton semantics', () => {
     const { input } = setup(124);
     expect(input.getAttribute('role')).toBe('spinbutton');
@@ -368,7 +444,77 @@ describe('Switch and Button', () => {
   });
 });
 
+describe('Notice', () => {
+  function layoutAt(width: number) {
+    const m = mount(
+      h(Notice, { tone: 'warning', title: 'This part has no path to the output', action: { label: 'Restore connection', onAction: () => {} }, onDismiss: () => {} }, 'Lead is not connected to the master, so you will not hear it.'),
+      { width },
+    );
+    const alert = m.container.querySelector<HTMLElement>('[role="alert"]')!;
+    const message = [...alert.querySelectorAll('div')].find((d) => d.textContent === 'Lead is not connected to the master, so you will not hear it.')!;
+    const action = [...alert.querySelectorAll('button')].find((b) => b.textContent === 'Restore connection')!;
+    const out = { message: message.getBoundingClientRect(), action: action.getBoundingClientRect(), box: alert.getBoundingClientRect() };
+    m.unmount();
+    return out;
+  }
+
+  it('in a narrow panel the buttons move below the message instead of squeezing it', () => {
+    const narrow = layoutAt(300);
+    expect(narrow.message.width).toBeGreaterThan(200);
+    expect(narrow.action.top).toBeGreaterThanOrEqual(narrow.message.bottom);
+    expect(narrow.action.right).toBeLessThanOrEqual(narrow.box.right);
+    const wide = layoutAt(760);
+    expect(wide.action.top).toBeLessThan(wide.message.bottom); // one row when there is room
+  });
+});
+
 describe('Toasts', () => {
+  function mountToasts(): () => ToastApi {
+    let api: ToastApi | null = null;
+    function Grab() {
+      api = useToasts();
+      return null;
+    }
+    mount(h(ToastProvider, null, h(Grab)));
+    return () => api!;
+  }
+  const toastWith = (text: string) => [...document.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]')].find((el) => el.textContent?.includes(text)) ?? null;
+
+  it('hides after its duration, but not while the pointer rests on it', async () => {
+    const api = mountToasts();
+    act(() => {
+      api().show({ message: 'Project duplicated.', duration: 150 });
+    });
+    expect(toastWith('Project duplicated.')).not.toBeNull();
+    await act(() => wait(350));
+    expect(toastWith('Project duplicated.')).toBeNull();
+
+    act(() => {
+      api().show({ message: 'Hover keeps me.', duration: 150 });
+    });
+    const t = toastWith('Hover keeps me.')!;
+    pointer(t, 'pointerover', { ...pointIn(t), buttons: 0, relatedTarget: document.body });
+    await act(() => wait(350));
+    expect(toastWith('Hover keeps me.')).not.toBeNull();
+    pointer(t, 'pointerout', { ...pointIn(t), buttons: 0, relatedTarget: document.body });
+    await act(() => wait(1100)); // a paused toast gets at least 0.8 s after the pointer leaves
+    expect(toastWith('Hover keeps me.')).toBeNull();
+  });
+
+  it('errors stay until dismissed; reusing an id replaces the toast instead of stacking', async () => {
+    const api = mountToasts();
+    act(() => {
+      api().show({ id: 'autosave', tone: 'error', message: 'Autosave failed (1).' });
+      api().show({ id: 'autosave', tone: 'error', message: 'Autosave failed (2).' });
+    });
+    await act(() => wait(400));
+    expect(toastWith('Autosave failed (1).')).toBeNull();
+    const t = toastWith('Autosave failed (2).')!;
+    expect(t.getAttribute('role')).toBe('alert');
+    fire(t.querySelector('button[aria-label="Dismiss"]')!, new MouseEvent('click', { bubbles: true }));
+    expect(toastWith('Autosave failed')).toBeNull();
+  });
+
   it('shows an undo notice whose action runs once and dismisses the toast', async () => {
     let api: ToastApi | null = null;
     let undone = 0;

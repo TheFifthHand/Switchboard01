@@ -1,7 +1,7 @@
 .bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   height: 58px;
   padding: 0 12px;
   background: linear-gradient(180deg, var(--shell-hi), var(--shell));
@@ -41,7 +41,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-left: 10px;
+  padding-left: 8px;
   border-left: 1px solid var(--line-soft);
   flex: none;
 }
@@ -235,12 +235,43 @@
   .right .export[data-size] {
     gap: 0;
   }
+  /* Icon only, but the word stays the button's accessible name. */
   .exportText {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 }
 @media (max-width: 1540px) {
   .brand {
+    display: none;
+  }
+}
+@media (min-width: 1541px) {
+  .bar {
+    gap: 12px;
+  }
+  .group {
+    padding-left: 12px;
+  }
+}
+
+/* Below 1366 px: tighter spacing; the save state shows as its lamp (words return on errors). */
+@media (max-width: 1365px) {
+  .bar {
+    gap: 6px;
+  }
+  .group {
+    padding-left: 6px;
+  }
+  .play {
+    min-width: 78px;
+  }
+  .saveOk .saveText,
+  .saveBusy .saveText {
     display: none;
   }
 }

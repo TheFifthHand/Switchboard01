@@ -3,7 +3,7 @@
  * Musical Assist (in-key notes) with a visible explanation and a chromatic
  * mode, and the key selector.
  */
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { IconButton, MiniKeyboard, Select, Switch, Tooltip, noteKeyLabels, useComputerKeyboard, useKeyCapLabels } from '../../ui/components';
 import { ROOT_NAMES, SCALES, SCALE_ORDER, keyLabel, noteName, scaleMask } from '../../music/scales';
 import { setAssist, setKey } from '../../state/commands';
@@ -11,6 +11,7 @@ import { OCTAVE_RANGE, setKeyboardOctave, shiftKeyboardOctave } from '../../stat
 import type { ScaleId } from '../../project/types';
 import { session, useProject, useUi } from '../instance';
 import { useRuntime } from '../runtime';
+import { ArpStrip } from './ArpPanel';
 import styles from './KeyboardStrip.module.css';
 
 const ROOT_OPTIONS = ROOT_NAMES.map((n, i) => ({ value: String(i), label: n }));
@@ -30,7 +31,19 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
 
   const baseNote = (octave + 1) * 12;
   const mask = useMemo(() => (assist ? scaleMask(root, scale) : undefined), [assist, root, scale]);
-  const keyLabels = useMemo(() => noteKeyLabels(baseNote, capLabels), [baseNote, capLabels]);
+  const stripRef = useRef<HTMLElement>(null);
+  // One legend per white key: the computer key, except on C keys (and the root), which show their note name.
+  // Two stacked legends would run into the scale dots on a keyboard this short.
+  const keyLabels = useMemo(() => {
+    const all = noteKeyLabels(baseNote, capLabels);
+    const out: Record<number, string> = {};
+    for (const [midi, label] of Object.entries(all)) {
+      const pc = Number(midi) % 12;
+      if (pc === 0 || (!isDrums && pc === root)) continue;
+      out[Number(midi)] = label;
+    }
+    return out;
+  }, [baseNote, capLabels, isDrums, root]);
   const active = useMemo(() => {
     if (!held || isDrums) return new Set<number>();
     return new Set(held);
@@ -52,7 +65,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   });
 
   return (
-    <section className={styles.strip} aria-label="Keyboard">
+    <section ref={stripRef} className={styles.strip} aria-label="Keyboard">
       <div className={styles.octave}>
         <IconButton icon="octaveDown" label="Octave down (Z)" size="sm" onClick={() => shiftKeyboardOctave(-1)} disabled={octave <= OCTAVE_RANGE.min} />
         <div className={styles.octLabel}>
@@ -73,9 +86,9 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
           activeNotes={active}
           scaleMask={isDrums ? undefined : mask}
           keyLabels={keyLabels}
-          rootPc={root}
+          rootPc={isDrums ? undefined : root}
           keys={25}
-          height={74}
+          height={90}
           label={`Keyboard playing ${trackName}`}
         />
       </div>
@@ -94,6 +107,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
           {isDrums ? `${trackName}: keys play the kit sounds.` : assist ? `Snapping to ${keyLabel(root, scale)}` : 'Every key plays as pressed'}
         </p>
       </div>
+      <ArpStrip trackId={trackId} stripRef={stripRef} />
       {props.children}
     </section>
   );

@@ -17,7 +17,7 @@
  * performance take is recording.
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { Button, Dialog, Icon, IconButton, Notice, NumberField } from '../../../ui/components';
+import { Button, Dialog, Icon, IconButton, NumberField } from '../../../ui/components';
 import { isTypingTarget } from '../../../ui/hooks/useComputerKeyboard';
 import { compatibleSources, compatibleTargets, describePathProblem } from '../../../project/graph';
 import type { Connection, Id, PortKind, PortRef, Project } from '../../../project/types';
@@ -120,6 +120,9 @@ interface Refusal {
 
 const refOf = (s: Pick<SocketGeom, 'module' | 'port'>): PortRef => ({ module: s.module, port: s.port });
 
+/** "Bass’s", "Chords’". */
+const possessive = (name: string) => (/s$/i.test(name) ? `${name}’` : `${name}’s`);
+
 function compatKeys(refs: PortRef[], dir: SocketDir): Set<string> {
   return new Set(refs.map((r) => socketKey(r.module, r.port, dir)));
 }
@@ -209,6 +212,23 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
 
   const nameOf = useCallback((c: Pick<Connection, 'from' | 'to'>) => cableName(modules, c, tracks, trackId), [modules, tracks, trackId]);
 
+  const armRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    armRef.current = armSocket?.key ?? null;
+  });
+
+  /** The newest cable drawn into an input with its own plug (a full cable or a single stub), if any. */
+  const pullableCable = (inputKey: string): Id | null => {
+    for (let i = connections.length - 1; i >= 0; i--) {
+      const c = connections[i];
+      if (socketKey(c.to.module, c.to.port, 'in') !== inputKey) continue;
+      if (cableSet.cables.some((x) => x.id === c.id)) return c.id;
+      const stub = cableSet.stubs.find((st) => st.socketKey === inputKey);
+      if (stub && stub.connectionIds.length === 1 && stub.connectionIds[0] === c.id) return c.id;
+    }
+    return null;
+  };
+
   const refuse = useCallback((key: string, text: string) => {
     refusalN.current += 1;
     setRefusal({ key, text, n: refusalN.current });
@@ -258,14 +278,14 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
       else notify(r.message, 'warn');
       return;
     }
-    if (session.accepted(cmd.restoreTrackPatch(session.store, trackId))) setStatus(`Restored ${partName}'s default cables. Ctrl+Z undoes it.`);
+    if (session.accepted(cmd.restoreTrackPatch(session.store, trackId))) setStatus(`Restored ${possessive(partName)} default cables. Ctrl+Z undoes it.`);
   };
 
   const restorePart = () => {
     setRestoreOpen(false);
     const r = cmd.restoreTrackPatch(session.store, trackId);
-    if (session.accepted(r)) setStatus(`Restored ${partName}'s default cables. Ctrl+Z undoes it.`);
-    else if (!r.refused && !r.message) setStatus(`${partName}'s cables already match the default.`);
+    if (session.accepted(r)) setStatus(`Restored ${possessive(partName)} default cables. Ctrl+Z undoes it.`);
+    else if (!r.refused && !r.message) setStatus(`${possessive(partName)} cables already match the default.`);
   };
 
   const restoreAll = () => {
@@ -433,6 +453,15 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
     } else {
       const s = layout.sockets.get(key);
       if (!s) return;
+      // Pressing a plugged input pulls its most recent plug (like unplugging a jack);
+      // while a socket is armed the press completes that connection instead.
+      if (s.dir === 'in' && !grab && !armRef.current) {
+        const pull = pullableCable(s.key);
+        if (pull) {
+          beginGesture(e, key, { connectionId: pull, end: 'to', socketKey: s.key });
+          return;
+        }
+      }
       kind = s.kind;
       const angle = SIDE_ANGLE[s.side];
       fixed = { socket: s, point: plugBack(s, angle), angle };
@@ -480,7 +509,10 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
         g.hover = socketAt(ev.clientX, ev.clientY, p, g.grab ? null : g.key);
       }
       endGesture();
+      const armed = armRef.current ? layout.sockets.get(armRef.current) : undefined;
+      const pressed = layout.sockets.get(g.grab ? g.grab.socketKey : g.key);
       if (g.started) dropCable(g);
+      else if (armed && pressed && armed.key !== pressed.key && armed.dir !== pressed.dir) clickSocket(pressed.key);
       else if (g.grab) {
         setArm(null);
         setSelectedId(g.grab.connectionId);
@@ -530,7 +562,7 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
 
   const focusSocket = (key: string) => {
     setFocusKey(key);
-    const el = rootRef.current?.querySelector<HTMLElement>(`[data-socket-key="${CSS.escape(key)}"]`);
+    const el = rootRef.current?.querySelector<HTMLElement>(`button[data-socket-key="${CSS.escape(key)}"]`);
     el?.focus();
   };
 
@@ -634,6 +666,7 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
   }, [arm, drag]);
 
   const onRootKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.defaultPrevented) return;
     if (e.key === 'Escape') {
       if (cancelAll()) {
         e.preventDefault();
@@ -725,12 +758,12 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
     hint = armSocket.dir === 'out' ? `Choose a destination for ${n}: click a highlighted socket. Esc cancels.` : `Choose a source for ${n}: click a highlighted socket. Esc cancels.`;
   }
 
-  const pickerAnchor = picker ? (rootRef.current?.querySelector<HTMLElement>(`[data-socket-key="${CSS.escape(picker)}"]`) ?? null) : null;
+  const pickerAnchor = picker ? (rootRef.current?.querySelector<HTMLElement>(`button[data-socket-key="${CSS.escape(picker)}"]`) ?? null) : null;
   const closePicker = useCallback(
     (refocus: boolean) => {
-      const key = picker;
+      // Focus goes back to the socket before the picker unmounts, so it never lands on the page body.
+      if (refocus && picker) rootRef.current?.querySelector<HTMLElement>(`button[data-socket-key="${CSS.escape(picker)}"]`)?.focus();
       setPicker(null);
-      if (refocus && key) requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(`[data-socket-key="${CSS.escape(key)}"]`)?.focus());
     },
     [picker],
   );
@@ -786,6 +819,19 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
             </Button>
             <IconButton icon="check" size="sm" label="Done with this cable" onClick={() => setSelectedId(null)} />
           </div>
+        ) : !hint && repair && !locked ? (
+          <div className={styles.pathWarn} id={hintId}>
+            <Icon name="warning" size={15} />
+            <strong>This part has no path to the output.</strong>
+            <Button
+              size="sm"
+              onClick={restoreConnection}
+              tip={repair === 'connect' ? `Plugs ${possessive(partName)} Channel Out back into the Master Out.` : `Nothing from ${partName} reaches the Master Out. This puts ${possessive(partName)} default cables back.`}
+              detail="Ctrl+Z undoes it."
+            >
+              Restore Connection
+            </Button>
+          </div>
         ) : (
           <p className={styles.status} data-tone={hint ? 'teal' : refusal ? 'coral' : undefined} id={hintId}>
             {hint ?? (status || DEFAULT_HINT)}
@@ -809,22 +855,7 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
         </div>
       </div>
 
-      {locked && (
-        <Notice tone="warning" className={styles.notice}>
-          {lock}
-        </Notice>
-      )}
-      {!locked && repair && (
-        <Notice
-          tone="warning"
-          className={styles.notice}
-          action={{ label: 'Restore Connection', onAction: restoreConnection }}
-        >
-          <strong>This part has no path to the output.</strong>{' '}
-          {repair === 'connect' ? `${partName}'s Channel is not plugged into the Master Out, so you won't hear it.` : `${partName}'s sound never reaches the Master Out, so you won't hear it. Restore Connection puts its default cables back.`}
-        </Notice>
-      )}
-
+      <div className={styles.viewportWrap}>
       <div className={styles.viewport} ref={scrollerRef}>
         <div
           id={`${listId}-stage`}
@@ -874,8 +905,22 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
           )}
         </div>
       </div>
+      {locked && (
+        <div className={styles.lockVeil} role="status">
+          <div className={styles.lockCard}>
+            <Icon name="lock" size={16} />
+            <p>{lock}</p>
+          </div>
+        </div>
+      )}
+      </div>
 
       <div className="visually-hidden">
+        {repair && !locked && (
+          <p role="alert">
+            This part has no path to the output. {repair === 'connect' ? `${possessive(partName)} Channel is not plugged into the Master Out.` : `No sound from ${partName} reaches the Master Out.`}
+          </p>
+        )}
         <h3 id={`${listId}-h`}>Cables of {partName}</h3>
         <ul aria-labelledby={`${listId}-h`}>
           {textList.length ? textList.map((l) => <li key={l.key}>{l.text}</li>) : <li>No cables.</li>}
@@ -912,7 +957,7 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
         <div className={styles.restoreChoices}>
           <div className={styles.restoreChoice}>
             <Button variant="primary" icon="undo" onClick={restorePart}>
-              Restore {partName}’s cables
+              Restore {possessive(partName)} cables
             </Button>
             <p>Instrument → Drive → Filter → Channel → Master Out, Send A to the Reverb, Send B to the Delay, and the LFO to the filter. Effects and LFOs you added to {partName} are removed.</p>
           </div>

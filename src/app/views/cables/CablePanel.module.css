@@ -130,26 +130,44 @@
   white-space: nowrap;
 }
 
-.notice {
-  flex: none;
-  margin: 6px 6px 0;
-  padding: 6px 8px 6px 12px;
+.pathWarn {
+  display: flex;
+  flex: 1;
   align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--coral-ink);
   font-size: var(--fs-sm);
+  white-space: nowrap;
 }
 
-.notice strong {
+.pathWarn > svg {
+  flex: none;
+  color: var(--coral);
+}
+
+.pathWarn strong {
+  min-width: 0;
+  overflow: hidden;
   font-weight: 650;
-  color: var(--ink);
+  text-overflow: ellipsis;
 }
 
 /* ------------------------------------------------------------------ */
 /* Patch area                                                          */
 /* ------------------------------------------------------------------ */
 
+.viewportWrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
 .viewport {
   position: relative;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   margin: 6px;
   overflow: auto;
@@ -163,6 +181,43 @@
     inset 0 0 0 1px rgba(20, 24, 28, 0.08);
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
+}
+
+.lockVeil {
+  position: absolute;
+  inset: 6px;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  border-radius: 10px;
+  background: rgba(221, 224, 227, 0.62);
+}
+
+.lockCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  max-width: 520px;
+  padding: 11px 14px 11px 12px;
+  border-radius: var(--r-md);
+  background: #fff5f2;
+  color: var(--coral-ink);
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  box-shadow:
+    0 0 0 1px rgba(220, 95, 71, 0.45),
+    var(--shadow-float);
+}
+
+.lockCard p {
+  margin: 0;
+}
+
+.lockCard svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--coral);
 }
 
 .stage {
@@ -288,18 +343,24 @@
   filter: drop-shadow(0 2px 3px rgba(20, 24, 28, 0.25));
 }
 
-.plug {
+.plug,
+.plug * {
   pointer-events: none;
 }
 
-.plugs[data-editable] .plug[data-grab] {
-  pointer-events: auto;
+/* Only the plug body outside the jack ring is grabbable; the jack itself starts new cables. */
+.plugs[data-editable] .plug[data-grab] .plugHit {
+  pointer-events: all;
   cursor: grab;
   touch-action: none;
 }
 
 .plugHit {
   fill: transparent;
+}
+
+.art [data-lifted] {
+  visibility: hidden;
 }
 
 .plugTip {

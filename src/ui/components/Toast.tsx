@@ -52,15 +52,21 @@ export function Notice({ tone = 'info', title, children, action, onDismiss, dism
         {title && <div className={styles.title}>{title}</div>}
         {children && <div className={styles.message}>{children}</div>}
       </div>
-      {action && (
-        <button type="button" className={styles.action} onClick={action.onAction}>
-          {action.label}
-        </button>
-      )}
-      {onDismiss && (
-        <button type="button" className={styles.dismiss} aria-label={dismissLabel} onClick={onDismiss}>
-          <Icon name="close" size={14} />
-        </button>
+      {(action || onDismiss) && (
+        // Grouped so that in a narrow panel they wrap below the message
+        // together instead of squeezing it into a one-word column.
+        <div className={styles.controls}>
+          {action && (
+            <button type="button" className={styles.action} onClick={action.onAction}>
+              {action.label}
+            </button>
+          )}
+          {onDismiss && (
+            <button type="button" className={styles.dismiss} aria-label={dismissLabel} onClick={onDismiss}>
+              <Icon name="close" size={14} />
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

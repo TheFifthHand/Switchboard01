@@ -3,7 +3,7 @@
   align-items: center;
   gap: 16px;
   height: 100%;
-  padding: 10px 16px;
+  padding: 5px 16px;
   background: linear-gradient(180deg, var(--shell), var(--shell-lo));
   border-top: 1px solid var(--line);
   min-width: 0;
@@ -50,7 +50,7 @@
 .assist {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   flex: none;
   width: 230px;
 }

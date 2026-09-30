@@ -43,6 +43,7 @@ function Socket(props: { s: SocketGeom; ui: SocketUi; handlers: SocketHandlers; 
   const compat = ui.compat ? (ui.compat.has(s.key) ? 'yes' : 'no') : undefined;
   const anchor = ui.anchorKey === s.key;
   return (
+    <Tooltip tip={s.tip} detail={s.kind === 'mod' ? 'Teal socket: modulation. Drag or click to patch; Enter lists what fits.' : 'Amber socket: audio. Drag or click to patch; Enter lists what fits.'}>
     <button
       type="button"
       className={styles.socket}
@@ -69,6 +70,7 @@ function Socket(props: { s: SocketGeom; ui: SocketUi; handlers: SocketHandlers; 
         {s.label}
       </span>
     </button>
+    </Tooltip>
   );
 }
 

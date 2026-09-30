@@ -1,6 +1,6 @@
 import { createElement as h, Fragment } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { MiniKeyboard } from '../../src/ui/components';
+import { Dialog, MiniKeyboard } from '../../src/ui/components';
 import { drumKeyHint, noteKeyLabels, useComputerKeyboard, type ComputerKeyboardLayout } from '../../src/ui/hooks/useComputerKeyboard';
 import { cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
 
@@ -176,6 +176,43 @@ describe('MiniKeyboard', () => {
     ]);
   });
 
+  it('an octave change under a held key releases it (the key now means another note)', () => {
+    const events: Ev[] = [];
+    const props = (baseNote: number) => ({
+      baseNote,
+      onNoteOn: (m: number, v: number) => events.push(['on', m, v]),
+      onNoteOff: (m: number) => events.push(['off', m]),
+    });
+    const m = mount(h(MiniKeyboard, props(48)), { width: 780 });
+    const board = m.container.querySelector<HTMLElement>('[role="group"]')!;
+    const p = pointIn(board.querySelector('[data-midi="50"]')!, 0.85);
+    pointer(board, 'pointerdown', p);
+    m.rerender(h(MiniKeyboard, props(60)));
+    expect(events.map((e) => e.slice(0, 2))).toEqual([
+      ['on', 50],
+      ['off', 50],
+    ]);
+    expect(board.querySelector('[data-midi="50"]')).toBeNull();
+    // The late pointerup does not send a stray note-off for the new layout.
+    pointer(board, 'pointerup', p);
+    expect(events).toHaveLength(2);
+  });
+
+  it('the tab becoming hidden releases held notes', () => {
+    const { events, board, whitePoint } = setupKeys();
+    pointer(board, 'pointerdown', whitePoint(53));
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    try {
+      fire(document, new Event('visibilitychange'));
+    } finally {
+      delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
+    expect(events.map((e) => e.slice(0, 2))).toEqual([
+      ['on', 53],
+      ['off', 53],
+    ]);
+  });
+
   it('shows active notes, key labels and the scale', () => {
     const { board, keyEl } = setupKeys({
       activeNotes: new Set([52]),
@@ -311,6 +348,24 @@ describe('useComputerKeyboard', () => {
       ['oct', 1],
       ['oct', -1],
     ]);
+  });
+
+  it('plays nothing while a modal dialog is open, but still releases a note held before it opened', () => {
+    const { log } = setupHook();
+    key(document.body, 'keydown', { code: 'KeyA', key: 'a' });
+    const d = mount(h(Dialog, { open: true, onClose: () => {}, title: 'Export audio' }, h('button', { type: 'button' }, 'Export')));
+    const inDialog = document.activeElement!;
+    expect(inDialog.closest('[role="dialog"]')).not.toBeNull();
+    key(inDialog, 'keydown', { code: 'KeyS', key: 's' }); // a note key on a dialog button
+    key(inDialog, 'keydown', { code: 'KeyX', key: 'x' }); // an octave key
+    key(inDialog, 'keyup', { code: 'KeyA', key: 'a' });
+    expect(log).toEqual([
+      ['on', 0, 0.8],
+      ['off', 0],
+    ]);
+    d.unmount();
+    key(document.body, 'keydown', { code: 'KeyS', key: 's' });
+    expect(log.at(-1)).toEqual(['on', 2, 0.8]);
   });
 
   it('drums layout: rows of keys match rows of pads (Z = pad 0 bottom-left, 1 = pad 12 top-left)', () => {

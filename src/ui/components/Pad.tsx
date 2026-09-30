@@ -227,7 +227,7 @@ export function Pad(props: PadProps) {
         {shownCaption && (
           <span className={styles.caption}>
             {icon && <Icon name={icon} size={10} className={styles.capIcon} />}
-            {shownCaption}
+            <span className={styles.capText}>{shownCaption}</span>
           </span>
         )}
         {keyHint && <span className={styles.key}>{keyHint}</span>}

@@ -1,0 +1,430 @@
+/* Project library dialog: a wider "lg" dialog with a fixed-height body so switching tabs never resizes it. */
+.dialog[data-size='lg'][role='dialog'] {
+  width: min(800px, 100%);
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: min(540px, calc(100vh - 228px));
+  min-height: 240px;
+}
+
+/* ---------- tab row ---------- */
+.tabRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+}
+.count {
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+}
+.guideButton {
+  margin-left: auto;
+  color: var(--ink-2);
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ---------- scrolling panel ---------- */
+.panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 0 -8px;
+  padding: 2px 8px 6px;
+  border-radius: var(--r-md);
+  outline: none;
+  scrollbar-gutter: stable;
+}
+.panel:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.intro {
+  margin: 0 0 10px;
+  color: var(--ink-2);
+  font-size: var(--fs-md);
+}
+
+.empty {
+  margin: 18px 0;
+  color: var(--ink-3);
+  font-size: var(--fs-md);
+  text-align: center;
+}
+.emptySmall {
+  margin: 4px 0 0;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+}
+
+.previewNote,
+.storageNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+.previewNote {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: var(--surface-hi);
+  box-shadow: 0 0 0 1px var(--line-soft);
+}
+.noteIcon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ink-3);
+}
+
+/* ---------- starter cards ---------- */
+.starters {
+  display: flex;
+  flex-direction: column;
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cardItem {
+  display: flex;
+  min-width: 0;
+}
+.card {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  min-height: 112px;
+  padding: 10px 12px 9px;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, #fbfbfb 0%, var(--pad) 55%, var(--pad-lo) 100%);
+  box-shadow:
+    0 0 0 1px var(--pad-edge),
+    inset 0 1px 0 #ffffff,
+    0 1px 2px rgba(20, 24, 28, 0.1),
+    0 3px 8px rgba(20, 24, 28, 0.05);
+  color: var(--ink);
+  text-align: left;
+  transition:
+    box-shadow var(--t-fast) var(--ease),
+    transform 60ms linear;
+}
+.card:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff 0%, #f7f8f8 55%, var(--pad) 100%);
+  box-shadow:
+    0 0 0 1px var(--line-strong),
+    inset 0 1px 0 #ffffff,
+    0 2px 4px rgba(20, 24, 28, 0.12),
+    0 6px 14px rgba(20, 24, 28, 0.07);
+}
+.card:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    0 0 0 1px var(--line-strong),
+    var(--shadow-pressed);
+}
+.card:focus-visible {
+  box-shadow:
+    0 0 0 1px var(--pad-edge),
+    var(--focus-ring);
+}
+.card:disabled {
+  cursor: default;
+}
+.card:disabled:not([data-starting]) {
+  opacity: 0.55;
+}
+.card[data-blank] {
+  background: var(--surface-hi);
+  box-shadow:
+    inset 0 0 0 1px var(--line-strong),
+    inset 0 0 0 3px var(--surface-hi);
+  outline: 1px dashed var(--line-strong);
+  outline-offset: -4px;
+}
+.card[data-blank]:hover:not(:disabled) {
+  background: #f4f5f6;
+}
+.card[data-starting] {
+  box-shadow:
+    0 0 0 2px var(--teal),
+    0 0 0 5px var(--teal-wash);
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cardName {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cardBpm {
+  flex: none;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+.cardKey {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.02em;
+}
+.cardDesc {
+  display: -webkit-box;
+  margin-top: 3px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: 1.38;
+}
+.cardGo {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-end;
+  gap: 3px;
+  margin-top: auto;
+  padding-top: 4px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.card:hover:not(:disabled) .cardGo,
+.card:focus-visible .cardGo {
+  color: var(--ink);
+}
+.card[data-starting] .cardGo {
+  color: var(--teal-ink);
+}
+
+/* ---------- project rows ---------- */
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-radius: var(--r-md);
+  background: var(--surface-hi);
+  box-shadow: 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.row:first-child {
+  border-top: 0;
+}
+.row[data-open] {
+  background: linear-gradient(90deg, var(--teal-wash), rgba(35, 149, 142, 0.03) 70%);
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+.rowMain {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+}
+.rowText {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.rowTitle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.rowName {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-md);
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rowMeta {
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+}
+.openBadge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 10px;
+  background: var(--shell-hi);
+  box-shadow: 0 0 0 1px rgba(35, 149, 142, 0.35);
+  color: var(--teal-ink);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.03em;
+}
+.openLamp {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 5px var(--teal-glow);
+}
+.rowActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+.deleteButton:not(:disabled):hover {
+  color: var(--coral-ink);
+}
+.row[data-trashed] .rowName {
+  color: var(--ink-2);
+}
+
+/* ---------- inline confirmation ---------- */
+.confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 9px 10px 9px 12px;
+  border-radius: var(--r-md);
+  background: #fbf1ee;
+  box-shadow:
+    0 0 0 1px rgba(220, 95, 71, 0.28),
+    inset 3px 0 0 var(--coral);
+}
+.starters > .confirm {
+  margin-bottom: 10px;
+}
+.confirmText {
+  flex: 1 1 260px;
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+.confirmActions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* ---------- rename ---------- */
+.rename {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+}
+.renameInput {
+  flex: 1 1 240px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: #ffffff;
+  font-size: var(--fs-md);
+  font-weight: 560;
+}
+.renameInput:focus-visible {
+  border-color: var(--teal);
+}
+.renameInput[aria-invalid='true'] {
+  border-color: var(--coral);
+}
+.renameActions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+.renameError {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--coral-ink);
+  font-size: var(--fs-sm);
+}
+
+/* ---------- recently deleted ---------- */
+.trash {
+  margin-top: 18px;
+}
+.sectionLabel {
+  margin: 0 0 6px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ---------- footer ---------- */
+.footer {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+}
+.storageNote {
+  flex: 1 1 auto;
+  max-width: 400px;
+  color: var(--ink-3);
+}
+.footerActions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  margin-left: auto;
+}
+
+@media (max-width: 760px) {
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .footer,
+  .tabRow {
+    flex-wrap: wrap;
+  }
+}
