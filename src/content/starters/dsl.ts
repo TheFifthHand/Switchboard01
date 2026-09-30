@@ -497,9 +497,9 @@ export function setDrumVoices(project: Project, trackId: Id, voices: DrumVoiceTw
     const voice = track.instrument.voices[slot];
     if (!Number.isInteger(slot) || !voice) throw new Error(`Starter DSL: no drum voice ${key}.`);
     if (!settings) continue;
-    for (const key of ['tune', 'decay', 'level', 'pan'] as const) {
-      const v = settings[key];
-      if (v !== undefined) voice[key] = clampParam(DRUM_VOICE_PARAM_SPECS[key], v);
+    for (const field of ['tune', 'decay', 'level', 'pan'] as const) {
+      const v = settings[field];
+      if (v !== undefined) voice[field] = clampParam(DRUM_VOICE_PARAM_SPECS[field], v);
     }
   }
 }
@@ -556,6 +556,14 @@ export interface StarterSpec {
   tailSeconds: number;
 }
 
+/**
+ * Every starter's mix is balanced against the others by its master volume;
+ * this trim then lifts all of them together so the grooves play at a healthy
+ * level (about -20 dBFS RMS) with the limiter barely touching the peaks.
+ */
+export const STARTER_OUTPUT_TRIM_DB = 4;
+const MASTER_MAX_DB = 6;
+
 /** Deterministic, per-starter project seed so Variation results reproduce. */
 export function starterSeed(id: string): number {
   return hashString(`starter:${id}`) & 0x7fffffff;
@@ -569,7 +577,10 @@ export function buildStarter(spec: StarterSpec): Project {
   project.swing = spec.swing ?? 0;
   project.root = spec.root;
   project.scale = spec.scale;
-  if (spec.masterVolumeDb !== undefined) project.masterVolumeDb = spec.masterVolumeDb;
+  const master = (spec.masterVolumeDb ?? project.masterVolumeDb) + STARTER_OUTPUT_TRIM_DB;
+  project.masterVolumeDb = Math.min(MASTER_MAX_DB, master);
+  // Whatever the master cannot take goes onto every channel equally, keeping the balance.
+  const channelLift = Math.max(0, master - MASTER_MAX_DB);
   spec.scenes.forEach((name, i) => {
     project.scenes[i].name = name;
   });
@@ -587,7 +598,7 @@ export function buildStarter(spec: StarterSpec): Project {
     if (part.filter) setModuleParams(project, moduleId.filter(id), part.filter);
     if (part.drive) setModuleParams(project, moduleId.drive(id), part.drive);
     if (part.channel) setModuleParams(project, moduleId.channel(id), part.channel);
-    setChannel(project, id, { level: part.level, pan: part.pan ?? 0 });
+    setChannel(project, id, { level: part.level + channelLift, pan: part.pan ?? 0 });
     if (part.macros) setMacros(project, id, part.macros);
     if (part.arp) t.arp = { ...t.arp, ...part.arp };
     if (part.clips.length > SCENE_ROWS) throw new Error(`Starter DSL: ${spec.id} ${track.role} has more than ${SCENE_ROWS} clips.`);

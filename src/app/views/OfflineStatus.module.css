@@ -1,0 +1,23 @@
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+.ready .dot {
+  background: var(--teal);
+}
+.update {
+  white-space: nowrap;
+}
