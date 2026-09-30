@@ -3,6 +3,8 @@ import { defineConfig, devices } from '@playwright/test';
 // The cloud container ships Chromium 141 at /opt/pw-browsers (Playwright 1.56.1).
 // Locally, run `npx playwright install chromium` once.
 const port = Number(process.env.E2E_PORT ?? 4173);
+// Build directory to serve (default dist/). Lets a clean build from another checkout be tested.
+const distDir = process.env.E2E_DIST ?? 'dist';
 
 export default defineConfig({
   testDir: './e2e',
@@ -22,7 +24,7 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1366, height: 768 } } }],
   webServer: {
-    command: `node launcher/serve.mjs dist --port ${port} --no-open`,
+    command: `node launcher/serve.mjs ${distDir} --port ${port} --no-open`,
     url: `http://127.0.0.1:${port}/`,
     reuseExistingServer: true,
     timeout: 30_000,

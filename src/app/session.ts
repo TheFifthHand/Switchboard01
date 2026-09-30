@@ -431,6 +431,8 @@ export class Session {
   stop(): void {
     this.finishTake('stop');
     this.stopRecordNotes();
+    // Stop releases every held note (keyboard, pads, arpeggio).
+    this.releaseAllNotes();
     if (this.transport) this.transport.stop();
     if (this.replayingId) this.endReplay();
     patchRuntime({ playing: false, mode: 'live', songBlock: null, countingIn: false });
