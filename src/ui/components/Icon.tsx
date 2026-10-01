@@ -44,6 +44,18 @@ export const ICON_NAMES = [
   'sparkle',
   'clock',
   'link',
+  'pause',
+  'speaker',
+  'headphones',
+  'sliders',
+  'mic',
+  'keys',
+  'drum',
+  'bell',
+  'search',
+  'spectrum',
+  'stereo',
+  'midi',
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -133,6 +145,18 @@ const GLYPHS: Record<IconName, ReactElement[]> = {
     P('M7.4 4.6 L8.6 3.4 A2.4 2.4 0 0 1 12.6 7.4 L11.4 8.6'),
     P('M8.6 11.4 L7.4 12.6 A2.4 2.4 0 0 1 3.4 8.6 L4.6 7.4'),
   ],
+  pause: [F('M4.4 3.4 H6.8 V12.6 H4.4 Z'), F('M9.2 3.4 H11.6 V12.6 H9.2 Z')],
+  speaker: [P('M2.5 6.2 H4.8 L8.2 3.4 V12.6 L4.8 9.8 H2.5 Z'), P('M10.4 5.8 A3 3 0 0 1 10.4 10.2'), P('M12.2 4 A5.6 5.6 0 0 1 12.2 12')],
+  headphones: [P('M3 10 V8 A5 5 0 0 1 13 8 V10'), P('M3 9.4 H5 V13 H3 Z'), P('M11 9.4 H13 V13 H11 Z')],
+  sliders: [P('M4 2.5 V13.5'), P('M8 2.5 V13.5'), P('M12 2.5 V13.5'), F('M2.6 9 H5.4 V11 H2.6 Z'), F('M6.6 4.6 H9.4 V6.6 H6.6 Z'), F('M10.6 7.4 H13.4 V9.4 H10.6 Z')],
+  mic: [P('M6 3.6 A2 2 0 0 1 10 3.6 V8 A2 2 0 0 1 6 8 Z'), P('M3.8 7.6 A4.2 4.2 0 0 0 12.2 7.6'), P('M8 11.8 V14'), P('M5.8 14 H10.2')],
+  keys: [P('M2 3.5 H14 V12.5 H2 Z'), P('M6 12.5 V8.5'), P('M10 12.5 V8.5'), F('M4.9 3.5 H7.1 V8.5 H4.9 Z'), F('M8.9 3.5 H11.1 V8.5 H8.9 Z')],
+  drum: [P('M2.5 6 A5.5 2.2 0 0 0 13.5 6 A5.5 2.2 0 0 0 2.5 6 Z'), P('M2.5 6 V11 A5.5 2.2 0 0 0 13.5 11 V6'), P('M5.4 2 L7.4 5'), P('M10.6 2 L8.6 5')],
+  bell: [P('M4 11.5 C4.6 10.6 4.6 9.6 4.6 7.4 A3.4 3.4 0 0 1 11.4 7.4 C11.4 9.6 11.4 10.6 12 11.5 Z'), P('M6.8 13.4 H9.2')],
+  search: [<circle key="c" cx={7} cy={7} r={4.2} {...S} />, P('M10.2 10.2 L13.6 13.6')],
+  spectrum: [P('M2.5 13.5 H13.5'), F('M3 9 H4.6 V13 H3 Z'), F('M5.8 5 H7.4 V13 H5.8 Z'), F('M8.6 7 H10.2 V13 H8.6 Z'), F('M11.4 10 H13 V13 H11.4 Z')],
+  stereo: [<circle key="l" cx={6} cy={8} r={3.6} {...S} />, <circle key="r" cx={10} cy={8} r={3.6} {...S} />],
+  midi: [<circle key="o" cx={8} cy={8} r={5.8} {...S} />, Dot(5, 8.2), Dot(11, 8.2), Dot(6, 5.6), Dot(10, 5.6), Dot(8, 4.6), P('M7 12 H9')],
 };
 
 export interface IconProps {

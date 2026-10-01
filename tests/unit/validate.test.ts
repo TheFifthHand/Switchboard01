@@ -346,7 +346,7 @@ describe('migration', () => {
 
   it('upgrades a version-1 project: neutral mastering is added and everything else is kept', () => {
     const v2 = json(createProject({ now: 0 }));
-    const v1 = json(v2);
+    const v1 = json<Record<string, unknown>>(v2 as unknown as Record<string, unknown>);
     v1.version = 1;
     delete v1.mastering;
     const r = validateProject(v1);
@@ -362,7 +362,7 @@ describe('migration', () => {
   });
 
   it('repairs damaged mastering settings to neutral values with a warning', () => {
-    const p = json(createProject({ now: 0 }));
+    const p = json<Record<string, unknown>>(createProject({ now: 0 }) as unknown as Record<string, unknown>);
     p.mastering = { enabled: 'yes', params: { loudness: 999, width: Number.NaN, nonsense: 3 }, presetId: '../../evil' };
     const r = validateProject(p);
     expect(r.ok).toBe(true);
