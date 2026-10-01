@@ -27,7 +27,7 @@
 import type { AudioEngineApi, VoiceHandle } from '../audio/contracts';
 import { PPQ, type Id, type Project } from '../project/types';
 import { clampBpm } from './clock';
-import type { LaunchResult, SeqEvent, StartOptions } from './contracts';
+import type { LaunchResult, SeqEvent, SongLoop, StartOptions } from './contracts';
 import type { BeatEvent, NoteCut, NoteEvent, SeqPosition, Sequencer } from './sequencer';
 import { TICKER_WORKER_SOURCE } from './tickerWorker';
 
@@ -461,14 +461,28 @@ export class RealtimeTransport {
   /**
    * The song was edited while it plays or is paused: lay out the rest of it
    * again from the block playing now (see Sequencer.replanSong) and
-   * regenerate what was scheduled from then on. Returns true when playback
-   * changed.
+   * regenerate what was scheduled from then on. `loop`: the song loop as the
+   * edit left it (taken without a jump). Returns true when playback changed.
    */
-  replanSong(): boolean {
+  replanSong(loop?: SongLoop | null): boolean {
     this.assertAlive();
     const now = this.ctx.currentTime;
     const at = now + INVALIDATE_MARGIN;
-    if (!this.sequencer.replanSong(at)) return false;
+    if (!this.sequencer.replanSong(at, loop)) return false;
+    if (this.sequencer.playing) this.invalidateFrom(at, now);
+    return true;
+  }
+
+  /**
+   * Loop part of the song, or play it through (null); see
+   * Sequencer.setSongLoop. Stopped, it applies to the next song start.
+   * Returns true when playback changed (what was scheduled is regenerated).
+   */
+  setSongLoop(loop: SongLoop | null): boolean {
+    this.assertAlive();
+    const now = this.ctx.currentTime;
+    const at = now + INVALIDATE_MARGIN;
+    if (!this.sequencer.setSongLoop(loop, at)) return false;
     if (this.sequencer.playing) this.invalidateFrom(at, now);
     return true;
   }

@@ -282,6 +282,29 @@ export function setPart(id: Id, trackId: Id, choice: Id | null | undefined, gest
   return done(`${cellToast(part, blockName(id), choice, typeof choice === 'string' ? sceneName(choice) : null)}.`);
 }
 
+/**
+ * A song helper on one block (one undo step): build up, strip down or
+ * breakdown. Returns what happened and the blocks it made (the first keeps
+ * the block's id).
+ */
+export function shapeBlock(id: Id, kind: cmd.ShapeKind): { ids: Id[]; text: string } | null {
+  if (refusedWhileLocked()) return null;
+  const name = blockName(id);
+  const r = cmd.shapeBlock(session.store, id, kind);
+  if (!session.accepted(r) || !r.blockIds?.length) return null;
+  const parts = r.parts ?? 0;
+  const n = r.blockIds.length;
+  const blocksText = n === 1 ? '' : ` (${n} blocks)`;
+  const text =
+    kind === 'build'
+      ? `${name} builds up: its ${parts} parts come in one at a time${blocksText}.`
+      : kind === 'strip'
+        ? `${name} strips down: its ${parts} parts drop out one at a time${blocksText}.`
+        : `Breakdown in ${name}: ${parts === 1 ? '1 part' : `${parts} parts`} of the beat and bass off.`;
+  notify(text.replace(/\.$/, ''), 'info', 'undo');
+  return { ids: r.blockIds, text };
+}
+
 export function resetParts(id: Id): string | null {
   if (refusedWhileLocked()) return null;
   if (!session.accepted(cmd.resetBlockParts(session.store, id))) return null;

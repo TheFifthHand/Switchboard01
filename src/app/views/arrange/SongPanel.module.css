@@ -156,13 +156,27 @@
   display: flex;
   gap: 8px;
 }
+/* Loop: the lane's own icon in the label, teal when on (the loop band is teal too). */
+.loopButton svg {
+  flex: none;
+  margin: -2px 6px -3px -1px;
+  vertical-align: middle;
+  color: var(--ink-2);
+}
+.loopButton[data-on] svg {
+  color: var(--teal-ink);
+}
 
 /* ---------- lane ---------- */
 
 .lane {
   /* Geometry shared by the part names, the blocks and the overlays. */
-  --ruler-h: 18px;
-  --head-h: 40px;
+  /* The ruler: a row for the loop band over the bar numbers. */
+  --ruler-h: 26px;
+  --loop-h: 10px;
+  --head-h: 38px;
+  /* The strip under the blocks: Join chips on seams, the drag label (their 24 px targets may reach past it). */
+  --seams-h: 22px;
   /* Part rows grow with the window's height: 15 px at 768 high, up to 24 px at 1080 and above. */
   --row-h: clamp(15px, calc(15px + (100vh - 768px) * 0.0289), 24px);
   --row-gap: 2px;
@@ -279,6 +293,11 @@
   cursor: pointer;
   outline: none;
   border-radius: 3px;
+  /* A finger dragging along the ruler sets the loop (the blocks below scroll the lane). */
+  touch-action: none;
+}
+.ruler[data-looping] {
+  cursor: ew-resize;
 }
 .ruler:focus-visible {
   box-shadow: inset 0 0 0 2px var(--teal);
@@ -335,7 +354,7 @@
 }
 .rulerHoverLabel {
   position: absolute;
-  top: 1px;
+  top: calc(var(--loop-h) + 1px);
   left: 3px;
   padding: 1px 4px;
   border-radius: 3px;
@@ -344,6 +363,87 @@
   font-size: 10px;
   line-height: 1.2;
   white-space: nowrap;
+}
+
+/* The loop: a teal band over the looped blocks (its label says Loop), dashed lines down their outer
+   edges, and a grip at each end that drags to another block edge. */
+.loopBand {
+  position: absolute;
+  top: 1px;
+  height: calc(var(--loop-h) - 1px);
+  display: flex;
+  align-items: stretch;
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(35, 149, 142, 0.3), rgba(35, 149, 142, 0.22));
+  box-shadow: inset 0 0 0 1px var(--teal);
+  pointer-events: none;
+  z-index: 2;
+}
+.loopBand[data-preview] {
+  background: linear-gradient(180deg, rgba(35, 149, 142, 0.42), rgba(35, 149, 142, 0.32));
+}
+.loopLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 7px 0 5px;
+  border-radius: 6px 0 0 6px;
+  background: var(--teal);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+/* A 24 px target (the ruler's height) around each end; a short grip shows where it is. */
+.loopEnd {
+  position: absolute;
+  top: -1px;
+  width: 24px;
+  height: var(--ruler-h);
+  cursor: ew-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+.loopEnd[data-loop-end='start'] {
+  left: -12px;
+}
+.loopEnd[data-loop-end='end'] {
+  right: -12px;
+}
+.loopEnd::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10px;
+  width: 4px;
+  height: calc(var(--loop-h) + 2px);
+  border-radius: 2px;
+  background: var(--teal);
+  box-shadow: 0 0 0 1.5px var(--shell-hi);
+  opacity: 0.85;
+}
+.loopEnd:hover::after,
+.ruler[data-looping] .loopEnd::after {
+  opacity: 1;
+  background: var(--teal-ink);
+}
+.loopLine {
+  position: absolute;
+  top: var(--ruler-h);
+  width: 0;
+  height: var(--track-h);
+  margin-left: -1px;
+  border-left: 2px dashed rgba(35, 149, 142, 0.75);
+  pointer-events: none;
+  z-index: 5;
+}
+.loopLine[data-preview] {
+  border-left-color: var(--teal);
+}
+.lane[data-carry] .loopLine {
+  visibility: hidden;
 }
 
 /* ---------- blocks ---------- */
@@ -369,7 +469,9 @@
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
-  touch-action: pan-y;
+  /* A finger swipe scrolls the lane (or the page); a press-and-hold lifts the block (laneGestures). */
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
   outline: none;
   will-change: transform;
   /* What happens inside a block (a cell switched, a name typed) never lays out the rest of the lane. */
@@ -418,6 +520,11 @@
 .block[data-hidden] {
   visibility: hidden;
 }
+/* A finger resting on a block: it darkens a little just before it lifts (a quick swipe never shows it). */
+.block[data-pressing] {
+  box-shadow: inset 0 0 0 999px rgba(20, 24, 28, 0.07);
+  transition: box-shadow 200ms var(--lane-ease) 90ms;
+}
 .block[data-settling] {
   z-index: 5;
   box-shadow: var(--shadow-float);
@@ -438,13 +545,10 @@
   box-shadow: inset 0 0 0 2px var(--line-strong);
 }
 /* While something is carried the pointer is captured: the captured element shows the cursor
-   (laneGestures sets it), so no rule here restyles every block. */
-.lane[data-dragging='move'] .scroller {
-  cursor: grabbing;
-}
-.lane[data-dragging='resize'] .scroller {
-  cursor: col-resize;
-}
+   (laneGestures sets it), so no rule here restyles every block. The lane marks a gesture with its own
+   attribute, data-carry: an attribute name other views share (data-dragging) is matched by their
+   universal rules ("[data-dragging] *"), and changing it would restyle the whole lane at every drag
+   start and drop. */
 
 /* Block header */
 .bhead {
@@ -481,10 +585,16 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* One line of whole words: an item that does not fit wraps onto a second line, which is cut off, so a
+   narrow block drops the pass detail and the scene first, then its length (the line's tooltip has it
+   all), and never shows half a word. Playing / Next come first and stay. */
 .meta {
   display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
   align-items: baseline;
-  gap: 6px;
+  column-gap: 6px;
+  height: 14px;
   min-width: 0;
   overflow: hidden;
   font-size: var(--fs-xs);
@@ -501,33 +611,31 @@
   flex: none;
   color: var(--ink-3);
 }
-@container (max-width: 170px) {
-  .calc,
-  .sceneTag {
-    display: none;
-  }
-}
 .sceneTag {
-  min-width: 0;
+  flex: 1 1 32px;
+  min-width: 32px;
   overflow: hidden;
   text-overflow: ellipsis;
   font-style: italic;
 }
-.nowTag {
+.nowTag,
+.nextTag {
   display: inline-flex;
-  flex: none;
+  flex: 0 1 auto;
   align-items: center;
   gap: 3px;
+  min-width: 0;
   font-weight: 650;
   color: var(--amber-ink);
 }
-.nextTag {
-  display: inline-flex;
+.nowTag > svg,
+.nextTag > svg {
   flex: none;
-  align-items: center;
-  gap: 2px;
-  font-weight: 650;
-  color: var(--amber-ink);
+}
+.tagText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .layerTag {
   display: inline-flex;
@@ -882,8 +990,8 @@ button.cell[data-kind='empty']:hover {
     opacity: 0.75;
   }
 }
-.lane[data-dragging] .divider,
-.lane[data-dragging] .pick {
+.lane[data-carry] .divider,
+.lane[data-carry] .pick {
   visibility: hidden;
 }
 
@@ -891,7 +999,7 @@ button.cell[data-kind='empty']:hover {
 
 .seams {
   position: relative;
-  height: 26px;
+  height: var(--seams-h);
   pointer-events: none;
 }
 /* A 24 px target around the small Join chip on the seam. */
@@ -928,7 +1036,7 @@ button.cell[data-kind='empty']:hover {
   border-color: var(--teal);
   color: var(--teal-ink);
 }
-.lane[data-dragging] .join {
+.lane[data-carry] .join {
   visibility: hidden;
 }
 
@@ -941,7 +1049,7 @@ button.cell[data-kind='empty']:hover {
   top: calc(4px + var(--ruler-h) - 6px);
   left: var(--names-w);
   right: 6px;
-  height: calc(var(--track-h) + 6px + 26px);
+  height: calc(var(--track-h) + 6px + var(--seams-h));
   overflow: hidden;
   pointer-events: none;
   z-index: 6;
@@ -958,6 +1066,17 @@ button.cell[data-kind='empty']:hover {
 }
 .clone[data-outside] {
   opacity: 0.45;
+}
+/* Lifted by a finger's press-and-hold: a short pop says "picked up" (the clone's own transform is the
+   lane's; this scales its contents). */
+.clone[data-held] .cloneItem {
+  animation: holdLift 220ms cubic-bezier(0.3, 1.32, 0.5, 1);
+}
+@keyframes holdLift {
+  from {
+    scale: 0.95;
+    opacity: 0.6;
+  }
 }
 .cloneItem {
   position: absolute;
@@ -1096,6 +1215,9 @@ button.cell[data-kind='empty']:hover {
 .ghost[data-drop] {
   border-color: var(--teal);
 }
+.ghost[data-held] {
+  animation: holdLift 220ms cubic-bezier(0.3, 1.32, 0.5, 1);
+}
 .ghostName {
   display: inline-flex;
   align-items: center;
@@ -1153,10 +1275,10 @@ button.cell[data-kind='empty']:hover {
 }
 /* While blocks are carried or resized the lane shows a preview; the ruler and playhead (which show
    the song as it is) step back until the drop. */
-.lane[data-dragging] .playhead {
+.lane[data-carry] .playhead {
   opacity: 0.3 !important;
 }
-.lane[data-dragging] .ruler {
+.lane[data-carry] .ruler {
   opacity: 0.45;
 }
 /* While the scale glides, the ruler and the seams (drawn at the new scale) wait for the blocks. */
@@ -1293,10 +1415,17 @@ button.cell[data-kind='empty']:hover {
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
-  touch-action: none;
+  /* A finger swipe scrolls; a press-and-hold lifts the card. */
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  transition: scale 180ms var(--lane-ease);
 }
 .card:hover {
   border-color: var(--line-strong);
+}
+.card[data-pressing] {
+  scale: 0.97;
+  transition-delay: 90ms;
 }
 .card[data-lifted] {
   opacity: 0.5;
@@ -1359,6 +1488,18 @@ button.cell[data-kind='empty']:hover {
 .lane[data-locked] ~ .palette .card {
   cursor: default;
 }
+/* The hint speaks the language of the pointer in use: a finger holds and swipes. */
+.hintTouch {
+  display: none;
+}
+@media (pointer: coarse) {
+  .hintPointer {
+    display: none;
+  }
+  .hintTouch {
+    display: inline;
+  }
+}
 
 /* Follow playhead, zoom and Fit song: how the lane is viewed (not the song). */
 .laneTools {
@@ -1398,6 +1539,22 @@ button.cell[data-kind='empty']:hover {
   color: var(--ink-3);
   white-space: normal;
 }
+/* The block menu: room for two actions (and their shortcuts) side by side. */
+.blockMenu[role='menu'] {
+  max-width: min(404px, calc(100vw - 16px));
+}
+/* Two equal columns, each as wide as the wider item needs (the menu grows to fit them). */
+.menuPair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+}
+.menuPair > * {
+  min-width: 0;
+}
+.shapeItem + .shapeItem {
+  margin-top: 2px;
+}
 
 /* ---------- motion ---------- */
 
@@ -1411,6 +1568,15 @@ button.cell[data-kind='empty']:hover {
   }
   .lockText[data-pulse] {
     animation: none;
+  }
+  .clone[data-held] .cloneItem,
+  .ghost[data-held] {
+    animation: none;
+  }
+  .block[data-pressing],
+  .card,
+  .card[data-pressing] {
+    transition: none;
   }
 }
 

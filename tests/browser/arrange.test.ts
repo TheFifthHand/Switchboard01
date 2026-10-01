@@ -202,7 +202,7 @@ describe('Song lane', () => {
     // Carry block 4 so its left edge sits on block 2's left edge.
     dragBlock(moved, xs[1] - xs[3], { release: false });
     expect(document.querySelector('[data-testid="lane-clone"]')).not.toBeNull();
-    expect(document.querySelector('[data-testid="song-lane"]')!.getAttribute('data-dragging')).toBe('move');
+    expect(document.querySelector('[data-testid="song-lane"]')!.getAttribute('data-carry')).toBe('move');
     expect(document.querySelector('[data-testid="lane-clone"]')!.textContent).toContain('Move to position 2');
     // Blocks 2 and 3 made room: each moved right by the dragged block's width. Nothing committed yet.
     expect(placedX(before[1])).toBeCloseTo(xs[1] + w, 0);
@@ -215,7 +215,7 @@ describe('Song lane', () => {
     expect(blockIds()).toEqual([before[0], before[3], before[1], before[2], before[4], before[5]]);
     expect(session.store.historySize().undo).toBe(undoBefore + 1);
     expect(document.querySelector('[data-testid="lane-clone"]')).toBeNull();
-    expect(document.querySelector('[data-testid="song-lane"]')!.hasAttribute('data-dragging')).toBe(false);
+    expect(document.querySelector('[data-testid="song-lane"]')!.hasAttribute('data-carry')).toBe(false);
     // The moved block is selected; the polite status says where it went.
     expect(blockEl(moved).hasAttribute('data-selected')).toBe(true);
     expect(document.querySelector('[data-testid="lane-status"]')!.textContent).toContain('to position 2');

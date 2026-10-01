@@ -59,6 +59,13 @@ export interface SongBlockProps {
   h: BlockHandlers;
 }
 
+/** The header's second line in full (its tooltip, for when a narrow block drops words): "Playing · 8 bars (4 × 2)". */
+export function metaTitle(block: Pick<BlockView, 'totalBars' | 'passBars' | 'repeats' | 'label' | 'sceneName'>, current: boolean, next: boolean): string {
+  const now = current ? 'Playing · ' : next ? 'Plays next · ' : '';
+  const scene = block.label ? ` · scene ${block.sceneName}` : '';
+  return `${now}${barsText(block.totalBars)} (${block.passBars} × ${block.repeats})${scene}`;
+}
+
 /** A layered part: the layers icon, the scene it comes from and its clip ("Lift: Bell Hook"); the clip name gives way first. */
 function LayerContent({ scene, clip }: { scene: string; clip: string | null }) {
   return (
@@ -163,7 +170,9 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
           ) : (
             <span className={styles.name}>{block.name}</span>
           )}
-          <span className={styles.meta}>
+          {/* One line; an item that does not fit wraps onto a hidden second line, so words are
+              dropped whole (pass detail and scene first, then the length), never cut. */}
+          <span className={styles.meta} title={layerSays || block.missing ? undefined : metaTitle(block, current, next)}>
             {layerSays ? (
               <span className={styles.layerTag} data-none={!layerSays.changes || undefined}>
                 <LaneIcon name="layers" size={10} />
@@ -175,16 +184,20 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
               <>
                 {current ? (
                   <span className={styles.nowTag}>
-                    <Icon name="play" size={8} /> Playing
+                    <Icon name="play" size={8} />
+                    <span className={styles.tagText}>Playing</span>
                   </span>
                 ) : (
                   next && (
                     <span className={styles.nextTag}>
-                      <Icon name="chevronRight" size={9} /> Next
+                      <Icon name="chevronRight" size={9} />
+                      <span className={styles.tagText}>Next</span>
                     </span>
                   )
                 )}
-                <span className={`${styles.len} mono`}>{barsText(block.totalBars)}</span>
+                <span className={`${styles.len} mono`} data-testid="block-length">
+                  {barsText(block.totalBars)}
+                </span>
                 {advanced && (
                   <span className={`${styles.calc} mono`}>
                     {block.passBars} × {block.repeats}

@@ -4,7 +4,7 @@
  */
 import type { ReactElement } from 'react';
 
-export type LaneIconName = 'scissors' | 'layers' | 'join' | 'more';
+export type LaneIconName = 'scissors' | 'layers' | 'join' | 'more' | 'loop' | 'buildUp' | 'stripDown' | 'breakdown';
 
 const S = { vectorEffect: 'non-scaling-stroke' } as const;
 
@@ -21,6 +21,23 @@ const GLYPHS: Record<LaneIconName, ReactElement[]> = {
     <circle key="a" cx={3.2} cy={8} r={1.4} fill="currentColor" stroke="none" />,
     <circle key="b" cx={8} cy={8} r={1.4} fill="currentColor" stroke="none" />,
     <circle key="c" cx={12.8} cy={8} r={1.4} fill="currentColor" stroke="none" />,
+  ],
+  // Two arrows chasing each other round: play again and again.
+  loop: [
+    <path key="a" d="M2.8 9.2 V7.4 A3 3 0 0 1 5.8 4.4 H12.2" {...S} />,
+    <path key="b" d="M10.4 2.6 L12.2 4.4 L10.4 6.2" {...S} />,
+    <path key="c" d="M13.2 6.8 V8.6 A3 3 0 0 1 10.2 11.6 H3.8" {...S} />,
+    <path key="d" d="M5.6 9.8 L3.8 11.6 L5.6 13.4" {...S} />,
+  ],
+  // Bars rising left to right: parts come in one at a time.
+  buildUp: [<path key="a" d="M2.6 13.2 V10.8" {...S} />, <path key="b" d="M6.2 13.2 V8.2" {...S} />, <path key="c" d="M9.8 13.2 V5.6" {...S} />, <path key="d" d="M13.4 13.2 V3" {...S} />],
+  // Bars falling: parts drop out one at a time.
+  stripDown: [<path key="a" d="M2.6 13.2 V3" {...S} />, <path key="b" d="M6.2 13.2 V5.6" {...S} />, <path key="c" d="M9.8 13.2 V8.2" {...S} />, <path key="d" d="M13.4 13.2 V10.8" {...S} />],
+  // A drum (the beat) with a stroke through it: the beat drops out.
+  breakdown: [
+    <ellipse key="a" cx={8} cy={5.6} rx={4.8} ry={1.9} {...S} />,
+    <path key="b" d="M3.2 5.6 V10.4 C3.2 11.5 5.3 12.3 8 12.3 C10.7 12.3 12.8 11.5 12.8 10.4 V5.6" {...S} />,
+    <path key="c" d="M2.4 13.6 L13.6 2.4" {...S} />,
   ],
 };
 

@@ -24,4 +24,16 @@ describe('random edits while the song plays, against the final plan', () => {
   it('includes the seed whose edit right after Resume once left the song without an end', () => {
     expect(runFuzz(935, { split: false })).toEqual([]);
   });
+
+  it('with song loops set, changed and cleared at random (see song-live-fuzz.ts for the loop invariants)', () => {
+    const problems: string[] = [];
+    for (let seed = 1; seed <= SEEDS; seed++) problems.push(...runFuzz(seed, { split: false, loops: true }));
+    expect(problems.slice(0, 12)).toEqual([]);
+  });
+
+  it('with song loops and splits', () => {
+    const problems: string[] = [];
+    for (let seed = 1; seed <= Math.ceil(SEEDS * 0.6); seed++) problems.push(...runFuzz(seed, { split: true, loops: true, steps: 20 }));
+    expect(problems.slice(0, 12)).toEqual([]);
+  });
 });

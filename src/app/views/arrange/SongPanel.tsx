@@ -9,9 +9,9 @@
  * live while the song plays or is paused: playback re-plans from the block
  * playing now (see Sequencer.replanSong), so the lane is always what plays.
  */
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Button, Led, NumberField, Tooltip, useRafLoop } from '../../../ui/components';
-import { TICKS_PER_BAR, type Id, type Project } from '../../../project/types';
+import { TICKS_PER_BAR, type ArrangementBlock, type Id, type Project } from '../../../project/types';
 import { clampBpm, ticksToSeconds } from '../../../time/clock';
 import { sceneBars, songLengthTicks } from '../../../time/sequencer';
 import * as cmd from '../../../state/commands';
@@ -22,8 +22,10 @@ import { notify, useRuntime } from '../../runtime';
 import { formatSeconds } from '../../session';
 import { barsLabel } from '../../labels';
 import type { SceneSummary } from './BlockMenu';
-import { SongLane } from './SongLane';
-import { laneBlocks, viewKey, type BlockView } from './songModel';
+import { LaneIcon } from './laneIcons';
+import { loopName, loopSpan } from './laneLoop';
+import { SongLane, type LaneControls } from './SongLane';
+import { blockView, viewKey, type BlockView } from './songModel';
 import { getSongPlan, startSong, useSongPlan } from './songPlan';
 import styles from './SongPanel.module.css';
 
@@ -31,28 +33,48 @@ import styles from './SongPanel.module.css';
 /* Data                                                                */
 /* ------------------------------------------------------------------ */
 
+// Stable selectors: the store keeps their last selection between renders.
+const selectScenes = (p: Project) => p.scenes;
+const selectSceneBars = (p: Project) => p.scenes.map((_, r) => sceneBars(p, r));
+const selectSceneParts = (p: Project) => p.scenes.map((_, r) => p.tracks.reduce((n, t) => n + (t.clips[r] ? 1 : 0), 0));
+
 function useSceneSummaries(): SceneSummary[] {
-  const scenes = useProject((p) => p.scenes);
-  const bars = useProject((p) => p.scenes.map((_, r) => sceneBars(p, r)), shallowEqual);
-  const parts = useProject((p) => p.scenes.map((_, r) => p.tracks.reduce((n, t) => n + (t.clips[r] ? 1 : 0), 0)), shallowEqual);
+  const scenes = useProject(selectScenes);
+  const bars = useProject(selectSceneBars, shallowEqual);
+  const parts = useProject(selectSceneParts, shallowEqual);
   return useMemo(() => scenes.map((s, row) => ({ id: s.id, row, name: s.name, bars: bars[row] ?? 1, parts: parts[row] ?? 0 })), [scenes, bars, parts]);
+}
+
+interface CachedView {
+  /** What the view was made from: the block (immer keeps an unchanged block's object), its place, and the scenes and parts it reads. */
+  block: ArrangementBlock;
+  index: number;
+  scenes: Project['scenes'];
+  tracks: Project['tracks'];
+  key: string;
+  view: BlockView;
 }
 
 /**
  * The lane's blocks. A view object keeps its identity while what it shows is
  * unchanged, so a knob turned elsewhere re-renders no block, and an edit to
- * one block re-renders only that block.
+ * one block re-renders only that block. A block whose object, place, scenes
+ * and parts are the ones its view was made from is not even looked at again
+ * (a move rebuilds only the blocks whose position changed).
  */
 function useBlockViews(): readonly BlockView[] {
-  const cache = useRef(new Map<Id, { key: string; view: BlockView }>());
+  const cache = useRef(new Map<Id, CachedView>());
   const last = useRef<readonly BlockView[]>([]);
-  const select = (p: Project): readonly BlockView[] => {
-    const next = laneBlocks(p).map((v) => {
+  // Stable, so the store keeps its memo of the last selection between renders.
+  const select = useCallback((p: Project): readonly BlockView[] => {
+    const next = p.arrangement.blocks.map((b, index) => {
+      const hit = cache.current.get(b.id);
+      if (hit && hit.block === b && hit.index === index && hit.scenes === p.scenes && hit.tracks === p.tracks) return hit.view;
+      const v = blockView(p, b, index);
       const key = viewKey(v);
-      const hit = cache.current.get(v.id);
-      if (hit && hit.key === key) return hit.view;
-      cache.current.set(v.id, { key, view: v });
-      return v;
+      const view = hit && hit.key === key ? hit.view : v;
+      cache.current.set(b.id, { block: b, index, scenes: p.scenes, tracks: p.tracks, key, view });
+      return view;
     });
     if (cache.current.size > next.length * 2 + 16) {
       const keep = new Set(next.map((v) => v.id));
@@ -61,7 +83,7 @@ function useBlockViews(): readonly BlockView[] {
     if (next.length === last.current.length && next.every((v, i) => v === last.current[i])) return last.current;
     last.current = next;
     return next;
-  };
+  }, []);
   return useProject(select);
 }
 
@@ -135,8 +157,8 @@ export function editSceneClips(row: number): void {
 /* Header                                                              */
 /* ------------------------------------------------------------------ */
 
-function ModeIndicator(props: { current: BlockView | null; next: BlockView | null; removed: boolean; blockCount: number }) {
-  const { current, next, removed, blockCount } = props;
+function ModeIndicator(props: { current: BlockView | null; next: BlockView | null; removed: boolean; blockCount: number; looping: string | null }) {
+  const { current, next, removed, blockCount, looping } = props;
   const mode = useRuntime((s) => s.mode);
   const playing = useRuntime((s) => s.playing);
   const paused = useRuntime((s) => s.paused);
@@ -160,6 +182,7 @@ function ModeIndicator(props: { current: BlockView | null; next: BlockView | nul
           ? `Removed block ends at the bar · next: ${next.name} (block ${next.index + 1})`
           : 'Removed block ends at the bar · then the song ends'
         : '';
+    if (looping) where = where ? `${where} · looping ${looping}` : `Looping ${looping}`;
     caption = 'Edits play right away: move, lengthen or change blocks while the song plays. Pads still work: a tapped clip joins at the next bar until the next block starts.';
   } else if (playing && mode === 'replay') {
     follows = 'Performance';
@@ -185,10 +208,14 @@ function ModeIndicator(props: { current: BlockView | null; next: BlockView | nul
   );
 }
 
+const selectSongTicks = (p: Project) => songLengthTicks(p);
+const selectBpm = (p: Project) => clampBpm(p.bpm);
+const selectTail = (p: Project) => p.arrangement.tailSeconds;
+
 function SongTotals() {
-  const ticks = useProject((p) => songLengthTicks(p));
-  const bpm = useProject((p) => clampBpm(p.bpm));
-  const tail = useProject((p) => p.arrangement.tailSeconds);
+  const ticks = useProject(selectSongTicks);
+  const bpm = useProject(selectBpm);
+  const tail = useProject(selectTail);
   const bars = Math.round(ticks / TICKS_PER_BAR);
   const secs = ticksToSeconds(ticks, bpm);
   return (
@@ -243,6 +270,11 @@ export function SongPanel() {
   const current = !handover && playingId ? (views.find((v) => v.id === playingId) ?? null) : null;
   const currentId = current?.id ?? null;
   const empty = views.length === 0;
+  // The loop (playback state), as the lane draws it: ignored when its blocks are gone.
+  const songLoop = useRuntime((s) => s.songLoop);
+  const loop = useMemo(() => loopSpan(views.map((v) => v.id), songLoop), [views, songLoop]);
+  const looping = loop ? loopName(views.map((v) => v.name), loop) : null;
+  const lane = useRef<LaneControls | null>(null);
 
   return (
     <section className={styles.panel} aria-labelledby="song-title">
@@ -251,7 +283,7 @@ export function SongPanel() {
           <h2 id="song-title" className={styles.title}>
             Song
           </h2>
-          <ModeIndicator current={current} next={next} removed={removed} blockCount={views.length} />
+          <ModeIndicator current={current} next={next} removed={removed} blockCount={views.length} looping={looping} />
         </div>
         <div className={styles.headRight}>
           <SongTotals />
@@ -260,16 +292,30 @@ export function SongPanel() {
               variant="primary"
               icon="play"
               pressed={songPlaying}
-              onClick={() => void startSong(0)}
+              onClick={() => void startSong()}
               disabled={empty}
               aria-label={songPlaying ? 'Play song from the start (playing now)' : 'Play song'}
-              tip={empty ? 'Add scene blocks first.' : 'Play the blocks in order from the first one. Pressing it while the song plays starts it again from the top.'}
+              tip={empty ? 'Add scene blocks first.' : loop ? `Play the song from the loop (${looping}).` : 'Play the blocks in order from the first one. Pressing it while the song plays starts it again from the top.'}
               detail="Starting the song ends a performance recording in progress."
             >
               Play song
             </Button>
             <Button icon="stop" onClick={() => session.stop()} disabled={!playing && !paused} tip="Stop playback (song, replay or pads).">
               Stop
+            </Button>
+            <Button
+              className={styles.loopButton}
+              pressed={!!loop}
+              tone="teal"
+              onClick={() => lane.current?.toggleLoop()}
+              disabled={empty}
+              aria-label="Loop"
+              data-testid="loop-toggle"
+              tip={empty ? 'Add scene blocks first.' : loop ? `Looping ${looping}. Press to play the song through again.` : 'Repeat part of the song while it plays: the selected blocks, else the block playing now, else the first block.'}
+              detail="Or drag across the bar numbers above the blocks; drag the ends of the Loop band to change it."
+            >
+              <LaneIcon name="loop" size={16} />
+              Loop
             </Button>
             <Button
               icon="download"
@@ -284,7 +330,7 @@ export function SongPanel() {
         </div>
       </header>
 
-      <SongLane views={views} scenes={scenes} currentId={currentId} nextId={next?.id ?? null} songActive={songOn} songPlaying={songPlaying} editClips={editSceneClips} />
+      <SongLane views={views} scenes={scenes} currentId={currentId} nextId={next?.id ?? null} songActive={songOn} songPlaying={songPlaying} editClips={editSceneClips} controls={lane} />
     </section>
   );
 }

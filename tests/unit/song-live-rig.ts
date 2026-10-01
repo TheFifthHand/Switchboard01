@@ -1,15 +1,18 @@
 /**
- * Shared driver for the song playback tests (song-live*.test.ts): runs a
- * Sequencer the way RealtimeTransport and the session do (25 ms ticker,
- * 120 ms look-ahead, cancel-and-regenerate on every change; on an edit,
- * clips and scenes that moved are followed first, then the song is replanned
- * when its signature changed) and records everything it hands out.
+ * Shared driver for the song playback tests (song-live*.test.ts,
+ * song-loop*.test.ts): runs a Sequencer the way RealtimeTransport and the
+ * session do (25 ms ticker, 120 ms look-ahead, cancel-and-regenerate on every
+ * change; on an edit, clips and scenes that moved are followed first, the
+ * song loop follows the edit, then the song is replanned when its signature
+ * or the loop changed) and records everything it hands out.
  */
 import { expect } from 'vitest';
 import type { ClipBars, Id, Project } from '../../src/project/types';
+import { TICKS_PER_BAR } from '../../src/project/types';
 import { ProjectStore } from '../../src/state/projectStore';
-import type { SeqEvent, StartOptions } from '../../src/time/contracts';
-import { Sequencer, songBlocks, songLaneTick, songSignature, type NoteCut, type NoteEvent, type SongBlockPlan } from '../../src/time/sequencer';
+import type { SeqEvent, SongLoop, StartOptions } from '../../src/time/contracts';
+import { Sequencer, songBlocks, songSignature, type NoteCut, type NoteEvent, type SongBlockPlan } from '../../src/time/sequencer';
+import { sameSongLoop, songLoopAfterEdit, songLoopRange } from '../../src/time/songLoop';
 import { makeClip, makeProject, notesOf, ofKind, setClip } from './sequencer-fixtures';
 
 export const BAR = 384;
@@ -98,9 +101,15 @@ export class Rig {
   cuts: NoteCut[] = [];
   /** Where each edit took effect (whole ticks): a song switch an edit makes lies there. */
   readonly editTicks: number[] = [];
-  /** With `traceLane`: the lane playhead after every ticker step, and how many edits were made by then. */
+  /**
+   * With `traceLane`: the lane playhead after every ticker step, how many
+   * edits were made by then, and the song loop on the lane ([start, end)
+   * ticks) with whether the block the lane shows at the playhead is in it.
+   */
   traceLane = false;
-  readonly laneTrace: { lane: number; edits: number; total: number }[] = [];
+  readonly laneTrace: { lane: number; edits: number; total: number; loop: [number, number] | null; inside: boolean }[] = [];
+  /** The song loop as the session holds it (runtime `songLoop`). */
+  loop: SongLoop | null = null;
   /** Voices released by a pause (note → tick). */
   private readonly released = new Map<NoteEvent, number>();
 
@@ -123,7 +132,16 @@ export class Rig {
     this.cuts.push(...this.seq.takeCuts());
     if (this.traceLane && this.seq.songPlan()) {
       const lane = this.lane();
-      this.laneTrace.push({ lane: this.laneTick()!, edits: this.editTicks.length, total: lane.at(-1)?.endTick ?? 0 });
+      const range = songLoopRange(lane, this.loop);
+      const at = this.seq.songBlockAt(this.tick);
+      const i = at ? lane.findIndex((b) => b.blockId === at.blockId) : -1;
+      this.laneTrace.push({
+        lane: this.laneTick()!,
+        edits: this.editTicks.length,
+        total: lane.at(-1)?.endTick ?? 0,
+        loop: range ? [lane[range[0]].startTick, lane[range[1]].endTick] : null,
+        inside: !!range && i >= range[0] && i <= range[1],
+      });
     }
   }
 
@@ -137,6 +155,31 @@ export class Rig {
   play(opts: StartOptions = { mode: { kind: 'song', fromBlock: 0 } }): this {
     this.seq.start(this.now + START, opts);
     this.pump();
+    return this;
+  }
+
+  /**
+   * As Session.playSong: from block `fromBlock` or lane bar `fromBar`; with
+   * neither (Play song), from the loop's first block when a loop is set.
+   */
+  playSong(fromBlock?: number, fromBar?: number): this {
+    let block = fromBlock ?? 0;
+    if (fromBlock === undefined && fromBar === undefined) {
+      const lane = songBlocks(this.project);
+      const range = songLoopRange(lane, this.loop);
+      if (range) block = lane[range[0]].index;
+    }
+    return this.play({ mode: { kind: 'song', fromBlock: block }, fromTick: fromBar === undefined ? undefined : fromBar * TICKS_PER_BAR });
+  }
+
+  /** As Session.setSongLoop: set (or clear) the loop; what was scheduled from the edit point is regenerated. */
+  setLoop(from: Id | null, to: Id | null = from): this {
+    const loop = from === null || to === null ? null : { fromBlockId: from, toBlockId: to };
+    if (sameSongLoop(this.loop, loop)) return this;
+    const at = this.now + MARGIN;
+    this.editTicks.push(Math.ceil(this.seq.getPosition(this.seq.paused ? this.now : at).tick));
+    this.loop = loop;
+    if (this.seq.setSongLoop(loop, at) && this.seq.playing) this.cancelFrom(at);
     return this;
   }
 
@@ -209,11 +252,15 @@ export class Rig {
         if (slots.size && this.seq.relocateSlots(tr.id, slots, at) && this.seq.playing) this.cancelFrom(at);
       }
     }
+    // The loop follows the edit (blocks deleted, split, joined) and goes to the replan with it.
+    const loop = songLoopAfterEdit(this.loop, prev, p);
     let replanned = false;
-    if (song && (this.seq.playing || this.seq.paused) && songSignature(p) !== songSignature(prev)) {
-      replanned = this.seq.replanSong(at);
+    if (song && (this.seq.playing || this.seq.paused) && (songSignature(p) !== songSignature(prev) || !sameSongLoop(this.seq.songLoop, loop))) {
+      replanned = this.seq.replanSong(at, loop);
       if (replanned && this.seq.playing) this.cancelFrom(at);
     }
+    if (!sameSongLoop(this.seq.songLoop, loop)) this.seq.replanSong(at, loop);
+    this.loop = loop;
     if (!replanned && this.seq.playing) this.cancelFrom(at);
     return replanned;
   }
@@ -258,8 +305,7 @@ export class Rig {
 
   /** The lane playhead (ticks from the lane start), as songTimelineBar draws it; null when the song is not on. */
   laneTick(): number | null {
-    const plan = this.seq.songPlan();
-    return plan ? songLaneTick(plan, this.lane(), this.tick) : null;
+    return this.seq.songLaneTickAt(this.lane(), this.tick);
   }
 
   /** [blockId, index, start, end] of every block of the plan. */

@@ -122,16 +122,21 @@ Advanced only.
 
 The song is one continuous strip of **blocks** (a scene played a number of passes), edge to edge,
 joined by a thin seam, widths proportional to their length. Code: `src/app/views/arrange/`
-(SongPanel, SongLane, SongBlock, BlockMenu; pure logic in songLayout, songDrag, songModel;
-pointer gestures in laneGestures; motion constants in laneMotion).
+(SongPanel, SongLane, SongBlock, BlockMenu, LaneRuler; pure logic in songLayout, songDrag,
+songModel, laneLoop; pointer gestures in laneGestures; motion constants in laneMotion; the song
+helpers are commands in `src/state/commands/arrangement.ts`).
 
 **Layout.** Part names in a column on the left (they do not scroll); to their right the lane
-scrolls sideways (never the page): the ruler (bar numbers), then the blocks. A block is a header
-(name — its label, or the scene name; with a label the scene name is shown small — length, ▶ play
-from here, ⋯ actions; 32 px buttons where the block has room) over one cell per part. Part rows
-grow with the window's height: 15 px at 768 high, up to 24 px at 1080. Faint lines mark its passes.
-Below the lane: the **SCENES** palette (name, bars, parts, **+**), the gesture hint, and the lane's
-view tools: **Follow** (follow the playhead), zoom **−** / **+** and **Fit song**.
+scrolls sideways (never the page): the ruler (a row for the loop band over the bar numbers), then
+the blocks. A block is a header (name — its label, or the scene name; with a label the scene name
+is shown small — then **Playing** / **Next**, length, ▶ play from here, ⋯ actions; 32 px buttons
+where the block has room) over one cell per part. The header's second line keeps whole words: a
+narrow block drops the pass detail and scene first, then the length (its tooltip has it all), never
+half a word; **Playing** stays. Part rows grow with the window's height: 15 px at 768 high, up to
+24 px at 1080. Faint lines mark its passes. Below the lane: the **SCENES** palette (name, bars,
+parts, **+**), the gesture hint (in touch words on a touch screen), and the lane's view tools:
+**Follow** (follow the playhead), zoom **−** / **+** and **Fit song**. The song header has **Loop**
+(loop icon and the word; pressed while a loop is on) next to Play song and Stop.
 
 **Scale.** When Arrange opens, the scale is the largest zoom step at which the song fits. After
 that, edits never change it: a longer song scrolls, so nothing shrinks under the pointer. The
@@ -146,11 +151,18 @@ empty outline = the scene has no clip for it (silent). Colour is never alone: th
 or an icon. Hovering a cell says what a click does ("Click: switch Drums off in this block").
 
 **Colour.** Amber = the block playing now (outline, **Playing**, its cells glow) and the block
-about to take over (dashed amber outline, **Next**). Teal = selection, focus and drop targets (a
-block selected, the slot a scene card will open, the block it will be layered into). Coral = Off
+about to take over (dashed amber outline, **Next**). Teal = selection, focus, drop targets and the
+loop (a block selected, the slot a scene card will open, the block it will be layered into, the
+**Loop** band with its icon and word, dashed lines down the looped blocks' outer edges). Coral = Off
 and the take lock.
 
-**Gestures** (a press becomes a drag after 4 px, so clicks stay clicks; mouse, touch and pen alike):
+**Gestures** (with a mouse or pen a press becomes a drag after 4 px, so clicks stay clicks):
+- **Touch**: a finger rests on a block or scene card for 300 ms (moving under 8 px) to lift it: it
+  darkens a little, then pops up (a short lift) and drags like the mouse. A finger that moves first
+  is a swipe: the browser scrolls the lane (or the page) natively and nothing is edited. Held and let
+  go in place, a block opens its actions (on a part cell: the part picker), as a long press does. The
+  right-edge handle and the ruler take a finger at once. Once a finger has lifted something the lane
+  keeps it (no scrolling, no browser menu) until it lets go.
 - **Select**: click a header (teal); Shift+click a range; Ctrl/⌘+click toggles; a click on the empty
   lane or Esc clears; Ctrl+A selects all. Actions apply to the selection.
 - **Move**: drag a block (header or cells). It lifts and follows the pointer exactly; the others
@@ -192,6 +204,24 @@ and the take lock.
   the scene name again.
 - **Ruler**: click a bar (or Enter on the focused ruler, ←/→ to choose) to play the song from there;
   the bar under the pointer is marked.
+- **Loop**: the looped blocks repeat while the song plays (playback state, not saved; Play song
+  starts at the loop). **Loop** in the header loops the selected blocks (first to last), else the
+  block playing now, else the first block; pressed again it plays the song through. A drag across
+  the ruler (past 4 px; a click still plays) loops every block from the one under the press to the
+  one under the pointer: the band follows, snapped to block edges, and the loop is set on release
+  (Esc keeps the old one). Each end of the band has a grip (24 px target) that drags to the nearest
+  block edge, never past the other end. The menu has **Loop this block** / **Loop selected blocks**
+  and **Stop looping**. The status line says "Looping Groove to Lift (blocks 2–4)."; the mode box
+  adds "looping …". A loop whose blocks were deleted is ignored.
+- **Song helpers** (⋯ → **Shape this block…**, each one Undo, each a set of per-part changes, so the
+  cells show it and it plays at once): **Build up** splits the block into its passes and brings its
+  sounding parts in one at a time (pass i plays the first ⌈(i+1)·k/n⌉ of its k parts), in this order
+  by role: texture, pad, chords, lead, sampler (vocal), percussion, bass, drums; neighbouring passes
+  with the same parts are joined again. **Strip down** is the reverse (all parts, then they drop out;
+  the last pass keeps one). **Breakdown** switches off the block's sounding drums, percussion and
+  bass. Parts silent in the block stay silent; a pass keeps its length in bars (shorter material
+  plays more passes). Unavailable with a short reason: "Plays once", "One part", "No beat or
+  bass", "Nothing left", "Scene missing".
 
 **Following the playhead.** While the song plays, the lane glides a page on when the playhead nears
 its right edge (the playhead then sits a fifth of the way in). It waits 8 s after you scroll or edit,
@@ -205,18 +235,25 @@ one before. The polite status line says the same for screen readers.
 **Keyboard** (the blocks are one Tab stop, arrow keys move between them): ←/→, Home/End; Shift
 extends the selection; Alt+←/→ moves the selection one block; ↓ enters the part cells (↑/↓ rows,
 ←/→ the same part in the next block, Enter/Space switch, "." picker, Esc back); Enter, ".", the menu
-key or Shift+F10 open the actions menu, which lists every action (parts with a checkbox each, play
-from here, edit clips in Play, rename, change scene, layer a scene, replace parts, passes, split,
-join, duplicate, copy, cut, paste, move, remove). Letter keys stay with the instrument. A polite
-status line says what changed ("Moved Groove to position 3", "Groove: 3 passes, 12 bars").
+key or Shift+F10 open the actions menu, which lists every action (play from here, loop / stop
+looping, edit clips in Play, rename, parts with a checkbox each, shape this block, change scene,
+layer a scene, replace parts, passes, split, join, duplicate, copy, cut, paste, move, remove).
+Opposite pairs (one more pass / one fewer, copy / cut, earlier / later) share a row so the menu
+fits a 768-high screen without scrolling. Letter keys stay with the instrument. A polite status line
+says what changed ("Moved Groove to position 3", "Groove: 3 passes, 12 bars").
 
 **Motion and speed.** Only transform and opacity animate (a zoom also glides widths). Slides are
 Web Animations started from where each block is on screen, so nothing forces a layout; a block
 keeps its own layout (CSS containment) and the part rows of blocks out of view are not rendered;
 the lane scrolls on the compositor (its background is opaque); the lifted copy of carried blocks
 floats over the lane, so auto-scrolling under a still pointer moves nothing else; the lane never
-reads layout while a pointer moves or it auto-scrolls. With *reduce motion* blocks jump to their
-places and the lane jumps to the playhead; everything else is the same.
+reads layout while a pointer moves or it auto-scrolls. A drop re-renders only the blocks whose
+content or position changed (block views are cached by block, scenes and parts; the ruler, seams and
+scene cards are separate memoised parts), marks the gesture with its own attribute (`data-carry`:
+a name shared with other views' universal rules would restyle the whole lane) and gives keyboard
+focus back to the landed block after the frame is drawn, so the drop forces no layout. With
+*reduce motion* blocks jump to their places, the lane jumps to the playhead and a lift does not
+pop; everything else is the same.
 
 **Playing and locks.** Edits apply while the song plays or is paused (playback re-plans from the
 block playing now), so there is no "restart" notice. Deleting the block that plays lets it sound to

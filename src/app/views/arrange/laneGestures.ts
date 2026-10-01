@@ -23,6 +23,16 @@
  *   blur, a hidden tab, an outside change to the song, or the lane unmounting.
  * - While something is carried, other pointers (a second finger, a pen) are
  *   ignored on the lane: they cannot edit the song under the drag.
+ * - Touch: a finger lifts a block or a scene card only after it rests on it
+ *   (HOLD_MS, moving less than HOLD_SLOP_PX); a finger that moves first is a
+ *   swipe, which the browser turns into native scrolling (the blocks allow
+ *   panning, see touch-action in SongPanel.module.css) and the press ends
+ *   with nothing done. Once a press is held, the lane owns the touch: its
+ *   touchmove listener (`ownsTouch`) stops the browser panning, and the
+ *   long-press menu the browser would open is swallowed. A hold let go
+ *   without moving opens the block's actions (the part picker on a cell), as
+ *   a long press did. Mouse and pen drag at once (after DRAG_THRESHOLD_PX);
+ *   the right-edge handle is immediate for every pointer.
  */
 import type { Id } from '../../../project/types';
 import type { LayerMode } from '../../../state/commands/arrangement';
@@ -56,10 +66,17 @@ export const DROP_MARGIN = 40;
  * middle of a block therefore does not push that block away.
  */
 export const SLOT_DELAY_MS = 140;
+/** A finger resting this long (ms) on a block or a scene card lifts it. */
+export const HOLD_MS = 300;
+/** A finger that moves this far (px) before the hold is a swipe (the lane scrolls), not a lift. */
+export const HOLD_SLOP_PX = 8;
+/** After a touch gesture, the browser's own long-press menu is swallowed for this long (ms). */
+const MENU_GUARD_MS = 800;
 
 export type DragUi =
-  | { kind: 'move'; ids: Id[]; copy: boolean; outside: boolean }
-  | { kind: 'card'; sceneId: Id; layerInto: Id | null; replace: boolean; outside: boolean }
+  /** `held`: lifted by a finger's press-and-hold (the lift is shown as a short animation). */
+  | { kind: 'move'; ids: Id[]; copy: boolean; outside: boolean; held?: boolean }
+  | { kind: 'card'; sceneId: Id; layerInto: Id | null; replace: boolean; outside: boolean; held?: boolean }
   | { kind: 'resize'; id: Id };
 
 export interface LaneHost {
@@ -105,6 +122,8 @@ export interface LaneHost {
   commitRepeats(id: Id, repeats: number): void;
   /** Live label for the edge bubble ("3 passes · 12 bars"). */
   resizeLabel(id: Id, repeats: number): string;
+  /** A finger held on block `id` and let go without moving: open its actions (or the part picker, on a cell). */
+  holdMenu(id: Id, target: Element | null): void;
 }
 
 interface Base {
@@ -114,14 +133,27 @@ interface Base {
   clientY: number;
 }
 
-interface Press extends Base {
-  kind: 'press' | 'edgePress' | 'cardPress';
+/** The pointer state a gesture keeps from its press: where it started and whether a finger held it. */
+interface Origin {
   startX: number;
   startY: number;
+  /** A finger (touch): a block or card lifts only after a hold. */
+  touch: boolean;
+  /** The finger rested long enough: the gesture was lifted by a hold. */
+  held: boolean;
+  /** What the press landed on (a part cell opens the picker after a hold let go in place). */
+  pressedEl: Element | null;
+}
+
+interface Press extends Base, Origin {
+  kind: 'press' | 'edgePress' | 'cardPress';
   id: Id;
   /** The pointerdown that started it (a handler further up the tree may see the same event). */
   down: PointerEvent;
 }
+
+/** The pointer fields a gesture needs from the event that starts it (a hold starts one without an event). */
+type PointerPos = Pick<PointerEvent, 'clientX' | 'clientY' | 'ctrlKey' | 'altKey' | 'metaKey' | 'shiftKey'>;
 
 interface Geometry {
   /** Client x of the content's left edge when scrollLeft is 0. */
@@ -129,7 +161,7 @@ interface Geometry {
   lane: { left: number; right: number; top: number; bottom: number };
 }
 
-interface MoveDrag extends Base, Geometry {
+interface MoveDrag extends Base, Geometry, Origin {
   kind: 'move';
   ids: Id[];
   moving: Set<Id>;
@@ -144,7 +176,7 @@ interface MoveDrag extends Base, Geometry {
   gap: number | null;
 }
 
-interface CardDrag extends Base, Geometry {
+interface CardDrag extends Base, Geometry, Origin {
   kind: 'card';
   sceneId: Id;
   slotWidth: number;
@@ -215,12 +247,27 @@ export class LaneGestures {
   /** Where the lifted copy was last put (view coordinates), to write only changes. */
   private cloneAt: { el: HTMLElement | null; x: number } = { el: null, x: NaN };
   private ghostAt = '';
+  /** A finger is waiting to lift what it rests on. */
+  private holdTimer = 0;
+  /** The current gesture is a finger the lane has taken over (held, or on an edge): the browser must not pan. */
+  private touchOwned = false;
+  /** Where the press-and-hold look is shown (the pressed block or card). */
+  private pressingEl: HTMLElement | null = null;
 
   constructor(private host: LaneHost) {}
 
   /** A gesture that moves something is in progress (not just a press). */
   get dragging(): boolean {
     return !!this.g && (this.g.kind === 'move' || this.g.kind === 'card' || this.g.kind === 'resize');
+  }
+
+  /**
+   * The lane owns the finger now down (a held block or card, an edge drag):
+   * its touchmove must not scroll the page or the lane. Call from a
+   * non-passive touchmove listener and preventDefault when true.
+   */
+  get ownsTouch(): boolean {
+    return this.touchOwned && !!this.g;
   }
 
   /** The click that follows a drag (or a cancelled one) is not a click. Call from click handlers. */
@@ -423,29 +470,64 @@ export class LaneGestures {
   /* Starting gestures                                                */
   /* ---------------------------------------------------------------- */
 
-  /** Pointer down on a block (its header or a part cell): a click, or a move once it travels. */
+  /** The press fields every gesture starts with. */
+  private origin(e: PointerEvent): Base & Origin {
+    return { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY, startX: e.clientX, startY: e.clientY, touch: e.pointerType === 'touch', held: false, pressedEl: e.target as Element | null, captureEl: e.currentTarget as HTMLElement };
+  }
+
+  /** Pointer down on a block (its header or a part cell): a click, or a move once it travels (a finger: once it is held). */
   pressBlock(e: PointerEvent, id: Id, el: HTMLElement): void {
     if (!this.canStart(e)) return;
     const t = e.target as Element | null;
     if (t?.closest('[data-no-drag], input, a, [role="menuitem"]')) return;
     if (t?.closest('button') && !t.closest('[data-cell]')) return;
-    this.begin({ kind: 'press', pointerId: e.pointerId, captureEl: el, clientX: e.clientX, clientY: e.clientY, startX: e.clientX, startY: e.clientY, id, down: e });
+    this.begin({ ...this.origin(e), kind: 'press', captureEl: el, id, down: e });
   }
 
-  /** Pointer down on a block's right-edge handle. */
+  /** Pointer down on a block's right-edge handle (immediate for every pointer, a finger too). */
   pressEdge(e: PointerEvent, id: Id, el: HTMLElement): void {
     if (!this.canStart(e)) return;
     e.stopPropagation();
     e.preventDefault();
-    this.begin({ kind: 'edgePress', pointerId: e.pointerId, captureEl: el, clientX: e.clientX, clientY: e.clientY, startX: e.clientX, startY: e.clientY, id, down: e });
+    this.begin({ ...this.origin(e), kind: 'edgePress', captureEl: el, id, down: e });
   }
 
-  /** Pointer down on a scene card in the palette. */
+  /** Pointer down on a scene card in the palette (a finger: it lifts once it is held). */
   pressCard(e: PointerEvent, sceneId: Id, el: HTMLElement): void {
     if (!this.canStart(e)) return;
     const t = e.target as Element | null;
     if (t?.closest('button, input, a')) return;
-    this.begin({ kind: 'cardPress', pointerId: e.pointerId, captureEl: el, clientX: e.clientX, clientY: e.clientY, startX: e.clientX, startY: e.clientY, id: sceneId, down: e });
+    this.begin({ ...this.origin(e), kind: 'cardPress', captureEl: el, id: sceneId, down: e });
+  }
+
+  /** A finger rested on a block or card long enough: lift it where it is (the drag goes on from there). */
+  private onHold = (): void => {
+    this.holdTimer = 0;
+    const g = this.g;
+    if (!g || (g.kind !== 'press' && g.kind !== 'cardPress') || !g.touch || g.held) return;
+    g.held = true;
+    this.touchOwned = true;
+    this.clearPressing();
+    const at: PointerPos = { clientX: g.clientX, clientY: g.clientY, ctrlKey: false, altKey: false, metaKey: false, shiftKey: false };
+    if (g.kind === 'press') this.startMove(g, at);
+    else this.startCard(g, at);
+  };
+
+  private clearPressing(): void {
+    if (this.pressingEl) delete this.pressingEl.dataset.pressing;
+    this.pressingEl = null;
+  }
+
+  /** After a touch gesture the browser may still open its long-press menu: swallow it for a moment. */
+  private guardMenu(): void {
+    const until = performance.now() + MENU_GUARD_MS;
+    const swallow = (ev: Event) => {
+      if (performance.now() > until) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+    };
+    window.addEventListener('contextmenu', swallow, true);
+    window.setTimeout(() => window.removeEventListener('contextmenu', swallow, true), MENU_GUARD_MS);
   }
 
   private canStart(e: PointerEvent): boolean {
@@ -463,6 +545,15 @@ export class LaneGestures {
 
   private begin(g: Press): void {
     this.g = g;
+    if (g.touch) {
+      if (g.kind === 'edgePress') this.touchOwned = true;
+      else {
+        // A finger lifts a block or card only after resting on it; until then the browser may scroll.
+        this.holdTimer = window.setTimeout(this.onHold, HOLD_MS);
+        this.pressingEl = g.captureEl;
+        g.captureEl.dataset.pressing = '';
+      }
+    }
     // Pointer capture waits until the press becomes a drag: captured, a plain click on a part
     // cell would be sent to the block instead of the cell.
     const opts = { capture: true };
@@ -504,7 +595,7 @@ export class LaneGestures {
     return { contentLeft0: content.getBoundingClientRect().left + this.scrollLeft, lane: { left: r.left, right: r.right, top: r.top, bottom: r.bottom } };
   }
 
-  private startMove(p: Press, ev: PointerEvent): void {
+  private startMove(p: Press, ev: PointerPos): void {
     if (this.host.locked()) {
       this.host.refuseLocked();
       return this.endQuietly();
@@ -532,6 +623,11 @@ export class LaneGestures {
       captureEl: p.captureEl,
       clientX: ev.clientX,
       clientY: ev.clientY,
+      startX: p.startX,
+      startY: p.startY,
+      touch: p.touch,
+      held: p.held,
+      pressedEl: p.pressedEl,
       ...geo,
       ids,
       moving: new Set(ids),
@@ -547,11 +643,11 @@ export class LaneGestures {
     this.badge = null;
     this.cloneAt = { el: null, x: NaN };
     this.capture(g, 'grabbing');
-    this.host.setDragUi({ kind: 'move', ids, copy: g.copy, outside: false });
+    this.host.setDragUi({ kind: 'move', ids, copy: g.copy, outside: false, held: g.held || undefined });
     this.updateMove(g);
   }
 
-  private startCard(p: Press, ev: PointerEvent): void {
+  private startCard(p: Press, ev: PointerPos): void {
     if (this.host.locked()) {
       this.host.refuseLocked();
       return this.endQuietly();
@@ -564,6 +660,11 @@ export class LaneGestures {
       captureEl: p.captureEl,
       clientX: ev.clientX,
       clientY: ev.clientY,
+      startX: p.startX,
+      startY: p.startY,
+      touch: p.touch,
+      held: p.held,
+      pressedEl: p.pressedEl,
       ...geo,
       sceneId: p.id,
       slotWidth: this.host.sceneWidth(p.id),
@@ -574,11 +675,11 @@ export class LaneGestures {
     };
     this.g = g;
     this.capture(g, 'grabbing');
-    this.host.setDragUi({ kind: 'card', sceneId: p.id, layerInto: null, replace: g.replace, outside: true });
+    this.host.setDragUi({ kind: 'card', sceneId: p.id, layerInto: null, replace: g.replace, outside: true, held: g.held || undefined });
     this.updateCard(g, true);
   }
 
-  private startResize(p: Press, ev: PointerEvent): void {
+  private startResize(p: Press, ev: PointerPos): void {
     const layout = this.host.layout();
     const b = layout.blocks.find((x) => x.id === p.id);
     if (!b || b.totalBars <= 0) return this.endQuietly();
@@ -622,6 +723,11 @@ export class LaneGestures {
     g.clientX = ev.clientX;
     g.clientY = ev.clientY;
     if (g.kind === 'ended') return;
+    if ((g.kind === 'press' || g.kind === 'cardPress') && g.touch) {
+      // A finger waiting for its hold: moving first makes it a swipe (the browser scrolls), never a drag.
+      if (Math.hypot(ev.clientX - g.startX, ev.clientY - g.startY) > HOLD_SLOP_PX) this.endQuietly();
+      return;
+    }
     if (g.kind === 'press' || g.kind === 'edgePress' || g.kind === 'cardPress') {
       if (Math.hypot(ev.clientX - g.startX, ev.clientY - g.startY) < DRAG_THRESHOLD_PX) return;
       ev.preventDefault();
@@ -652,6 +758,15 @@ export class LaneGestures {
     if (!g || ev.pointerId !== g.pointerId) return;
     g.clientX = ev.clientX;
     g.clientY = ev.clientY;
+    if ((g.kind === 'move' || g.kind === 'card') && g.held && Math.hypot(ev.clientX - g.startX, ev.clientY - g.startY) < HOLD_SLOP_PX) {
+      // Held and let go in place: no move. A block shows its actions, as a long press does.
+      const id = g.kind === 'move' ? g.ids.find((x) => this.host.blockEl(x) === g.captureEl) ?? g.ids[0] : null;
+      const target = g.pressedEl;
+      this.cancel(false);
+      this.blockClick();
+      if (id) this.host.holdMenu(id, target);
+      return;
+    }
     if (g.kind === 'move') {
       const copy = ev.ctrlKey || ev.altKey || ev.metaKey;
       if (copy !== g.copy) this.setCopy(g, copy);
@@ -700,6 +815,12 @@ export class LaneGestures {
   /** A press, click or menu from another pointer (a second finger, a pen) on the lane while something is carried: ignored. */
   private onOtherPointer = (ev: Event): void => {
     const g = this.g;
+    // The browser's long-press menu while a finger holds a block, card or edge: swallowed.
+    if (g && this.touchOwned && ev.type === 'contextmenu') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
     if (!g || !this.dragging) return;
     const pid = (ev as PointerEvent).pointerId;
     if (pid === g.pointerId) return;
@@ -795,12 +916,12 @@ export class LaneGestures {
     g.copy = copy;
     // The gap counts different lists in the two modes.
     g.gap = null;
-    this.host.setDragUi({ kind: 'move', ids: g.ids, copy, outside: g.outside });
+    this.host.setDragUi({ kind: 'move', ids: g.ids, copy, outside: g.outside, held: g.held || undefined });
   }
 
   private setReplace(g: CardDrag, replace: boolean): void {
     g.replace = replace;
-    this.host.setDragUi({ kind: 'card', sceneId: g.sceneId, layerInto: this.layerInto(g), replace, outside: g.outside });
+    this.host.setDragUi({ kind: 'card', sceneId: g.sceneId, layerInto: this.layerInto(g), replace, outside: g.outside, held: g.held || undefined });
   }
 
   private updateMove(g: MoveDrag): void {
@@ -809,7 +930,7 @@ export class LaneGestures {
     const flipped = outside !== g.outside;
     if (flipped) {
       g.outside = outside;
-      this.host.setDragUi({ kind: 'move', ids: g.ids, copy: g.copy, outside });
+      this.host.setDragUi({ kind: 'move', ids: g.ids, copy: g.copy, outside, held: g.held || undefined });
     }
     this.moveClone(g, left);
     const prevGap = g.gap;
@@ -899,7 +1020,7 @@ export class LaneGestures {
       if (next.kind === 'insert') this.slotTimer = window.setTimeout(() => this.openSlot(g), SLOT_DELAY_MS);
     }
     if (changed) {
-      this.host.setDragUi({ kind: 'card', sceneId: g.sceneId, layerInto: this.layerInto(g), replace: g.replace, outside });
+      this.host.setDragUi({ kind: 'card', sceneId: g.sceneId, layerInto: this.layerInto(g), replace: g.replace, outside, held: g.held || undefined });
       this.preview(g);
     }
     if (!changed && !force) return;
@@ -1119,6 +1240,7 @@ export class LaneGestures {
   private endQuietly(): void {
     const g = this.g;
     if (!g) return;
+    this.stopHold();
     this.stopAutoScroll();
     this.hideTransient();
     this.g = { kind: 'ended', pointerId: g.pointerId, captureEl: g.captureEl, clientX: g.clientX, clientY: g.clientY };
@@ -1143,11 +1265,22 @@ export class LaneGestures {
     this.pendingMove = false;
   }
 
+  private stopHold(): void {
+    window.clearTimeout(this.holdTimer);
+    this.holdTimer = 0;
+    this.clearPressing();
+  }
+
   /** End the gesture: every listener removed, capture released, nothing left half-done. */
   private finish(): void {
     const g = this.g;
     this.g = null;
     window.clearTimeout(this.slotTimer);
+    this.stopHold();
+    if (this.touchOwned) {
+      this.touchOwned = false;
+      this.guardMenu();
+    }
     this.stopAutoScroll();
     this.hideTransient();
     for (const [t, type, fn, opts] of this.listeners) t.removeEventListener(type, fn, opts);

@@ -13,6 +13,15 @@
  *   plan says (a block that was continued after a split or join keeps the
  *   loop phases it had, so there any bar-aligned phase of the right clip is
  *   accepted).
+ * With `loops`, song loops are also set (before Play, or while it plays or
+ * is paused), changed and cleared at random, and the session's loop rules
+ * apply to every edit (see songLoopAfterEdit). Then also:
+ * - between edits the lane playhead moves back only while a loop is set,
+ *   and only into the loop;
+ * - while a loop is set and the playhead is inside it, the playhead's lane
+ *   position stays inside the loop range, and the playhead does not leave
+ *   the loop until an edit or a loop change;
+ * - the loop is cleared before the end, and the song then ends as planned.
  */
 import type { ClipBars, Id, Project } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
@@ -39,12 +48,16 @@ function expected(p: Project, trackId: Id, row: number | null, loop: number, fro
   return out.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
 }
 
-export function runFuzz(seed: number, opts: { split: boolean; steps?: number }): string[] {
+export function runFuzz(seed: number, opts: { split: boolean; steps?: number; loops?: boolean }): string[] {
   const problems: string[] = [];
-  const where = `seed ${seed}${opts.split ? ' (split)' : ''}`;
+  const where = `seed ${seed}${opts.split ? ' (split)' : ''}${opts.loops ? ' (loops)' : ''}`;
   const rnd = mulberry32(seed);
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)];
-  const r = new Rig().play();
+  const r = new Rig();
+  if (opts.loops && rnd() < 0.4) {
+    const ids = r.project.arrangement.blocks.map((b) => b.id);
+    r.setLoop(pick(ids), pick(ids)).playSong();
+  } else r.play();
   r.traceLane = true;
   let paused = false;
   let lastEditTick = 0;
@@ -64,6 +77,8 @@ export function runFuzz(seed: number, opts: { split: boolean; steps?: number }):
       // Real clocks never land exactly on a tick boundary.
       r.now += 0.0007;
       r.pump();
+      // (Within the look-ahead of the end Pause stops instead: nothing to pause.)
+      if (r.seq.ended) break;
       if (rnd() < 0.12) {
         r.pause();
         paused = true;
@@ -72,7 +87,7 @@ export function runFuzz(seed: number, opts: { split: boolean; steps?: number }):
     const p = r.project;
     const ids = p.arrangement.blocks.map((b) => b.id);
     const scene = () => pick(p.scenes).id;
-    const op = Math.floor(rnd() * 17);
+    const op = Math.floor(rnd() * (opts.loops ? 20 : 17));
     if (op === 16 && !paused) {
       r.setTempo(pick([90, 120, 150, 175]));
       lastEditTick = r.seq.getPosition(r.now + MARGIN).tick;
@@ -80,7 +95,23 @@ export function runFuzz(seed: number, opts: { split: boolean; steps?: number }):
     }
     // Edits apply from now + MARGIN: what is due before that is already scheduled.
     const pos = r.seq.getPosition(paused ? r.now : r.now + MARGIN).tick;
-    const playingBefore = r.seq.songPlan()?.find((b) => pos < b.endTick)?.blockId;
+    const before = r.seq.songPlan()?.find((b) => pos < b.endTick);
+    const playingBefore = before?.blockId;
+    if (op >= 17) {
+      // A loop: anywhere, around the block playing (so the playhead is often inside it), or cleared.
+      const playing = r.seq.songBlockAt(pos)?.blockId;
+      const i = playing ? ids.indexOf(playing) : -1;
+      if (op === 17 && ids.length) r.setLoop(pick(ids), pick(ids));
+      else if (op === 18 && i >= 0) r.setLoop(ids[Math.max(0, i - Math.floor(rnd() * 2))], ids[Math.min(ids.length - 1, i + Math.floor(rnd() * 3))]);
+      else r.setLoop(null);
+      lastEditTick = pos;
+      // Setting the loop changes what follows, never the block the playhead is in (once it sounds).
+      const now = r.seq.songPlan()?.find((b) => pos < b.endTick);
+      if (before && now && before.startTick < pos && (now.blockId !== before.blockId || now.startTick !== before.startTick)) {
+        problems.push(`${where}: setting the loop moved the playhead from ${before.blockId}@${before.startTick} to ${now.blockId}@${now.startTick}`);
+      }
+      continue;
+    }
     const changedBefore = r.project;
     r.edit((s) => {
       if (op === 0 && ids.length) cmd.moveBlocks(s, [pick(ids)], Math.floor(rnd() * (ids.length + 1)));
@@ -110,11 +141,19 @@ export function runFuzz(seed: number, opts: { split: boolean; steps?: number }):
     if (r.project === changedBefore) continue;
     lastEditTick = pos;
     const now = r.seq.songPlan()?.find((b) => pos < b.endTick);
-    if (now && now.index >= 0 && now.blockId !== playingBefore && now.startTick < pos) continued.add(now.blockId);
+    // Continued in another block, or (in a loop) in another pass of the same one.
+    if (now && now.index >= 0 && (now.blockId !== playingBefore || now.startTick !== before?.startTick) && now.startTick < pos) continued.add(now.blockId);
     const at = r.seq.songBlockAt(r.tick);
     if (at && !r.project.arrangement.blocks.some((b) => b.id === at.blockId)) problems.push(`${where}: the playing block ${at.blockId} is not in the song`);
+    const loop = r.loop;
+    if (loop && ![loop.fromBlockId, loop.toBlockId].every((id) => r.project.arrangement.blocks.some((b) => b.id === id))) problems.push(`${where}: the loop names a deleted block`);
   }
   if (paused) r.resume();
+  // A loop never ends: clear it (an edit like any other), then the song plays to its end.
+  if (r.loop) {
+    lastEditTick = r.seq.getPosition(r.now + MARGIN).tick;
+    r.setLoop(null);
+  }
   r.finish();
 
   const ends = r.ends();
@@ -125,11 +164,17 @@ export function runFuzz(seed: number, opts: { split: boolean; steps?: number }):
   const bl = ofKind(r.out, 'block');
   for (let i = 1; i < bl.length; i++) if (bl[i].tick <= bl[i - 1].tick) problems.push(`${where}: block events not increasing ${bl[i - 1].tick} -> ${bl[i].tick}`);
 
-  // The lane playhead: inside the lane, and only forward between edits.
+  // The lane playhead: inside the lane, and only forward between edits (back only into a loop).
   const tr = r.laneTrace;
+  const inLoop = (x: (typeof tr)[number]) => !!x.loop && x.lane >= x.loop[0] - 1e-6 && x.lane <= x.loop[1] + 1e-6;
   for (let i = 0; i < tr.length; i++) {
-    if (tr[i].lane < 0 || tr[i].lane > tr[i].total) problems.push(`${where}: lane playhead ${tr[i].lane} outside [0, ${tr[i].total}]`);
-    if (i && tr[i].edits === tr[i - 1].edits && tr[i].lane < tr[i - 1].lane - 1e-6) problems.push(`${where}: lane playhead went back ${tr[i - 1].lane} -> ${tr[i].lane}`);
+    const x = tr[i];
+    if (x.lane < 0 || x.lane > x.total) problems.push(`${where}: lane playhead ${x.lane} outside [0, ${x.total}]`);
+    if (x.inside && !inLoop(x)) problems.push(`${where}: lane playhead ${x.lane} outside the loop ${JSON.stringify(x.loop)} it plays in`);
+    if (!i || x.edits !== tr[i - 1].edits) continue;
+    const y = tr[i - 1];
+    if (x.lane < y.lane - 1e-6 && !(x.loop && inLoop(x))) problems.push(`${where}: lane playhead went back ${y.lane} -> ${x.lane}`);
+    if (y.inside && !x.inside && JSON.stringify(x.loop) === JSON.stringify(y.loop)) problems.push(`${where}: the playhead left the loop ${JSON.stringify(x.loop)} at lane ${y.lane} -> ${x.lane}`);
   }
 
   for (const trackId of PARTS) {

@@ -47,7 +47,8 @@ import * as db from '../persistence/db';
 import * as library from '../persistence/library';
 import type { LaunchResult, SongLoop } from '../time/contracts';
 import { makeSnapshot, projectFromSnapshot } from '../time/snapshot';
-import { Sequencer, songSignature, type NoteEvent } from '../time/sequencer';
+import { Sequencer, songBlocks, songSignature, type NoteEvent } from '../time/sequencer';
+import { sameSongLoop, songLoopAfterEdit, songLoopRange } from '../time/songLoop';
 import { RealtimeTransport } from '../time/transport';
 import { notify, patchRuntime, runtimeStore, setTrackRuntime, type PlayMode } from './runtime';
 
@@ -262,9 +263,10 @@ export class Session {
    * successful save adds it to the library as the project to reopen.
    */
   private async loadProject(project: Project, opts: { unsaved?: boolean } = {}): Promise<void> {
-    // An A/B comparison belongs to the project that was open.
+    // An A/B comparison belongs to the project that was open, and so does a song loop.
     this.setMasteringListen(false);
     this.stopEverything();
+    this.setSongLoop(null);
     await this.autosaver?.flush();
     this.setPreview(false);
     this.unstored = !!opts.unsaved;
@@ -421,6 +423,8 @@ export class Session {
       if (runtimeStore.getState().muteAll) engine.setMuteAll(true);
       if (this.masteringBypass) engine.setMasteringBypass(true);
       const sequencer = new Sequencer({ getProject: () => this.store.getState() });
+      // A song loop set before audio started applies to the first song start.
+      sequencer.setSongLoop(runtimeStore.getState().songLoop, 0);
       const transport = new RealtimeTransport({ ctx, engine, sequencer });
       this.sequencer = sequencer;
       this.transport = transport;
@@ -541,6 +545,9 @@ export class Session {
       this.engine.setProject(p);
       if (p.masterVolumeDb !== prev.masterVolumeDb) this.engine.setMasterVolume(p.masterVolumeDb);
     }
+    // The song loop follows the edit (see songLoopAfterEdit); another project has none.
+    const loopWas = runtimeStore.getState().songLoop;
+    const loop = p.id !== prev.id ? null : songLoopAfterEdit(loopWas, prev, p);
     if (this.transport && !this.replayingId) {
       if (p.bpm !== prev.bpm) this.transport.setTempo(p.bpm);
       if (p.swing !== prev.swing) this.transport.setSwing(p.swing);
@@ -552,9 +559,12 @@ export class Session {
         }
       }
       // A song playing (or paused) follows edits to its blocks and to the clips they play; that also regenerates.
-      const replanned = this.followSongEdits(p, prev);
+      const replanned = this.followSongEdits(p, prev, loop);
       if (!replanned && musicChanged(p, prev)) this.transport.invalidate();
     }
+    // Not replanned (stopped, live pads, a replay): the sequencer keeps the loop for the next song start.
+    if (this.transport && this.sequencer && !sameSongLoop(this.sequencer.songLoop, loop)) this.transport.replanSong(loop);
+    if (loop !== loopWas) patchRuntime({ songLoop: loop });
     if (p.samples !== prev.samples) void this.loadProjectSamples(p);
     if (p.tracks !== prev.tracks) this.stopPartsWithoutClip(p);
   }
@@ -609,16 +619,19 @@ export class Session {
    * or the clips they play, undo and redo included) lays out the rest of the
    * song again from the block playing now (see Sequencer.replanSong). Scene
    * reorders were already followed by `followMovedClips`, which then changes
-   * nothing more here. Returns true when playback changed.
+   * nothing more here. `loop`: the song loop after this edit (it never makes
+   * playback jump). Returns true when playback changed.
    */
-  private followSongEdits(p: Project, prev: Project): boolean {
+  private followSongEdits(p: Project, prev: Project, loop: SongLoop | null): boolean {
     const seq = this.sequencer;
     const t = this.transport;
     if (!seq || !t || seq.mode.kind !== 'song' || !(seq.playing || seq.paused)) return false;
-    // The song depends on the blocks, the scenes and the clips (not on sounds or knobs).
-    if (p.arrangement === prev.arrangement && p.scenes === prev.scenes && p.tracks.every((t, i) => t.clips === prev.tracks[i]?.clips)) return false;
-    if (songSignature(p) === songSignature(prev)) return false;
-    const changed = t.replanSong();
+    if (sameSongLoop(seq.songLoop, loop)) {
+      // The song depends on the blocks, the scenes and the clips (not on sounds or knobs).
+      if (p.arrangement === prev.arrangement && p.scenes === prev.scenes && p.tracks.every((t, i) => t.clips === prev.tracks[i]?.clips)) return false;
+      if (songSignature(p) === songSignature(prev)) return false;
+    }
+    const changed = t.replanSong(loop);
     this.syncSongBlock();
     // Pads show what each part plays now, or switches to when the next block starts.
     if (changed) this.refreshLauncherRuntime();
@@ -775,35 +788,66 @@ export class Session {
   }
 
   /**
-   * Play the arrangement from a block, or from bar `opts.fromBar` (0-based, on
-   * the song timeline as the Arrange lane draws it).
+   * Loop part of the song: the blocks from `fromBlockId` to `toBlockId`
+   * (inclusive, either way round, in the song's current order), or play it
+   * through again (null). The session is the only owner of the loop
+   * (runtime `songLoop`, never saved); views read it there. While the song
+   * plays or is paused: with the playhead inside the new loop playback goes
+   * on and loops at the loop's end; outside it, playback continues at the
+   * loop's first block at the next bar line (on Resume when paused);
+   * cleared, the song plays on to its end (see Sequencer.setSongLoop).
+   * Edits keep it valid (see songLoopAfterEdit). Returns false (and changes
+   * nothing) when a block it names is not in the song.
    */
-  /**
-   * Loop part of the song (blocks `fromBlockId`..`toBlockId`, inclusive, in
-   * song order), or play it through again (null). Applies while the song
-   * plays or is paused.
-   */
-  setSongLoop(range: SongLoop | null): void {
-    patchRuntime({ songLoop: range });
+  setSongLoop(range: SongLoop | null): boolean {
+    const loop = range ? { fromBlockId: range.fromBlockId, toBlockId: range.toBlockId } : null;
+    if (loop) {
+      const ids = new Set(this.store.getState().arrangement.blocks.map((b) => b.id));
+      if (!ids.has(loop.fromBlockId) || !ids.has(loop.toBlockId)) return false;
+    }
+    if (sameSongLoop(runtimeStore.getState().songLoop, loop)) return true;
+    const t = this.transport;
+    const changed = t ? t.setSongLoop(loop) : false;
+    // After the transport: the song plan the views take on this change already has the loop.
+    patchRuntime({ songLoop: loop });
+    if (t) {
+      this.syncSongBlock();
+      if (changed) this.refreshLauncherRuntime();
+    }
+    return true;
   }
 
-  async playSong(fromBlock = 0, opts: { fromBar?: number } = {}): Promise<void> {
+  /**
+   * Play the arrangement from block `fromBlock`, or from bar `opts.fromBar`
+   * (0-based, on the song timeline as the Arrange lane draws it); a start
+   * before the end of the song loop plays into the loop, one after it plays
+   * to the song's end. Neither given (Play song): from the loop's first
+   * block when a loop is set, else from the first block.
+   */
+  async playSong(fromBlock?: number, opts: { fromBar?: number } = {}): Promise<void> {
     if (!(await this.startAudio())) return;
     this.finishTake('stop');
     this.stopRecordNotes();
     if (this.replayingId) this.endReplay();
-    if (this.store.getState().arrangement.blocks.length === 0) {
+    const p = this.store.getState();
+    if (p.arrangement.blocks.length === 0) {
       notify('The arrangement is empty. Add scene blocks in Arrange first.', 'warn');
       return;
     }
     const fromBar = opts.fromBar;
     const fromTick = fromBar !== undefined && Number.isFinite(fromBar) ? Math.max(0, Math.floor(fromBar)) * TICKS_PER_BAR : undefined;
-    this.transport!.start({ mode: { kind: 'song', fromBlock }, fromTick });
+    let block = fromBlock ?? 0;
+    if (fromBlock === undefined && fromTick === undefined) {
+      const lane = songBlocks(p);
+      const range = songLoopRange(lane, runtimeStore.getState().songLoop);
+      if (range) block = lane[range[0]].index;
+    }
+    this.transport!.start({ mode: { kind: 'song', fromBlock: block }, fromTick });
     this.stallResume = null;
     // The block the song starts in (its 'block' event confirms it when it sounds).
     const at = this.transport!.getPosition().tick;
     const first = this.sequencer!.songPlan()?.find((b) => at < b.endTick);
-    patchRuntime({ playing: true, paused: false, mode: 'song', songBlock: first ? first.index : fromBlock, songBlockId: first?.blockId ?? null, stalled: null });
+    patchRuntime({ playing: true, paused: false, mode: 'song', songBlock: first ? first.index : block, songBlockId: first?.blockId ?? null, stalled: null });
     this.refreshLauncherRuntime();
   }
 
@@ -835,8 +879,9 @@ export class Session {
   /**
    * Resume after a stall: start the same thing again. The live pads resume
    * with the same clips, the song from the block that was playing (from the
-   * block taking over, when the playing one had just been deleted), and a
-   * replayed take from its start.
+   * block taking over, when the playing one had just been deleted; with a
+   * song loop, inside the loop: from its first block when that block lies
+   * outside it), and a replayed take from its start.
    */
   async resumeAfterStall(): Promise<void> {
     const resume = this.stallResume;
@@ -847,9 +892,15 @@ export class Session {
     const replayId = resume?.mode === 'replay' ? resume.replayId : null;
     if (resume?.mode === 'song') {
       // The block where it stopped, found by id (blocks may have moved meanwhile).
-      const blocks = this.store.getState().arrangement.blocks;
+      const p = this.store.getState();
+      const blocks = p.arrangement.blocks;
       const byId = resume.songBlockId ? blocks.findIndex((b) => b.id === resume.songBlockId) : -1;
-      await this.playSong(byId >= 0 ? byId : Math.min(resume.songBlock ?? 0, Math.max(0, blocks.length - 1)));
+      let block = byId >= 0 ? byId : Math.min(resume.songBlock ?? 0, Math.max(0, blocks.length - 1));
+      const lane = songBlocks(p);
+      const range = songLoopRange(lane, runtimeStore.getState().songLoop);
+      const at = lane.findIndex((b) => b.index === block);
+      if (range && (at < range[0] || at > range[1])) block = lane[range[0]].index;
+      await this.playSong(block);
     }
     else if (replayId && this.store.getState().performances.some((p) => p.id === replayId)) await this.replayPerformance(replayId);
     else await this.play();

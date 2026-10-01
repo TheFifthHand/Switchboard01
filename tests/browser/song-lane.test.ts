@@ -254,7 +254,7 @@ describe('dragging blocks', () => {
       // A release after the cancel does nothing either.
       pointer(document.body, 'pointerup', { clientX: 900, clientY: 300 });
       expect(clone(), what).toBeNull();
-      expect(lane().hasAttribute('data-dragging'), what).toBe(false);
+      expect(lane().hasAttribute('data-carry'), what).toBe(false);
       expect(blockIds(), what).toEqual(ids);
       expect(watch.leftover(), what).toEqual([]);
       vi.restoreAllMocks();
@@ -310,7 +310,7 @@ describe('length, split and join', () => {
     const bubble = document.querySelector<HTMLElement>('[data-testid="lane-bubble"]')!;
     expect(bubble.textContent).toBe('5 passes · 20 bars');
     expect(bubble.hasAttribute('data-on')).toBe(true);
-    expect(lane().dataset.dragging).toBe('resize');
+    expect(lane().dataset.carry).toBe('resize');
     // The block widened and the next one rippled by the same amount; nothing committed yet.
     expect(parseFloat(blockEl(id).style.width)).toBeCloseTo(5 * pass, -1);
     expect(placedX(ids[1])).toBeCloseTo(x1 + 3 * pass, -1);
@@ -986,7 +986,7 @@ describe('one pointer at a time', () => {
     const c = new PointerEvent('click', { bubbles: true, cancelable: true, pointerId: 2, pointerType: 'touch' });
     fire(cell, c);
     expect(blocks().every((b) => !b.parts)).toBe(true);
-    expect(lane().dataset.dragging).toBe('move');
+    expect(lane().dataset.carry).toBe('move');
     expect(clone()).not.toBeNull();
     pointer(document.body, 'pointerup', at);
     expect(blockIds().indexOf(ids[0])).toBe(3);

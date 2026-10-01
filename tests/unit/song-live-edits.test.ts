@@ -334,6 +334,28 @@ describe('edits to what the playing block plays apply at once, in phase with the
   });
 });
 
+describe('found by the song loop fuzz (not loop-specific)', () => {
+  it('a tempo change right after Resume, before the resume time comes, does not play the bar before the pause point again', () => {
+    // Paused a tick after the note on bar line 1152; Resume; a slower tempo within the 50 ms before playback continues.
+    const r = new Rig().play().to(1153).pause();
+    r.now += 0.3;
+    r.resume().setTempo(90);
+    r.to(2000);
+    expect(r.notes('t1').filter(([t]) => t < 2000)).toEqual(UNEDITED.filter(([t]) => t < 2000));
+  });
+
+  it('the clip in the playing pad replaced just after the block start: what the old clip sounds ends at the edit point', () => {
+    // b1 starts at 768 with t4's 2-bar chord (row 1); 3 ticks later t4's row-1 and row-3 clips swap pads.
+    const r = new Rig().play().to(769);
+    r.edit((s) => cmd.moveClip(s, 't4', 1, 't4', 3));
+    const at = r.editTicks[0];
+    expect(at - 768).toBeLessThan(8);
+    r.to(2304);
+    // The row-3 chord (one bar) now plays in b1, in phase with the block: from its next loop (1152).
+    expect(r.held('t4').filter(([t]) => t < 2304)).toEqual([[0, 30, 768], [768, 50, at], [1152, 90, 1536], [1536, 90, 1920], [1920, 90, 2304]]);
+  });
+});
+
 describe('a block shortened below the playhead (L2)', () => {
   it('sounds on to the next bar line while the lane playhead waits at its end, then the next block takes over there', () => {
     const r = new Rig().play().to(1800);

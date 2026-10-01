@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createClip, createProject } from '../../src/project/factory';
 import { blockBars, blockParts, blockRowOverrides, sameMaterial } from '../../src/project/arrangement';
 import { MAX_BLOCK_REPEATS, type Id, type Project } from '../../src/project/types';
-import { validateProject } from '../../src/project/validate';
+import { VALIDATION_LIMITS, validateProject } from '../../src/project/validate';
 import { ProjectStore } from '../../src/state/projectStore';
 import * as cmd from '../../src/state/commands';
 import { songBlocks } from '../../src/time/sequencer';
@@ -283,5 +283,203 @@ describe('validation of song blocks', () => {
     expect(a).toEqual({ id: 'blk_a', sceneId: p.scenes[1].id, repeats: 12, label: 'Verse', parts: { [p.tracks[0].id]: null, [p.tracks[3].id]: p.scenes[2].id } });
     expect(b).toEqual({ id: 'blk_b', sceneId: p.scenes[0].id, repeats: 16 });
     expect(r.warnings.length).toBeGreaterThan(0);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Song helpers: build up, strip down, breakdown                       */
+/* ------------------------------------------------------------------ */
+
+describe('song helpers', () => {
+  /**
+   * One scene ("Drop", row 0) where every part has a clip of `bars` (or
+   * `lengths` per role), and one block of it playing `repeats` passes.
+   * Tracks (factory roles): drums, percussion, bass, chords, lead, pad, texture, sampler.
+   */
+  function shaped(repeats: number, lengths: Partial<Record<string, 1 | 2 | 3 | 4 | null>>, parts?: (p: Project) => Record<Id, Id | null>) {
+    const p = createProject({ now: 0 });
+    for (const t of p.tracks) t.clips = t.clips.map(() => null);
+    for (const t of p.tracks) {
+      const bars = lengths[t.role];
+      if (bars) t.clips[0] = createClip(`${t.role} clip`, bars);
+    }
+    // Another scene with a lead clip, for a layered part.
+    p.tracks.find((t) => t.role === 'lead')!.clips[2] = createClip('lift lead', 4);
+    p.arrangement = { tailSeconds: 2, blocks: [{ id: 'blk_x', sceneId: p.scenes[0].id, repeats, ...(parts ? { parts: parts(p) } : {}) }] };
+    const store = new ProjectStore(p);
+    const role = (r: string) => p.tracks.find((t) => t.role === r)!.id;
+    return { store, p, role, list: () => store.getState().arrangement.blocks };
+  }
+  /** The parts that play in each block, by role, with its passes. */
+  function playing(store: ProjectStore) {
+    const p = store.getState();
+    return p.arrangement.blocks.map((b) => ({
+      repeats: b.repeats,
+      plays: blockParts(p, b)
+        .filter((x) => x.clip)
+        .map((x) => p.tracks.find((t) => t.id === x.trackId)!.role)
+        .sort(),
+    }));
+  }
+  const ticks = (s: ProjectStore) => songBlocks(s.getState()).reduce((n, b) => n + (b.endTick - b.startTick), 0);
+
+  it('the build order: texture, pad, chords, lead, sampler, percussion, bass, drums (same role: track order)', () => {
+    expect(cmd.BUILD_ORDER).toEqual(['texture', 'pad', 'chords', 'lead', 'sampler', 'percussion', 'bass', 'drums']);
+    const { p, role } = shaped(4, { drums: 4, percussion: 4, bass: 4, chords: 4, lead: 4, pad: 4, texture: 4, sampler: 4 });
+    expect(cmd.soundingInBuildOrder(p, p.arrangement.blocks[0])).toEqual(['texture', 'pad', 'chords', 'lead', 'sampler', 'percussion', 'bass', 'drums'].map(role));
+    // Two parts with one role keep their track order.
+    const q = structuredClone(p);
+    q.tracks[1].role = 'drums';
+    expect(cmd.soundingInBuildOrder(q, q.arrangement.blocks[0]).slice(-2)).toEqual([q.tracks[0].id, q.tracks[1].id]);
+  });
+
+  it('shapePasses: pass i plays the first ceil((i+1)·k/n) parts; strip down is the reverse', () => {
+    const o = ['a', 'b', 'c', 'd'];
+    expect(cmd.shapePasses(o, 4, 'build')).toEqual([['a'], ['a', 'b'], ['a', 'b', 'c'], o]);
+    expect(cmd.shapePasses(o, 2, 'build')).toEqual([['a', 'b'], o]);
+    expect(cmd.shapePasses(['a', 'b', 'c'], 6, 'build').map((s) => s.length)).toEqual([1, 1, 2, 2, 3, 3]);
+    expect(cmd.shapePasses(o, 4, 'strip')).toEqual([o, ['a', 'b', 'c'], ['a', 'b'], ['a']]);
+    // The last pass of a strip-down keeps at least one part.
+    expect(cmd.shapePasses(['a', 'b'], 16, 'strip').at(-1)).toEqual(['a']);
+  });
+
+  it('build up: parts come in one at a time, pass by pass, as one undo step; the first block keeps its id', () => {
+    const { store, list } = shaped(4, { drums: 4, bass: 4, chords: 4, pad: 4 });
+    const before = structuredClone(store.getState().arrangement);
+    const length = ticks(store);
+    const r = cmd.shapeBlock(store, 'blk_x', 'build');
+    expect(r.changed).toBe(true);
+    expect(r.parts).toBe(4);
+    expect(playing(store)).toEqual([
+      { repeats: 1, plays: ['pad'] },
+      { repeats: 1, plays: ['chords', 'pad'] },
+      { repeats: 1, plays: ['bass', 'chords', 'pad'] },
+      { repeats: 1, plays: ['bass', 'chords', 'drums', 'pad'] },
+    ]);
+    expect(list()[0].id).toBe('blk_x');
+    expect(r.blockIds).toEqual(list().map((b) => b.id));
+    expect(new Set(r.blockIds).size).toBe(4);
+    // Every change is a per-part Off; the last pass plays the scene as it is.
+    expect(list()[3].parts).toBeUndefined();
+    expect(ticks(store)).toBe(length);
+    expect(store.historySize().undo).toBe(1);
+    store.undo();
+    expect(store.getState().arrangement).toEqual(before);
+  });
+
+  it('build up joins neighbouring passes with the same parts (3 parts over 6 passes: three blocks of 2 passes)', () => {
+    const { store } = shaped(6, { drums: 2, chords: 2, texture: 2 });
+    cmd.shapeBlock(store, 'blk_x', 'build');
+    expect(playing(store)).toEqual([
+      { repeats: 2, plays: ['texture'] },
+      { repeats: 2, plays: ['chords', 'texture'] },
+      { repeats: 2, plays: ['chords', 'drums', 'texture'] },
+    ]);
+  });
+
+  it('strip down: every part first, then they drop out (drums first); the last pass keeps one', () => {
+    const { store } = shaped(4, { drums: 4, bass: 4, chords: 4, pad: 4 });
+    const length = ticks(store);
+    cmd.shapeBlock(store, 'blk_x', 'strip');
+    expect(playing(store)).toEqual([
+      { repeats: 1, plays: ['bass', 'chords', 'drums', 'pad'] },
+      { repeats: 1, plays: ['bass', 'chords', 'pad'] },
+      { repeats: 1, plays: ['chords', 'pad'] },
+      { repeats: 1, plays: ['pad'] },
+    ]);
+    expect(ticks(store)).toBe(length);
+    expect(store.historySize().undo).toBe(1);
+  });
+
+  it('parts silent in the block stay silent; a part switched Off stays off; a layered part takes part', () => {
+    const { store, p, role } = shaped(3, { drums: 4, percussion: 4, pad: 4 }, (q) => ({
+      [q.tracks.find((t) => t.role === 'percussion')!.id]: null,
+      [q.tracks.find((t) => t.role === 'lead')!.id]: q.scenes[2].id,
+    }));
+    expect(cmd.soundingInBuildOrder(p, p.arrangement.blocks[0])).toEqual([role('pad'), role('lead'), role('drums')]);
+    cmd.shapeBlock(store, 'blk_x', 'build');
+    expect(playing(store)).toEqual([
+      { repeats: 1, plays: ['pad'] },
+      { repeats: 1, plays: ['lead', 'pad'] },
+      { repeats: 1, plays: ['drums', 'lead', 'pad'] },
+    ]);
+    // Percussion is off in every block, the layered lead keeps its scene where it plays.
+    for (const b of store.getState().arrangement.blocks) expect(b.parts![role('percussion')]).toBeNull();
+    expect(store.getState().arrangement.blocks[2].parts![role('lead')]).toBe(p.scenes[2].id);
+  });
+
+  it('a pass keeps its length when the parts that play in it are shorter (the song length does not change)', () => {
+    // Pad 1 bar, drums 4 bars: the first pass (pad only) plays its 1-bar clip four times.
+    const { store } = shaped(2, { pad: 1, drums: 4 });
+    const length = ticks(store);
+    cmd.shapeBlock(store, 'blk_x', 'build');
+    expect(playing(store)).toEqual([
+      { repeats: 4, plays: ['pad'] },
+      { repeats: 1, plays: ['drums', 'pad'] },
+    ]);
+    expect(ticks(store)).toBe(length);
+    // 16 passes: the pad-only half is 8 × 4 = 32 one-bar passes, two blocks of 16.
+    const big = shaped(16, { pad: 1, drums: 4 });
+    const bigLength = ticks(big.store);
+    cmd.shapeBlock(big.store, 'blk_x', 'build');
+    expect(playing(big.store)).toEqual([
+      { repeats: 16, plays: ['pad'] },
+      { repeats: 16, plays: ['pad'] },
+      { repeats: 8, plays: ['drums', 'pad'] },
+    ]);
+    expect(ticks(big.store)).toBe(bigLength);
+    expect(big.store.historySize().undo).toBe(1);
+  });
+
+  it('breakdown switches off the drums, percussion and bass that sound there (one undo step)', () => {
+    const { store, role, list } = shaped(4, { drums: 4, percussion: 2, chords: 4, pad: 4 });
+    const length = ticks(store);
+    const r = cmd.shapeBlock(store, 'blk_x', 'breakdown');
+    expect(r.changed).toBe(true);
+    expect(r.parts).toBe(2);
+    expect(list()).toEqual([{ id: 'blk_x', sceneId: store.getState().scenes[0].id, repeats: 4, parts: { [role('drums')]: null, [role('percussion')]: null } }]);
+    expect(ticks(store)).toBe(length);
+    expect(store.historySize().undo).toBe(1);
+  });
+
+  it('refuses with a short reason when a helper cannot shape the block', () => {
+    const reason = (s: ReturnType<typeof shaped>, kind: cmd.ShapeKind) => cmd.shapeProblem(s.store.getState(), 'blk_x', kind)?.short ?? null;
+    const once = shaped(1, { drums: 4, pad: 4 });
+    expect(reason(once, 'build')).toBe('Plays once');
+    expect(reason(once, 'strip')).toBe('Plays once');
+    expect(reason(once, 'breakdown')).toBeNull();
+    const one = shaped(4, { pad: 4 });
+    expect(reason(one, 'build')).toBe('One part');
+    expect(cmd.shapeProblem(one.store.getState(), 'blk_x', 'strip')?.text).toContain('nothing to drop out');
+    expect(reason(one, 'breakdown')).toBe('No beat or bass');
+    const none = shaped(4, {});
+    expect(reason(none, 'build')).toBe('Nothing plays');
+    const beat = shaped(4, { drums: 4, bass: 2 });
+    expect(reason(beat, 'breakdown')).toBe('Nothing left');
+    expect(reason(beat, 'build')).toBeNull();
+    // Refused commands change nothing and add no undo step.
+    const r = cmd.shapeBlock(beat.store, 'blk_x', 'breakdown');
+    expect(r.changed).toBe(false);
+    expect(r.message).toContain('would leave silence');
+    expect(beat.store.historySize().undo).toBe(0);
+    expect(cmd.shapeBlock(beat.store, 'nope', 'build').changed).toBe(false);
+    // A block whose scene was deleted.
+    const gone = shaped(4, { drums: 4, pad: 4 });
+    gone.store.apply('x', (d) => {
+      d.arrangement.blocks[0].sceneId = 'missing';
+    });
+    expect(reason(gone, 'build')).toBe('Scene missing');
+  });
+
+  it('refuses when the song has no room for the new blocks', () => {
+    const { store } = shaped(8, { drums: 4, bass: 4, chords: 4, pad: 4 });
+    store.apply('fill', (d) => {
+      for (let i = d.arrangement.blocks.length; i < VALIDATION_LIMITS.maxBlocks - 1; i++) d.arrangement.blocks.push({ id: `f${i}`, sceneId: d.scenes[1].id, repeats: 1 });
+    });
+    const n = store.getState().arrangement.blocks.length;
+    const r = cmd.shapeBlock(store, 'blk_x', 'build');
+    expect(r.changed).toBe(false);
+    expect(r.message).toContain('as many blocks');
+    expect(store.getState().arrangement.blocks.length).toBe(n);
   });
 });

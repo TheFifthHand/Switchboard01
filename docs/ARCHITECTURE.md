@@ -149,7 +149,8 @@ Rules:
   otherwise the live pads.
 - Song playback is what the Arrange lane shows. `start()` lays out every block's part choices as
   'song' transitions (a layered part plays the other scene's slot, an off part stops at the block
-  start); `playSong(i, {fromBar})` starts at that lane bar, the block containing it in phase.
+  start); `playSong(i, {fromBar})` starts at that lane bar, the block containing it in phase;
+  `playSong()` (neither given) starts at the song loop's first block, else at the first block.
 - Edits while a song plays or is paused (undo/redo included): when `songSignature()` changes, the
   session calls `transport.replanSong()` → `Sequencer.replanSong(now + 10 ms)`. The **edit point**
   is the playhead at that time (the pause point while paused), rounded up to a whole tick; nothing
@@ -186,9 +187,41 @@ Rules:
   to another part) to the replan: its slot is empty, so the part is silent at once, and the replan
   makes that a switch (Undo switches it back on); no live stop is queued and the slot is not
   relocated to "stopped".
+- **Song loop** (`runtime.songLoop`, set only through `Session.setSongLoop`; runtime only, never
+  saved, not in undo history): the blocks from `fromBlockId` to `toBlockId`, inclusive, either way
+  round, in the current order. After the loop's last block the plan goes on with its first block,
+  again and again: one pass is kept as a template (`SongState.cycle`) and laid out a bar ahead of
+  the generation cursor (`extendSong`), with the blocks' own ids and every pass starting its clips at
+  its own start, as the song plays them there; entries that played more than `HISTORY_TICKS` ago are
+  dropped (`pruneSong`), so a long loop never grows the plan. No 'end' while it loops.
+  - Play song with a loop: from its first block. From a block or bar before the loop's end it plays
+    into the loop; after it, to the song's end (the loop never engages).
+  - Set or changed while playing or paused (`Sequencer.setSongLoop`): the block the lane shows at
+    the playhead lies in the loop → it plays on and loops at the loop's end; outside → playback
+    continues at the loop's first block at the next bar line (`jumpAt`; at once when that block has
+    not sounded yet; while paused, after Resume). Setting never changes the block under the
+    playhead. Cleared: the song plays on to its end; a waiting jump is dropped. Resume after a
+    stall restarts inside the loop (at its first block when the music stopped outside it).
+  - Edits never jump. A replan wraps after the loop's last block (for the block that follows and
+    for the playhead's place on the edited lane, rules 2–4 above); a waiting jump is kept.
+  - The session keeps the loop valid on every project change, before the replan
+    (`songLoopAfterEdit`, src/time/songLoop.ts): both end blocks still there → unchanged (blocks
+    moved between them join it); a split keeps both halves (a new second half right after the last
+    block becomes the last block); an end block joined into the block before it → that block;
+    otherwise a deleted end block shrinks the loop to the first (last) block of its old span still
+    there; nothing left, or another project → cleared. Undoing a deletion does not widen it again.
+  - Every pass sends its 'block' events (runtime `songBlock`/`songBlockId` follow); the lane maps a
+    repeat by its id, so the lane playhead and the readout go back to the loop's start.
+    `songTimelineBar` reads the sequencer's live plan (`songLaneTickAt`), never a stale copy.
+    Replay, live pads and exports ignore the loop.
 - An 'end' is always handed out where the driver gets it: never before the resume point or before
   the floor of a rewind, so the transport stops even if the end came to lie behind music already
   handed out.
+- A tempo change never takes effect before the start or resume point (the playhead waits there). A
+  transition that leaves the same pad playing still ends what another clip sounds on that part (a
+  clip replaced in its pad just after a block start, re-applied by a rewind).
+- Right after an edit made just before a block (or loop pass) starts, the playhead lies a moment
+  before the block the edit point found; `songBlockAt` and the lane count it as that block's start.
 - `Sequencer.songPlan()` (absolute ticks; blocks before the playing one laid out in the current
   order; a deleted block has index -1 while it sounds on to the next bar line) feeds
   `views/arrange/songPlan.ts`. `songLaneTick(plan, lane, tick)` (pure, in the sequencer module) and

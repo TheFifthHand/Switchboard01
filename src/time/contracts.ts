@@ -20,6 +20,10 @@
  *   playing plays switches its parts at the edit point instead (the playhead
  *   at now + the invalidate margin), in phase with the block start; see
  *   Sequencer.replanSong. A 'launch' event then lies off the bar line.
+ * - A song loop (SongLoop) repeats its blocks: the transport tick keeps
+ *   running, each pass is a new stretch of the timeline whose clips start at
+ *   its own start (block ends are bar lines), so swing and the arpeggiator
+ *   run on through the seam. See Sequencer.setSongLoop.
  * - A clip that started at tick S with length L plays note n at
  *   S + k*L + n.tick for k = 0, 1, 2 ...
  * - Events are generated for windows of ticks. Each event belongs to exactly
@@ -58,8 +62,9 @@ export type SeqEvent =
 
 /**
  * A looped part of the song: the blocks from `fromBlockId` to `toBlockId`
- * (inclusive, in the song's current order) play again and again until the
- * loop is cleared. Runtime only (not saved with the project).
+ * (inclusive, either way round, in the song's current order) play again and
+ * again until the loop is cleared. Runtime only (not saved with the project);
+ * the session owns it (see src/time/songLoop.ts for how edits change it).
  */
 export interface SongLoop {
   fromBlockId: Id;
