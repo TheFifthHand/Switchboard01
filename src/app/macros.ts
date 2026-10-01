@@ -11,6 +11,16 @@ import { defaultMacros } from '../project/factory';
 
 const d = defaultMacros();
 
+/** One short line under each macro knob: what turning it does. The same words in every view. */
+export const MACRO_CAPTION: Record<MacroId, string> = {
+  tone: 'Dark ↔ bright',
+  space: 'Room around it',
+  echo: 'Echoes in time',
+  motion: 'Moves in time',
+  drive: 'Warmth to grit',
+  pump: 'Ducks in time',
+};
+
 export const MACRO_SPECS: Record<MacroId, ParamSpec> = {
   tone: { id: 'tone', label: 'Tone', min: 0, max: 1, default: d.tone, unit: '%', curve: 'lin', tip: 'Makes this part darker (left) or brighter (right). The middle is the sound as designed.' },
   space: { id: 'space', label: 'Space', min: 0, max: 1, default: d.space, unit: '%', curve: 'lin', tip: 'Space adds a room around this sound.' },

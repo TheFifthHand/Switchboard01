@@ -16,7 +16,7 @@ import { setView, uiStore } from '../../state/uiStore';
 import { session, useProject, useUi } from '../instance';
 import { notify, runtimeStore } from '../runtime';
 import { soundName } from '../labels';
-import { MACRO_SPECS } from '../macros';
+import { MACRO_CAPTION, MACRO_SPECS } from '../macros';
 import { SoundBrowser } from './SoundBrowser';
 import styles from './PartPanel.module.css';
 
@@ -31,15 +31,6 @@ const INSTRUMENT_TYPE: Record<Instrument['kind'], { name: string; icon: IconName
   sampler: { name: 'Sampler', icon: 'mic' },
 };
 
-/** One line under each macro: what turning it does. */
-const MACRO_CAPTION: Record<MacroId, string> = {
-  tone: 'Dark ↔ bright',
-  space: 'Room around it',
-  echo: 'Echoes in time',
-  motion: 'Moves in time',
-  drive: 'Warmth to grit',
-  pump: 'Ducks in time',
-};
 
 function MacroKnob(props: { trackId: string; macro: MacroId }) {
   const { trackId, macro } = props;

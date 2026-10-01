@@ -104,7 +104,13 @@ async function tab(page, name) {
   await page.waitForTimeout(400);
   await shot(page, '13-sound-browser-1366');
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: /^Projects \(open:/ }).click();
+  // At 1366 px Projects sits in the transport's More menu (it joins the strip from 1440 px).
+  const projects = page.getByRole('button', { name: /^Projects \(open:/ });
+  if (await projects.isVisible().catch(() => false)) await projects.click();
+  else {
+    await page.getByRole('button', { name: /^More:/ }).click();
+    await page.getByRole('menuitem', { name: /^Projects/ }).click();
+  }
   await page.waitForTimeout(400);
   await shot(page, '14-project-library-1366');
   await page.keyboard.press('Escape');

@@ -16,20 +16,13 @@ import { describeMacro, macroTargetValue } from '../../../project/resolve';
 import { MACRO_IDS, type Id, type MacroId, type MacroTarget } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { session, useProject } from '../../instance';
-import { MACRO_SPECS } from '../../macros';
+import { MACRO_CAPTION, MACRO_SPECS } from '../../macros';
 import { notify } from '../../runtime';
 import { moduleName } from './paramState';
 import styles from './MacroColumn.module.css';
 
 /** One-line summary of what each macro is for. */
-export const MACRO_CAPTION: Record<MacroId, string> = {
-  tone: 'Darker ↔ brighter',
-  space: 'Room around the sound',
-  echo: 'Echoes in time',
-  motion: 'Movement with the beat',
-  drive: 'Warmth, then grit',
-  pump: 'Ducks with the beat',
-};
+export { MACRO_CAPTION };
 
 export interface MacroRow {
   target: MacroTarget;

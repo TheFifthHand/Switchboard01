@@ -138,8 +138,8 @@ describe('Simple Shape: macros and instrument', () => {
     expect(macros.map((x) => x.getAttribute('aria-label'))).toEqual(['Tone', 'Space', 'Echo', 'Motion', 'Drive', 'Pump']);
     for (const k of macros) expect(k.closest('[data-size]')!.getAttribute('data-size')).toBe('lg');
     const tone = m.container.querySelector<HTMLElement>('[aria-label="Tone macro"]')!;
-    expect(tone.textContent).toContain('Darker ↔ brighter');
-    expect(m.container.querySelector('[aria-label="Pump macro"]')!.textContent).toContain('Ducks with the beat');
+    expect(tone.textContent).toContain('Dark ↔ bright');
+    expect(m.container.querySelector('[aria-label="Pump macro"]')!.textContent).toContain('Ducks in time');
 
     const before = track('t4').macros.tone;
     key(slider(tone, 'Tone'), 'keydown', { key: 'PageUp' });
