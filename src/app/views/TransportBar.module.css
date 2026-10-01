@@ -17,7 +17,7 @@
 }
 /* Large keys, kept compact sideways so the whole strip fits one row from 1024 px. */
 .bar .views[data-size] [role='tab'] {
-  padding: 0 10px;
+  padding: 0 9px;
   font-size: 14px;
 }
 
@@ -86,10 +86,13 @@
   gap: 4px;
 }
 .recButtons > button[data-size] {
-  --px: 9px;
+  --px: 8px;
 }
 
 .playback {
+  gap: 5px;
+}
+.output {
   gap: 6px;
 }
 
@@ -102,7 +105,7 @@
 }
 .stop[data-size] {
   --h: 40px;
-  --px: 12px;
+  --px: 11px;
 }
 
 /* State word above bar.beat. The word is the state in text; its colour repeats it. */
@@ -303,6 +306,18 @@
 .modeSwitch {
   flex: none;
 }
+/* Snug keys: the switch is secondary to the music controls beside it. */
+.bar .modeSwitch[data-size] [role='radio'] {
+  padding: 0 7px;
+}
+.exportKey[data-size] {
+  --px: 10px;
+}
+/* The MIDI & audio key with both of its icons, a little snugger. */
+.right .devicesKey {
+  gap: 2px;
+  padding: 0 4px;
+}
 
 /* Visually hidden, but still the key's accessible name. */
 .srOnly {
@@ -315,24 +330,38 @@
 }
 
 /*
- * Undo / Redo and Projects / Export move into More where the strip has no
- * room: Simple shows Undo / Redo from 1320 px and Projects / Export from
- * 1440 px; Advanced (with Swing) shows them all from 1600 px. The Simple ·
- * Advanced switch is in the strip from 1366 px.
+ * What the strip shows at each width; everything else is in More (which also
+ * always has Undo, Redo, Projects, Export and the Simple · Advanced switch).
+ * Simple, the default:
+ *   1024-1279  Stop as its square; Undo, Redo, Projects and Export in More
+ *   1280-1365  + the word "Stop" and Export (with its word)
+ *   1366-1599  + the Simple · Advanced switch
+ *   1440-1599  + Projects (its folder)
+ *   1600 up    + Undo, Redo and the save word; from 1760 the project's name
+ * Advanced (Swing takes room): the word "Stop" from 1600, Undo, Redo,
+ * Projects and Export from 1700.
+ * A failed save ("Not saved") or a waiting Update key needs room too: the
+ * Simple · Advanced switch and Projects give theirs first, never Export or Stop.
  */
-@media (max-width: 1319px) {
+@media (max-width: 1599px) {
   .right .historyKey {
     display: none;
   }
 }
 @media (max-width: 1439px) {
-  .right .fileKey {
+  .right .projectKey {
+    display: none;
+  }
+}
+@media (max-width: 1279px) {
+  .right .exportKey {
     display: none;
   }
 }
 @media (max-width: 1699px) {
   .bar[data-mode='advanced'] .right .historyKey,
-  .bar[data-mode='advanced'] .right .fileKey {
+  .bar[data-mode='advanced'] .right .projectKey,
+  .bar[data-mode='advanced'] .right .exportKey {
     display: none;
   }
 }
@@ -343,15 +372,31 @@
 }
 /* "Not saved" needs room: on narrower screens the More menu makes it. */
 @media (max-width: 1599px) {
-  .right:has(.saveError) .historyKey,
-  .right:has(.saveError) .fileKey {
+  .right:has(.saveError) .projectKey,
+  .right:has(.saveError) .modeSwitch {
     display: none;
   }
 }
 /* So does a waiting Update key, until the strip is wide enough for everything. */
 @media (max-width: 1799px) {
   .right:has(.update) .historyKey,
-  .right:has(.update) .fileKey {
+  .right:has(.update) .projectKey {
+    display: none;
+  }
+}
+@media (max-width: 1599px) {
+  .right:has(.update) .modeSwitch {
+    display: none;
+  }
+}
+/* And the MIDI & audio key, where it is on the strip: the offline state (also in More) makes room for it. */
+@media (max-width: 1799px) {
+  .bar[data-mode='simple'] .right:has(.devicesKey) .offline {
+    display: none;
+  }
+}
+@media (min-width: 1280px) and (max-width: 1799px) {
+  .bar[data-mode='advanced'] .right:has(.devicesKey) .offline {
     display: none;
   }
 }
@@ -385,8 +430,21 @@
     display: none;
   }
 }
+@media (min-width: 1180px) and (max-width: 1365px) {
+  .right:has(.update) .devicesKey {
+    display: none;
+  }
+}
+/* Advanced from 1180 px (one row, with Swing): as tight as Simple below 1180 px. */
 @media (min-width: 1180px) and (max-width: 1279px) {
-  .bar[data-mode='advanced'] .devicesKey {
+  .bar[data-mode='advanced'] .devicesKey,
+  .bar[data-mode='advanced'] .right .update {
+    display: none;
+  }
+  .bar[data-mode='advanced'] .moreBadge {
+    display: block;
+  }
+  .bar[data-mode='advanced'] .saveError .saveText {
     display: none;
   }
 }
@@ -398,17 +456,23 @@
   }
 }
 
-/* Narrow desktop: hide secondary text, keep every control reachable. */
+/* Narrow desktop: the project's name is in the Projects key's tooltip and the More menu. */
 @media (max-width: 1759px) {
   .projectName {
     display: none;
   }
-  .right .project[data-size],
-  .right .export[data-size] {
+  .right .project[data-size] {
     gap: 0;
   }
-  /* Icon only, but the word stays the button's accessible name. */
-  .exportText {
+}
+/* Stop shows its square only where the strip has no room for the word (its name stays "Stop"). */
+@media (max-width: 1279px) {
+  .stop[data-size] {
+    gap: 0;
+    width: 40px;
+    padding: 0;
+  }
+  .stopText {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -417,14 +481,13 @@
     white-space: nowrap;
   }
 }
-/* Below 1600 px Stop shows its square only (its name stays "Stop"). */
 @media (max-width: 1599px) {
-  .stop[data-size] {
+  .bar[data-mode='advanced'] .stop[data-size] {
     gap: 0;
     width: 40px;
     padding: 0;
   }
-  .stopText {
+  .bar[data-mode='advanced'] .stopText {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -445,10 +508,10 @@
 /* Below 1600 px: tighter spacing. */
 @media (max-width: 1599px) {
   .bar {
-    gap: 6px;
+    gap: 5px;
   }
   .group {
-    padding-left: 6px;
+    padding-left: 5px;
   }
 }
 /* Below 1600 px the save state shows as its lamp (words return on errors). */

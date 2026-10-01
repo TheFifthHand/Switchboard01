@@ -188,7 +188,7 @@ describe('Shape view', () => {
     expect(runtimeStore.getState().notice?.text).toMatch(/no longer moves Filter Cutoff/);
 
     // Reset mappings restores the mapping the part's sound was designed with.
-    click(button(panel(m.container, 'Macros'), /Reset mappings/));
+    click(button(panel(m.container, 'Macros (big knobs)'), /Reset mappings/));
     const designed = cmd.soundMacroMap(track('t3'));
     expect(track('t3').macroMap).toEqual(designed);
     const filterCutoffMapped = Object.values(designed).some((list) => list.some((t) => t.module === 't3:filter' && t.param === 'cutoff'));
@@ -198,7 +198,7 @@ describe('Shape view', () => {
     expect(rows).toHaveLength(designed.tone.length);
     // Resetting again changes nothing, and says so.
     const map = track('t3').macroMap;
-    click(button(panel(m.container, 'Macros'), /Reset mappings/));
+    click(button(panel(m.container, 'Macros (big knobs)'), /Reset mappings/));
     expect(track('t3').macroMap).toBe(map);
     expect(runtimeStore.getState().notice?.text).toMatch(/already match/);
   });
@@ -290,7 +290,7 @@ describe('Shape view', () => {
       for (let i = 0; i < PATCH_LIMITS.maxEffectsPerTrack - 2; i++) cmd.insertEffect(session.store, 't3', 'crusher');
     });
     const rack = panel(m.container, 'Effects');
-    expect(rack.textContent).toContain(`${PATCH_LIMITS.maxEffectsPerTrack} of ${PATCH_LIMITS.maxEffectsPerTrack}`);
+    expect(rack.textContent).toContain(`${PATCH_LIMITS.maxEffectsPerTrack} effects (up to ${PATCH_LIMITS.maxEffectsPerTrack})`);
     expect(button(rack, /Add effect/).disabled).toBe(true);
     expect(rack.textContent).toContain(`This part already has ${PATCH_LIMITS.maxEffectsPerTrack} effects, the most it can hold. Remove one to add another.`);
     // The command refuses too, with the same limit.
@@ -493,7 +493,7 @@ describe('Shape view', () => {
     });
     expect(trackChain(project().patch, 't3')).toEqual(['t3:inst', 't3:filter', 't3:ch']);
     const rack = panel(m.container, 'Effects');
-    expect(rack.textContent).toContain('1 of 6');
+    expect(rack.textContent).toContain('1 effect (up to 6)');
     const outside = rack.querySelector<HTMLElement>('[aria-label="Outside the chain"]')!;
     expect(outside).not.toBeNull();
     const drive = outside.querySelector<HTMLElement>('#rack-card-t3\\:drive')!;
@@ -545,7 +545,7 @@ describe('Shape view', () => {
     m.container.style.width = '920px';
     m.container.style.height = 'auto';
     await actFrame();
-    const macros = panel(m.container, 'Macros').getBoundingClientRect();
+    const macros = panel(m.container, 'Macros (big knobs)').getBoundingClientRect();
     const inst = panel(m.container, 'Instrument').getBoundingClientRect();
     const fx = panel(m.container, 'Effects').getBoundingClientRect();
     expect(Math.abs(inst.top - macros.top)).toBeLessThan(2);

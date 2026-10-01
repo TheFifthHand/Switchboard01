@@ -124,6 +124,11 @@
   grid-area: actions;
   justify-self: end;
   display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 2px;
+  /* In a narrow spot the buttons wrap onto a second line instead of running over the label and counter. */
+  min-width: 0;
+  max-width: 100%;
 }

@@ -48,8 +48,10 @@ test('after Jump In, "Try this" hints suggest one thing at a time, follow what y
   await page.getByRole('button', { name: 'Mute Drums', exact: true }).click();
   await expect(hint).toContainText('Drag a clip onto another pad.');
 
-  // Hidden is remembered: not even a new Jump In brings it back.
-  await hint.getByRole('button', { name: 'Hide hints' }).click();
+  // Hidden is remembered: not even a new Jump In brings it back. (Pressed with the keyboard: right
+  // after the chip changes, mouse clicks on it are ignored for a moment so a double-click elsewhere
+  // cannot hide it by accident; keys always work.)
+  await hint.getByRole('button', { name: 'Hide hints' }).press('Enter');
   await expect(hint).toBeHidden();
   await page.reload();
   await jumpIn(page);

@@ -213,6 +213,11 @@
   padding-right: 20px;
 }
 
+/* A key over the top-right corner (the selected clip pad's '⋯', 32 px from 3 px in): the name and length end before it. */
+.pad[data-corner] .text {
+  padding-right: 30px;
+}
+
 /* Pads with only a name (drum and note pads) may use two lines. */
 .pad[data-wrap] .label {
   display: -webkit-box;

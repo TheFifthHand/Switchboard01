@@ -44,7 +44,7 @@
 .plot {
   position: relative;
   flex: 1 1 auto;
-  min-height: 72px;
+  min-height: 60px;
   border-radius: var(--r-md);
   background: linear-gradient(180deg, var(--surface-hi), var(--surface));
   box-shadow:

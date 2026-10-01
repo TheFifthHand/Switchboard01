@@ -8,6 +8,10 @@
  * every recorded edit joins the group's entry. `updatedAt` is stamped outside the recorded patches, so
  * undo/redo count as fresh edits for autosave instead of rewinding the clock.
  *
+ * Every history entry has an id that is never reused (gesture and group
+ * merges keep it), so a message about an edit ("Moved clip" [Undo]) can tell
+ * whether its edit is still the newest step.
+ *
  * The edit lock refuses routing edits (labels starting with "patch:") while a
  * performance take is recording, including undo/redo of such edits and of
  * undoable whole-project swaps (which replace the patch as well). A lock can
@@ -43,6 +47,8 @@ export interface ApplyResult {
 }
 
 export interface HistoryEntry {
+  /** Unique for the app's lifetime; kept when later edits merge into this step. */
+  id: number;
   label: string;
   gesture?: string;
   patches: ImmerPatch[];
@@ -54,10 +60,17 @@ export interface HistoryInfo {
   canRedo: boolean;
   undoLabel: string | null;
   redoLabel: string | null;
+  /** Ids of the steps Undo and Redo would apply (see HistoryEntry.id). */
+  undoId: number | null;
+  redoId: number | null;
   lock: string | null;
 }
 
 export type Recipe = (draft: Project) => void;
+
+/** Shared by every store, so an id never names steps of two different stores. */
+let lastEntryId = 0;
+const nextEntryId = (): number => ++lastEntryId;
 
 /** "patch:Connect cable" -> "Connect cable". Labels without an area prefix are returned unchanged. */
 export function displayLabel(label: string): string {
@@ -162,7 +175,7 @@ export class ProjectStore implements ReadableStore<Project> {
         // Inverses run newest-first.
         top.inverse = [...inverse, ...top.inverse];
       } else {
-        const entry: HistoryEntry = { label: this.group?.label ?? label, gesture: opts.gesture, patches, inverse };
+        const entry: HistoryEntry = { id: nextEntryId(), label: this.group?.label ?? label, gesture: opts.gesture, patches, inverse };
         this.undoStack.push(entry);
         if (this.group) this.group.entry = entry;
         if (this.undoStack.length > this.limit) this.undoStack.splice(0, this.undoStack.length - this.limit);
@@ -216,6 +229,16 @@ export class ProjectStore implements ReadableStore<Project> {
     return top ? displayLabel(top.label) : null;
   }
 
+  /** Id of the step Undo would revert (the newest edit), or null. */
+  undoEntryId(): number | null {
+    return this.undoStack[this.undoStack.length - 1]?.id ?? null;
+  }
+
+  /** Id of the step Redo would apply again, or null. */
+  redoEntryId(): number | null {
+    return this.redoStack[this.redoStack.length - 1]?.id ?? null;
+  }
+
   undo(): ApplyResult {
     const entry = this.undoStack[this.undoStack.length - 1];
     if (!entry) return { changed: false };
@@ -249,6 +272,7 @@ export class ProjectStore implements ReadableStore<Project> {
     this.openGesture = null;
     if (opts.resetHistory === false) {
       this.undoStack.push({
+        id: nextEntryId(),
         label: opts.label ?? 'project:Replace project',
         patches: [{ op: 'replace', path: [], value: next }],
         inverse: [{ op: 'replace', path: [], value: prev }],
@@ -312,10 +336,18 @@ export class ProjectStore implements ReadableStore<Project> {
   }
 
   private computeInfo(): HistoryInfo {
-    const next: HistoryInfo = { canUndo: this.canUndo(), canRedo: this.canRedo(), undoLabel: this.undoLabel(), redoLabel: this.redoLabel(), lock: this.lock };
+    const next: HistoryInfo = {
+      canUndo: this.canUndo(),
+      canRedo: this.canRedo(),
+      undoLabel: this.undoLabel(),
+      redoLabel: this.redoLabel(),
+      undoId: this.undoEntryId(),
+      redoId: this.redoEntryId(),
+      lock: this.lock,
+    };
     const cur = this.info?.getState();
     // Keep the same object when nothing changed so subscribers are not woken.
-    if (cur && cur.canUndo === next.canUndo && cur.canRedo === next.canRedo && cur.undoLabel === next.undoLabel && cur.redoLabel === next.redoLabel && cur.lock === next.lock) return cur;
+    if (cur && (Object.keys(next) as (keyof HistoryInfo)[]).every((k) => cur[k] === next[k])) return cur;
     return next;
   }
 }

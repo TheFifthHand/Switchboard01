@@ -19,14 +19,15 @@
  * button, or Alt+Up / Alt+Down on it; the clips of every part move with them.
  *
  * The selected pad's actions are in the bar under the grid (Edit steps ·
- * Duplicate · Move… · Rename · Delete); right-click, the menu key or
- * Shift+F10 open them as a menu at the pad, and the '⋯' key on the pad too.
- * On a focused pad: Delete removes the clip (with Undo), Ctrl+C / Ctrl+V copy
- * and paste clips, F2 renames.
+ * Duplicate · Move… · Rename · Delete); right-click, the menu key, Shift+F10
+ * or "." open them as a menu at the pad without playing it (the pad's tooltip
+ * and description say so), and the '⋯' key in the selected pad's top-right
+ * corner too. On a focused pad: Delete removes the clip (with Undo), Ctrl+C /
+ * Ctrl+V copy and paste clips, F2 renames.
  */
 import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Button, Icon, IconButton, Meter, Pad, Tooltip, type PadState } from '../../ui/components';
+import { Button, DRUM_KEYS, Icon, IconButton, Meter, NOTE_KEYS, OCTAVE_KEYS, Pad, Tooltip, type PadState } from '../../ui/components';
 import { TAP_SLOP_PX } from '../../ui/components/Pad';
 import { SCENE_ROWS, type Clip, type Id, type Project, type Scene } from '../../project/types';
 import { clipDropProblem } from '../../state/commands';
@@ -91,6 +92,21 @@ function padState(clip: Clip | null, slot: number, rt: TrackRuntime | undefined,
   }
   if (queued && queued.slot === slot) return { state: 'queued' };
   return { state: 'ready' };
+}
+
+/** What a clip pad does when tapped, and how to reach its actions without playing it (its tooltip and description). */
+const PAD_TIP = 'Tap to start this clip, in time with the others; tap it again to stop it.';
+const EMPTY_PAD_TIP = 'Tap to add a clip here: a new one, or paste a copied clip.';
+const PAD_ACTIONS_HINT = 'Right-click or Shift+F10 for actions without playing it (on a focused pad the . key works too). Drag it onto another pad to move it.';
+/** Keys on a focused pad (see onGridKey). */
+const PAD_SHORTCUTS = 'Shift+F10 ContextMenu . F2';
+const CLIP_PAD_SHORTCUTS = `${PAD_SHORTCUTS} Delete`;
+
+/** "." opens a focused pad's actions, unless that physical key plays notes or drum pads on this keyboard layout. */
+const PLAYED_KEY_CODES: ReadonlySet<string> = new Set([...NOTE_KEYS, ...DRUM_KEYS, OCTAVE_KEYS.down, OCTAVE_KEYS.up].map((k) => k.code));
+function isActionsKey(e: KeyboardEvent<HTMLElement>): boolean {
+  if (isMenuKey(e)) return true;
+  return e.key === '.' && !e.ctrlKey && !e.metaKey && !e.altKey && !PLAYED_KEY_CODES.has(e.code);
 }
 
 const STATE_SPOKEN: Record<PadState, string> = { empty: 'Empty', ready: 'Ready', queued: 'Starts next bar', playing: 'Playing', recording: 'Recording', stopping: 'Stopping' };
@@ -217,27 +233,32 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
       onPointerDown={(e) => clip && onPointerDownPad(e, { trackId, slot })}
       onContextMenu={(e) => onContextMenuOpen(e, (a) => open(a, document.getElementById(id)))}
     >
-      <Pad
-        state={state}
-        selected={selected}
-        label={clip ? clip.name : 'Add clip'}
-        sublabel={clip ? barsLabel(clip.bars) : undefined}
-        caption={caption}
-        captionIcon={paused ? 'pause' : undefined}
-        activateOn="release"
-        labelSize="lg"
-        quietEmpty
-        onPress={onPress}
-        ariaLabel={move && drop ? `${label} ${drop === 'source' ? 'Moving this clip.' : drop === 'ok' ? 'Press Enter to drop it here.' : 'It cannot go here.'}` : label}
-        id={id}
-      />
+      {/* Always wrapped (an empty pad has a tip too), so the pad never remounts and keeps focus when a clip lands on it. */}
+      <Tooltip tip={clip ? PAD_TIP : EMPTY_PAD_TIP} hint={clip ? PAD_ACTIONS_HINT : undefined}>
+        <Pad
+          state={state}
+          selected={selected}
+          label={clip ? clip.name : 'Add clip'}
+          sublabel={clip ? barsLabel(clip.bars) : undefined}
+          caption={caption}
+          captionIcon={paused ? 'pause' : undefined}
+          activateOn="release"
+          labelSize="lg"
+          quietEmpty
+          cornerKey={selected && !move}
+          shortcuts={clip ? CLIP_PAD_SHORTCUTS : PAD_SHORTCUTS}
+          onPress={onPress}
+          ariaLabel={move && drop ? `${label} ${drop === 'source' ? 'Moving this clip.' : drop === 'ok' ? 'Press Enter to drop it here.' : 'It cannot go here.'}` : label}
+          id={id}
+        />
+      </Tooltip>
       {drop === 'no' && over && (
         <span className={styles.dropNote} aria-hidden="true">
           Can’t go here
         </span>
       )}
       {selected && !move && (
-        <Tooltip name={clip ? 'Clip options' : 'New clip or paste'} tip={clip ? 'Rename, length, duplicate, move, copy, paste, clear or delete this clip.' : 'Make a new clip here, or paste a copied one.'} detail={`Right-click any pad for the same menu. Keys on a pad: Delete, ${MOD_KEY}C, ${MOD_KEY}V, F2.`}>
+        <Tooltip name={clip ? 'Clip options' : 'New clip or paste'} tip={clip ? 'Rename, length, duplicate, move, copy, paste, clear or delete this clip.' : 'Make a new clip here, or paste a copied one.'} detail={`Right-click any pad for the same menu (or Shift+F10, or . on a focused pad). Keys on a pad: Delete, ${MOD_KEY}C, ${MOD_KEY}V, F2.`}>
           <button
             type="button"
             className={styles.more}
@@ -395,7 +416,7 @@ function TrackHeader(props: { col: ColumnSummary; index: number; anySolo: boolea
       <div className={styles.headBottom}>
         <PartPlayButton col={col} />
         {status ? (
-          <span className={styles.status} data-status={status === 'Solo' ? 'solo' : 'off'}>
+          <span className={styles.status} data-status={status === 'Solo' ? 'solo' : status === 'Muted' ? 'muted' : 'quiet'}>
             {status}
           </span>
         ) : (
@@ -821,8 +842,9 @@ export function LoopsGrid() {
         selectTrack(trackId);
         selectSlot(trackId, row);
       };
-      if (!moving && isMenuKey(e)) {
+      if (!moving && isActionsKey(e)) {
         e.preventDefault();
+        if (e.repeat) return;
         noteKeyboardMenu(el);
         select();
         openMenu({ kind: 'clip', trackId, slot: row, anchor: anchorFromElement(el), returnFocus: el });

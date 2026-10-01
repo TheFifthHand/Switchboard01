@@ -322,6 +322,12 @@ button.head:hover {
   padding: 6px 0 26px;
 }
 
+.masterMeters {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
 /* ---------- limiter (master, Advanced) ---------- */
 
 .limiter {

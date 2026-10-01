@@ -47,8 +47,24 @@ export interface RuntimeState {
   preview: boolean;
   /** Notes currently held per track (keyboard/pad highlighting). */
   held: Record<Id, readonly number[]>;
-  /** One-line status message shown in the transport (e.g. "Variation: 5 notes changed"). */
-  notice: { id: number; text: string; tone: 'info' | 'warn' | 'error'; action?: 'undo' } | null;
+  /** One-line status message shown as a toast (e.g. "Variation: 5 notes changed" [Undo]). */
+  notice: Notice | null;
+}
+
+/** What a notice's button does: Undo (or Redo) the history step the message is about. */
+export type NoticeAction = 'undo' | 'redo';
+
+export interface Notice {
+  id: number;
+  text: string;
+  tone: 'info' | 'warn' | 'error';
+  action?: NoticeAction;
+  /**
+   * The history step the action applies to (ProjectStore entry id): Undo acts
+   * only while it is the newest step (Redo: while it is next to redo), and the
+   * toast goes away once it is not. Unset: not known when the notice was made.
+   */
+  entry?: number;
 }
 
 export const EMPTY_TRACK_RUNTIME: TrackRuntime = { playingSlot: null, queued: null };
@@ -85,9 +101,30 @@ export function setTrackRuntime(trackId: Id, tr: TrackRuntime): void {
 }
 
 let noticeCounter = 0;
-export function notify(text: string, tone: 'info' | 'warn' | 'error' = 'info', action?: 'undo'): void {
+
+/** Where notify() finds the step an Undo / Redo notice is about (the app's project store; see setNoticeHistory). */
+let historyTop: ((action: NoticeAction) => number | null) | null = null;
+
+/**
+ * Tell notify() how to find the newest undo step and the next redo step (ids),
+ * so each Undo notice is tied to the edit that was just made.
+ */
+export function setNoticeHistory(top: ((action: NoticeAction) => number | null) | null): void {
+  historyTop = top;
+}
+
+/**
+ * Show a message. With an action, the toast offers Undo (or Redo) of the
+ * history step it is about: `entry`, or by default the step that is newest
+ * right now (call it just after the edit).
+ */
+export function notify(text: string, tone: 'info' | 'warn' | 'error' = 'info', action?: NoticeAction, entry?: number | null): void {
   noticeCounter += 1;
-  patchRuntime({ notice: { id: noticeCounter, text, tone, action } });
+  // undefined: not known (no history source); null: nothing to undo (redo).
+  const step = !action ? undefined : entry !== undefined ? entry : historyTop ? historyTop(action) : undefined;
+  // Nothing to undo (or redo): no button.
+  const tied = action && step !== null ? { action, ...(step !== undefined ? { entry: step } : {}) } : {};
+  patchRuntime({ notice: { id: noticeCounter, text, tone, ...tied } });
 }
 
 /** The transport's state in one word, as the transport shows it. */

@@ -2,7 +2,10 @@
  * Mix layout.
  * - Wide enough: mixer and mastering side by side, filling the workspace
  *   (Simple from 1280 px; Advanced, whose strips carry two more knobs, from 1800 px).
- * - Narrower: mixer on top at the workspace height, mastering below; the view scrolls.
+ * - Narrower: mixer on top at about the workspace height (the top of Mastering
+ *   peeks out below it), mastering below at its full height, laid out in two
+ *   columns; the view scrolls. The mastering panel never becomes a small
+ *   scroll box of its own.
  * - Below 1024 px (200 % zoom), the page scrolls (App switches to auto rows).
  * The strips scroll sideways inside the mixer if they ever run out of room,
  * so all eight parts and the master stay reachable.
@@ -11,7 +14,8 @@
 .view {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: max(560px, 100%) auto;
+  /* max-content: an auto row would get no room under a full-height mixer. */
+  grid-template-rows: max(560px, calc(100% - 52px)) max-content;
   gap: 10px;
   height: 100%;
   min-height: 0;
@@ -22,7 +26,7 @@
 }
 
 .view[data-mode='advanced'] {
-  grid-template-rows: max(600px, 100%) auto;
+  grid-template-rows: max(600px, calc(100% - 52px)) max-content;
 }
 
 /* Side by side, both filling the workspace height (a very short workspace scrolls instead of clipping faders). */
@@ -44,11 +48,11 @@
   .view,
   .view[data-mode='advanced'] {
     height: auto;
-    grid-template-rows: 560px auto;
+    grid-template-rows: 560px max-content;
     overflow: visible;
   }
   .view[data-mode='advanced'] {
-    grid-template-rows: 740px auto;
+    grid-template-rows: 740px max-content;
   }
 }
 

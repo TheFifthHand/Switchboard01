@@ -291,7 +291,8 @@
   flex: none;
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--teal);
+  /* Dark teal: white text on it reads at well over 4.5:1. */
+  background: var(--teal-ink);
   color: #fff;
   font-size: var(--fs-xs);
   font-weight: 600;

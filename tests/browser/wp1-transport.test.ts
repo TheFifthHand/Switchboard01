@@ -1,10 +1,12 @@
 /**
  * The transport strip in the running app (real Chromium layout): the offline
  * readiness and Update states are on screen and fit the compact strip at the
- * target sizes without pushing anything off it; Update never reloads during
- * playback, a recording or with unsaved edits; the More menu carries both
- * where the strip has no room; and at 200 % zoom the strip (with Mute All)
- * stays on screen while the page scrolls.
+ * target sizes without pushing anything off it; Stop and Export show their
+ * words from 1280 px (so on the common 1366 px laptop), whatever the save or
+ * update state; Update never reloads during playback, a recording or with
+ * unsaved edits; the More menu carries both where the strip has no room; and
+ * at 200 % zoom the strip (with Mute All) stays on screen while the page
+ * scrolls.
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -89,6 +91,26 @@ function expectStripFits(label: string) {
   expect(outside, `${label}: controls outside the strip`).toEqual([]);
 }
 
+/** The word is on screen inside the key (not only its accessible name). */
+function wordShown(b: HTMLElement | null, word: string): boolean {
+  if (!shown(b)) return false;
+  const el = [...b.querySelectorAll<HTMLElement>('*')].find((e) => e.children.length === 0 && e.textContent?.trim() === word) ?? (b.textContent?.trim() === word ? b : null);
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
+  const box = b.getBoundingClientRect();
+  const bar = document.querySelector('header[aria-label="Transport"]')!.getBoundingClientRect();
+  return r.width >= word.length * 5 && r.left >= box.left - 0.5 && r.right <= Math.min(box.right, bar.right) + 0.5 && getComputedStyle(el).clip === 'auto';
+}
+
+/** Stop and Export with their words: from 1280 px in Simple, whatever the save or update state. */
+function expectStopAndExportWords(label: string) {
+  const stop = buttonNamed('Stop', bar());
+  const exportKey = buttonNamed('Export', bar());
+  expect(wordShown(stop, 'Stop'), `${label}: "Stop" shown`).toBe(true);
+  expect(wordShown(exportKey, 'Export'), `${label}: "Export" shown`).toBe(true);
+  expect(stop!.getBoundingClientRect().height, `${label}: Stop is a primary key`).toBeGreaterThanOrEqual(40);
+}
+
 async function until<T>(fn: () => T | null | undefined | false, what: string, ms = 5000): Promise<T> {
   const end = performance.now() + ms;
   for (;;) {
@@ -118,16 +140,32 @@ describe('Offline readiness in the transport', () => {
       expect(status!.querySelector('svg')).not.toBeNull();
       expectStripFits(text);
     }
-    // Saved, Undo, Redo and the Simple · Advanced switch stay in view next to it; Projects and Export are in More.
+    // The save state, Stop and Export with their words, the Simple · Advanced switch and More stay in
+    // view next to it; Undo, Redo and Projects are in More (and Ctrl+Z / Ctrl+Shift+Z work anywhere).
     setOffline('ready');
-    for (const name of [/^Autosave: /, /^Undo/, /^Redo/, /^More:/]) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
+    for (const name of [/^Autosave: /, /^More:/]) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
+    expectStopAndExportWords('1366 px, offline ready');
     for (const name of ['Simple', 'Advanced']) expect(shown([...bar().querySelectorAll('[role="radio"]')].find((r) => r.textContent === name)), name).toBe(true);
+    for (const name of [/^Undo/, /^Redo/, /^Projects \(open:/]) expect(shown(buttonNamed(name, bar())), String(name)).toBe(false);
     expect(buttonNamed(/^Autosave: /, bar())!.textContent).toContain('Preview');
-    // From 1440 px Projects and Export are on the strip too.
+    // From 1440 px Projects is on the strip too; from 1600 px Undo and Redo.
     await page.viewport(1440, 900);
     await settle();
     for (const name of [/^Projects \(open:/, 'Export']) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
     expectStripFits('1440 px, offline ready');
+    await page.viewport(1600, 900);
+    await settle();
+    for (const name of [/^Undo/, /^Redo/, /^Projects \(open:/, 'Export']) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
+    expectStripFits('1600 px, offline ready');
+    // What the strip has no room for is one press away in More.
+    await act(async () => {
+      buttonNamed(/^More:/, bar())!.click();
+    });
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role^="menuitem"]')].map((el) => el.textContent ?? '');
+    for (const word of ['Undo', 'Redo', 'Projects…', 'Export WAV…', 'Show every control (Advanced)']) expect(items.some((t) => t.includes(word)), word).toBe(true);
+    await act(async () => {
+      buttonNamed(/^More:/, bar())!.click();
+    });
   });
 
   it('fits the strip at every width from 1024 to 1920 px, with an update waiting, a preview or a failed save', async () => {
@@ -143,6 +181,9 @@ describe('Offline readiness in the transport', () => {
             await wait(0);
           });
           expectStripFits(`${w} px, ${state}, ${save}`);
+          if (w >= 1280) expectStopAndExportWords(`${w} px, ${state}, ${save}`);
+          // Narrower, Stop is its square (still named Stop) and Export is in More.
+          else expect(wordShown(buttonNamed('Stop', bar()), 'Stop'), `${w} px: Stop as its square`).toBe(false);
         }
       }
     };

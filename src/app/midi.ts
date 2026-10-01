@@ -273,7 +273,7 @@ interface Wheel {
   viaSelected: boolean;
 }
 
-/** One undo step per control movement: a pause this long starts the next one. */
+/** One undo step per control movement (all controls moved together count as one): a pause this long starts the next one. */
 const GESTURE_IDLE_MS = 600;
 /** How long an activity light stays lit after a message. */
 export const ACTIVITY_MS = 140;
@@ -281,6 +281,8 @@ export const ACTIVITY_MS = 140;
 export const MIDI_UNSUPPORTED_MESSAGE = 'This browser cannot use MIDI keyboards. Chrome or Edge on a computer can; your computer keyboard and the on-screen keys still play.';
 export const MIDI_INSECURE_MESSAGE = 'MIDI only works when the app is opened from its own launcher (http://127.0.0.1…) or a secure https address.';
 export const MIDI_DENIED_MESSAGE = 'MIDI access was blocked. Allow MIDI devices for this page in the browser’s site settings (the icon left of the address), then press Connect MIDI again.';
+/** Any other failure to start MIDI (the browser's own error text means nothing to most people). */
+export const MIDI_FAILED_MESSAGE = 'Omni Song can’t reach MIDI on this computer. Check the keyboard is plugged in, use Chrome or Edge, then press Connect MIDI again.';
 export const MIDI_SOUND_OFF_MESSAGE = 'Your MIDI keyboard is connected. Click anywhere in the app once (or press Play) to turn the sound on; then it plays.';
 
 export class MidiController {
@@ -296,7 +298,8 @@ export class MidiController {
   private wheels = new Map<string, Wheel>();
   private activity = new Map<string, number>();
   private lastActivityAt = -Infinity;
-  private gestures = new Map<string, { id: string; timer: ReturnType<typeof setTimeout> }>();
+  /** The undo gesture shared by every control moving now (see gesture()). */
+  private openGesture: { id: string; timer: ReturnType<typeof setTimeout> } | null = null;
   private gestureSeq = 0;
   private soundOffNoticeShown = false;
   private unsubs: (() => void)[] = [];
@@ -348,7 +351,7 @@ export class MidiController {
       } catch (e) {
         const name = (e as { name?: string } | null)?.name ?? '';
         if (name === 'SecurityError' || name === 'NotAllowedError') this.patch({ status: 'denied', message: MIDI_DENIED_MESSAGE });
-        else this.patch({ status: 'error', message: `MIDI could not start: ${e instanceof Error ? e.message : String(e)}` });
+        else this.patch({ status: 'error', message: MIDI_FAILED_MESSAGE });
         return false;
       } finally {
         this.connectJob = null;
@@ -609,7 +612,7 @@ export class MidiController {
     }
     if (cc === 1) {
       const target = this.targetTrack(inputId);
-      if (target) this.session.setMacro(target.trackId, 'motion', value / 127, this.gesture(`motion:${target.trackId}`));
+      if (target) this.session.setMacro(target.trackId, 'motion', value / 127, this.gesture());
     }
   }
 
@@ -630,16 +633,16 @@ export class MidiController {
     const t = m.target;
     switch (t.kind) {
       case 'macro':
-        this.session.setMacro(selected, t.macro, x, this.gesture(`macro:${selected}:${t.macro}`));
+        this.session.setMacro(selected, t.macro, x, this.gesture());
         break;
       case 'volume':
-        this.session.setModuleParam(moduleId.channel(selected), 'level', faderValue(LEVEL_SPEC, x), this.gesture(`volume:${selected}`));
+        this.session.setModuleParam(moduleId.channel(selected), 'level', faderValue(LEVEL_SPEC, x), this.gesture());
         break;
       case 'master':
-        this.session.setMasterVolume(faderValue(MASTER_VOLUME_SPEC, x), this.gesture('master'));
+        this.session.setMasterVolume(faderValue(MASTER_VOLUME_SPEC, x), this.gesture());
         break;
       case 'tempo':
-        this.session.setBpm(Math.max(BPM_SPEC.min, Math.min(BPM_SPEC.max, TEMPO_CC_BASE + value)), this.gesture('tempo'));
+        this.session.setBpm(Math.max(BPM_SPEC.min, Math.min(BPM_SPEC.max, TEMPO_CC_BASE + value)), this.gesture());
         break;
     }
   }
@@ -677,13 +680,21 @@ export class MidiController {
     return Math.round(norm * this.state.getState().settings.bendRange * 100 * 100) / 100;
   }
 
-  private gesture(key: string): string {
-    const cur = this.gestures.get(key);
-    if (cur) clearTimeout(cur.timer);
-    this.gestureSeq += 1;
-    const id = cur?.id ?? `midi:${key}:${this.gestureSeq}`;
-    const timer = setTimeout(() => this.gestures.delete(key), GESTURE_IDLE_MS);
-    this.gestures.set(key, { id, timer });
+  /**
+   * The undo gesture for a control movement. Every control moving at the same
+   * time shares one gesture (the store merges only into the step still open,
+   * so one gesture per control would make a step per message when two move
+   * together, and push older edits out of the history). It ends after a pause
+   * of GESTURE_IDLE_MS with no control moving.
+   */
+  private gesture(): string {
+    if (this.openGesture) clearTimeout(this.openGesture.timer);
+    else this.gestureSeq += 1;
+    const id = this.openGesture?.id ?? `midi:controls:${this.gestureSeq}`;
+    const timer = setTimeout(() => {
+      if (this.openGesture?.id === id) this.openGesture = null;
+    }, GESTURE_IDLE_MS);
+    this.openGesture = { id, timer };
     return id;
   }
 
@@ -747,8 +758,8 @@ export class MidiController {
     this.disconnectSilently();
     for (const u of this.unsubs) u();
     this.unsubs = [];
-    for (const g of this.gestures.values()) clearTimeout(g.timer);
-    this.gestures.clear();
+    if (this.openGesture) clearTimeout(this.openGesture.timer);
+    this.openGesture = null;
   }
 
   private disconnectSilently(): void {

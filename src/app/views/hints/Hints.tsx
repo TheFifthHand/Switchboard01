@@ -6,20 +6,23 @@
  *
  * - Never blocks anything: it is not a dialog, takes no focus, and sits in a
  *   free spot of the workspace (placement.ts), never over the transport, the
- *   pads or the keyboard. It moves only when something would end up under it.
+ *   pads, the keyboard, a control, a heading or a status line. It moves only
+ *   when something would end up under it, and for a moment after it appears
+ *   or moves it ignores pointer clicks (a double-click meant for what was
+ *   there before never hides it).
  * - Shown only while Tips are on; "Hide hints" closes it (remembered), and
  *   the Project library's "Show hints again" starts it over.
  * - Screen readers hear each new suggestion through a polite status message.
  * - A step that needs another view offers a button that goes there.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { Button, Icon, IconButton } from '../../../ui/components';
 import { setPadMode, setView } from '../../../state/uiStore';
 import { shallowEqual, useStore } from '../../../state/store';
 import { session, useProject, useUi } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { finishHints, hideHints, hintsRunning, hintsStore, markHintDone, type HintId } from './hintsState';
-import { HINT_STEPS, HINTS_FINISHED_TEXT, bassPart, currentHint, drumsPart, type HintContext } from './steps';
+import { HINT_STEPS, bassPart, currentHint, drumsPart, hintsFinishedText, type HintContext } from './steps';
 import { findSpot, readObstacles, spotCost, workArea, type Spot } from './placement';
 import { watchHints } from './tracker';
 import styles from './Hints.module.css';
@@ -53,6 +56,20 @@ function applyLayout(el: HTMLElement, layout: Layout, maxW: number): void {
 const DONE_MS = 1800;
 /** How often the chip checks that nothing has moved under it. */
 const CHECK_MS = 600;
+/**
+ * After the chip appears, moves or changes size, pointer clicks on it are
+ * ignored for this long: the second click of a double-click meant for what
+ * was there before (Skip guide, Next hint) must not land on Hide hints.
+ * Keyboard presses always work.
+ */
+export const HINT_CLICK_GUARD_MS = 450;
+
+/** True when the transport shows its Export key at this width (otherwise Export is in its ⋯ menu). */
+function exportOnStrip(): boolean {
+  const bar = document.querySelector('header[aria-label="Transport"]');
+  if (!bar) return true;
+  return [...bar.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Export' && b.getBoundingClientRect().width > 1);
+}
 
 export interface HintsProps {
   /** False while something else has the stage (the Welcome card, the quick guide). */
@@ -86,12 +103,15 @@ function HintChip({ done }: { done: readonly HintId[] }) {
     shallowEqual,
   );
   const recording = useRuntime((s) => s.recording === 'performance');
+  const selectedTrack = useUi((s) => s.selectedTrackId);
   const ctx: HintContext = { view, padMode, recording, ...parts };
+  // Where Export is at this width, for the closing line (read from the strip, which follows the window).
+  const [exportShown, setExportShown] = useState(true);
 
   const current = currentHint(done, ctx);
   const steps = useMemo(() => HINT_STEPS.filter((s) => !s.available || s.available(ctx)), [ctx.bassName, ctx.drumsName]); // eslint-disable-line react-hooks/exhaustive-deps
   const step = current?.step ?? null;
-  const text = step ? step.text(ctx) : HINTS_FINISHED_TEXT;
+  const text = step ? step.text(ctx) : hintsFinishedText(exportShown ? 'strip' : 'menu');
   const more = step?.more?.(ctx) ?? null;
   const here = step ? step.here(ctx) : true;
   const go = step && !here ? (step.go ?? null) : null;
@@ -123,9 +143,11 @@ function HintChip({ done }: { done: readonly HintId[] }) {
   }, [step?.id, text]);
 
   const chipRef = useRef<HTMLElement>(null);
-  /** Where the chip is, and what it covered there counting controls only (for the quick check). */
-  const spot = useRef<(Spot & { vw: number; vh: number; controls: number }) | null>(null);
+  /** Where the chip is (and its size), and what it covered there counting the quick check's obstacles only. */
+  const spot = useRef<(Spot & { w: number; h: number; vw: number; vh: number; controls: number }) | null>(null);
   const [ready, setReady] = useState(false);
+  /** Pointer clicks on the chip before this time (performance.now()) are ignored (see HINT_CLICK_GUARD_MS). */
+  const clickGuardUntil = useRef(0);
 
   /**
    * Find the best spot and move there. Size and layout are set on the element
@@ -151,9 +173,15 @@ function HintChip({ done }: { done: readonly HintId[] }) {
     applyLayout(el, best.layout, best.maxW);
     el.style.left = `${best.x}px`;
     el.style.top = `${best.y}px`;
-    const controls = spotCost(best.x, best.y, { w: el.offsetWidth, h: el.offsetHeight }, readObstacles(el, vw, vh, { text: false }));
-    spot.current = { ...best, vw, vh, controls };
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const prev = spot.current;
+    // Appeared, moved or changed size: its buttons are somewhere new, so a click meant for what was there before is ignored.
+    if (!prev || prev.x !== best.x || prev.y !== best.y || prev.w !== w || prev.h !== h) clickGuardUntil.current = performance.now() + HINT_CLICK_GUARD_MS;
+    const controls = spotCost(best.x, best.y, { w, h }, readObstacles(el, vw, vh, { text: false }));
+    spot.current = { ...best, w, h, vw, vh, controls };
     setReady(true);
+    setExportShown(exportOnStrip());
   };
 
   // Stay out of the way: move only when the window changes or something now sits under the chip.
@@ -182,7 +210,7 @@ function HintChip({ done }: { done: readonly HintId[] }) {
       const vw = document.documentElement.clientWidth || window.innerWidth;
       const vh = document.documentElement.clientHeight || window.innerHeight;
       if (vw !== s.vw || vh !== s.vh) return place();
-      // Cheap: controls only (a few milliseconds less than reading every line of text on the page).
+      // Cheap: controls, headings and status lines only (a few milliseconds less than reading every line of text on the page).
       const cost = spotCost(s.x, s.y, { w: el.offsetWidth, h: el.offsetHeight }, readObstacles(el, vw, vh, { text: false }));
       if (cost > s.controls + 0.5) place();
     };
@@ -204,6 +232,22 @@ function HintChip({ done }: { done: readonly HintId[] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Another part selected: its name (in the Shape heading, say) may now run under the chip. Check after it has laid out.
+  useEffect(() => {
+    let raf = requestAnimationFrame(() => {
+      raf = requestAnimationFrame(() => checkRef.current());
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [selectedTrack]);
+
+  /** Ignore pointer clicks right after the chip appeared or moved (keyboard presses have detail 0 and always count). */
+  const guardClicks = (e: MouseEvent) => {
+    if (e.detail > 0 && performance.now() < clickGuardUntil.current) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
   const next = () => {
     if (!step) return;
     passedOver.current = step.id;
@@ -211,7 +255,7 @@ function HintChip({ done }: { done: readonly HintId[] }) {
   };
   const hide = () => {
     hideHints();
-    notify('Hints are off. To see them again, open Projects (the folder button at the top right, or More → Projects…) and press “Show hints again”.');
+    notify('Hints are off. To see them again, choose Projects… in the ⋯ menu at the top right and press “Show hints again”.');
   };
   const goThere = () => {
     if (!go) return;
@@ -228,6 +272,7 @@ function HintChip({ done }: { done: readonly HintId[] }) {
         data-hint={step?.id ?? 'finished'}
         data-ready={ready || undefined}
         data-done={justDone || undefined}
+        onClickCapture={guardClicks}
       >
         <span className={styles.label} aria-hidden="true">
           {justDone ? (

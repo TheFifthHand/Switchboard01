@@ -127,7 +127,7 @@ export function PartPanel() {
             {header.name}
           </h2>
           {status && (
-            <span className={styles.status} data-status={status === 'Solo' ? 'solo' : 'off'}>
+            <span className={styles.status} data-status={status === 'Solo' ? 'solo' : status === 'Muted' ? 'muted' : 'quiet'}>
               {status}
             </span>
           )}

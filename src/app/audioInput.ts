@@ -21,9 +21,11 @@
  *   messages), put on the part with a clip that plays it from the downbeat:
  *   one undo step (cmd.addRecordedTake).
  * - Stop, Pause, Mute All or the input going away end a take early and keep
- *   what was recorded; a tempo change, a performance take or Record Notes
- *   starting cancel it (it could not stay in time or would mix into their
- *   undo step). Recording audio is unavailable during a performance take.
+ *   what was recorded (up to the moment of stopping, latency included); a
+ *   tempo change, a performance take or Record Notes starting cancel it (it
+ *   could not stay in time or would mix into their undo step). Recording
+ *   audio is unavailable during a performance take, and neither kind of
+ *   recording starts while a finished take is still being saved.
  */
 import { audioBufferFromChannels } from '../audio/instruments/sampleBank';
 import { LIMITER_PROCESSOR_NAME, engineLatencyFrames, limiterProcessorOptions } from '../audio/worklets/limiter';
@@ -235,7 +237,11 @@ const SILENT_PEAK = 5e-4;
 export type InputSession = Pick<
   Session,
   'ctx' | 'engine' | 'bank' | 'transport' | 'sequencer' | 'store' | 'startAudio' | 'startPlaybackForRecording' | 'storeSample' | 'pressClip'
->;
+> &
+  Partial<Pick<Session, 'addRecordGuard'>>;
+
+/** Said when Record Performance or Record Notes is pressed while a finished audio take is being saved. */
+export const TAKE_SAVING_MESSAGE = 'The audio take is still being saved. Wait a moment, then press Record again.';
 
 export type RecordResult = { ok: boolean; message: string };
 
@@ -243,8 +249,11 @@ interface ActiveTake {
   info: TakeInfo;
   /** The project the take belongs to: it is never put into another one. */
   projectId: Id;
+  /** Input frames of the take: the downbeat and the end, shifted later by `lat`. */
   from: number;
   to: number;
+  /** Seconds the input arrives after its audio-clock time (latency estimate plus the user's offset). */
+  lat: number;
   sampleRate: number;
   channels: 1 | 2;
   data: Float32Array[];
@@ -305,6 +314,9 @@ export class AudioInputController {
       session.store.subscribe((p, prev) => {
         if (p.id !== prev.id && this.state.getState().result) this.patch({ result: null });
       }),
+      // A take being saved needs the store as it is: a performance take's lock would refuse it (and
+      // the stored file would go), and Record Notes would merge it into the notes' undo step.
+      session.addRecordGuard?.(() => (this.take?.finishing ? TAKE_SAVING_MESSAGE : null)) ?? (() => undefined),
     );
   }
 
@@ -726,6 +738,7 @@ export class AudioInputController {
         projectId: s.store.getState().id,
         from,
         to,
+        lat,
         sampleRate: sr,
         channels,
         data: Array.from({ length: channels }, () => new Float32Array(Math.max(1, to - from))),
@@ -762,12 +775,17 @@ export class AudioInputController {
     });
   }
 
-  /** Stop the take now: before its downbeat nothing is kept; after it, what was recorded so far is kept. */
+  /**
+   * Stop the take now: before its downbeat nothing is kept; after it, what was
+   * recorded so far is kept. "Now" is shifted by the take's latency like its
+   * window: what the player played up to this moment reaches the input up to
+   * `lat` seconds later, and is still recorded.
+   */
   stopTake(why: 'button' | 'transport' | 'muted' | 'input' = 'button'): void {
     const take = this.take;
     const ctx = this.session.ctx;
     if (!take || take.stopping || take.finishing) return;
-    const now = ctx ? Math.round(ctx.currentTime * take.sampleRate) : take.from;
+    const now = ctx ? Math.round((ctx.currentTime + take.lat) * take.sampleRate) : take.from;
     if (now <= take.from) {
       this.cancelTake(why === 'button' ? 'Stopped before the recording began: nothing was kept.' : why === 'input' ? INPUT_ENDED_MESSAGE : 'Playback stopped before the recording began: nothing was kept.');
       return;
@@ -821,12 +839,14 @@ export class AudioInputController {
     this.stopWatching(take);
     const { trackId } = take.info;
     let settled = false;
-    const done = (r: RecordResult, tone: 'info' | 'warn' = r.ok ? 'info' : 'warn') => {
+    /** `entry`: the history step a kept take made (its message offers Undo of exactly that step). */
+    const done = (r: RecordResult, tone: 'info' | 'warn' = r.ok ? 'info' : 'warn', entry?: number | null) => {
       if (settled) return;
       settled = true;
       if (this.take === take) this.take = null;
       this.patch({ take: null, result: { trackId, ok: r.ok, message: r.message } });
-      notify(r.message, tone, r.ok ? 'undo' : undefined);
+      if (r.ok) notify(r.message, tone, 'undo', entry);
+      else notify(r.message, tone);
       take.resolve(r);
     };
     try {
@@ -837,7 +857,7 @@ export class AudioInputController {
     }
   }
 
-  private async keep(take: ActiveTake, frames: number, done: (r: RecordResult, tone?: 'info' | 'warn') => void): Promise<void> {
+  private async keep(take: ActiveTake, frames: number, done: (r: RecordResult, tone?: 'info' | 'warn', entry?: number | null) => void): Promise<void> {
     const { trackId } = take.info;
     const sr = take.sampleRate;
     if (frames < MIN_TAKE_SECONDS * sr) {
@@ -881,6 +901,7 @@ export class AudioInputController {
       done({ ok: false, message: r.refused ?? r.message ?? 'The recording could not be put on the part.' });
       return;
     }
+    const entry = s.store.undoEntryId();
     selectSlot(trackId, slot);
     // Hear it back in time: its clip starts at the next bar while the pads play.
     const rt = runtimeStore.getState();
@@ -892,7 +913,7 @@ export class AudioInputController {
     let message = `Recorded “${name}” (${seconds.toFixed(1)} s, ${clipBars} bar${clipBars === 1 ? '' : 's'}): its clip on ${where} plays it from the downbeat${replaced ? `, replacing “${replaced.name}”` : ''}. Undo removes it.`;
     if (frames < take.to - take.from - sr * 0.05) message = `Stopped early. ${message}`;
     if (peak < SILENT_PEAK) message += ' The take is silent: check the input and its level in MIDI & audio.';
-    done({ ok: true, message }, peak < SILENT_PEAK ? 'warn' : 'info');
+    done({ ok: true, message }, peak < SILENT_PEAK ? 'warn' : 'info', entry);
   }
 
   dispose(): void {

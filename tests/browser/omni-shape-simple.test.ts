@@ -1,8 +1,8 @@
 /**
  * Shape, Simple mode (the default) in real Chromium: what a first-time user
- * sees and does — the part being shaped and the way back to Play, six large
- * macros, the instrument card, effects as cards with one main knob each, the
- * grouped Add effect menu, Show every setting — checked on the real project
+ * sees and does — the part being shaped and the way back to Play, six big
+ * knobs (macros), the instrument card, effects as cards with one main knob
+ * each, the grouped Add effect menu, Show every setting (Advanced) — checked on the real project
  * through the real session, plus the layout at laptop, desktop and 200 % sizes.
  */
 import { act, createElement as h } from 'react';
@@ -14,7 +14,7 @@ import { session } from '../../src/app/instance';
 import { INSTRUMENT_LABEL, soundName } from '../../src/app/labels';
 import { runtimeStore } from '../../src/app/runtime';
 import { ShapeView } from '../../src/app/views/shape/ShapeView';
-import { EFFECT_GROUPS, EFFECT_INFO, effectSentence, mainParamSpec, menuGroups, ungroupedEffects } from '../../src/app/views/shape/effectCatalog';
+import { EFFECT_GROUPS, EFFECT_INFO, effectSentence, mainKnobCandidates, mainParamSpec, menuGroups, ungroupedEffects } from '../../src/app/views/shape/effectCatalog';
 import { createProject } from '../../src/project/factory';
 import { trackChain } from '../../src/project/graph';
 import { INSERTABLE_EFFECTS, MODULE_DEFS } from '../../src/project/modules';
@@ -113,9 +113,9 @@ describe('Simple Shape: orientation', () => {
     expect(uiStore.getState().selectedTrackId).toBe('t5');
   });
 
-  it('Show every setting switches to Advanced and back, keeping keyboard focus on the button', async () => {
+  it('Show every setting (Advanced) switches to Advanced and back, keeping keyboard focus on the button', async () => {
     const m = setup('t4');
-    const toggle = button(m.container, 'Show every setting');
+    const toggle = button(m.container, 'Show every setting (Advanced)');
     toggle.focus();
     click(toggle);
     expect(uiStore.getState().uiMode).toBe('advanced');
@@ -124,7 +124,7 @@ describe('Simple Shape: orientation', () => {
     expect(m.container.textContent).toContain('Reset mappings');
     expect(m.container.querySelector('[aria-label="Shared Reverb return"]')).not.toBeNull();
     expect(m.container.querySelector('[aria-label="Cable panel"]')).not.toBeNull();
-    const back = button(m.container, 'Show fewer settings');
+    const back = button(m.container, 'Show fewer settings (Simple)');
     expect(document.activeElement).toBe(back);
     click(back);
     expect(uiStore.getState().uiMode).toBe('simple');
@@ -132,14 +132,16 @@ describe('Simple Shape: orientation', () => {
 });
 
 describe('Simple Shape: macros and instrument', () => {
-  it('shows the six macros large with a one-line caption; turning one is one undo step', async () => {
+  it('shows the six macros large under “Big knobs”, with a one-line caption; turning one is one undo step', async () => {
     const m = setup('t4');
+    expect([...m.container.querySelectorAll('h2')].map((x) => x.textContent)).toContain('Big knobs');
+    expect(m.container.textContent).not.toMatch(/Macros/);
     const macros = [...m.container.querySelectorAll<HTMLElement>('[role="slider"][id^="shape-macro-"]')];
     expect(macros.map((x) => x.getAttribute('aria-label'))).toEqual(['Tone', 'Space', 'Echo', 'Motion', 'Drive', 'Pump']);
     for (const k of macros) expect(k.closest('[data-size]')!.getAttribute('data-size')).toBe('lg');
-    const tone = m.container.querySelector<HTMLElement>('[aria-label="Tone macro"]')!;
+    const tone = m.container.querySelector<HTMLElement>('[aria-label="Tone big knob"]')!;
     expect(tone.textContent).toContain('Dark ↔ bright');
-    expect(m.container.querySelector('[aria-label="Pump macro"]')!.textContent).toContain('Ducks in time');
+    expect(m.container.querySelector('[aria-label="Pump big knob"]')!.textContent).toContain('Ducks in time');
 
     const before = track('t4').macros.tone;
     key(slider(tone, 'Tone'), 'keydown', { key: 'PageUp' });
@@ -155,7 +157,7 @@ describe('Simple Shape: macros and instrument', () => {
     act(() => {
       for (let i = track('t4').macroMap.echo.length - 1; i >= 0; i--) cmd.removeMacroTarget(session.store, 't4', 'echo', i);
     });
-    const echo = m.container.querySelector<HTMLElement>('[aria-label="Echo macro"]')!;
+    const echo = m.container.querySelector<HTMLElement>('[aria-label="Echo big knob"]')!;
     expect(echo.textContent).toContain('Moves nothing here');
     expect(slider(echo, 'Echo').getAttribute('aria-disabled')).toBe('true');
   });
@@ -193,14 +195,24 @@ describe('Simple Shape: effects', () => {
     const cards = [...list.querySelectorAll<HTMLElement>('article')];
     expect(cards.map((c) => c.getAttribute('aria-label'))).toEqual(['Drive, effect 1 of 2', 'Filter, effect 2 of 2']);
     for (const c of cards) expect(c.querySelectorAll('[role="slider"]')).toHaveLength(1);
-    expect(cards[0].textContent).toContain(effectSentence('drive'));
-    // The default Drive and Filter knobs belong to macros: read-only, and the card says which macro sets them.
-    const drive = slider(cards[0], 'Drive');
-    expect(drive.getAttribute('aria-readonly')).toBe('true');
-    expect(cards[0].textContent).toContain('Drive is set by the Drive macro.');
-    expect(cards[1].textContent).toContain('Cutoff is set by the Tone macro.');
-    // The signal flow reads left to right.
-    expect(m.container.querySelector('[aria-label="Signal flow"]')!.textContent).toMatch(/Instrument→Drive→Filter→Channel→Master/);
+    // The default Drive amount and Filter cutoff belong to big knobs (macros), so each card's one knob is
+    // the next main setting, which turning really changes; the card says which big knob sets the other.
+    expect(cards[0].textContent).toContain(effectSentence('drive', 'tone'));
+    expect(slider(cards[0], 'Tone').hasAttribute('aria-readonly')).toBe(false);
+    expect(cards[0].textContent).toContain('Drive is set by the Drive knob.');
+    expect(slider(cards[1], 'Resonance').hasAttribute('aria-readonly')).toBe(false);
+    expect(cards[1].textContent).toContain('Cutoff is set by the Tone knob.');
+    expect(m.container.textContent).not.toMatch(/macro/i);
+    // The signal flow reads left to right, as plain words (nothing there looks clickable).
+    const flow = m.container.querySelector<HTMLElement>('[aria-label="Signal flow"]')!;
+    expect(flow.textContent).toMatch(/Instrument→Drive→Filter→Channel→Master/);
+    expect(flow.querySelector('button, [role="button"]')).toBeNull();
+    for (const step of flow.querySelectorAll<HTMLElement>('li > span:last-child')) {
+      const st = getComputedStyle(step);
+      expect(st.backgroundColor, step.textContent ?? '').toBe('rgba(0, 0, 0, 0)');
+      expect(st.boxShadow, step.textContent ?? '').toBe('none');
+      expect(st.borderStyle, step.textContent ?? '').toBe('none');
+    }
   });
 
   it('adds, switches off, turns and removes an effect: each is one undo step and says what happened', async () => {
@@ -259,7 +271,7 @@ describe('Simple Shape: effects', () => {
     expect(groups.map(items)).toEqual([
       ['EQ', 'Filter'],
       ['Compressor', 'Gate'],
-      ['Reverb', 'Delay'],
+      ['Reverb', 'Echo'],
       ['Chorus', 'Phaser', 'Flanger', 'Auto Pan'],
       ['Drive', 'Tape', 'Bit Crusher'],
       ['Stereo Width'],
@@ -288,16 +300,21 @@ describe('Simple Shape: effects', () => {
     expect(trackChain(project().patch, 't4')!.at(-2)).toBe('t4:widener');
   });
 
-  it('every insertable effect is in exactly one group, and its sentence names its main knob', () => {
+  it('every insertable effect is in exactly one group, and its sentence names the knob its card shows', () => {
     expect(ungroupedEffects()).toEqual([]);
     const listed = EFFECT_GROUPS.flatMap((g) => g.types);
     expect(new Set(listed).size).toBe(listed.length);
     expect([...listed].sort()).toEqual([...INSERTABLE_EFFECTS].sort());
     expect(menuGroups().map((g) => g.label)).toEqual(['Tone', 'Dynamics', 'Space', 'Movement', 'Colour', 'Stereo']);
     for (const type of INSERTABLE_EFFECTS) {
-      const spec = mainParamSpec(type)!;
-      expect(specById(MODULE_PARAMS[type], EFFECT_INFO[type]!.main)).toBe(spec);
-      expect(effectSentence(type)).toContain(spec.label);
+      const candidates = mainKnobCandidates(type);
+      expect(candidates.length, type).toBeGreaterThanOrEqual(2);
+      expect(candidates.map((c) => c.id)).toEqual(EFFECT_INFO[type]!.knobs.map((k) => k.id));
+      expect(mainParamSpec(type)).toBe(candidates[0]);
+      for (const spec of candidates) {
+        expect(specById(MODULE_PARAMS[type], spec.id)).toBe(spec);
+        expect(effectSentence(type, spec.id), `${type} ${spec.id}`).toContain(spec.label);
+      }
     }
   });
 
@@ -325,13 +342,13 @@ describe('Simple Shape: effects', () => {
     }
   });
 
-  it('All settings opens that effect in the Advanced view, selected and in view', async () => {
+  it('Every setting opens that effect in the Advanced view, selected and in view', async () => {
     const m = setup('t4');
     let chorus = '';
     act(() => {
       chorus = cmd.insertEffect(session.store, 't4', 'chorus').moduleId!;
     });
-    click(button(card(m.container, chorus)!, 'All settings of Chorus'));
+    click(button(card(m.container, chorus)!, 'Every setting of Chorus (Advanced)'));
     expect(uiStore.getState().uiMode).toBe('advanced');
     expect(uiStore.getState().selectedModuleId).toBe(chorus);
     await actFrame();
@@ -416,7 +433,7 @@ function checkLayout(root: HTMLElement, label: string) {
     const r = b.getBoundingClientRect();
     expect(Math.min(r.width, r.height), `${label}: ${b.getAttribute('aria-label') ?? b.textContent} size`).toBeGreaterThanOrEqual(32);
   }
-  const primary = [button(root, 'Back to Play'), button(root, /Show every setting|Show fewer settings/), button(root, 'Change instrument'), button(root, 'Add effect'), ...root.querySelectorAll<HTMLElement>('article [role="switch"]')];
+  const primary = [button(root, 'Back to Play'), button(root, /Show every setting \(Advanced\)|Show fewer settings \(Simple\)/), button(root, 'Change instrument'), button(root, 'Add effect'), ...root.querySelectorAll<HTMLElement>('article [role="switch"]')];
   for (const b of primary) expect(b.getBoundingClientRect().height, `${label}: ${b.textContent} height`).toBeGreaterThanOrEqual(40);
   // Cards never overlap.
   const rects = [...root.querySelectorAll<HTMLElement>('article')].map((a) => a.getBoundingClientRect());

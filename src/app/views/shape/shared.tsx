@@ -1,20 +1,69 @@
 /**
  * Pieces shared by the Simple and Advanced Shape views: the part's effect
  * list (chain order), the signal-flow line, the no-path warning with Restore
- * Connection, and the recording lock notice.
+ * Connection, the recording lock notice, and the switch to Advanced with the
+ * toast that says so.
  */
-import { Notice } from '../../../ui/components';
+import { useCallback } from 'react';
+import { Notice, useToasts, type ToastApi } from '../../../ui/components';
 import { MASTER_ID, moduleId as mid } from '../../../project/factory';
 import { connectionKind, findModule, trackChain } from '../../../project/graph';
-import { MODULE_DEFS } from '../../../project/modules';
+import { MODULE_DEFS, PATCH_LIMITS } from '../../../project/modules';
 import type { Id, Patch } from '../../../project/types';
 import { useStore } from '../../../state/store';
+import { setUiMode } from '../../../state/uiStore';
 import { session, useProject } from '../../instance';
 import { notify } from '../../runtime';
 import { samePlan, type RepairPlan } from '../cables/model';
 import { repairCableName, restoreConnection as restoreFor, restorePlanFor } from '../cables/restore';
 import { moduleName, sameItems } from './paramState';
 import styles from './shared.module.css';
+
+/** The Shape view's names for the two modes, used on every button that switches between them. */
+export const SHOW_EVERY_SETTING = 'Show every setting (Advanced)';
+export const SHOW_FEWER_SETTINGS = 'Show fewer settings (Simple)';
+export const ADVANCED_TOAST_ID = 'shape-advanced';
+export const ADVANCED_TOAST_TEXT = 'Now showing every setting (Advanced), in every view. Back to Simple brings back the short view.';
+
+/** The app's toasts; null where no ToastProvider is mounted (a view rendered on its own). */
+function useToastsIfAny(): ToastApi | null {
+  try {
+    return useToasts();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Switching to Advanced from Shape changes the whole app, so it says so in a
+ * toast with "Back to Simple". Returns the switch, and a way to take that toast away.
+ */
+export function useAdvancedSwitch(): { toAdvanced(): void; dismiss(): void } {
+  const toasts = useToastsIfAny();
+  const toAdvanced = useCallback(() => {
+    setUiMode('advanced');
+    toasts?.show({
+      id: ADVANCED_TOAST_ID,
+      tone: 'info',
+      message: ADVANCED_TOAST_TEXT,
+      action: {
+        label: 'Back to Simple',
+        onAction: () => {
+          setUiMode('simple');
+          focusLater('shape-mode-toggle');
+        },
+      },
+    });
+  }, [toasts]);
+  const dismiss = useCallback(() => toasts?.dismiss(ADVANCED_TOAST_ID), [toasts]);
+  return { toAdvanced, dismiss };
+}
+
+/** "2 effects (up to 6)": how many effects the part has, and how many it can hold. */
+export function effectCount(n: number): string {
+  const most = PATCH_LIMITS.maxEffectsPerTrack;
+  return n === 0 ? `None yet (up to ${most})` : `${n} effect${n === 1 ? '' : 's'} (up to ${most})`;
+}
 
 /** Focus an element once the DOM has caught up (a moved or new card), or a fallback. */
 export const focusLater = (id: string, fallback?: string) =>

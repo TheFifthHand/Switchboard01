@@ -33,6 +33,10 @@ const MODE_OPTIONS = [
   { value: 'advanced', label: 'Advanced', tip: 'Advanced: every control (swing, key and scale, arpeggiator, cables, pan …). Your music does not change.' },
 ] as const;
 
+/** What the master meter's colours mean: red at the top is "near the ceiling", not a fault. */
+export const MASTER_METER_TIP = 'What you hear, left and right. Amber is a healthy level. The red light at the top means the song is close to as loud as it can go, which is normal with a loud mastering preset.';
+export const MASTER_METER_DETAIL = 'Red lights within about 3 dB of full scale. The output limiter still keeps every peak below −1 dBFS, so red does not mean distortion.';
+
 const meterFrame: MeterFrame = { masterPeakL: 0, masterPeakR: 0, masterRms: 0, limiterReductionDb: 0, tracks: [] };
 let meterFrameAt = 0;
 /** One engine read per animation frame, shared by every meter. */
@@ -303,8 +307,10 @@ function RecordGroup() {
 
 /**
  * The More menu: Tips, and whatever the strip has no room for at this width
- * (Undo, Redo, Projects, Export, the Simple · Advanced switch, the offline
- * state and the Update action, which the key marks when one waits).
+ * (Undo and Redo below 1600 px, Projects, Export below 1280 px, the Simple ·
+ * Advanced switch, the offline state and the Update action, which the key
+ * marks when one waits). It always lists all of them, so each is one place to
+ * look whatever the width.
  */
 function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; onOpenDevices(): void; projectName: string }) {
   const [open, setOpen] = useState(false);
@@ -484,10 +490,12 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
 
       <div className={`${styles.group} ${styles.output}`} role="group" aria-label="Output">
         <Knob spec={MASTER_VOLUME_SPEC} value={masterDb} size="sm" onChange={(v, info) => session.setMasterVolume(v, info.gesture)} label="Master" className={styles.master} />
-        <div className={styles.meters}>
-          <Meter read={() => readMeterFrame().masterPeakL} label="Master left level" orientation="vertical" length={36} thickness={5} />
-          <Meter read={() => readMeterFrame().masterPeakR} label="Master right level" orientation="vertical" length={36} thickness={5} />
-        </div>
+        <Tooltip name="Master level" tip={MASTER_METER_TIP} detail={MASTER_METER_DETAIL}>
+          <div className={styles.meters} role="group" aria-label="Master level" data-master-meters="">
+            <Meter read={() => readMeterFrame().masterPeakL} label="Master left level" orientation="vertical" length={36} thickness={5} />
+            <Meter read={() => readMeterFrame().masterPeakR} label="Master right level" orientation="vertical" length={36} thickness={5} />
+          </div>
+        </Tooltip>
         <Button
           variant={muteAll ? 'danger' : 'secondary'}
           size="sm"
@@ -545,7 +553,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           onClick={props.onOpenLibrary}
           tip={`Projects: open, rename, duplicate, import and export. Open now: ${projectName}.`}
           aria-label={`Projects (open: ${projectName})`}
-          className={`${styles.project} ${styles.fileKey}`}
+          className={`${styles.project} ${styles.projectKey}`}
         >
           <span className={styles.projectName}>{projectName}</span>
         </Button>
@@ -555,9 +563,9 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           icon="download"
           onClick={props.onOpenExport}
           tip="Export a WAV file: your song, a scene or a recorded performance."
-          className={`${styles.export} ${styles.fileKey}`}
+          className={styles.exportKey}
         >
-          <span className={styles.exportText}>Export</span>
+          Export
         </Button>
         <DevicesKey onOpen={() => setDevicesOpen(true)} className={styles.devicesKey} />
         <MoreMenu onOpenLibrary={props.onOpenLibrary} onOpenExport={props.onOpenExport} onOpenDevices={() => setDevicesOpen(true)} projectName={projectName} />

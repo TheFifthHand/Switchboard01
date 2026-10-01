@@ -75,14 +75,15 @@ describe('Edits on the trimmed region', () => {
   });
 
   it('Reverse plays the region backwards in place', () => {
-    const r = ok(applySampleEdit(ramp(10, 1), SR, 0.2, 0.6, { kind: 'reverse' }));
-    expect([...r.channels[0]]).toEqual([1, 2, 6, 5, 4, 3, 7, 8, 9, 10]);
-    expect([...r.channels[1]]).toEqual([-1, -2, -6, -5, -4, -3, -7, -8, -9, -10]);
+    // Steps of 1/16 (exact in 32-bit floats, and under full scale: edits clip like the stored WAV).
+    const r = ok(applySampleEdit(ramp(10, 1 / 16), SR, 0.2, 0.6, { kind: 'reverse' }));
+    expect([...r.channels[0]]).toEqual([1, 2, 6, 5, 4, 3, 7, 8, 9, 10].map((k) => k / 16));
+    expect([...r.channels[1]]).toEqual([-1, -2, -6, -5, -4, -3, -7, -8, -9, -10].map((k) => k / 16));
   });
 
   it('Crop keeps only the region and makes it the whole recording; a whole-file crop is refused', () => {
-    const r = ok(applySampleEdit(ramp(10, 1), SR, 0.3, 0.7, { kind: 'crop' }));
-    expect([...r.channels[0]]).toEqual([4, 5, 6, 7]);
+    const r = ok(applySampleEdit(ramp(10, 1 / 16), SR, 0.3, 0.7, { kind: 'crop' }));
+    expect([...r.channels[0]]).toEqual([4, 5, 6, 7].map((k) => k / 16));
     expect(r.region).toEqual({ start: 0, end: 1 });
     const whole = applySampleEdit(ramp(10, 1), SR, 0, 1, { kind: 'crop' });
     expect(whole.ok).toBe(false);
@@ -110,9 +111,14 @@ describe('Edits on the trimmed region', () => {
     const up = ok(applySampleEdit(flat, SR, 0, 1, { kind: 'gain', db: 6 }));
     expect(up.channels[0][10]).toBeCloseTo(0.5 * 10 ** (6 / 20), 5);
     expect(up.peak).toBeGreaterThan(0.99);
+    // At most 12 dB.
+    const quiet = [new Float32Array(100).fill(0.1)];
+    const limited = ok(applySampleEdit(quiet, SR, 0, 1, { kind: 'gain', db: 40 }));
+    expect(limited.channels[0][0]).toBeCloseTo(0.1 * 10 ** (12 / 20), 4);
+    // Over full scale: reported, and clipped as the stored WAV is.
     const clamp = ok(applySampleEdit(flat, SR, 0, 1, { kind: 'gain', db: 40 }));
-    expect(clamp.channels[0][0]).toBeCloseTo(0.5 * 10 ** (12 / 20), 4);
     expect(clamp.peak).toBeGreaterThan(1);
+    expect(clamp.channels[0][0]).toBe(1);
     expect(applySampleEdit(flat, SR, 0, 1, { kind: 'gain', db: 0 }).ok).toBe(false);
   });
 

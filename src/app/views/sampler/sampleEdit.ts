@@ -12,6 +12,10 @@
  * - Fade in / Fade out: a linear fade over the chosen length, at the region's
  *   start or end (silence before a fade-in start stays silent).
  * - Gain: the region louder or quieter by up to 12 dB.
+ *
+ * Results are clipped to full scale (-1..1), as the stored WAV is, so the
+ * version that plays right away sounds exactly like the one kept in the
+ * project (`peak` still tells when a gain change went over and clipped).
  */
 
 export type SampleEditKind = 'normalize' | 'reverse' | 'crop' | 'fadeIn' | 'fadeOut' | 'gain';
@@ -90,11 +94,24 @@ export function fadeFrames(length: FadeLength, sampleRate: number, regionLength:
 }
 
 export interface EditOutcome {
+  /** The new version, clipped to -1..1 (what a stored WAV holds). */
   channels: Float32Array[];
   /** Start and End for the new version (a crop plays all of it); null keeps the trim. */
   region: { start: number; end: number } | null;
-  /** Peak of the edited region (linear), to tell when a gain change clips. */
+  /** Peak of the edited region (linear) before clipping, to tell when a gain change clips. */
   peak: number;
+}
+
+/** Clip every sample to full scale in place, as the WAV encoder does (a broken value becomes silence). */
+function clipToFullScale(channels: readonly Float32Array[]): void {
+  for (const ch of channels) {
+    for (let i = 0; i < ch.length; i++) {
+      const v = ch[i];
+      if (!Number.isFinite(v)) ch[i] = 0;
+      else if (v > 1) ch[i] = 1;
+      else if (v < -1) ch[i] = -1;
+    }
+  }
 }
 
 export type EditResult = ({ ok: true } & EditOutcome) | { ok: false; message: string };
@@ -103,8 +120,16 @@ export type EditResult = ({ ok: true } & EditOutcome) | { ok: false; message: st
  * Apply one edit to the region [start, end] (fractions of the recording).
  * Refuses edits that would change nothing (a silent region to normalize, a
  * crop of the whole recording, a 0 dB gain), with the reason in words.
+ * The result is clipped to full scale, exactly as it will be stored.
  */
 export function applySampleEdit(channels: readonly Float32Array[], sampleRate: number, start: number, end: number, edit: SampleEdit): EditResult {
+  const res = editChannels(channels, sampleRate, start, end, edit);
+  // New arrays every time: the source (maybe the buffer playing now) is never touched.
+  if (res.ok) clipToFullScale(res.channels);
+  return res;
+}
+
+function editChannels(channels: readonly Float32Array[], sampleRate: number, start: number, end: number, edit: SampleEdit): EditResult {
   const length = channels.reduce((m, c) => Math.max(m, c.length), 0);
   if (length === 0 || channels.length === 0) return { ok: false, message: 'The recording is empty.' };
   const [a, b] = regionFrames(length, start, end);

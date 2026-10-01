@@ -2,9 +2,11 @@
  * Where the hint chip goes: the free spot nearest the top of the workspace
  * that covers nothing. The transport is never covered; the pads and the
  * keyboard are avoided as a whole (gaps included); every other control is
- * avoided, and text and displays are avoided where possible. When no spot is
- * free (a crowded view, a very small window), the spot that covers the least
- * wins, and controls count far more than text.
+ * avoided, and so are headings (a view's title, a panel's name) and status
+ * explanations (what "Playback follows", a recording's state); other text
+ * and displays are avoided where possible. When no spot is free (a crowded
+ * view, a very small window), the spot that covers the least wins: controls,
+ * headings and status lines count far more than other text.
  */
 
 export interface Box {
@@ -33,7 +35,9 @@ export const WEIGHT_FORBIDDEN = 1e6;
 export const WEIGHT_PLAYED = 3;
 /** Buttons, knobs, sliders, fields. */
 export const WEIGHT_CONTROL = 6;
-/** Headings, text, meters and displays. */
+/** Headings and status lines: what a view or panel is, and what is happening. Covering them hides the context. */
+export const WEIGHT_KEY_TEXT = 6;
+/** Other text, meters and displays. */
 export const WEIGHT_INFO = 0.4;
 
 function overlap(a: Box, b: Box): number {
@@ -87,6 +91,8 @@ export function findSpot(size: { w: number; h: number }, area: Box, obstacles: r
 /* Reading the page                                                    */
 /* ------------------------------------------------------------------ */
 
+/** Text that says what a view or panel is, or what is happening now (see WEIGHT_KEY_TEXT). */
+const KEY_TEXT = 'h1, h2, h3, h4, h5, h6, [role="heading"], [role="status"], [role="alert"]';
 const CONTROLS = 'button, a[href], input, select, textarea, [role="slider"], [role="tab"], [role="radio"], [role="switch"], [role="checkbox"], [role="button"], [role="menuitem"], [draggable="true"], [tabindex]:not([tabindex="-1"])';
 const GRAPHICS = 'canvas, svg, img, [role="img"], [role="meter"], [role="progressbar"]';
 /** Room kept between the chip and what it avoids. */
@@ -102,9 +108,14 @@ function onScreen(r: DOMRect, vw: number, vh: number): boolean {
 
 /**
  * Everything the chip should not cover, read from the page (the chip itself
- * excluded): the transport, the pads and the keyboard, every control, and the
- * text and graphics on screen (each line of text by its own box, so a wide
- * heading element with short text leaves the rest of its row free).
+ * excluded): the transport, the pads and the keyboard, every control, the
+ * headings and status lines, and the other text and graphics on screen (each
+ * line of text by its own box, so a wide heading element with short text
+ * leaves the rest of its row free).
+ *
+ * `text: false` is the quick check while the chip is shown: controls,
+ * headings and status lines only (a few elements), so a part's longer name
+ * in a heading moves the chip as surely as a new button does.
  */
 export function readObstacles(chip: Element | null, vw: number, vh: number, opts: { text?: boolean } = {}): Obstacle[] {
   const out: Obstacle[] = [];
@@ -120,16 +131,25 @@ export function readObstacles(chip: Element | null, vw: number, vh: number, opts
   const keyboard = document.querySelector('main ~ footer');
   if (keyboard) add(keyboard, WEIGHT_PLAYED);
   for (const el of document.querySelectorAll(CONTROLS)) add(el, WEIGHT_CONTROL);
-  // The quick check while the chip is shown looks at controls only; text and graphics matter when choosing a spot.
-  if (opts.text === false) return out;
-  for (const el of document.querySelectorAll(GRAPHICS)) add(el, WEIGHT_INFO, 2);
-  // Visible text, line by line.
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   const range = document.createRange();
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    if (!n.nodeValue || !n.nodeValue.trim() || chip?.contains(n)) continue;
-    range.selectNodeContents(n);
-    for (const r of range.getClientRects()) if (onScreen(r, vw, vh)) out.push({ box: grow(r, 2), weight: WEIGHT_INFO });
+  /** Each visible line of text under `root`, at `weight`. */
+  const addText = (root: Node, weight: number, margin: number, skip?: (n: Node) => boolean) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (!n.nodeValue || !n.nodeValue.trim() || chip?.contains(n) || skip?.(n)) continue;
+      range.selectNodeContents(n);
+      for (const r of range.getClientRects()) if (onScreen(r, vw, vh)) out.push({ box: grow(r, margin), weight });
+    }
+  };
+  // Headings and status lines that are on screen (not the transport's, which is out of bounds anyway, nor visually hidden ones).
+  for (const el of document.querySelectorAll(KEY_TEXT)) {
+    if (chip?.contains(el) || el.closest('[inert], header[aria-label="Transport"]') || !onScreen(el.getBoundingClientRect(), vw, vh)) continue;
+    addText(el, WEIGHT_KEY_TEXT, 4);
+  }
+  if (opts.text !== false) {
+    for (const el of document.querySelectorAll(GRAPHICS)) add(el, WEIGHT_INFO, 2);
+    // Other visible text, line by line (headings and status lines are in already).
+    addText(document.body, WEIGHT_INFO, 2, (n) => !!n.parentElement?.closest(KEY_TEXT));
   }
   range.detach();
   return out;

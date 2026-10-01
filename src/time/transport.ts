@@ -314,6 +314,9 @@ export class RealtimeTransport {
     const t = now + START_OFFSET;
     this.sequencer.start(t, opts);
     this.engine.transportStarted(t, this.sequencer.tickAt(t), this.sequencer.bpm);
+    // Integrated loudness and true peak measure this playback: every start (a replay of a take
+    // recorded mid-song, the song from a later block) begins a new measurement; resume() keeps counting.
+    this.engine.resetLoudness?.();
     this.horizon = now;
     this.schedule(now);
     this.ensureTicker();

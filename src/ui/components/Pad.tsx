@@ -51,6 +51,16 @@ export interface PadProps {
   quietEmpty?: boolean;
   /** Icon for a caption shown without a state icon of its own (e.g. "Paused"). */
   captionIcon?: IconName;
+  /**
+   * A small key sits over the pad's top-right corner (e.g. the selected clip
+   * pad's '⋯'): the name and length make room for it, so it never covers
+   * them, and the state caption at the bottom keeps the whole width.
+   */
+  cornerKey?: boolean;
+  /** Keys that act on the focused pad, besides its own computer key (e.g. "Shift+F10 F2"). */
+  shortcuts?: string;
+  /** Set by a Tooltip around the pad (its description). */
+  'aria-describedby'?: string;
   id?: string;
   className?: string;
 }
@@ -108,9 +118,12 @@ export function Pad(props: PadProps) {
     labelSize = 'md',
     quietEmpty = false,
     captionIcon,
+    cornerKey = false,
+    shortcuts,
     id,
     className,
   } = props;
+  const describedBy = props['aria-describedby'];
 
   const [pressed, setPressed] = useState(false);
   const pointer = useRef<number | null>(null);
@@ -236,9 +249,11 @@ export function Pad(props: PadProps) {
       data-wrap={!sublabel && !shownCaption ? true : undefined}
       data-label={labelSize === 'lg' ? 'lg' : undefined}
       data-quiet={quietEmpty && state === 'empty' ? true : undefined}
+      data-corner={cornerKey || undefined}
       disabled={disabled}
       aria-label={spoken}
-      aria-keyshortcuts={keyHint || undefined}
+      aria-describedby={describedBy}
+      aria-keyshortcuts={[keyHint, shortcuts].filter(Boolean).join(' ') || undefined}
       style={{ '--intensity': String(0.35 + 0.65 * lvl) } as CSSProperties}
       onPointerDown={onPointerDown}
       onPointerMove={activateOn === 'release' ? onPointerMove : undefined}

@@ -184,6 +184,8 @@ export class Session {
   private sampleLoads = new Map<Id, Promise<void>>();
   /** Told whenever every held note was let go of (Stop, Pause, Mute All, blur, a stall, a new project). */
   private releaseListeners = new Set<() => void>();
+  /** Asked before Record Performance or Record Notes starts: a reason to wait, or null (see addRecordGuard). */
+  private recordGuards = new Set<() => string | null>();
 
   constructor(initial: Project) {
     this.store = new ProjectStore(initial);
@@ -934,7 +936,7 @@ export class Session {
     if (copy) text = replaced ? `Copied “${clip.name}” onto ${where}, replacing “${replaced.name}”.` : `Copied “${clip.name}” to ${where}.`;
     else text = replaced ? `Swapped “${clip.name}” and “${replaced.name}”.` : `Moved “${clip.name}” to ${where}.`;
     if (wasPlaying) text += ` ${src.name} stopped playing it; tap the pad to play it on ${dst.name}.`;
-    notify(text, 'info', 'undo');
+    notify(text, 'info', 'undo', this.store.undoEntryId());
     return true;
   }
 
@@ -960,7 +962,7 @@ export class Session {
       if (at >= 0) selectSlot(t.id, at);
       else if (sel === fromRow) selectSlot(t.id, toRow);
     }
-    notify(`Moved the scene “${scene.name}” to row ${toRow + 1}; its clips moved with it.`, 'info', 'undo');
+    notify(`Moved the scene “${scene.name}” to row ${toRow + 1}; its clips moved with it.`, 'info', 'undo', this.store.undoEntryId());
     return true;
   }
 
@@ -1021,20 +1023,25 @@ export class Session {
     return r.changed;
   }
 
+  /** Undo the newest edit; the message says what was undone, with Redo. */
   undo(): void {
-    this.stepHistory(() => this.store.undo());
+    const label = this.store.undoLabel();
+    if (this.stepHistory(() => this.store.undo())) notify(`Undid: ${label}`, 'info', 'redo', this.store.redoEntryId());
   }
 
+  /** Redo the edit undone last; the message says what was redone, with Undo. */
   redo(): void {
-    this.stepHistory(() => this.store.redo());
+    const label = this.store.redoLabel();
+    if (this.stepHistory(() => this.store.redo())) notify(`Redid: ${label}`, 'info', 'undo', this.store.undoEntryId());
   }
 
-  /** Undo or redo. During a take the values it changes are heard at once, so the take records them. */
-  private stepHistory(step: () => ApplyResult): void {
+  /** Undo or redo (true when it went through). During a take the values it changes are heard at once, so the take records them. */
+  private stepHistory(step: () => ApplyResult): boolean {
     const before = this.store.getState();
     const r = step();
     if (r.refused) notify(r.refused, 'warn');
     else if (r.changed && this.take) this.recordChangedValues(before, this.store.getState());
+    return r.changed;
   }
 
   /**
@@ -1196,6 +1203,30 @@ export class Session {
   }
 
   /**
+   * Hold back Record Performance and Record Notes while `why` returns a
+   * reason (shown to the user), e.g. while a finished audio take is being
+   * saved: the take's lock or the notes' undo step would catch it.
+   */
+  addRecordGuard(why: () => string | null): () => void {
+    this.recordGuards.add(why);
+    return () => {
+      this.recordGuards.delete(why);
+    };
+  }
+
+  /** Why a recording cannot start right now (told to the user), or null. */
+  private recordingHeldBack(): string | null {
+    for (const why of this.recordGuards) {
+      const reason = why();
+      if (reason) {
+        notify(reason, 'warn');
+        return reason;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Bend a part's playing and future notes by `cents` (MIDI pitch wheel), now.
    * 0 = centred. Ignored during a replay (the take plays as recorded).
    */
@@ -1248,7 +1279,10 @@ export class Session {
       notify('Finish the performance recording first.', 'warn');
       return;
     }
+    if (this.recordingHeldBack()) return;
     if (!(await this.startAudio())) return;
+    // Again: a take may have started saving meanwhile (from here on nothing waits).
+    if (this.recordingHeldBack()) return;
     const ui = uiStore.getState();
     const trackId = ui.selectedTrackId;
     const p = this.store.getState();
@@ -1318,7 +1352,7 @@ export class Session {
     this.store.endGroup();
     if (runtimeStore.getState().recording === 'notes') patchRuntime({ recording: 'off', recordTarget: null });
     else patchRuntime({ recordTarget: null });
-    if (added > 0) notify(`Recorded ${added} note${added === 1 ? '' : 's'} into the clip. Undo removes the whole pass, with any knob moves made during it.`, 'info', 'undo');
+    if (added > 0) notify(`Recorded ${added} note${added === 1 ? '' : 's'} into the clip. Undo removes the whole pass, with any knob moves made during it.`, 'info', 'undo', this.store.undoEntryId());
   }
 
   private commitRecordedNote(n: HeldNote): void {
@@ -1389,8 +1423,11 @@ export class Session {
       notify('Mute All is on. Turn it off to record a performance.', 'warn');
       return;
     }
+    if (this.recordingHeldBack()) return;
     if (this.noteRec) this.stopRecordNotes();
     if (!(await this.startAudio())) return;
+    // Again: a take may have started saving meanwhile (from here on nothing waits).
+    if (this.recordingHeldBack()) return;
     if (this.replayingId) this.stop();
     if (this.transport!.paused) {
       if (runtimeStore.getState().mode !== 'live') {

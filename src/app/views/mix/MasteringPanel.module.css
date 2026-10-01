@@ -1,11 +1,48 @@
-/* Mastering panel: header actions, then stacked sections in a scrolling body. */
+/*
+ * Mastering panel: header actions, then the sections.
+ * - Narrow (beside the mixer): one column in a scrolling body; the spectrum
+ *   takes the room that is left, and gives a little back when the column is
+ *   short (at 1366 × 768 it stays in view, also after a Match).
+ * - Wide (below the mixer, full width): Presets and Loudness on the left, the
+ *   Spectrum on the right, the Advanced controls underneath. The panel then
+ *   has its full height and the Mix view scrolls (no inner scroll box).
+ */
 
 .body {
+  container: mastering / inline-size;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+/* Narrow: the sections are the body's own column. */
+.layout {
+  display: contents;
+}
+
+@container mastering (min-width: 860px) {
+  .layout {
+    display: grid;
+    flex: none;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-auto-flow: row dense;
+    align-items: start;
+    gap: 12px 28px;
+  }
+  .layout > * {
+    grid-column: 1 / -1;
+  }
+  .layout > [data-section='presets'],
+  .layout > [data-section='loudness'] {
+    grid-column: 1;
+  }
+  .layout > [data-section='spectrum'] {
+    grid-column: 2;
+    grid-row: span 2;
+    align-self: stretch;
+  }
 }
 
 .lock {
@@ -142,12 +179,37 @@
 
 .readoutRow {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 4px;
 }
 
+/* Icon above the word, as tall as the readings it resets. */
 .reset {
+  display: inline-flex;
   flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 48px;
+  min-height: 40px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, #fdfdfc 0%, #f1f2f3 55%, #e9ebed 100%);
+  box-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.13),
+    inset 0 1px 0 #ffffff,
+    0 1px 1.5px rgba(20, 24, 28, 0.13);
+  color: var(--ink);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.reset:focus-visible {
+  box-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.13),
+    var(--focus-ring);
 }
 
 .readouts {
@@ -191,7 +253,14 @@
   white-space: nowrap;
 }
 
-.readoutValue [data-over='1'] {
+/* True peak: amber just above the limiter's −1 dB (normal), red above 0 dBTP (the name then says so). */
+.readoutValue [data-level='near'] {
+  color: var(--amber-ink);
+  font-weight: 650;
+}
+
+.readoutValue [data-level='over'],
+.readoutName[data-level='over'] {
   color: var(--coral-ink);
   font-weight: 650;
 }
@@ -251,13 +320,13 @@
 /* ---------- spectrum ---------- */
 
 .spectrumSection {
-  flex: 1 0 auto;
-  min-height: 150px;
+  flex: 1 1 auto;
+  min-height: 146px;
 }
 
 .spectrumSection > :last-child {
   flex: 1 1 auto;
-  min-height: 120px;
+  min-height: 0;
 }
 
 /* ---------- advanced groups ---------- */

@@ -15,6 +15,6 @@ export {
   type HintsState,
   type HintsStore,
 } from './hintsState';
-export { HINT_STEPS, HINTS_FINISHED_TEXT, currentHint, bassPart, drumsPart, type HintContext, type HintStep } from './steps';
+export { HINT_STEPS, HINTS_FINISHED_TEXT, hintsFinishedText, currentHint, bassPart, drumsPart, type HintContext, type HintStep } from './steps';
 export { watchHints, type HintSources } from './tracker';
 export { findSpot, spotCost, type Box, type Obstacle, type Spot } from './placement';

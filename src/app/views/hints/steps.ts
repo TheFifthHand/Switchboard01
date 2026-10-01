@@ -95,8 +95,13 @@ export const HINT_STEPS: readonly HintStep[] = [
   },
 ];
 
-/** The closing message once every step is done. */
-export const HINTS_FINISHED_TEXT = 'You have tried the basics. Export, at the top right, saves your music as a WAV file.';
+/** The closing message once every step is done, saying where Export is: on the strip at the top right, or in its ⋯ menu (narrower windows). */
+export function hintsFinishedText(exportAt: 'strip' | 'menu'): string {
+  return exportAt === 'strip'
+    ? 'You have tried the basics. Export, at the top right, saves your music as a WAV file.'
+    : 'You have tried the basics. Export, in the ⋯ menu at the top right, saves your music as a WAV file.';
+}
+export const HINTS_FINISHED_TEXT = hintsFinishedText('strip');
 
 /** The part a step points at: the first part with that role, else the first of that instrument kind. */
 export function bassPart(p: Project): Track | null {

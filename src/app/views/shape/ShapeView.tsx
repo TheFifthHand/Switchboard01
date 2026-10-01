@@ -1,19 +1,20 @@
 /**
  * Shape: sound design for the selected part, in the same workspace.
  *
- *   [ ← Back to Play   Shaping: 4 Chords — House Stab   Show every setting ]
+ *   [ ← Back to Play   Shaping: 4 Chords — House Stab   Show every setting (Advanced) ]
  *   [ part selector: 8 parts, selected = teal                               ]
  *
  * Simple (the default): the instrument card, the six macros large, and the
  * part's effects as cards with one main knob each (SimpleShape).
- * Advanced: every control —
+ * Advanced: every control (switching to it here says so in a toast with
+ * "Back to Simple", since it changes every view) —
  *   [ MACROS | INSTRUMENT | EFFECTS (chain, channel, returns, LFOs)   ]
  *   [ CABLES (collapsible, resizable split)                           ]
  *
  * Everything edits the real project through the session and commands, so
  * both modes, the effects rack and the cable panel always show the same sound.
  */
-import { memo, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { memo, useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Button, Icon } from '../../../ui/components';
 import { useElementSize } from '../../../ui/hooks/useElementSize';
 import type { Id, InstrumentKind } from '../../../project/types';
@@ -27,6 +28,7 @@ import { EffectsRack } from './EffectsRack';
 import { InstrumentColumn } from './InstrumentColumn';
 import { MacroColumn } from './MacroColumn';
 import { sameItems } from './paramState';
+import { SHOW_EVERY_SETTING, SHOW_FEWER_SETTINGS, useAdvancedSwitch } from './shared';
 import { SimpleShape } from './SimpleShape';
 import styles from './ShapeView.module.css';
 
@@ -42,6 +44,11 @@ interface HeaderInfo {
 
 function ShapeHeader(props: { trackId: Id; advanced: boolean }) {
   const { trackId, advanced } = props;
+  const { toAdvanced, dismiss } = useAdvancedSwitch();
+  // Back in Simple (from here, the toast or the transport switch): the "now Advanced" toast is stale.
+  useEffect(() => {
+    if (!advanced) dismiss();
+  }, [advanced, dismiss]);
   const info = useProject<HeaderInfo | null>((p) => {
     const i = p.tracks.findIndex((t) => t.id === trackId);
     if (i < 0) return null;
@@ -68,15 +75,15 @@ function ShapeHeader(props: { trackId: Id; advanced: boolean }) {
         id="shape-mode-toggle"
         className={styles.big}
         icon="sliders"
-        onClick={() => setUiMode(advanced ? 'simple' : 'advanced')}
+        onClick={() => (advanced ? setUiMode('simple') : toAdvanced())}
         tip={
           advanced
-            ? 'Back to the essentials: the macros, the instrument and one main knob per effect.'
-            : 'Show every control: macro mappings, every instrument and effect setting, shared effects, LFOs and cables.'
+            ? 'Back to the essentials (Simple): the big knobs, the instrument and one main knob per effect, in every view.'
+            : 'Show every control (Advanced), in every view: what each big knob moves, every instrument and effect setting, shared effects, LFOs and cables.'
         }
         detail="The same as the Simple · Advanced switch at the top. The sound does not change."
       >
-        {advanced ? 'Show fewer settings' : 'Show every setting'}
+        {advanced ? SHOW_FEWER_SETTINGS : SHOW_EVERY_SETTING}
       </Button>
     </div>
   );

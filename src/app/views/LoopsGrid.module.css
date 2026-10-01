@@ -178,10 +178,17 @@
   font-size: var(--fs-sm);
   font-weight: 650;
   line-height: 14px;
-  color: var(--coral-ink);
+  color: var(--ink-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Muted is coral (the part was silenced on purpose); Not soloed is plain grey (nothing is wrong); Solo is amber. */
+.status[data-status='muted'] {
+  color: var(--coral-ink);
+}
+.status[data-status='quiet'] {
+  font-weight: 560;
 }
 .status[data-status='solo'] {
   color: var(--amber-ink);
@@ -244,10 +251,11 @@
 .cell[data-dim] {
   opacity: 0.5;
 }
+/* The selected pad's '⋯': top-right, where the pad's name and length make room for it (the state word below keeps the full width). */
 .more {
   position: absolute;
+  top: 3px;
   right: 3px;
-  bottom: 3px;
   z-index: 1;
   display: grid;
   place-items: center;

@@ -47,7 +47,14 @@
 .status {
   font-size: var(--fs-sm);
   font-weight: 650;
+  color: var(--ink-3);
+}
+/* Muted is coral (silenced on purpose); Not soloed is plain grey (nothing is wrong); Solo is amber. */
+.status[data-status='muted'] {
   color: var(--coral-ink);
+}
+.status[data-status='quiet'] {
+  font-weight: 560;
 }
 .status[data-status='solo'] {
   color: var(--amber-ink);

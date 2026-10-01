@@ -198,8 +198,9 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
             <Select label="Scale" hideLabel size="sm" value={scale} options={SCALE_OPTIONS} onChange={(v) => session.accepted(setKey(session.store, root, v as ScaleId))} width={132} tip="Which notes belong to the key." />
           </div>
         ) : (
+          // Plain text (not a tab stop: it does nothing); the pointer still gets the explanation.
           <Tooltip tip={`The project's key is ${keyName}. The Notes pads and Musical Assist use it.`} detail="Advanced shows the key and scale pickers.">
-            <p className={styles.keySummary} tabIndex={0}>
+            <p className={styles.keySummary}>
               Key: <strong>{keyName}</strong>
             </p>
           </Tooltip>

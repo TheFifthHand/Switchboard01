@@ -87,9 +87,10 @@ Advanced only.
 
 - **Simple**: the six macros large; the instrument card with Change instrument; the part's effects
   as cards (name, on/off switch, one main knob, a sentence of what it does); **Add effect** grouped
-  by purpose: *Tone* (EQ, Filter) · *Dynamics* (Compressor, Gate) · *Space* (Reverb, Delay) ·
+  by purpose: *Tone* (EQ, Filter) · *Dynamics* (Compressor, Gate) · *Space* (Reverb, Echo) ·
   *Movement* (Chorus, Phaser, Flanger, Auto Pan) · *Colour* (Drive, Tape, Bit Crusher) · *Stereo*
-  (Stereo Width). "Show every setting" switches to Advanced.
+  (Stereo Width). "Show every setting (Advanced)" switches to Advanced, with a toast that offers
+  "Back to Simple"; Advanced shows "Show fewer settings (Simple)".
 - **Advanced**: today's full layout (macros with mappings, instrument panel, effects rack, cable
   dock) with full-word labels, clearer group headings and more breathing room.
 
@@ -142,6 +143,11 @@ description per sound. Target: at least 12 drum kits and 60 synth presets that g
 | Pump Rate | Pump Speed |
 | Downsample | Lo-fi Rate |
 | DTN, FDEC, PRATE, CHAR, BRT … | the full word |
+| Delay (the effect) | Echo (the stored module type stays `delay`) |
+| Macros (in Simple) | Big knobs ("Macros (big knobs)" in Advanced) |
+
+Pads: the selected clip pad's ⋯ sits in its top-right corner; right-click, Shift+F10, the menu key
+or "." on a focused pad opens its actions without playing it.
 
 ## Quality bar for every change
 

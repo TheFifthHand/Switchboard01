@@ -65,6 +65,19 @@ function typeSearch(value: string) {
   });
 }
 
+/** WCAG contrast ratio of two computed "rgb(r, g, b)" colours. */
+function contrast(a: string, b: string): number {
+  const lum = (c: string) => {
+    const [r, g, bl] = (c.match(/[\d.]+/g) ?? []).slice(0, 3).map((v) => {
+      const x = Number(v) / 255;
+      return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 const open = (trackId: Id) => mount(h(TipsProvider, { enabled: false }, h(SoundBrowser, { open: true, trackId, onClose: () => {} })));
 
 describe('sound browser', () => {
@@ -96,6 +109,10 @@ describe('sound browser', () => {
     expect(selected.textContent).toMatch(/current sound is here/);
     const current = options().find((o) => o.getAttribute('aria-selected') === 'true')!;
     expect(current.textContent).toContain('Current');
+    // The "Current" badge's small white text is readable on its teal (WCAG AA, 4.5:1).
+    const badge = [...current.querySelectorAll<HTMLElement>('span')].find((x) => x.textContent === 'Current')!;
+    const style = getComputedStyle(badge);
+    expect(contrast(style.color, style.backgroundColor)).toBeGreaterThanOrEqual(4.5);
     expect(document.activeElement).toBe(current);
     // One line of description per sound, with its instrument type.
     expect(current.textContent).toMatch(/Bass synth/);

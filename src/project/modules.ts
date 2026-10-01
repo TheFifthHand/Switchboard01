@@ -68,7 +68,7 @@ export const MODULE_DEFS: Record<ModuleType, ModuleDef> = {
       audioIn('In', 'Mixer input for this part.'),
       audioOut('Out', 'Goes to the master output.'),
       { id: 'sendA', kind: 'audio', direction: 'out', label: 'Send A', tip: 'A copy of the sound for a shared effect (the Reverb, unless you re-patch it). Reverb Amount sets how much.' },
-      { id: 'sendB', kind: 'audio', direction: 'out', label: 'Send B', tip: 'A copy of the sound for a shared effect (the Delay, unless you re-patch it). Echo Amount sets how much.' },
+      { id: 'sendB', kind: 'audio', direction: 'out', label: 'Send B', tip: 'A copy of the sound for a shared effect (the Echo, unless you re-patch it). Echo Amount sets how much.' },
       { id: 'level', kind: 'mod', direction: 'in', label: 'Level', tip: 'Movement here makes the volume pulse (tremolo).', modRange: { amount: 1, unit: 'gain' } },
       { id: 'pan', kind: 'mod', direction: 'in', label: 'Pan', tip: 'Movement here swings the sound left and right.', modRange: { amount: 1, unit: 'pan' } },
     ],
@@ -95,10 +95,11 @@ export const MODULE_DEFS: Record<ModuleType, ModuleDef> = {
   },
   delay: {
     type: 'delay',
-    label: 'Delay',
-    short: 'DELAY',
+    // Called Echo everywhere it is shown, like the Echo macro and Echo Amount (the type id stays "delay").
+    label: 'Echo',
+    short: 'ECHO',
     family: 'effect',
-    description: 'Tempo-synced echo with bounded feedback.',
+    description: 'Echo (a delay): repeats in time with the beat, with bounded feedback.',
     insertable: true,
     protected: false,
     ports: [audioIn(), audioOut(), { id: 'mix', kind: 'mod', direction: 'in', label: 'Mix', tip: 'Movement here fades the echoes in and out.', modRange: { amount: 1, unit: 'param' } }],

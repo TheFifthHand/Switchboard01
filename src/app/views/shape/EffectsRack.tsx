@@ -26,7 +26,7 @@ import { AddEffectMenu } from './AddEffectMenu';
 import { RACK_ROWS, rackRows } from './effectCatalog';
 import { ParamKnob } from './ParamKnob';
 import { moduleName, sameItems } from './paramState';
-import { FlowLine, LockNotice, PathWarning, focusLater, onAudiblePath, useEditLock, usePartEffects } from './shared';
+import { FlowLine, LockNotice, PathWarning, effectCount, focusLater, onAudiblePath, useEditLock, usePartEffects } from './shared';
 import { useEffectDrag, type EffectDragView } from './useEffectDrag';
 import styles from './EffectsRack.module.css';
 
@@ -215,7 +215,7 @@ function ChannelRow(props: { trackId: Id }) {
   const exists = useProject((p) => !!findModule(p.patch, ch));
   if (!exists) return null;
   return (
-    <ModuleRow title="Channel" note="Level, pan, the amounts sent to the shared Reverb and Delay, and pump" label="Channel strip">
+    <ModuleRow title="Channel" note="Level, pan, the amounts sent to the shared Reverb and Echo, and pump" label="Channel strip">
       {MODULE_PARAMS.channel.map((spec) => (
         <ParamKnob key={spec.id} moduleId={ch} param={spec.id} spec={spec} ownerTrackId={trackId} size="sm" />
       ))}
@@ -230,7 +230,7 @@ function ReturnRow(props: { trackId: Id; id: Id; locked: boolean }) {
     return m ? { type: m.type, bypass: m.bypass, name: MODULE_DEFS[m.type].label } : null;
   }, shallowEqual);
   if (!info) {
-    const label = id === REVERB_ID ? 'Reverb' : 'Delay';
+    const label = id === REVERB_ID ? 'Reverb' : 'Echo';
     return (
       <div className={styles.missing}>
         The shared {label} is not in the patch.{' '}
@@ -418,7 +418,7 @@ export function EffectsRack(props: { trackId: Id; className?: string }) {
   return (
     <Panel
       title="Effects"
-      subtitle={<span className={`${styles.count} mono`}>{linear ? `${effects.length} of ${PATCH_LIMITS.maxEffectsPerTrack}` : 'Custom routing'}</span>}
+      subtitle={<span className={styles.count}>{linear ? effectCount(effects.length) : 'Custom routing'}</span>}
       className={className}
       bodyClassName={styles.scroll}
       dense

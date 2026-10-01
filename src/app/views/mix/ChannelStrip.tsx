@@ -274,12 +274,19 @@ export const MasterStrip = memo(function MasterStrip(props: { advanced: boolean 
           tip="Overall volume of everything, before mastering."
           detail="Master gain before the mastering chain and the output limiter (ceiling −1 dBFS)."
         />
-        <span className={styles.meterWell}>
-          <Meter read={() => readMixFrame().masterPeakL} label="Master left meter" orientation="vertical" thickness={6} segments={24} />
-        </span>
-        <span className={styles.meterWell}>
-          <Meter read={() => readMixFrame().masterPeakR} label="Master right meter" orientation="vertical" thickness={6} segments={24} />
-        </span>
+        <Tooltip
+          tip="The level of the whole mix, left and right. The red top segments mean peaks near the limiter’s −1 dB ceiling: normal for a loud master, nothing is distorting."
+          detail="Sample peaks of the output after mastering and the limiter. Clip lights only at full scale (0 dBFS)."
+        >
+          <span className={styles.masterMeters}>
+            <span className={styles.meterWell}>
+              <Meter read={() => readMixFrame().masterPeakL} label="Master left meter" orientation="vertical" thickness={6} segments={24} />
+            </span>
+            <span className={styles.meterWell}>
+              <Meter read={() => readMixFrame().masterPeakR} label="Master right meter" orientation="vertical" thickness={6} segments={24} />
+            </span>
+          </span>
+        </Tooltip>
       </div>
     </div>
   );

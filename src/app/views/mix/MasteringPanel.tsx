@@ -4,11 +4,15 @@
  *   MASTERING ───────────────────────── [Compare A/B] [On/Off]
  *   Presets   [Clean] [Warm] [Punchy] …  + what the chosen one does
  *   Loudness  target (Streaming −14 · Gentle −18 · Loud −9)
- *             Momentary · Short-term · Integrated · True peak   [Reset]
- *             [Match target]  how far from the target, what Match did
+ *             Momentary · Short-term · Integrated · True peak   [↺ Reset]
+ *             how far from the target; [Match target]  Loudness 0.0 → +6.0 dB
+ *             what true peak means (amber above −1 dBTP, red above 0)
  *   Spectrum  lows · mids · highs of the output
  *   Advanced: every control as knobs, grouped Clean-up / EQ / Glue (with the
  *             Glue gain-reduction indicator) / Colour / Stereo / Loudness.
+ *
+ * Beside the mixer the sections stack in one scrolling column; below the
+ * mixer (full width) Presets and Loudness sit left of the Spectrum.
  *
  * Live readouts (loudness, Glue) are written to the DOM from
  * requestAnimationFrame loops a few times a second; React only renders when a
@@ -17,7 +21,7 @@
  * the panel says why.
  */
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
-import { Button, Icon, IconButton, Knob, Panel, SegmentedControl, Switch, Tooltip, useRafLoop } from '../../../ui/components';
+import { Button, Icon, Knob, Panel, SegmentedControl, Switch, Tooltip, useRafLoop } from '../../../ui/components';
 import { MASTERING_PRESETS } from '../../../content/mastering';
 import { MASTERING_PARAMS, readParam, specById, type ParamSpec } from '../../../project/params';
 import {
@@ -33,7 +37,7 @@ import { session, useProject } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { engageCompare, releaseCompare, useCompare } from './compare';
 import { formatDb, formatLoudness, mixFrameLive, readMixFrame } from './mixMeters';
-import { LOUDNESS_TARGETS, setLoudnessTarget, useLoudnessTarget, type LoudnessTarget, type LoudnessTargetId } from './mixPrefs';
+import { LOUDNESS_TARGETS, setLoudnessTarget, useLoudnessTarget, type LoudnessTargetId } from './mixPrefs';
 import { Spectrum } from './Spectrum';
 import styles from './MasteringPanel.module.css';
 
@@ -148,7 +152,8 @@ function CompareButton(props: { enabled: boolean }) {
         className={styles.compare}
         data-active={active || undefined}
         aria-pressed={active}
-        aria-label="Hear without mastering (A/B)"
+        // The name starts with the words on the button (WCAG 2.5.3), then says what it does.
+        aria-label={active ? 'Hearing: no mastering (Compare A/B)' : 'Compare A/B (hear without mastering)'}
         aria-disabled={disabled || undefined}
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
@@ -178,7 +183,7 @@ function Presets(props: { locked: boolean }) {
     if (acceptMastering(r) && preset) notify(`Mastering: ${preset.name}. ${preset.description}`, 'info', 'undo');
   };
   return (
-    <section className={styles.section} aria-labelledby={titleId}>
+    <section className={styles.section} aria-labelledby={titleId} data-section="presets">
       <SectionTitle id={titleId}>Presets</SectionTitle>
       <div className={styles.chips} role="group" aria-labelledby={titleId}>
         {MASTERING_PRESETS.map((p) => (
@@ -212,17 +217,28 @@ const READOUTS: readonly { key: ReadoutKey; name: string; unit: string; tip: str
   { key: 'momentary', name: 'Momentary', unit: 'LUFS', tip: 'Loudness of the last 0.4 seconds: jumps with every hit.' },
   { key: 'shortTerm', name: 'Short-term', unit: 'LUFS', tip: 'Loudness of the last 3 seconds: how loud this part of the song feels.' },
   { key: 'integrated', name: 'Integrated', unit: 'LUFS', tip: 'Average loudness since you started playing (or pressed Reset): the number streaming services use.' },
-  { key: 'truePeak', name: 'True peak', unit: 'dBTP', tip: 'The highest peak so far, between samples too. The limiter keeps it near −1 dB.' },
+  {
+    key: 'truePeak',
+    name: 'True peak',
+    unit: 'dBTP',
+    tip: 'The highest peak so far, counting the peaks between samples too. Amber: just above the limiter’s −1 dB, which is normal. Red: above 0 dBTP, which may distort on some players.',
+  },
 ];
 
 const minusLufs = (lufs: number) => `${lufs < 0 ? MINUS : ''}${Math.abs(lufs)} LUFS`;
 
-function describeMatch(r: LoudnessMatch, target: LoudnessTarget, which: string, measured: number): string {
-  const parts = [`Loudness ${formatDb(r.before)} → ${formatDb(r.after)}: the ${which} reading was ${formatLoudness(measured)}, the ${target.name} target is ${minusLufs(target.lufs)}.`];
-  if (r.limit === 'max') parts.push('That is as far as Loudness goes. To get louder still, raise the parts or the master volume.');
-  if (r.limit === 'min') parts.push('Loudness is now at 0 dB. To get quieter still, lower the master volume.');
-  parts.push('Measuring again from now: play on, then match again to fine-tune.');
-  return parts.join(' ');
+/** How a true-peak reading is shown: amber just above the limiter's −1 dB (normal), red above 0 dBTP. */
+export type PeakLevel = 'ok' | 'near' | 'over';
+export function truePeakLevel(db: number | undefined): PeakLevel {
+  if (db === undefined || !Number.isFinite(db)) return 'ok';
+  return db > 0 ? 'over' : db > -1 ? 'near' : 'ok';
+}
+
+/** Advice after a match that hit the end of the Loudness range (null when it did not). */
+function limitAdvice(r: LoudnessMatch): string | null {
+  if (r.limit === 'max') return 'That is as far as Loudness goes. To get louder still, raise the parts or the master volume.';
+  if (r.limit === 'min') return 'Loudness is now at 0 dB. To get quieter still, lower the master volume.';
+  return null;
 }
 
 function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: boolean }) {
@@ -231,6 +247,7 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
   const target = useLoudnessTarget();
   const loudnessDb = useProject((p) => readParam(MASTERING_PARAMS, p.mastering.params, 'loudness'));
   const values = useRef<Record<ReadoutKey, HTMLElement | null>>({ momentary: null, shortTerm: null, integrated: null, truePeak: null });
+  const peakNameRef = useRef<HTMLSpanElement>(null);
   const statusRef = useRef<HTMLParagraphElement>(null);
   const latest = useRef({ integrated: -Infinity, shortTerm: -Infinity });
   const hasRef = useRef(false);
@@ -242,7 +259,10 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
    */
   const freshAfter = useRef<number | null>(null);
   const [measured, setMeasured] = useState(false);
+  /** Advice when Match could not do (all of) what was asked; a plain match needs none. */
   const [result, setResult] = useState<string | null>(null);
+  /** The last match's before → after, shown beside the button while Loudness is still there. */
+  const [lastMatch, setLastMatch] = useState<{ before: number; after: number } | null>(null);
 
   // A new target refreshes the distance-to-target line at once.
   useLayoutEffect(() => {
@@ -264,8 +284,15 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
       const el = values.current[k];
       if (el && el.textContent !== text[k]) el.textContent = text[k];
     }
+    // Amber just above the limiter's −1 dB (normal for true peak), red above 0 dBTP, which also says so in words.
+    const level = truePeakLevel(l?.truePeakDb);
     const peakEl = values.current.truePeak;
-    if (peakEl) peakEl.dataset.over = l && Number.isFinite(l.truePeakDb) && l.truePeakDb > -1 ? '1' : '0';
+    if (peakEl && peakEl.dataset.level !== level) peakEl.dataset.level = level;
+    const peakName = level === 'over' ? 'Peak too high' : 'True peak';
+    if (peakNameRef.current && peakNameRef.current.textContent !== peakName) {
+      peakNameRef.current.textContent = peakName;
+      peakNameRef.current.dataset.level = level;
+    }
     const integrated = l?.integrated ?? -Infinity;
     const shortTerm = l?.shortTerm ?? -Infinity;
     if (freshAfter.current !== null && ((now >= freshAfter.current && Number.isFinite(integrated)) || !live)) freshAfter.current = null;
@@ -330,9 +357,13 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
     hasRef.current = false;
     setMeasured(false);
     lastAt.current = -Infinity;
-    const text = describeMatch(r, t, useIntegrated ? 'integrated' : 'short-term', value);
-    setResult(text);
-    notify(`Loudness set to ${formatDb(r.after)} to aim for ${minusLufs(t.lufs)}.`, 'info', 'undo');
+    setLastMatch({ before: r.before, after: r.after });
+    setResult(limitAdvice(r));
+    notify(
+      `Loudness ${formatDb(r.before)} → ${formatDb(r.after)} to aim for ${minusLufs(t.lufs)} (the ${useIntegrated ? 'integrated' : 'short-term'} reading was ${formatLoudness(value)}). Play on, then match again to fine-tune.`,
+      'info',
+      'undo',
+    );
   };
 
   const reset = () => {
@@ -341,8 +372,12 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
     lastAt.current = -Infinity;
   };
 
+  // "0.0 → +6.0 dB" while Loudness is still where the last match put it.
+  const showMatch = lastMatch !== null && Math.abs(lastMatch.after - loudnessDb) < 0.05;
+  const loudnessText = showMatch ? `Loudness ${formatDb(lastMatch.before)} → ${formatDb(lastMatch.after)}` : `Loudness ${formatDb(loudnessDb)}`;
+
   return (
-    <section className={styles.section} aria-labelledby={titleId}>
+    <section className={styles.section} aria-labelledby={titleId} data-section="loudness">
       <SectionTitle id={titleId}>Loudness</SectionTitle>
       <SegmentedControl<LoudnessTargetId>
         label="Loudness target"
@@ -360,7 +395,9 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
           {READOUTS.map((r) => (
             <Tooltip key={r.key} tip={r.tip}>
               <div className={styles.readout} data-key={r.key}>
-                <span className={styles.readoutName}>{r.name}</span>
+                <span className={styles.readoutName} ref={r.key === 'truePeak' ? peakNameRef : undefined}>
+                  {r.name}
+                </span>
                 <span className={styles.readoutValue}>
                   <span
                     className="mono"
@@ -369,7 +406,7 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
                       values.current[r.key] = el;
                     }}
                   >
-                    {'\u2014'}
+                    {'—'}
                   </span>{' '}
                   <span className={styles.unit}>{r.unit}</span>
                 </span>
@@ -377,15 +414,12 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
             </Tooltip>
           ))}
         </div>
-        <IconButton
-          icon="undo"
-          size="sm"
-          variant="ghost"
-          label="Reset the loudness measurement"
-          onClick={reset}
-          tip="Start measuring again from now (integrated loudness and true peak)."
-          className={styles.reset}
-        />
+        <Tooltip tip="Start measuring again from now (integrated loudness and true peak).">
+          <button type="button" className={styles.reset} aria-label="Reset loudness readings" onClick={reset}>
+            <Icon name="undo" size={14} />
+            <span>Reset</span>
+          </button>
+        </Tooltip>
       </div>
       <p ref={statusRef} className={styles.status} data-testid="loudness-status">
         Start playback to measure.
@@ -400,21 +434,20 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
           data-blocked={blocked ? '' : undefined}
           className={styles.match}
           tip={blocked ?? `Set the Loudness control so the song lands on ${minusLufs(target.lufs)}.`}
-          detail="Uses the integrated reading when there is one, otherwise the short-term one. One undo step."
+          detail={`Moves Loudness by the measured difference, using the integrated reading when there is one, otherwise the short-term one. It is approximate: the limiter holds peaks below ${MINUS}1 dBFS, so a big push adds less than the numbers say. One undo step.`}
         >
           Match target
         </Button>
-        <span className={`${styles.loudnessNow} mono`} aria-label={`Loudness control: ${formatDb(loudnessDb)}`}>
-          Loudness {formatDb(loudnessDb)}
+        <span className={`${styles.loudnessNow} mono`} data-testid="loudness-control">
+          {loudnessText}
         </span>
       </div>
       {reason && !locked && <p className={styles.blocked}>{reason}</p>}
       <p className={styles.result} role="status" aria-live="polite" data-testid="match-result">
         {result ?? ''}
       </p>
-      <p className={styles.fine}>
-        Match target moves Loudness by the measured difference. It is approximate: the limiter holds peaks below {MINUS}1 dBFS, so a big push adds less than the
-        numbers say.
+      <p className={styles.fine} data-testid="true-peak-note">
+        True peak counts the peaks between samples, so it can read just above the limiter’s {MINUS}1 dBFS: amber is normal, red (above 0 dBTP) may distort.
       </p>
     </section>
   );
@@ -572,18 +605,21 @@ export function MasteringPanel(props: { advanced: boolean; className?: string })
         </>
       }
     >
-      {takeLocked && (
-        <p className={styles.lock} role="note">
-          <Icon name="lock" size={13} /> {MASTERING_LOCKED_MESSAGE}
-        </p>
-      )}
-      <Presets locked={takeLocked} />
-      <LoudnessSection enabled={enabled} locked={takeLocked} comparing={comparing} />
-      <section className={`${styles.section} ${styles.spectrumSection}`} aria-labelledby={spectrumId}>
-        <SectionTitle id={spectrumId}>Spectrum</SectionTitle>
-        <Spectrum />
-      </section>
-      {advanced && <MasteringControls enabled={enabled} locked={takeLocked} />}
+      {/* One column beside the mixer; below it (full width), Presets and Loudness left of the Spectrum. */}
+      <div className={styles.layout}>
+        {takeLocked && (
+          <p className={styles.lock} role="note">
+            <Icon name="lock" size={13} /> {MASTERING_LOCKED_MESSAGE}
+          </p>
+        )}
+        <Presets locked={takeLocked} />
+        <LoudnessSection enabled={enabled} locked={takeLocked} comparing={comparing} />
+        <section className={`${styles.section} ${styles.spectrumSection}`} aria-labelledby={spectrumId} data-section="spectrum">
+          <SectionTitle id={spectrumId}>Spectrum</SectionTitle>
+          <Spectrum />
+        </section>
+        {advanced && <MasteringControls enabled={enabled} locked={takeLocked} />}
+      </div>
     </Panel>
   );
 }

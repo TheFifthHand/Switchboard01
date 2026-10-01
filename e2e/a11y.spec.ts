@@ -114,7 +114,7 @@ test('keyboard only: Jump In, reach every essential control, play a note, change
   await expect.poll(() => page.evaluate(() => Object.values((window as any).__switchboard.runtime.getState().held).flat().length)).toBeGreaterThan(0);
   await page.keyboard.up('KeyA');
 
-  // Space plays/stops when focus is not on a control (on a focused button it activates that button).
+  // Space plays/pauses when focus is not on a control (a control reached with Tab is pressed by Space instead).
   await page.keyboard.press('Space');
   await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing)).toBe(false);
   expect(pageErrors(page)).toEqual([]);

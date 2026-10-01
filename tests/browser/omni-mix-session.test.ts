@@ -154,7 +154,7 @@ describe('Mix view on the real engine', () => {
     await act(async () => wait(300));
     const mastered = await rmsOver(800);
     const before = session.store.getState();
-    const b = root.querySelector<HTMLButtonElement>('button[aria-label="Hear without mastering (A/B)"]')!;
+    const b = root.querySelector<HTMLButtonElement>('button[aria-label="Compare A/B (hear without mastering)"]')!;
     pointer(b, 'pointerdown', pointIn(b));
     await act(async () => wait(300));
     const without = await rmsOver(800);

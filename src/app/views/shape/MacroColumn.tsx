@@ -206,7 +206,7 @@ export function MacroColumn(props: { trackId: Id; className?: string }) {
   };
   return (
     <Panel
-      title="Macros"
+      title="Macros (big knobs)"
       className={className}
       bodyClassName={styles.scroll}
       dense

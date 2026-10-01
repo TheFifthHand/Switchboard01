@@ -1,6 +1,6 @@
 /**
  * The cable panel: the selected part's patch as hardware module blocks in
- * signal order (Instrument → effects → Channel → shared Reverb/Delay →
+ * signal order (Instrument → effects → Channel → shared Reverb/Echo →
  * Master Out, LFOs below), with draggable cables.
  *
  * Patching (all through the patch commands, so the engine rewires with
@@ -989,14 +989,14 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
               Restore {possessive(partName)} cables
             </Button>
             <p>
-              Instrument → Drive → Filter → Channel → Master Out, Send A to the Reverb, Send B to the Delay, and the LFO to the filter. Effects and LFOs you added to {partName} and its cables to other parts are removed.
+              Instrument → Drive → Filter → Channel → Master Out, Send A to the Reverb, Send B to the Echo, and the LFO to the filter. Effects and LFOs you added to {partName} and its cables to other parts are removed.
             </p>
           </div>
           <div className={styles.restoreChoice}>
             <Button variant="danger" icon="undo" onClick={restoreAll}>
               Restore all parts
             </Button>
-            <p>Every part and the shared Reverb, Delay and Master Out get their default modules and cables back.</p>
+            <p>Every part and the shared Reverb, Echo and Master Out get their default modules and cables back.</p>
           </div>
         </div>
       </Dialog>

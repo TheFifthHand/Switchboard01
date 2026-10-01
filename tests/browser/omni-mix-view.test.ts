@@ -422,10 +422,10 @@ describe('Loudness', () => {
     expect(value('shortTerm').textContent).toBe('−13.1');
     expect(value('integrated').textContent).toBe('−20.0');
     expect(value('truePeak').textContent).toBe('−0.6');
-    // Above the −1 dB ceiling: flagged.
-    expect(value('truePeak').dataset.over).toBe('1');
+    // Just above the limiter's −1 dB: amber (normal for true peak), explained in words; red only above 0 dBTP.
+    expect(value('truePeak').dataset.level).toBe('near');
+    expect(panel.querySelector('[data-testid="true-peak-note"]')!.textContent).toMatch(/peaks between samples.*amber is normal, red \(above 0 dBTP\) may distort/);
     expect(panel.querySelector('[data-testid="loudness-status"]')!.textContent).toBe('Integrated: 6.0 dB quieter than the Streaming target, −14 LUFS.');
-    expect(panel.textContent).toMatch(/approximate: the limiter holds peaks below/);
     const match = button(panel, /Match target/);
     expect(match.getAttribute('aria-disabled')).toBeNull();
     click(match);
@@ -435,14 +435,17 @@ describe('Loudness', () => {
     click(match);
     expect(mastering('loudness')).toBe(6);
     expect(match.getAttribute('aria-disabled')).toBe('true');
-    expect(panel.querySelector('[data-testid="match-result"]')!.textContent).toContain('Loudness 0.0 dB → +6.0 dB');
+    // What Match did: beside the button and in the toast (with Undo); a plain match needs no extra paragraph.
+    expect(panel.querySelector('[data-testid="loudness-control"]')!.textContent).toBe('Loudness 0.0 dB → +6.0 dB');
+    expect(panel.querySelector('[data-testid="match-result"]')!.textContent).toBe('');
     expect(session.store.undoLabel()).toBe('Match loudness target');
-    expect(notice()).toContain('Loudness set to +6.0 dB');
+    expect(notice()).toContain('Loudness 0.0 dB → +6.0 dB to aim for −14 LUFS (the integrated reading was −20.0 LUFS)');
     // Once a fresh reading arrives, Match is available again.
     await settle(900);
     expect(match.getAttribute('aria-disabled')).toBeNull();
     act(() => session.undo());
     expect(mastering('loudness')).toBe(0);
+    expect(panel.querySelector('[data-testid="loudness-control"]')!.textContent).toBe('Loudness 0.0 dB');
   });
 
   it('uses the short-term reading when there is no integrated one yet', async () => {
@@ -453,7 +456,7 @@ describe('Loudness', () => {
     expect(panel.querySelector('[data-testid="loudness-status"]')!.textContent).toMatch(/^Short-term: 2\.0 dB quieter/);
     click(button(panel, /Match target/));
     expect(mastering('loudness')).toBe(2);
-    expect(panel.querySelector('[data-testid="match-result"]')!.textContent).toContain('short-term reading');
+    expect(notice()).toContain('the short-term reading was −16.0 LUFS');
   });
 
   it('the target can be changed (remembered in this browser) and Match aims for it', async () => {
@@ -535,7 +538,8 @@ describe('Spectrum', () => {
 });
 
 describe('A/B comparison', () => {
-  const compareButton = (root: Element) => button(root, 'Hear without mastering (A/B)');
+  // The accessible name starts with the visible words (WCAG 2.5.3 label in name).
+  const compareButton = (root: Element) => button(root, 'Compare A/B (hear without mastering)');
   const hearingWithout = () => session.masteringListenBypass;
 
   it('holding plays the mix without mastering, listening only; letting go brings it back', async () => {
@@ -549,6 +553,7 @@ describe('A/B comparison', () => {
     expect(project()).toBe(before);
     expect(b.getAttribute('aria-pressed')).toBe('true');
     expect(b.textContent).toContain('Hearing: no mastering');
+    expect(b.getAttribute('aria-label')).toBe('Hearing: no mastering (Compare A/B)');
     expect(section(m.container, 'Mastering').querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('true');
     await act(async () => wait(400));
     pointer(b, 'pointerup', pointIn(b));

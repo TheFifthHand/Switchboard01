@@ -103,6 +103,7 @@ async function makeVersion(trackId: Id, edit: SampleEdit, s: Session, finish: (o
   if (!res.ok) return finish(false, res.message);
   await yieldToUi();
   const baseName = isBuiltinId(sampleId) ? (builtinSampleInfo(sampleId)?.name ?? 'Recording') : (p.samples.find((x) => x.id === sampleId)?.name ?? 'Recording');
+  // res.channels is already clipped to full scale: the bank plays exactly what the WAV keeps.
   const made = encodeMadeAudio(versionName(baseName, s.store.getState().samples.map((x) => x.name)), res.channels, audio.sampleRate);
   if (!made.ok) return finish(false, made.message);
   const stored = await s.storeSample(made.meta, made.blob, s.ctx ? audioBufferFromChannels(res.channels, audio.sampleRate) : null);

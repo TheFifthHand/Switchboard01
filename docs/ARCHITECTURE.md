@@ -71,6 +71,7 @@ Rules:
   - Mute All ends a take (the notice says so), and a take cannot start while Mute All is on.
   - Editor previews and auditions (`NoteSource 'preview'`) play the exact pitch, skip Musical Assist
     and the arpeggiator, are never recorded, and are blocked while a take records or replays.
+  - MIDI pitch bend is not recorded into performance takes: a replay plays its notes unbent.
 - Musical Assist snaps melodic notes into the key; drums, sampler parts (recordings keep their
   pitch) and previews play the key as pressed.
 
@@ -92,8 +93,8 @@ Rules:
   limiter (AudioWorklet, ceiling −1 dBFS) → final safety clipper (WaveShaper bounded to the
   ceiling) → destination.
 - Meters: per-part and master peak/RMS (AnalyserNodes); a loudness AudioWorklet on the final output
-  (ITU-R BS.1770 / EBU R128: momentary, short-term, gated integrated, 4× true peak; restarted when
-  playback starts from the top or by `resetLoudness()`); `readSpectrum()` (log-spaced band energy
+  (ITU-R BS.1770 / EBU R128: momentary, short-term, gated integrated, 4× true peak; restarted every time
+  playback starts — live, song or replay — and by `resetLoudness()`, but not on resume from Pause); `readSpectrum()` (log-spaced band energy
   20 Hz–20 kHz); the Glue's gain reduction.
 - Insert effects: filter, drive, delay, reverb, chorus, phaser, bit crusher, EQ, compressor, gate,
   auto pan, stereo width, flanger, tape. Worklets (limiter, crusher, dynamics, fx, mastering,
