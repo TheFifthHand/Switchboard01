@@ -782,8 +782,10 @@ export class Session {
   }
 
   /** Space: Play / Pause. */
-  async togglePlay(): Promise<void> {
+  async togglePlay(opts: { song?: boolean } = {}): Promise<void> {
     if (this.playing) this.pause();
+    // In Arrange, Play plays the song (from the loop, if one is set); a pause resumes what was playing.
+    else if (opts.song && !this.transport?.paused && this.store.getState().arrangement.blocks.length) await this.playSong();
     else await this.play();
   }
 

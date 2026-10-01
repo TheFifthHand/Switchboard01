@@ -44,6 +44,11 @@ export interface ApplyResult {
   changed: boolean;
   /** Set when the edit lock refused the edit: the lock reason. */
   refused?: string;
+  /**
+   * The edit changed the project but left no undo step of its own (a gesture
+   * that came back to where it started): offer no Undo for it.
+   */
+  noStep?: boolean;
 }
 
 export interface HistoryEntry {

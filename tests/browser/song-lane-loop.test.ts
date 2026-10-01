@@ -34,7 +34,7 @@ beforeEach(async () => {
   session.store.replace(getStarter('house')!.build(), { resetHistory: true });
   clearBlockClipboard();
   act(() => {
-    patchRuntime({ held: {}, notice: null, recording: 'off', playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, songLoop: null, replayId: null });
+    patchRuntime({ held: {}, notice: null, recording: 'off', playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, songLoop: null, songLooping: false, replayId: null });
     setView('arrange');
     setUiMode('simple');
   });
@@ -44,7 +44,7 @@ afterEach(() => {
   if (session.playing) act(() => session.stop());
   cleanup();
   vi.restoreAllMocks();
-  act(() => patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, songLoop: null, replayId: null }));
+  act(() => patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, songLoop: null, songLooping: false, replayId: null }));
 });
 
 async function setup() {

@@ -39,6 +39,8 @@ export interface RuntimeState {
   songBlockId: Id | null;
   /** The looped part of the song (Arrange), or null: the song plays through. */
   songLoop: SongLoop | null;
+  /** The song is playing (or paused) inside the loop and will repeat it; false while it plays towards it or on to the end. */
+  songLooping: boolean;
   tracks: Record<Id, TrackRuntime>;
   recording: RecordingState;
   /** Clip that Record Notes writes into. */
@@ -84,6 +86,7 @@ export const runtimeStore = createStore<RuntimeState>({
   songBlock: null,
   songBlockId: null,
   songLoop: null,
+  songLooping: false,
   tracks: {},
   recording: 'off',
   recordTarget: null,
