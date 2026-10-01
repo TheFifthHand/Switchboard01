@@ -15,7 +15,7 @@ import { TransportBar } from '../../src/app/views/TransportBar';
 import { getStarter } from '../../src/content/starters';
 import type { Id } from '../../src/project/types';
 import { setArp, setSettings } from '../../src/state/commands';
-import { selectTrack, setKeyboardOctave, setPadMode, setTipsEnabled, uiStore } from '../../src/state/uiStore';
+import { selectTrack, setKeyboardOctave, setPadMode, setTipsEnabled, setUiMode, uiStore } from '../../src/state/uiStore';
 import { TipsProvider } from '../../src/ui/components';
 import { cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
 import '../../src/ui/theme.css';
@@ -37,7 +37,10 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  act(() => setTipsEnabled(true));
+  act(() => {
+    setTipsEnabled(true);
+    setUiMode('simple');
+  });
 });
 
 const arp = (id: Id) => session.store.getState().tracks.find((t) => t.id === id)!.arp;
@@ -117,6 +120,8 @@ describe('Arpeggiator', () => {
     session.noteOn = (trackId, pitch) => void played.push(`on ${trackId} ${pitch}`);
     session.noteOff = (trackId, pitch) => void played.push(`off ${trackId} ${pitch}`);
     try {
+      // The arpeggiator strip is part of Advanced.
+      act(() => setUiMode('advanced'));
       const m = mount(h('div', { style: { width: '1340px', height: '100px' } }, h(KeyboardStrip)), { width: 1366 });
       click(m.container.querySelector<HTMLButtonElement>('button[aria-label^="Arpeggiator settings"]')!);
       const rate = byRole(dialog()!, 'radio', '1/8');
@@ -179,13 +184,28 @@ describe('Recording options', () => {
 });
 
 describe('Transport strip', () => {
-  it('the Tips switch toggles the remembered Tips setting', () => {
+  it('the Simple · Advanced switch and Tips (in More) change remembered UI settings, never the project', () => {
     const m = mount(h(TipsProvider, { enabled: true, children: h(TransportBar, { onOpenLibrary: () => {}, onOpenExport: () => {} }) }), { width: 1366 });
-    const sw = byRole(m.container, 'switch', 'Tips');
-    expect(sw.getAttribute('aria-checked')).toBe('true');
-    click(sw);
+    const before = session.store.getState();
+    const group = byRole(m.container, 'radiogroup', 'Simple or Advanced');
+    expect(byRole(group, 'radio', 'Simple').getAttribute('aria-checked')).toBe('true');
+    // Swing is an Advanced control.
+    expect(m.container.textContent).not.toContain('Swing');
+    click(byRole(group, 'radio', 'Advanced'));
+    expect(uiStore.getState().uiMode).toBe('advanced');
+    expect(m.container.textContent).toContain('Swing');
+    click(byRole(group, 'radio', 'Simple'));
+    expect(uiStore.getState().uiMode).toBe('simple');
+    expect(session.store.getState()).toBe(before);
+
+    const more = m.container.querySelector<HTMLButtonElement>('button[aria-label^="More:"]')!;
+    click(more);
+    const tips = [...document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find((b) => b.textContent?.includes('Tips'))!;
+    expect(tips.getAttribute('aria-checked')).toBe('true');
+    click(tips);
     expect(uiStore.getState().tipsEnabled).toBe(false);
-    click(sw);
+    click(more);
+    click([...document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find((b) => b.textContent?.includes('Tips'))!);
     expect(uiStore.getState().tipsEnabled).toBe(true);
   });
 

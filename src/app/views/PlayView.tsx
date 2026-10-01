@@ -1,7 +1,7 @@
 /**
  * Play: the default surface — pad matrix (four modes), the selected part's
- * sound controls and the keyboard. Switching pad modes never touches
- * playback or the project.
+ * sound controls and the keyboard. Switching pad modes (or Simple / Advanced)
+ * never touches playback or the project. The cables drawer is in Advanced.
  */
 import type { ReactNode } from 'react';
 import { SegmentedControl } from '../../ui/components';
@@ -30,9 +30,10 @@ export const PAD_MODES: PadModeDef[] = [
 
 export function PlayView() {
   const padMode = useUi((s) => s.padMode);
+  const advanced = useUi((s) => s.uiMode === 'advanced');
   const mode = PAD_MODES.find((m) => m.value === padMode) ?? PAD_MODES[0];
   return (
-    <div className={styles.view}>
+    <div className={styles.view} data-mode={advanced ? 'advanced' : 'simple'}>
       <section className={styles.surface} aria-label="Pads">
         <div className={styles.surfaceHead}>
           <SegmentedControl<PadMode>
@@ -42,7 +43,7 @@ export function PlayView() {
             value={mode.value}
             onChange={(v) => setPadMode(v)}
             controls="pad-surface"
-            size="sm"
+            size="md"
           />
         </div>
         <div id="pad-surface" className={styles.surfaceBody} role="tabpanel" aria-label={`${mode.label} pads`}>
@@ -52,10 +53,12 @@ export function PlayView() {
       <aside className={styles.side}>
         <PartPanel />
       </aside>
-      {/* The cable panel: collapsed to a one-line bar until opened. */}
-      <div className={styles.cables}>
-        <CablesDrawer />
-      </div>
+      {/* The cable panel (Advanced): collapsed to a one-line bar until opened. */}
+      {advanced && (
+        <div className={styles.cables}>
+          <CablesDrawer />
+        </div>
+      )}
     </div>
   );
 }

@@ -215,12 +215,23 @@ export interface AudioEngineApi {
   readonly output: AudioNode;
   readMeters(out: MeterFrame): void;
   /**
-   * Spectrum of the final output: fills `out` with dB values (about -120..0)
-   * for log-spaced bands from 20 Hz to 20 kHz (out.length bands). Optional.
+   * Spectrum of the final output: fills `out` with the energy of out.length
+   * log-spaced bands from 20 Hz to 20 kHz in dB (−140..+20; a full-scale
+   * sine reads about 0 dB in its band, pink noise reads flat). The analyser
+   * smooths between reads, so call it at a steady rate (e.g. every frame).
+   * Engines without live meters fill −140. Optional.
    */
   readSpectrum?(out: Float32Array): void;
-  /** Restart the integrated loudness and true-peak measurement. Optional. */
+  /**
+   * Restart the integrated loudness and true-peak measurement. Optional.
+   * The engine also restarts it when playback starts from the top (tick 0).
+   */
   resetLoudness?(): void;
+  /**
+   * A/B listening: hear the output without the mastering chain while `on`.
+   * Never changes the project; offline renders (exports) are unaffected.
+   */
+  setMasteringBypass?(on: boolean): void;
   /**
    * Live pitch bend for a part's playing and future notes, in cents
    * (MIDI pitch wheel). Optional; 0 = centred.

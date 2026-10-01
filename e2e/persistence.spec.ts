@@ -124,7 +124,7 @@ test('autosave reopens the last project after a reload', async ({ page }) => {
     const sb = (window as any).__switchboard;
     sb.session.setBpm(97);
   });
-  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole('button', { name: 'Autosave: Saved' })).toBeVisible({ timeout: 5000 });
   const name = await page.evaluate(() => (window as any).__switchboard.project().name);
   await page.reload();
   await expect(page.getByRole('button', { name: `Continue “${name}”` })).toBeVisible();
@@ -174,5 +174,5 @@ test('a storage failure shows "Not saved" with Try again and Export project file
   // Recovery: storage frees up, Try again saves.
   await page.evaluate(() => (window as any).__restorePut());
   await pop.getByRole('button', { name: 'Try again' }).click();
-  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole('button', { name: 'Autosave: Saved' })).toBeVisible({ timeout: 5000 });
 });

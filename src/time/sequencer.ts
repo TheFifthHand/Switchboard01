@@ -337,6 +337,18 @@ interface Domain {
   clock: TempoMap;
   swing: SwingTimeline | null;
   clauses: Clause[];
+  /** Events timed before this never sound (the music before a resume point). */
+  floor: number;
+}
+
+/** Where a paused transport holds: everything needed to continue exactly there. */
+interface PausedState {
+  /** Transport tick (playhead) at the pause. */
+  tick: number;
+  /** Where generation restarts on resume (a little earlier, for notes swing delays past the pause point). */
+  cursor: number;
+  /** Tempo in effect at the pause (a replayed take keeps its own). */
+  bpm: number;
 }
 
 class SwingTimeline {
@@ -441,6 +453,15 @@ export class Sequencer {
   private batch = 0;
   private inProcess = false;
   private readonly dropped = new Set<NoteEvent>();
+  /** Set while paused (see `pause()`). */
+  private pausedState: PausedState | null = null;
+  /** After a resume: events timed before the resume time are the paused past and never sound. */
+  private resumeFloor = -Infinity;
+  /** The playhead waits here until the start (or resume) time comes. */
+  private playheadFloor = 0;
+  /** A resumed replay's control values in effect at the pause point, sent again at the resume time. */
+  private resumeEvents: SeqEvent[] = [];
+  private resumeSent = true;
 
   // Free-running arpeggiator clock while the transport is stopped.
   private freeClock: TempoMap | null = null;
@@ -467,6 +488,11 @@ export class Sequencer {
   /** True after a song / performance / bounded render reached its end. */
   get ended(): boolean {
     return this._ended;
+  }
+
+  /** Paused: not playing, holding its position, mode and every clip's phase until `resume()` (or `stop()`). */
+  get paused(): boolean {
+    return this.pausedState !== null;
   }
 
   /** Events have been generated for un-swung ticks below this. */
@@ -510,9 +536,12 @@ export class Sequencer {
     return this.swing.at(tick);
   }
 
-  /** Playhead at `time`; it waits at the start tick until the transport's start time comes. */
+  /**
+   * Playhead at `time`; it waits at the start tick until the transport's start
+   * time comes. Paused: where it paused. Stopped: the start (bar 1).
+   */
   getPosition(time: number): SeqPosition {
-    return positionOf(this._playing ? Math.max(this.startTick, this.clock.tickAt(time)) : this.stoppedTick);
+    return positionOf(this._playing ? Math.max(this.playheadFloor, this.clock.tickAt(time)) : this.stoppedTick);
   }
 
   private rt(trackId: Id): TrackRt {
@@ -600,6 +629,7 @@ export class Sequencer {
       if (!perf) throw new Error(`Performance "${mode.performanceId}" not found`);
     }
     if (this._playing) this.stopTransport(t0);
+    else if (this.pausedState) this.endPause();
     const base = this.getProject();
     let project = base;
     let replay: ReplayState | null = null;
@@ -645,12 +675,16 @@ export class Sequencer {
     this.clock.reset({ time: t0, tick: startTick, bpm: project.bpm });
     this.swing.reset(project.swing);
     this.startTick = startTick;
+    this.playheadFloor = startTick;
     this.musicStartTick = from;
     this.cursor = startTick;
     this.historyFloor = startTick;
     this.clauses = [];
     this.cuts = [];
     this.endSentTime = null;
+    this.resumeFloor = -Infinity;
+    this.resumeEvents = [];
+    this.resumeSent = true;
 
     for (const id of [...this.tracks.keys()]) {
       if (!project.tracks.some((t) => t.id === id)) this.tracks.delete(id);
@@ -706,12 +740,13 @@ export class Sequencer {
   }
 
   /**
-   * Stop the transport at `time`. Stop also releases a latched arpeggio
-   * (keys still physically held keep playing on the free-running clock).
-   * The launcher returns to its armed state: in live mode the latest queued
-   * request of each track (or what it was playing) starts again from the top
-   * on the next Play; after song or replay playback the live selection from
-   * before is restored.
+   * Stop the transport at `time` (also from a pause). Stop also releases a
+   * latched arpeggio (keys still physically held keep playing on the
+   * free-running clock). The playhead returns to the start (bar 1) and the
+   * launcher to its armed state: in live mode the latest queued request of
+   * each track (or what it was playing) starts again from the top on the next
+   * Play; after song or replay playback the live selection from before is
+   * restored.
    */
   stop(time: number): void {
     const t = Number.isFinite(time) ? time : 0;
@@ -720,6 +755,7 @@ export class Sequencer {
       this.stopTransport(t);
       return;
     }
+    if (this.pausedState) this.endPause();
     if (this.freeClock) {
       const tick = this.freeClock.tickAt(t);
       const project = this.getProject();
@@ -730,8 +766,166 @@ export class Sequencer {
     }
   }
 
+  /**
+   * Pause at `time`: hold the playhead, the mode (live pads, song, replay), the
+   * song position, every playing clip's loop phase and every queued launch, so
+   * `resume()` continues exactly there, in time. Generated events at or after
+   * the pause point are forgotten (the driver releases or cancels every voice
+   * at `time`). Like Stop, a latched arpeggio ends, and the arpeggiator does
+   * not run while paused unless keys are pressed (as when stopped). Returns
+   * false when there is nothing to pause: not playing, or the music already
+   * reached its end (the driver stops instead).
+   */
+  pause(time: number): boolean {
+    if (!this._playing || this._ended) return false;
+    const t = Number.isFinite(time) ? time : 0;
+    const tick = Math.max(this.playheadFloor, this.clock.tickAt(t));
+    if (this.endTick !== null && tick >= this.endTick) return false;
+    const project = this.activeProject();
+    // Catch up to the pause point if the ticker had not generated that far (nothing of it was handed out in time).
+    if (this.cursor < tick) this.runTransport(t, project, []);
+    if (this._ended) return false;
+    // State applied at or after the pause point is rolled back; it applies again (and is announced) on resume.
+    for (const rt of this.tracks.values()) {
+      while (rt.history.length && rt.history[rt.history.length - 1].appliedTick >= tick) {
+        const h = rt.history.pop()!;
+        rt.playing = h.prev;
+        for (const tr of h.due) this.insertTransition(rt, tr);
+      }
+      // Every voice is released at the pause: nothing sounds on into the resume.
+      rt.recent = [];
+    }
+    const song = this.song;
+    if (song) {
+      song.next = 0;
+      while (song.next < song.blocks.length && song.blocks[song.next].startTick < tick) song.next++;
+    }
+    const rp = this.replay;
+    if (rp) {
+      rp.next = 0;
+      while (rp.next < rp.controls.length && rp.controls[rp.next].t < tick) rp.next++;
+    }
+    // Live arpeggiator input: as at Stop, a latched pattern ends; keys pressed while paused play on the idle clock.
+    for (const arp of this.arps.values()) {
+      if (arp.replayDriven) continue;
+      arp.latch = { held: arp.latch.held, latched: [] };
+      arp.changes = [];
+    }
+    this.freeClock = null;
+    this.freeClauses = [];
+    // Swing delays notes by up to MAX_SWING_TICKS: generation restarts that much earlier, and the
+    // resume floor keeps everything that belongs before the pause point silent.
+    const cursor = Math.min(tick, Math.max(tick - MAX_SWING_TICKS, this.startTick, this.historyFloor));
+    this.pausedState = { tick, cursor, bpm: this.clock.bpmAtTick(tick) };
+    this.cursor = cursor;
+    this.clauses = [];
+    this.cuts = [];
+    this.endSentTime = null;
+    this.resumeEvents = [];
+    this.resumeSent = true;
+    this.stoppedTick = tick;
+    this._playing = false;
+    return true;
+  }
+
+  /**
+   * Continue a pause at `time`: the playhead tick at `time` is the tick where
+   * it paused, every clip keeps its loop phase, queued launches and the song
+   * carry on, and nothing from before the pause point sounds (no backlog).
+   * Live and song playback take the project's tempo and swing as they are
+   * now; a replayed take keeps its own tempo map, and the control values the
+   * take had reached (knobs, macros, mutes, master) are sent again at `time`.
+   * Returns false when not paused.
+   */
+  resume(time: number): boolean {
+    const ps = this.pausedState;
+    if (!ps || this._playing) return false;
+    const t0 = Number.isFinite(time) ? time : 0;
+    const project = this.activeProject();
+    const rp = this.replay;
+    this.clock.reset({ time: t0, tick: ps.tick, bpm: rp ? ps.bpm : project.bpm });
+    if (rp) {
+      if (rp.tempoOverrideTick !== null && rp.tempoOverrideTick > ps.tick) rp.tempoOverrideTick = null;
+      // The take's later tempo changes go back into the clock (a live override holds until the next one).
+      if (rp.tempoOverrideTick === null) for (const tp of rp.tempos) if (tp.tick > ps.tick) this.clock.reanchorAtTick(tp.tick, tp.bpm);
+      this.resumeEvents = this.replayStateAt(rp, ps.tick, t0);
+    } else {
+      this.swing.set(ps.cursor, project.swing);
+      this.resumeEvents = [];
+    }
+    this.resumeSent = this.resumeEvents.length === 0;
+    this.resumeFloor = t0;
+    this.playheadFloor = ps.tick;
+    this.cursor = ps.cursor;
+    this.clauses = [];
+    this.cuts = [];
+    this.endSentTime = null;
+    // Arpeggiator input moves onto the transport grid from the resume point.
+    this.freeClock = null;
+    this.freeClauses = [];
+    for (const track of project.tracks) {
+      const arp = this.arps.get(track.id);
+      if (!arp || arp.replayDriven) continue;
+      arp.changes = [nextArpChange(undefined, arp.latch, ps.tick, track, arp.velocity)];
+    }
+    this.pausedState = null;
+    this._playing = true;
+    return true;
+  }
+
+  /** The values a replayed take's controls reached before `tick` (the engine dropped them at the pause), as events at `time`. */
+  private replayStateAt(rp: ReplayState, tick: number, time: number): SeqEvent[] {
+    const last = new Map<string, ControlEvent>();
+    for (const c of rp.controls) {
+      if (c.t >= tick) break;
+      switch (c.type) {
+        case 'macro':
+          last.set(`macro:${c.trackId}:${c.macro}`, c);
+          break;
+        case 'param':
+          last.set(`param:${c.module}:${c.param}`, c);
+          break;
+        case 'mute':
+          last.set(`mute:${c.trackId}`, c);
+          break;
+        case 'master':
+          last.set('master', c);
+          break;
+        default:
+          // Tempo is in the clock and swing in the sequencer itself.
+          break;
+      }
+    }
+    const out: SeqEvent[] = [];
+    for (const c of last.values()) {
+      if (c.type === 'macro') out.push({ kind: 'macro', tick, time, trackId: c.trackId, macro: c.macro, value: c.value });
+      else if (c.type === 'param') out.push({ kind: 'param', tick, time, module: c.module, param: c.param, value: c.value });
+      else if (c.type === 'mute') out.push({ kind: 'mute', tick, time, trackId: c.trackId, mute: c.mute });
+      else if (c.type === 'master') out.push({ kind: 'master', tick, time, volumeDb: c.volumeDb });
+    }
+    return out;
+  }
+
+  /** Leave a pause without resuming (Stop, or a new start): settle the launcher as Stop does. */
+  private endPause(): void {
+    this.pausedState = null;
+    this.settleStopped();
+    // A replayed take's arpeggiator input belongs to the take.
+    for (const arp of this.arps.values()) {
+      if (!arp.replayDriven) continue;
+      arp.changes = [];
+      arp.replayDriven = false;
+    }
+  }
+
   private stopTransport(time: number): void {
-    this.stoppedTick = Math.max(this.startTick, this.clock.tickAt(time));
+    this.settleStopped();
+    this.startFreeArp(time);
+  }
+
+  /** Back to stopped at bar 1: the launcher re-armed, song, replay and pause state cleared. */
+  private settleStopped(): void {
+    this.stoppedTick = 0;
     const live = this.getProject();
     for (const [id, rt] of this.tracks) {
       let armed: Playing | null = null;
@@ -766,7 +960,9 @@ export class Sequencer {
     this.endSentTime = null;
     this.clauses = [];
     this.cuts = [];
-    this.startFreeArp(time);
+    this.resumeFloor = -Infinity;
+    this.resumeEvents = [];
+    this.resumeSent = true;
   }
 
   /** Keys still held keep the arpeggiator going on a free clock anchored at `time`. */
@@ -856,15 +1052,22 @@ export class Sequencer {
     return this.activeProject().tracks.map((t) => this.request(t, null, time));
   }
 
+  /**
+   * Stopped: arm (or disarm) the clip for the next Play. Playing: queue the
+   * change for the next bar. Paused: queue it for the next bar after the
+   * pause point, so it happens there after Resume (`atTime` is then where
+   * that bar would have been without the pause).
+   */
   private request(track: Track, slot: number | null, time: number): LaunchResult {
     const t = Number.isFinite(time) ? time : 0;
     const rt = this.rt(track.id);
-    if (!this._playing) {
+    const ps = this.pausedState;
+    if (!this._playing && !ps) {
       rt.playing = slot === null ? null : this.resolvePlaying(track, slot, 0);
       rt.pending = [];
       return { trackId: track.id, slot, atTick: 0, atTime: t };
     }
-    const nowTick = this.clock.tickAt(t);
+    const nowTick = ps ? ps.tick : this.clock.tickAt(t);
     const at = nextBarTick(nowTick);
     const result: LaunchResult = { trackId: track.id, slot, atTick: at, atTime: this.clock.timeAt(at) };
     const queued = rt.pending.find((tr) => tr.source === 'live' && tr.atTick === at);
@@ -874,6 +1077,78 @@ export class Sequencer {
     this.insertTransition(rt, { atTick: at, slot, row: null, source: 'live', seq: ++this.transitionSeq, requestTick: nowTick });
     this.cutAtSwitch(rt, at);
     return result;
+  }
+
+  /**
+   * Clips moved between the slots of a part (a drag between pads, a scene
+   * reorder, or undoing one): the launcher follows them. `slots` maps an old
+   * slot to its new slot (a clip playing there keeps playing, in phase, from
+   * its new slot; a queued launch of it follows it), or to null when the clip
+   * left the part: the part stops playing it at `time` (its sounding notes end
+   * there) and a queued launch of it is dropped. Works stopped (armed clips),
+   * playing and paused. During a replay only the live selection that comes
+   * back afterwards follows (the take plays its own snapshot). Returns true
+   * when anything changed (the driver then regenerates from `time`).
+   */
+  relocateSlots(trackId: Id, slots: ReadonlyMap<number, number | null>, time: number): boolean {
+    if (!slots.size) return false;
+    const remap = (p: Playing | null): Playing | null => {
+      if (!p || !slots.has(p.slot)) return p;
+      const to = slots.get(p.slot)!;
+      return to === null ? null : { ...p, slot: to };
+    };
+    const remapTr = (tr: Transition): Transition => (tr.row === null && tr.slot !== null && slots.has(tr.slot) ? { ...tr, slot: slots.get(tr.slot)! } : tr);
+    let changed = false;
+    if (this.savedLive?.has(trackId)) {
+      const saved = this.savedLive.get(trackId) ?? null;
+      const next = remap(saved);
+      if (next !== saved) {
+        this.savedLive.set(trackId, next);
+        changed = true;
+      }
+    }
+    if (this.replay) return changed;
+    const rt = this.tracks.get(trackId);
+    if (!rt) return changed;
+    const playing = remap(rt.playing);
+    if (playing !== rt.playing) {
+      if (!playing && this._playing) this.cutAtSwitch(rt, Math.max(this.playheadFloor, this.clock.tickAt(Number.isFinite(time) ? time : 0)));
+      rt.playing = playing;
+      changed = true;
+    }
+    const pending: Transition[] = [];
+    for (const tr of rt.pending) {
+      const next = remapTr(tr);
+      if (next === tr) pending.push(tr);
+      else {
+        changed = true;
+        // A queued launch of a clip that left the part is dropped.
+        if (next.slot !== null) pending.push(next);
+      }
+    }
+    rt.pending = pending;
+    for (const h of rt.history) {
+      h.prev = remap(h.prev);
+      h.due = h.due.map(remapTr);
+    }
+    return changed;
+  }
+
+  /**
+   * Scene rows were reordered (`rows` maps an old row to its new row): song
+   * playback keeps playing the same scenes. Live launches follow per part
+   * through `relocateSlots`; a replay plays its own snapshot.
+   */
+  relocateSongRows(rows: ReadonlyMap<number, number>): boolean {
+    const song = this.song;
+    if (!song || !rows.size || this.replay) return false;
+    const remapTr = (tr: Transition): Transition => (tr.row !== null && rows.has(tr.row) ? { ...tr, row: rows.get(tr.row)! } : tr);
+    song.blocks = song.blocks.map((b) => (rows.has(b.row) ? { ...b, row: rows.get(b.row)! } : b));
+    for (const rt of this.tracks.values()) {
+      rt.pending = rt.pending.map(remapTr);
+      for (const h of rt.history) h.due = h.due.map(remapTr);
+    }
+    return true;
   }
 
   private insertTransition(rt: TrackRt, tr: Transition): void {
@@ -951,7 +1226,8 @@ export class Sequencer {
       this.freeCursor = 0;
       this.freeClauses = [];
       this.freeHistoryFloor = 0;
-      for (const a of this.arps.values()) a.changes = [];
+      // (A paused replay keeps its take's arpeggiator input for the resume.)
+      for (const a of this.arps.values()) if (!a.replayDriven) a.changes = [];
     }
     this.pushLiveArpChange(track, arp, this.freeClock.tickAt(t));
   }
@@ -1103,6 +1379,10 @@ export class Sequencer {
     this.dropped.clear();
     try {
       const project = this.activeProject();
+      if (this._playing && !this.resumeSent) {
+        this.resumeSent = true;
+        out.push(...this.resumeEvents);
+      }
       if (this._playing) this.runTransport(untilTime, project, out);
       else if (this.freeClock) this.runFree(untilTime, project, out);
     } finally {
@@ -1146,7 +1426,7 @@ export class Sequencer {
   }
 
   private push(out: SeqEvent[], e: SeqEvent): void {
-    if (!skipped(this.clauses, e.tick, e.time)) out.push(e);
+    if (e.time >= this.resumeFloor && !skipped(this.clauses, e.tick, e.time)) out.push(e);
   }
 
   private applyDue(project: Project, out: SeqEvent[]): void {
@@ -1263,7 +1543,7 @@ export class Sequencer {
     });
     if (this.replay) this.replayCandidates(project, a, b, limit, cands);
     cands.sort(compareCandidates);
-    const domain: Domain = { clock: this.clock, swing: this.swing, clauses: this.clauses };
+    const domain: Domain = { clock: this.clock, swing: this.swing, clauses: this.clauses, floor: this.resumeFloor };
     for (const c of cands) this.emitNote(c, domain, out);
   }
 
@@ -1365,7 +1645,7 @@ export class Sequencer {
   private emitNote(c: Candidate, d: Domain, out: SeqEvent[]): void {
     const swing = c.swung && d.swing ? d.swing.at(c.tick) : 0;
     const time = d.clock.timeAtSwung(c.tick, swing);
-    if (skipped(d.clauses, c.tick, time)) return;
+    if (time < d.floor || skipped(d.clauses, c.tick, time)) return;
     const rt = this.rt(c.trackId);
     let legato = false;
     if (c.mono) {
@@ -1471,7 +1751,7 @@ export class Sequencer {
         this.arpCandidates(track, order, this.freeCursor, untilTick, Infinity, track.instrument.kind === 'bass', false, cands),
       );
       cands.sort(compareCandidates);
-      const domain: Domain = { clock, swing: null, clauses: this.freeClauses };
+      const domain: Domain = { clock, swing: null, clauses: this.freeClauses, floor: -Infinity };
       for (const c of cands) this.emitNote(c, domain, out);
       this.freeCursor = untilTick;
       this.freeClauses = this.freeClauses.filter((c) => c.untilTick > this.freeCursor);
@@ -1520,6 +1800,8 @@ export class Sequencer {
   }
 
   private rewindTransport(fromTime: number): void {
+    // A resumed take's control values sent at the resume time were cancelled with the rest: send them again.
+    if (this.resumeEvents.length && this.resumeEvents[0].time >= fromTime) this.resumeSent = false;
     const fromTick = this.clock.tickAt(fromTime);
     // Swing delays notes by up to MAX_SWING_TICKS: earlier ticks can sound at/after fromTime.
     const r = Math.max(fromTick - MAX_SWING_TICKS, this.startTick, this.historyFloor);

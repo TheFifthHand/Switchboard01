@@ -111,8 +111,10 @@ function isRecordablePath(path: readonly (string | number)[]): boolean {
   return a === 'patch' && b === 'modules' && typeof c === 'number' && path.length === 5 && d === 'params';
 }
 
+export const PAUSE_UNAVAILABLE_MESSAGE = 'Pause is not available while a performance records: a take cannot hold a pause. Stop ends the take and keeps it.';
+
 export const TAKE_LOCK_MESSAGE =
-  'Recording a performance: cables, clips, sounds, the song and saved takes are locked until you stop. Knob, macro, mute and tempo changes are recorded, and so is undoing them.';
+  'Recording a performance: cables, clips, sounds, the song and saved takes are locked until you stop. Knob, macro, mute and tempo changes are recorded, and so is undoing them. Mastering is locked too: it applies to the whole song, not the take.';
 
 interface HeldNote {
   trackId: Id;
@@ -165,6 +167,8 @@ export class Session {
   private unsubs: (() => void)[] = [];
   private held = new Map<string, HeldNote>();
   private take: Take | null = null;
+  /** A/B comparison (Mix view): mastering bypassed for listening only. */
+  private masteringBypass = false;
   private noteRec: NoteRecording | null = null;
   /** The open project is the preview starter shown on first launch: stored only once it is changed. */
   private previewOnly = false;
@@ -254,6 +258,8 @@ export class Session {
    * successful save adds it to the library as the project to reopen.
    */
   private async loadProject(project: Project, opts: { unsaved?: boolean } = {}): Promise<void> {
+    // An A/B comparison belongs to the project that was open.
+    this.setMasteringListen(false);
     this.stopEverything();
     await this.autosaver?.flush();
     this.setPreview(false);
@@ -407,8 +413,9 @@ export class Session {
       engine.setMasterVolume(project.masterVolumeDb);
       engine.setProject(project);
       engine.prepareInstruments();
-      // Mute All pressed before audio started still holds.
+      // Mute All pressed before audio started still holds; so does an A/B comparison.
       if (runtimeStore.getState().muteAll) engine.setMuteAll(true);
+      if (this.masteringBypass) engine.setMasteringBypass(true);
       const sequencer = new Sequencer({ getProject: () => this.store.getState() });
       const transport = new RealtimeTransport({ ctx, engine, sequencer });
       this.sequencer = sequencer;
@@ -496,6 +503,7 @@ export class Session {
         this.endReplay();
         patchRuntime({
           playing: false,
+          paused: false,
           mode: 'live',
           songBlock: null,
           countingIn: false,
@@ -515,6 +523,8 @@ export class Session {
   /* ------------------------------------------------------------------ */
 
   private onProjectChange(p: Project, prev: Project): void {
+    // First the launcher follows clips that moved, so the regeneration below already plays them from their new pads.
+    if (p.tracks !== prev.tracks) this.followMovedClips(p, prev);
     if (this.engine && !this.replayingId) {
       this.engine.setProject(p);
       if (p.masterVolumeDb !== prev.masterVolumeDb) this.engine.setMasterVolume(p.masterVolumeDb);
@@ -533,6 +543,45 @@ export class Session {
     }
     if (p.samples !== prev.samples) void this.loadProjectSamples(p);
     if (p.tracks !== prev.tracks) this.stopPartsWithoutClip(p);
+  }
+
+  /**
+   * Clips that moved (a drag between pads, a scene reorder, or undoing one)
+   * take the launcher with them: a clip moved within its part keeps playing
+   * (in phase) or stays armed or queued, from its new pad. A clip moved to
+   * another part stops on its old part at once and does not start by itself
+   * on the new one (tap it there). A copy or paste that replaces a playing
+   * clip plays in its place, as before. Song playback keeps its scenes.
+   */
+  private followMovedClips(p: Project, prev: Project): void {
+    const t = this.transport;
+    if (!t) return;
+    if (p.scenes !== prev.scenes) {
+      const rows = new Map<number, number>();
+      prev.scenes.forEach((s, i) => {
+        const j = p.scenes.findIndex((x) => x.id === s.id);
+        if (j >= 0 && j !== i) rows.set(i, j);
+      });
+      if (rows.size) t.relocateSongRows(rows);
+    }
+    const partOf = new Map<Id, Id>();
+    for (const tr of p.tracks) for (const c of tr.clips) if (c) partOf.set(c.id, tr.id);
+    let moved = false;
+    for (const tr of p.tracks) {
+      const was = prev.tracks.find((x) => x.id === tr.id);
+      if (!was || was.clips === tr.clips) continue;
+      const slots = new Map<number, number | null>();
+      was.clips.forEach((c, s) => {
+        if (!c || tr.clips[s]?.id === c.id) return;
+        const to = tr.clips.findIndex((x) => x?.id === c.id);
+        if (to >= 0) slots.set(s, to);
+        else if (partOf.has(c.id)) slots.set(s, null);
+      });
+      if (!slots.size) continue;
+      t.relocateSlots(tr.id, slots);
+      moved = true;
+    }
+    if (moved && !this.replayingId) this.refreshLauncherRuntime();
   }
 
   /** A part whose playing (or armed) clip was deleted stops, so undo does not silently resume it. */
@@ -589,13 +638,23 @@ export class Session {
     return !!this.transport?.playing;
   }
 
+  /** Holding at a pause: Play continues from there (the live pads, the song or the replay). */
+  get paused(): boolean {
+    return !!this.transport?.paused;
+  }
+
+  /** Play: continue a pause from where it stopped, else start the lit pads from the top. */
   async play(): Promise<void> {
     if (!(await this.startAudio())) return;
+    if (this.transport!.paused) {
+      this.resumeFromPause();
+      return;
+    }
     if (this.replayingId) this.endReplay();
     this.armDefaultSceneIfIdle();
     this.transport!.start({ mode: { kind: 'live' }, countInBars: 0 });
     this.stallResume = null;
-    patchRuntime({ playing: true, mode: 'live', stalled: null, songBlock: null });
+    patchRuntime({ playing: true, paused: false, mode: 'live', stalled: null, songBlock: null });
     this.refreshLauncherRuntime();
   }
 
@@ -607,12 +666,47 @@ export class Session {
     if (this.transport) this.transport.stop();
     if (this.replayingId) this.endReplay();
     this.stallResume = null;
-    patchRuntime({ playing: false, mode: 'live', songBlock: null, countingIn: false });
+    patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, countingIn: false });
     this.refreshLauncherRuntime();
   }
 
+  /**
+   * Pause: hold the bar and beat and every playing clip's phase (also in song
+   * mode and during a replay); Play continues from exactly there. Held notes
+   * are released. During Record Notes the pass ends first (one undo step).
+   * Unavailable while a performance take records: a take cannot hold a pause
+   * (Stop ends it).
+   */
+  pause(): void {
+    const t = this.transport;
+    if (!t?.playing) return;
+    if (this.take) {
+      notify(PAUSE_UNAVAILABLE_MESSAGE, 'warn');
+      return;
+    }
+    this.stopRecordNotes();
+    if (!t.pause()) {
+      // The song or take had just reached its end: that is a stop.
+      this.stop();
+      return;
+    }
+    this.releaseAllNotes();
+    this.stallResume = null;
+    patchRuntime({ playing: false, paused: true, countingIn: false });
+    this.refreshLauncherRuntime();
+  }
+
+  private resumeFromPause(): void {
+    if (!this.transport?.resume()) return;
+    this.stallResume = null;
+    // The mode, song block and replay carry on as they were.
+    patchRuntime({ playing: true, paused: false, stalled: null });
+    this.refreshLauncherRuntime();
+  }
+
+  /** Space: Play / Pause. */
   async togglePlay(): Promise<void> {
-    if (this.playing) this.stop();
+    if (this.playing) this.pause();
     else await this.play();
   }
 
@@ -628,7 +722,7 @@ export class Session {
     }
     this.transport!.start({ mode: { kind: 'song', fromBlock } });
     this.stallResume = null;
-    patchRuntime({ playing: true, mode: 'song', songBlock: fromBlock, stalled: null });
+    patchRuntime({ playing: true, paused: false, mode: 'song', songBlock: fromBlock, stalled: null });
     this.refreshLauncherRuntime();
   }
 
@@ -720,6 +814,13 @@ export class Session {
     if (!track?.clips[slot]) return;
     const rt = runtimeStore.getState().tracks[trackId];
     const wasPlaying = this.transport!.playing;
+    if (this.transport!.paused && rt?.playingSlot === slot && (!rt.queued || rt.queued.slot === slot)) {
+      // The clip that holds at the pause: tapping it continues playback, in phase.
+      selectSlot(trackId, slot);
+      await this.play();
+      return;
+    }
+    // Paused, another clip queues for the next bar after the pause point and playback continues.
     let res: LaunchResult;
     if (wasPlaying && rt?.playingSlot === slot && (!rt.queued || rt.queued.slot === slot)) {
       res = this.transport!.stopTrack(trackId);
@@ -798,6 +899,84 @@ export class Session {
   setMute(trackId: Id, mute: boolean): void {
     const r = cmd.setMute(this.store, trackId, mute);
     if (this.accepted(r)) this.recordEvent({ t: this.currentTick(), type: 'mute', trackId, mute });
+  }
+
+  /**
+   * Move a clip onto another pad (onto an occupied pad the two swap), or copy
+   * it there (`copy`; onto an occupied pad it replaces that clip). One undo
+   * step each, with a notice that says what happened. Refused across parts of
+   * a different kind (drum steps and melodic notes), during a performance take
+   * (clips are locked) and while Record Notes records (the pass is one undo
+   * step of its own). Playback follows as `followMovedClips` describes.
+   */
+  moveClip(from: { trackId: Id; slot: number }, to: { trackId: Id; slot: number }, copy = false): boolean {
+    if (this.noteRec) {
+      notify(`Stop recording notes first, then ${copy ? 'copy' : 'move'} clips.`, 'warn');
+      return false;
+    }
+    const p = this.store.getState();
+    const src = p.tracks.find((t) => t.id === from.trackId);
+    const dst = p.tracks.find((t) => t.id === to.trackId);
+    const clip = src?.clips[from.slot];
+    if (!src || !dst || !clip) return false;
+    const replaced = dst.clips[to.slot] ?? null;
+    const where = `${dst.name} · ${p.scenes[to.slot]?.name ?? `row ${to.slot + 1}`}`;
+    const run = runtimeStore.getState();
+    const rt = run.tracks[from.trackId];
+    const wasPlaying = !copy && from.trackId !== to.trackId && (run.playing || run.paused) && (rt?.playingSlot === from.slot || rt?.queued?.slot === from.slot);
+    const r = copy ? cmd.copyClipTo(this.store, from.trackId, from.slot, to.trackId, to.slot) : cmd.moveClip(this.store, from.trackId, from.slot, to.trackId, to.slot);
+    if (!this.accepted(r)) return false;
+    selectTrack(to.trackId);
+    selectSlot(to.trackId, to.slot);
+    let text: string;
+    if (copy) text = replaced ? `Copied “${clip.name}” onto ${where}, replacing “${replaced.name}”.` : `Copied “${clip.name}” to ${where}.`;
+    else text = replaced ? `Swapped “${clip.name}” and “${replaced.name}”.` : `Moved “${clip.name}” to ${where}.`;
+    if (wasPlaying) text += ` ${src.name} stopped playing it; tap the pad to play it on ${dst.name}.`;
+    notify(text, 'info', 'undo');
+    return true;
+  }
+
+  /** Move a scene row (every part's clip in it moves along), one undo step; song blocks keep their scenes. */
+  moveScene(fromRow: number, toRow: number): boolean {
+    if (this.noteRec) {
+      notify('Stop recording notes first, then move scenes.', 'warn');
+      return false;
+    }
+    const before = this.store.getState();
+    const scene = before.scenes[fromRow];
+    if (!scene) return false;
+    const r = cmd.moveScene(this.store, fromRow, toRow);
+    if (!this.accepted(r)) return false;
+    // Each part's chosen clip stays the same clip.
+    const ui = uiStore.getState();
+    for (const t of before.tracks) {
+      const sel = ui.selectedSlot[t.id];
+      if (sel === undefined) continue;
+      const id = t.clips[sel]?.id;
+      const now = this.store.getState().tracks.find((x) => x.id === t.id);
+      const at = id && now ? now.clips.findIndex((c) => c?.id === id) : -1;
+      if (at >= 0) selectSlot(t.id, at);
+      else if (sel === fromRow) selectSlot(t.id, toRow);
+    }
+    notify(`Moved the scene “${scene.name}” to row ${toRow + 1}; its clips moved with it.`, 'info', 'undo');
+    return true;
+  }
+
+  /** Solo a part (not part of a performance take: the take lock refuses it, with the reason). */
+  setSolo(trackId: Id, solo: boolean): void {
+    this.accepted(cmd.setSolo(this.store, trackId, solo));
+  }
+
+  /** M: mute or unmute a part. */
+  toggleMute(trackId: Id): void {
+    const t = this.store.getState().tracks.find((x) => x.id === trackId);
+    if (t) this.setMute(trackId, !t.mute);
+  }
+
+  /** S: solo a part, or stop soloing it. */
+  toggleSolo(trackId: Id): void {
+    const t = this.store.getState().tracks.find((x) => x.id === trackId);
+    if (t) this.setSolo(trackId, !t.solo);
   }
 
   setBpm(bpm: number, gesture?: string): void {
@@ -1060,11 +1239,15 @@ export class Session {
     this.noteRec = { trackId, slot, gesture: uid('rec'), added: 0, arpNotes: [], arpFlush: null };
     patchRuntime({ recording: 'notes', recordTarget: { trackId, slot } });
     const seqState = this.sequencer!.getTrackState(trackId);
-    if (!this.transport!.playing) {
+    if (this.transport!.paused) {
+      // Paused: playback continues from the pause (no count-in); another clip starts at the next bar.
+      if (seqState.playing?.slot !== slot) this.transport!.launchClip(trackId, slot);
+      this.resumeFromPause();
+    } else if (!this.transport!.playing) {
       if (seqState.playing?.slot !== slot) this.transport!.launchClip(trackId, slot);
       const countIn = p.settings.countIn ? 1 : 0;
       this.transport!.start({ mode: { kind: 'live' }, countInBars: countIn });
-      patchRuntime({ playing: true, mode: 'live', countingIn: countIn > 0, stalled: null });
+      patchRuntime({ playing: true, paused: false, mode: 'live', countingIn: countIn > 0, stalled: null });
       this.refreshLauncherRuntime();
     } else if (seqState.playing?.slot !== slot) {
       this.applyLaunchResults([this.transport!.launchClip(trackId, slot)]);
@@ -1155,9 +1338,16 @@ export class Session {
     if (this.noteRec) this.stopRecordNotes();
     if (!(await this.startAudio())) return;
     if (this.replayingId) this.stop();
-    if (!this.transport!.playing) {
+    if (this.transport!.paused) {
+      if (runtimeStore.getState().mode !== 'live') {
+        notify('Performances record live pad playing. Stop the song first.', 'warn');
+        return;
+      }
+      // The take starts where the pause continues, with the pads as they were.
+      this.resumeFromPause();
+    } else if (!this.transport!.playing) {
       this.transport!.start({ mode: { kind: 'live' } });
-      patchRuntime({ playing: true, mode: 'live', stalled: null });
+      patchRuntime({ playing: true, paused: false, mode: 'live', stalled: null });
       this.refreshLauncherRuntime();
     } else if (runtimeStore.getState().mode !== 'live') {
       notify('Performances record live pad playing. Stop the song first.', 'warn');
@@ -1289,7 +1479,7 @@ export class Session {
     this.replayingId = id;
     this.engine!.setProject(projectFromSnapshot(project, perf.snapshot));
     this.transport!.start({ mode: { kind: 'replay', performanceId: id } });
-    patchRuntime({ playing: true, mode: 'replay', replayId: id, stalled: null });
+    patchRuntime({ playing: true, paused: false, mode: 'replay', replayId: id, stalled: null });
     this.refreshLauncherRuntime();
   }
 
@@ -1400,6 +1590,20 @@ export class Session {
     if (!engine?.readSpectrum) return false;
     engine.readSpectrum(out);
     return true;
+  }
+
+  /**
+   * A/B in the Mix view: hear the mix without mastering while `bypass` is on.
+   * Listening only: the project and every export keep their mastering.
+   */
+  setMasteringListen(bypass: boolean): void {
+    this.masteringBypass = !!bypass;
+    const engine: AudioEngineApi | null = this.engine;
+    engine?.setMasteringBypass?.(this.masteringBypass);
+  }
+
+  get masteringListenBypass(): boolean {
+    return this.masteringBypass;
   }
 
   /** Restart the integrated loudness / true-peak measurement shown in the Mix view. */

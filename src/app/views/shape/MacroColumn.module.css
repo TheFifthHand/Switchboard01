@@ -86,13 +86,18 @@
   min-width: 0;
 }
 
+/* Full names ("Channel Reverb Amount") wrap to a second line rather than being cut. */
 .target {
+  display: -webkit-box;
   overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   color: var(--ink);
   font-size: var(--fs-sm);
   font-weight: 560;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 15px;
+  overflow-wrap: break-word;
 }
 
 .meta {

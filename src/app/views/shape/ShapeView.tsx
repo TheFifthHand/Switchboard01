@@ -1,18 +1,23 @@
 /**
- * Shape: detailed sound design for the selected part, in the same workspace.
+ * Shape: sound design for the selected part, in the same workspace.
  *
- *   [ part selector: 8 parts, selected = teal                         ]
+ *   [ ← Back to Play   Shaping: 4 Chords — House Stab   Show every setting ]
+ *   [ part selector: 8 parts, selected = teal                               ]
+ *
+ * Simple (the default): the instrument card, the six macros large, and the
+ * part's effects as cards with one main knob each (SimpleShape).
+ * Advanced: every control —
  *   [ MACROS | INSTRUMENT | EFFECTS (chain, channel, returns, LFOs)   ]
  *   [ CABLES (collapsible, resizable split)                           ]
  *
  * Everything edits the real project through the session and commands, so
- * the effects rack and the cable panel always show the same routing.
+ * both modes, the effects rack and the cable panel always show the same sound.
  */
 import { memo, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Button, Icon } from '../../../ui/components';
 import { useElementSize } from '../../../ui/hooks/useElementSize';
 import type { Id, InstrumentKind } from '../../../project/types';
-import { selectTrack, setCablesOpen } from '../../../state/uiStore';
+import { selectTrack, setCablesOpen, setUiMode, setView } from '../../../state/uiStore';
 import { shallowEqual } from '../../../state/store';
 import { useProject, useUi } from '../../instance';
 import { INSTRUMENT_LABEL, soundName } from '../../labels';
@@ -22,7 +27,60 @@ import { EffectsRack } from './EffectsRack';
 import { InstrumentColumn } from './InstrumentColumn';
 import { MacroColumn } from './MacroColumn';
 import { sameItems } from './paramState';
+import { SimpleShape } from './SimpleShape';
 import styles from './ShapeView.module.css';
+
+/* ------------------------------------------------------------------ */
+/* Header: way back, what is being shaped, how much is shown           */
+/* ------------------------------------------------------------------ */
+
+interface HeaderInfo {
+  num: number;
+  name: string;
+  sound: string;
+}
+
+function ShapeHeader(props: { trackId: Id; advanced: boolean }) {
+  const { trackId, advanced } = props;
+  const info = useProject<HeaderInfo | null>((p) => {
+    const i = p.tracks.findIndex((t) => t.id === trackId);
+    if (i < 0) return null;
+    const t = p.tracks[i];
+    return { num: i + 1, name: t.name, sound: soundName(p, t.instrument) };
+  }, shallowEqual);
+  return (
+    <div className={styles.header}>
+      <Button
+        className={styles.big}
+        icon="chevronLeft"
+        onClick={() => setView('play')}
+        tip="Go back to the pads to play and record. This part stays selected."
+      >
+        Back to Play
+      </Button>
+      {info && (
+        <h2 className={styles.context}>
+          <span className={styles.contextLabel}>Shaping:</span> <span className={`${styles.contextNum} mono`}>{info.num}</span> <span className={styles.contextName}>{info.name}</span>{' '}
+          <span className={styles.contextSep}>—</span> <span className={styles.contextSound}>{info.sound}</span>
+        </h2>
+      )}
+      <Button
+        id="shape-mode-toggle"
+        className={styles.big}
+        icon="sliders"
+        onClick={() => setUiMode(advanced ? 'simple' : 'advanced')}
+        tip={
+          advanced
+            ? 'Back to the essentials: the macros, the instrument and one main knob per effect.'
+            : 'Show every control: macro mappings, every instrument and effect setting, shared effects, LFOs and cables.'
+        }
+        detail="The same as the Simple · Advanced switch at the top. The sound does not change."
+      >
+        {advanced ? 'Show fewer settings' : 'Show every setting'}
+      </Button>
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Part selector                                                       */
@@ -63,7 +121,7 @@ const PartButton = memo(function PartButton(props: { id: Id; index: number; sele
         <span className={styles.partSound}>{info.sound}</span>
       </span>
       <span className={styles.partState} aria-hidden="true">
-        {info.mute && <span className={styles.muted}>M</span>}
+        {info.mute && <span className={styles.muted}>Muted</span>}
         {playing ? (
           <span className={styles.playing}>
             <Icon name="play" size={9} />
@@ -121,8 +179,8 @@ const DOCK_DEFAULT_MIN = 280;
 const DOCK_DEFAULT_MAX = 320;
 /** Room the columns keep above an open cable panel. */
 const COLUMNS_MIN = 170;
-/** Part strip + gaps + splitter above an open cable panel (the view height excludes its padding). */
-const CHROME = 44 + 10 * 2 + 10;
+/** Header + part strip + gaps + splitter above an open cable panel (the view height excludes its padding). */
+const CHROME = 40 + 44 + 10 * 3 + 10;
 
 function CableDock(props: { trackId: Id; viewHeight: number }) {
   const { trackId, viewHeight } = props;
@@ -255,16 +313,24 @@ export function ShapeView() {
   const size = useElementSize(rootRef);
   const ids = useProject<Id[]>((p) => p.tracks.map((t) => t.id), sameItems);
   const chosen = useUi((s) => s.selectedTrackId);
+  const advanced = useUi((s) => s.uiMode === 'advanced');
   const trackId = ids.includes(chosen) ? chosen : (ids[0] ?? 't1');
   return (
-    <div ref={rootRef} className={styles.view}>
+    <div ref={rootRef} className={styles.view} data-mode={advanced ? 'advanced' : 'simple'}>
+      <ShapeHeader trackId={trackId} advanced={advanced} />
       <PartStrip ids={ids} selected={trackId} />
-      <div className={styles.columns}>
-        <MacroColumn key={`m-${trackId}`} trackId={trackId} className={styles.col} />
-        <InstrumentColumn key={`i-${trackId}`} trackId={trackId} className={styles.col} />
-        <EffectsRack key={`e-${trackId}`} trackId={trackId} className={styles.col} />
-      </div>
-      <CableDock trackId={trackId} viewHeight={size.height} />
+      {advanced ? (
+        <>
+          <div className={styles.columns}>
+            <MacroColumn key={`m-${trackId}`} trackId={trackId} className={styles.col} />
+            <InstrumentColumn key={`i-${trackId}`} trackId={trackId} className={styles.col} />
+            <EffectsRack key={`e-${trackId}`} trackId={trackId} className={styles.col} />
+          </div>
+          <CableDock trackId={trackId} viewHeight={size.height} />
+        </>
+      ) : (
+        <SimpleShape key={`s-${trackId}`} trackId={trackId} />
+      )}
     </div>
   );
 }

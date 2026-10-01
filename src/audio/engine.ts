@@ -4,8 +4,11 @@
  *
  * Graph:
  *   patch modules --(one GainNode per connection)--> ... --> master sum
- *   master sum -> volume -> Mute All -> look-ahead limiter (worklet)
+ *   master sum -> volume -> mastering chain (Project.mastering) -> Mute All
+ *              -> look-ahead limiter (worklet)
  *              -> safety clipper (WaveShaper, bounded to OUTPUT_CEILING) -> destination
+ *   live meters on the final output: peak/RMS analysers, a BS.1770 loudness
+ *   worklet (LUFS, true peak) and a spectrum analyser.
  *
  * The same class runs on an AudioContext (live) and an OfflineAudioContext
  * (export). Offline, nothing waits on wall-clock timers: rewiring and module
@@ -17,6 +20,7 @@ import type {
   EngineStats,
   InstrumentContext,
   InstrumentFactory,
+  LoudnessReading,
   MeterFrame,
   NoteTrigger,
   VoiceHandle,
@@ -36,6 +40,11 @@ import { MasterModule, scheduleClickVoice, stopClickVoice, type ClickVoice } fro
 import { PARAM_SMOOTHING, REWIRE_RAMP, type ModuleEnv, type ModuleNode } from './modules/types';
 import { LIMITER_PROCESSOR_NAME, LIMITER_WORKLET_SOURCE, limiterProcessorOptions, safetyClipperCurve } from './worklets/limiter';
 import { CRUSHER_WORKLET_SOURCE } from './worklets/crusher';
+import { DYNAMICS_WORKLET_SOURCE } from './worklets/dynamics';
+import { FX_WORKLET_SOURCE } from './worklets/fx';
+import { MASTERING_WORKLET_SOURCE } from './worklets/mastering';
+import { LOUDNESS_PROCESSOR_NAME, LOUDNESS_WORKLET_SOURCE, loudnessProcessorOptions } from './worklets/loudness';
+import { MasteringChain } from './modules/mastering';
 import { createInstrumentEngine } from './instruments/index';
 import { moduleId as trackModuleId } from '../project/factory';
 
@@ -50,6 +59,21 @@ const TIMER_MARGIN_MS = 40;
 /** Seconds of shared white noise handed to instruments. */
 const NOISE_SECONDS = 2;
 const MASTER_METER_FFT = 1024;
+/** Spectrum analyser size (5.9 Hz bins at 48 kHz, enough for log bands from 20 Hz). */
+const SPECTRUM_FFT = 8192;
+/** Lowest and highest edge of the readSpectrum bands. */
+export const SPECTRUM_LOW_HZ = 20;
+export const SPECTRUM_HIGH_HZ = 20000;
+/**
+ * Bands show the energy they contain (the sum of their bins' power), so pink
+ * noise reads flat and a sine reads its own level. The AnalyserNode scales by
+ * 1/N and applies a Blackman window (mean square 0.3046): the bins of a sine
+ * of amplitude A sum to A²/4 · 0.3046, i.e. −11.2 dB for A = 1. This offset
+ * makes a full-scale sine read 0 dB.
+ */
+const SPECTRUM_CAL_DB = 10 * Math.log10(4 / 0.30458);
+/** Pitch bend is clamped to ±2 octaves (the glide is the instrument module's BEND_TAU). */
+export const PITCH_BEND_MAX_CENTS = 2400;
 
 /* ------------------------------------------------------------------ */
 /* Worklets                                                            */
@@ -67,9 +91,9 @@ async function addWorkletSource(ctx: BaseAudioContext, source: string): Promise<
 }
 
 /**
- * Load the engine's AudioWorklet processors (limiter, crusher) into `ctx`
- * once. Concurrent and repeated calls share the same promise; a failed load
- * can be retried.
+ * Load the engine's AudioWorklet processors (limiter, crusher, dynamics,
+ * flanger / tape, mastering, loudness meter) into `ctx` once. Concurrent and
+ * repeated calls share the same promise; a failed load can be retried.
  */
 export function loadEngineWorklets(ctx: BaseAudioContext): Promise<void> {
   let p = workletLoads.get(ctx);
@@ -77,7 +101,11 @@ export function loadEngineWorklets(ctx: BaseAudioContext): Promise<void> {
     if (!ctx.audioWorklet) {
       return Promise.reject(new Error('AudioWorklet is not available (a secure context is required).'));
     }
-    p = Promise.all([addWorkletSource(ctx, LIMITER_WORKLET_SOURCE), addWorkletSource(ctx, CRUSHER_WORKLET_SOURCE)]).then(() => undefined);
+    p = Promise.all(
+      [LIMITER_WORKLET_SOURCE, CRUSHER_WORKLET_SOURCE, DYNAMICS_WORKLET_SOURCE, FX_WORKLET_SOURCE, MASTERING_WORKLET_SOURCE, LOUDNESS_WORKLET_SOURCE].map((src) =>
+        addWorkletSource(ctx, src),
+      ),
+    ).then(() => undefined);
     workletLoads.set(ctx, p);
     p.catch(() => {
       if (workletLoads.get(ctx) === p) workletLoads.delete(ctx);
@@ -208,6 +236,7 @@ export class AudioEngine implements AudioEngineApi {
   private readonly ictx: InstrumentContext;
 
   private readonly volume: GainNode;
+  private readonly mastering: MasteringChain;
   private readonly muteGain: GainNode;
   private readonly limiter: AudioWorkletNode;
   private readonly safety: WaveShaperNode;
@@ -217,6 +246,13 @@ export class AudioEngine implements AudioEngineApi {
   private readonly meterBuf: Float32Array<ArrayBuffer> | null = null;
   private readonly channelReading: ChannelMeterReading = { peak: 0, rms: 0 };
   private limiterReductionDb = 0;
+  private glueReductionDb = 0;
+  private readonly loudnessNode: AudioWorkletNode | null = null;
+  private readonly loudness: LoudnessReading = { momentary: -Infinity, shortTerm: -Infinity, integrated: -Infinity, truePeakDb: -Infinity };
+  private readonly spectrum: AnalyserNode | null = null;
+  private readonly spectrumBuf: Float32Array<ArrayBuffer> | null = null;
+  /** Pitch bend per part (cents), re-applied when an instrument module is rebuilt. */
+  private readonly bends = new Map<Id, number>();
 
   private project: Project | null = null;
   private bpm = BPM_SPEC.default;
@@ -297,7 +333,9 @@ export class AudioEngine implements AudioEngineApi {
     this.safety = ctx.createWaveShaper();
     this.safety.curve = safetyClipperCurve();
     this.safety.oversample = 'none';
-    this.volume.connect(this.muteGain);
+    this.mastering = new MasteringChain(ctx, this.meters ? { onGlueReduction: (db) => (this.glueReductionDb = db) } : {});
+    this.volume.connect(this.mastering.input);
+    this.mastering.output.connect(this.muteGain);
     this.muteGain.connect(this.limiter);
     this.limiter.connect(this.safety);
     this.safety.connect(ctx.destination);
@@ -313,7 +351,38 @@ export class AudioEngine implements AudioEngineApi {
       this.safety.connect(this.meterSplit);
       this.meterSplit.connect(this.meterL, 0);
       this.meterSplit.connect(this.meterR, 1);
+
+      // Loudness (BS.1770) of the final output. Its output is silent; it is
+      // connected to the destination only so the graph keeps pulling it.
+      this.loudnessNode = new AudioWorkletNode(ctx, LOUDNESS_PROCESSOR_NAME, {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        channelCount: 2,
+        channelCountMode: 'explicit',
+        channelInterpretation: 'speakers',
+        processorOptions: loudnessProcessorOptions(ctx.sampleRate, true),
+      });
+      this.loudnessNode.port.onmessage = (e: MessageEvent) => this.onLoudness(e.data);
+      this.safety.connect(this.loudnessNode);
+      this.loudnessNode.connect(ctx.destination);
+
+      this.spectrum = ctx.createAnalyser();
+      this.spectrum.fftSize = SPECTRUM_FFT;
+      this.spectrum.smoothingTimeConstant = 0.75;
+      this.spectrumBuf = new Float32Array(SPECTRUM_FFT / 2);
+      this.safety.connect(this.spectrum);
     }
+  }
+
+  private onLoudness(data: unknown): void {
+    if (!data || typeof data !== 'object') return;
+    const d = data as Record<string, unknown>;
+    const num = (v: unknown) => (typeof v === 'number' && !Number.isNaN(v) ? v : -Infinity);
+    this.loudness.momentary = num(d.m);
+    this.loudness.shortTerm = num(d.s);
+    this.loudness.integrated = num(d.i);
+    this.loudness.truePeakDb = num(d.tp);
   }
 
   /* ---------------------------------------------------------------- */
@@ -398,6 +467,7 @@ export class AudioEngine implements AudioEngineApi {
     } else if (project.masterVolumeDb !== prev.masterVolumeDb) {
       this.setMasterVolume(project.masterVolumeDb);
     }
+    if (first || project.mastering !== prev.mastering) this.mastering.set(project.mastering, now, first);
   }
 
   /** True when any track's sound-relevant data (instrument, macros, mapping) changed. */
@@ -449,6 +519,7 @@ export class AudioEngine implements AudioEngineApi {
       }
       if (m.bypass) node.setBypass(true, now);
       if (node instanceof ChannelModule && this.meters) node.enableMeter();
+      if (node instanceof InstrumentModule && m.trackId && this.bends.has(m.trackId)) node.setPitchBend(this.bends.get(m.trackId)!, now);
       if (node instanceof MasterModule) node.output('out')?.connect(this.volume);
       this.alignToTransport(node, now);
       this.mods.set(m.id, {
@@ -943,6 +1014,8 @@ export class AudioEngine implements AudioEngineApi {
     if (b !== this.bpm) this.tempoChanged(b, t);
     this.transport = [{ time, tick, bpm: b }];
     for (const rec of this.mods.values()) rec.node.transportStarted?.(time, tick, b);
+    // Integrated loudness counts from the start of playback (a resume from Pause keeps counting).
+    if (tick <= 0) this.resetLoudness();
   }
 
   transportStopped(time: number): void {
@@ -951,7 +1024,8 @@ export class AudioEngine implements AudioEngineApi {
     const t = Math.max(finiteOr(time, now), now);
     this.transport = null;
     for (const ch of this.channels) ch.cancelAfter(t);
-    for (const lfo of this.lfos) lfo.transportStopped(t);
+    // Tempo-synced movement (LFOs, Auto Pan) runs on freely from its phase.
+    for (const rec of this.mods.values()) rec.node.transportStopped?.(t);
     // Sampler one-shots play out past their notes' ends: Stop ends them.
     for (const inst of this.instByTrack.values()) inst.stopOneShots(t);
     this.cancelClicksAfter(t);
@@ -1082,6 +1156,7 @@ export class AudioEngine implements AudioEngineApi {
     }
     for (const rec of this.mods.values()) rec.node.flush?.();
     for (const node of this.retiredMods) node.flush?.();
+    this.mastering.flush();
     for (const v of this.looseClicks) stopClickVoice(v);
     this.looseClicks.clear();
   }
@@ -1098,6 +1173,7 @@ export class AudioEngine implements AudioEngineApi {
 
   readMeters(out: MeterFrame): void {
     out.limiterReductionDb = this.disposed ? 0 : this.limiterReductionDb;
+    out.glueReductionDb = this.disposed || !this.mastering.isEnabled ? 0 : this.glueReductionDb;
     if (!this.meterL || !this.meterR || !this.meterBuf || this.disposed) {
       out.masterPeakL = 0;
       out.masterPeakR = 0;
@@ -1105,6 +1181,11 @@ export class AudioEngine implements AudioEngineApi {
       out.tracks.length = 0;
       return;
     }
+    const lr = (out.loudness ??= { momentary: -Infinity, shortTerm: -Infinity, integrated: -Infinity, truePeakDb: -Infinity });
+    lr.momentary = this.loudness.momentary;
+    lr.shortTerm = this.loudness.shortTerm;
+    lr.integrated = this.loudness.integrated;
+    lr.truePeakDb = this.loudness.truePeakDb;
     const buf = this.meterBuf;
     this.meterL.getFloatTimeDomainData(buf);
     const l = peakAndSquares(buf);
@@ -1131,6 +1212,75 @@ export class AudioEngine implements AudioEngineApi {
       n++;
     }
     out.tracks.length = n;
+  }
+
+  /**
+   * Spectrum of the final output in `out.length` log-spaced bands from 20 Hz
+   * to 20 kHz: the energy in each band in dB (a full-scale sine reads about
+   * 0 dB in its band, pink noise reads flat; silence −140). Bands narrower
+   * than an FFT bin are interpolated between bins.
+   * Live engines with meters only; otherwise every band reads −140.
+   */
+  readSpectrum(out: Float32Array): void {
+    const n = out.length;
+    if (n === 0) return;
+    const an = this.spectrum;
+    const buf = this.spectrumBuf;
+    if (!an || !buf || this.disposed) {
+      out.fill(-140);
+      return;
+    }
+    an.getFloatFrequencyData(buf);
+    const binHz = this.ctx.sampleRate / SPECTRUM_FFT;
+    const power = (k: number): number => {
+      const db = buf[Math.min(buf.length - 1, Math.max(0, k))];
+      return Number.isFinite(db) ? Math.pow(10, (db + SPECTRUM_CAL_DB) / 10) : 0;
+    };
+    const ratio = SPECTRUM_HIGH_HZ / SPECTRUM_LOW_HZ;
+    for (let b = 0; b < n; b++) {
+      const lo = SPECTRUM_LOW_HZ * Math.pow(ratio, b / n);
+      const hi = SPECTRUM_LOW_HZ * Math.pow(ratio, (b + 1) / n);
+      const k0 = Math.ceil(lo / binHz);
+      const k1 = Math.floor(hi / binHz);
+      let p = 0;
+      if (k1 >= k0) {
+        for (let k = k0; k <= k1; k++) p += power(k);
+      } else {
+        // No bin inside the band: its share of the density interpolated at its centre.
+        const f = Math.sqrt(lo * hi) / binHz;
+        const k = Math.floor(f);
+        const frac = f - k;
+        p = (power(k) * (1 - frac) + power(k + 1) * frac) * ((hi - lo) / binHz);
+      }
+      const db = p > 0 ? 10 * Math.log10(p) : -140;
+      out[b] = Math.max(-140, Math.min(20, db));
+    }
+  }
+
+  /** Restart the integrated loudness and true-peak measurement (live meters). */
+  setMasteringBypass(on: boolean): void {
+    if (this.disposed) return;
+    this.mastering.setListenBypass(!!on, this.now());
+  }
+
+  resetLoudness(): void {
+    if (this.disposed) return;
+    this.loudness.integrated = -Infinity;
+    this.loudness.truePeakDb = -Infinity;
+    this.loudnessNode?.port.postMessage('reset');
+  }
+
+  /**
+   * Pitch bend for a part's playing and future notes (cents, smoothed).
+   * Bass, poly and sampler parts bend; drum kits ignore it.
+   */
+  setPitchBend(trackId: Id, cents: number, time: number): void {
+    if (this.disposed || !Number.isFinite(cents)) return;
+    const c = clamp(cents, -PITCH_BEND_MAX_CENTS, PITCH_BEND_MAX_CENTS);
+    if (c === 0) this.bends.delete(trackId);
+    else this.bends.set(trackId, c);
+    const now = this.now();
+    this.instByTrack.get(trackId)?.setPitchBend(c, Math.max(finiteOr(time, now), now));
   }
 
   /**
@@ -1185,7 +1335,14 @@ export class AudioEngine implements AudioEngineApi {
     this.limiter.port.onmessage = null;
     this.limiter.port.postMessage('stop');
     this.limiter.port.close();
-    for (const n of [this.volume, this.muteGain, this.limiter, this.safety, this.meterSplit, this.meterL, this.meterR]) n?.disconnect();
+    this.mastering.dispose();
+    if (this.loudnessNode) {
+      this.loudnessNode.port.onmessage = null;
+      this.loudnessNode.port.postMessage('stop');
+      this.loudnessNode.port.close();
+    }
+    for (const n of [this.volume, this.muteGain, this.limiter, this.safety, this.meterSplit, this.meterL, this.meterR, this.loudnessNode, this.spectrum]) n?.disconnect();
+    this.bends.clear();
     this.project = null;
   }
 }

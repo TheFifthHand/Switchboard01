@@ -30,7 +30,7 @@ test('play a starter, change a sound, Variation, a real cable edit, then reopen 
 
   // Change its sound from the part panel.
   const soundBefore = await page.evaluate(() => JSON.stringify((window as any).__switchboard.project().tracks.find((t: any) => t.id === 't3').instrument));
-  await page.getByRole('button', { name: /^Sound: .*Change sound$/ }).click();
+  await page.getByRole('button', { name: /^Change instrument/ }).click();
   const browser = page.getByRole('dialog');
   await expect(browser).toBeVisible();
   const options = browser.getByRole('option');
@@ -59,7 +59,8 @@ test('play a starter, change a sound, Variation, a real cable edit, then reopen 
   await expect.poll(() => bassNotes(page)).not.toBe(original);
   const varied = await bassNotes(page);
 
-  // Open the cable drawer and unplug the instrument's audio output with the keyboard picker.
+  // Open the cable drawer (an Advanced control) and unplug the instrument's audio output with the keyboard picker.
+  await page.getByRole('radio', { name: 'Advanced', exact: true }).click();
   await page.getByRole('region', { name: 'Cables drawer' }).getByRole('button', { expanded: false }).click();
   const cables = page.getByRole('region', { name: /^Cables for Bass/ });
   await expect(cables).toBeVisible();
@@ -85,7 +86,7 @@ test('play a starter, change a sound, Variation, a real cable edit, then reopen 
   // Reopen: the project comes back as it was left, and stays editable.
   await page.getByRole('button', { name: 'Solo Bass' }).click();
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
-  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole('button', { name: 'Autosave: Saved' })).toBeVisible({ timeout: 5000 });
   const name = await page.evaluate(() => (window as any).__switchboard.project().name);
   const sound = await page.evaluate(() => JSON.stringify((window as any).__switchboard.project().tracks.find((t: any) => t.id === 't3').instrument));
   await page.reload();

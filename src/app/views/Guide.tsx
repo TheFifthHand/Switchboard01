@@ -95,7 +95,7 @@ function findPlayButton(): HTMLElement | null {
   if (bySpace) return bySpace;
   for (const b of document.querySelectorAll<HTMLButtonElement>('button')) {
     const name = (b.getAttribute('aria-label') ?? b.textContent ?? '').trim();
-    if (name === 'Play' || name === 'Stop') return b;
+    if (name === 'Play' || name === 'Pause') return b;
   }
   return null;
 }
@@ -103,13 +103,13 @@ function findPlayButton(): HTMLElement | null {
 export const GUIDE_STEPS: readonly StepDef[] = [
   {
     id: 'play',
-    title: 'Play and stop',
+    title: 'Play and pause',
     body: ({ playing, armed }) =>
       playing
-        ? 'The groove is playing. Stop it here or with the Space bar.'
+        ? 'The groove is playing. Pause it here or with the Space bar; Stop (Shift+Space) goes back to bar 1.'
         : armed
           ? 'Resume the groove here or with the Space bar.'
-          : 'Starts and stops playback (Space bar too). Tap a pad to begin.',
+          : 'Starts and pauses playback (Space bar too). Tap a pad to begin.',
     find: findPlayButton,
     missingHint: 'Play sits in the strip along the top of the screen.',
     sides: ['bottom', 'top', 'right', 'left'],

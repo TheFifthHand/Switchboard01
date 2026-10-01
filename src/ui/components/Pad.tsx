@@ -5,13 +5,19 @@
  * ("▶ Playing", "Next bar", "● Rec", "Stopping"), a recessed look with a "+"
  * for empty slots, and a ring for the selected pad. onPress fires on
  * pointerdown for low latency, with a velocity from where the pad is struck
- * (lower = harder), and on Space/Enter when focused.
+ * (lower = harder), and on Space/Enter when focused. A pad that can also be
+ * dragged (`activateOn="release"`, the clip pads) presses on pointerup
+ * instead, and only when the pointer moved less than TAP_SLOP_PX, so a drag
+ * never launches it.
  */
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import { Icon, type IconName } from './Icon';
 import styles from './Pad.module.css';
 
 export type PadState = 'empty' | 'ready' | 'queued' | 'playing' | 'recording' | 'stopping';
+
+/** Movement (CSS px) after which a press on a draggable pad becomes a drag instead of a tap. */
+export const TAP_SLOP_PX = 6;
 
 export interface PadPressEvent {
   /** 0..1 */
@@ -37,6 +43,14 @@ export interface PadProps {
   disabled?: boolean;
   /** Replaces the state caption (null hides it, e.g. for drum and note pads). */
   caption?: string | null;
+  /** 'press' (default): onPress on pointerdown. 'release': on pointerup after a tap (moving TAP_SLOP_PX or more makes it a drag). */
+  activateOn?: 'press' | 'release';
+  /** Larger name (clip pads). */
+  labelSize?: 'md' | 'lg';
+  /** Empty pads: show only a faint "+"; the label appears on hover and keyboard focus. */
+  quietEmpty?: boolean;
+  /** Icon for a caption shown without a state icon of its own (e.g. "Paused"). */
+  captionIcon?: IconName;
   id?: string;
   className?: string;
 }
@@ -90,12 +104,18 @@ export function Pad(props: PadProps) {
     keyHint,
     disabled = false,
     caption,
+    activateOn = 'press',
+    labelSize = 'md',
+    quietEmpty = false,
+    captionIcon,
     id,
     className,
   } = props;
 
   const [pressed, setPressed] = useState(false);
   const pointer = useRef<number | null>(null);
+  /** Release mode: where the pointer went down, and the velocity it would play with; null once it became a drag. */
+  const tap = useRef<{ x: number; y: number; velocity: number } | null>(null);
   const keyDown = useRef<string | null>(null);
   const onReleaseRef = useRef(onRelease);
   useEffect(() => {
@@ -149,7 +169,18 @@ export function Pad(props: PadProps) {
     }
     pointer.current = e.pointerId;
     setPressed(true);
-    onPress({ velocity });
+    if (activateOn === 'release') tap.current = { x: e.clientX, y: e.clientY, velocity };
+    else onPress({ velocity });
+  };
+
+  const onPointerMove = (e: PointerEvent<HTMLButtonElement>) => {
+    const t = tap.current;
+    if (!t || pointer.current !== e.pointerId) return;
+    if (Math.hypot(e.clientX - t.x, e.clientY - t.y) >= TAP_SLOP_PX) {
+      // A drag: it never presses the pad.
+      tap.current = null;
+      setPressed(false);
+    }
   };
 
   const onPointerEnd = (e: PointerEvent<HTMLButtonElement>) => {
@@ -159,6 +190,9 @@ export function Pad(props: PadProps) {
     } catch {
       /* already released */
     }
+    const t = tap.current;
+    tap.current = null;
+    if (t && e.type === 'pointerup' && !disabled) onPress({ velocity: t.velocity });
     release();
   };
 
@@ -179,7 +213,7 @@ export function Pad(props: PadProps) {
   };
 
   const shownCaption = caption === undefined ? (state === 'empty' ? null : PAD_STATE_TEXT[state]) : caption;
-  const icon = STATE_ICON[state];
+  const icon = captionIcon ?? STATE_ICON[state];
   const light = state === 'recording' ? 'coral' : accent;
   const lvl = Math.min(1, Math.max(0, intensity));
   const spoken =
@@ -200,11 +234,14 @@ export function Pad(props: PadProps) {
       data-pressed={pressed || undefined}
       data-keyhint={keyHint ? true : undefined}
       data-wrap={!sublabel && !shownCaption ? true : undefined}
+      data-label={labelSize === 'lg' ? 'lg' : undefined}
+      data-quiet={quietEmpty && state === 'empty' ? true : undefined}
       disabled={disabled}
       aria-label={spoken}
       aria-keyshortcuts={keyHint || undefined}
       style={{ '--intensity': String(0.35 + 0.65 * lvl) } as CSSProperties}
       onPointerDown={onPointerDown}
+      onPointerMove={activateOn === 'release' ? onPointerMove : undefined}
       onPointerUp={onPointerEnd}
       onPointerCancel={onPointerEnd}
       onLostPointerCapture={onPointerEnd}

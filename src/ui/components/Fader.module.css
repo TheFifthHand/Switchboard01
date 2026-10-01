@@ -1,0 +1,210 @@
+/* Fader: a vertical level control. The whole column is the target (scale + lane). */
+
+.fader {
+  --cap-h: 30px;
+  --cap-w: 34px;
+  --scale-w: 20px;
+  --pad-y: 4px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  height: 100%;
+  min-height: 112px;
+  min-width: 44px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.slider {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--pad-y) 2px var(--pad-y) calc(var(--scale-w) + 2px);
+  border-radius: var(--r-md);
+  outline: none;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.slider:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.fader[data-readonly] .slider,
+.fader[data-disabled] .slider {
+  cursor: default;
+}
+
+/* ---------- scale ---------- */
+
+.scale {
+  position: absolute;
+  left: 2px;
+  top: var(--pad-y);
+  bottom: var(--pad-y);
+  width: var(--scale-w);
+  pointer-events: none;
+}
+
+.mark {
+  position: absolute;
+  left: 0;
+  right: 2px;
+  bottom: calc(var(--at) * (100% - var(--cap-h)) + var(--cap-h) / 2);
+  transform: translateY(50%);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1;
+  text-align: right;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.mark[data-unity] {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ---------- lane, slot and cap ---------- */
+
+.lane {
+  position: relative;
+  width: var(--cap-w);
+  height: 100%;
+}
+
+.slot {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--cap-h) / 2 - 3px);
+  bottom: calc(var(--cap-h) / 2 - 3px);
+  width: 6px;
+  margin-left: -3px;
+  border-radius: 3px;
+  background: #b9bfc5;
+  box-shadow:
+    inset 0 1px 2px rgba(20, 24, 28, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.tick {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  height: 1px;
+  bottom: calc(var(--at) * (100% - var(--cap-h)) + var(--cap-h) / 2);
+  background: var(--line-strong);
+  opacity: 0.55;
+}
+
+.tick[data-unity] {
+  left: 0;
+  right: 0;
+  height: 2px;
+  opacity: 0.9;
+  background: var(--ink-3);
+}
+
+.cap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--cap-h);
+  bottom: calc(var(--pos) * (100% - var(--cap-h)));
+  border-radius: 5px;
+  background: linear-gradient(180deg, #555b62 0%, #3a3f45 46%, #2c3035 54%, #40454b 100%);
+  box-shadow:
+    0 0 0 1px #1c1f22,
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 2px 4px rgba(20, 24, 28, 0.35);
+  transition: box-shadow var(--t-fast) var(--ease);
+}
+
+.capLine {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: var(--ink-inverse);
+}
+
+.slider:focus-visible .cap,
+.fader[data-dragging] .cap {
+  box-shadow:
+    0 0 0 1px #1c1f22,
+    0 0 0 3px var(--teal),
+    0 2px 6px rgba(20, 24, 28, 0.35);
+}
+
+.fader[data-modulated] .capLine {
+  background: var(--teal-hi);
+}
+
+.fader[data-disabled] .cap,
+.fader[data-readonly] .cap {
+  opacity: 0.55;
+}
+
+/* ---------- value readout and entry ---------- */
+
+.value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 18px;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.modMark {
+  color: var(--teal);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0 5px 0 3px;
+  border-radius: 8px;
+  background: var(--teal-wash);
+  color: var(--teal-ink);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.entry {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 64px;
+  height: 22px;
+  margin-left: -32px;
+  padding: 0 4px;
+  border: 1px solid var(--teal);
+  border-radius: var(--r-sm);
+  background: var(--surface-hi);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--teal-wash);
+  outline: none;
+  z-index: 2;
+}
+
+.entry[data-invalid] {
+  border-color: var(--coral);
+  box-shadow: 0 0 0 2px var(--coral-wash);
+}

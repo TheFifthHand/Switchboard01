@@ -21,6 +21,11 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
   size?: ButtonSize;
   /** Toggle state; renders aria-pressed. Leave undefined for a plain button. */
   pressed?: boolean;
+  /**
+   * Light the key (it sits lower, its icon in `tone`) without making it a
+   * toggle: for a key whose label already says the state, such as Play / Pause.
+   */
+  lit?: boolean;
   /** LED colour when pressed (default: amber; coral for danger). */
   tone?: Tone;
   icon?: IconName;
@@ -41,6 +46,7 @@ export function Button({
   variant = 'secondary',
   size = 'md',
   pressed,
+  lit,
   tone,
   icon,
   iconRight,
@@ -54,6 +60,7 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const toggle = pressed !== undefined;
+  const on = toggle ? pressed : lit;
   const led = tone ?? (variant === 'danger' ? 'coral' : 'amber');
   const btn = (
     <button
@@ -64,7 +71,7 @@ export function Button({
       data-size={size}
       data-tone={led}
       data-block={block || undefined}
-      data-on={pressed || undefined}
+      data-on={on || undefined}
       aria-pressed={toggle ? pressed : undefined}
       {...rest}
     >

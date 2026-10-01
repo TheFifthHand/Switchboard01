@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type { Performance, Project } from '../../src/project/types';
 import type { SeqEvent } from '../../src/time/contracts';
-import { Sequencer, nextBarTick } from '../../src/time/sequencer';
+import { Sequencer, nextBarTick, type NoteEvent } from '../../src/time/sequencer';
+import { makeSnapshot } from '../../src/time/snapshot';
 import { Holder, effectiveEnds, makeClip, makeProject, notesOf, ofKind, runTo, sec, setClip } from './sequencer-fixtures';
 
 const SIXTEENTHS = Array.from({ length: 16 }, (_, i) => [i * 24, 60 + (i % 4)] as [number, number]);
@@ -356,7 +358,8 @@ describe('Sequencer: live launcher', () => {
     seq.stop(1.2);
     expect(seq.playing).toBe(false);
     expect(seq.getLauncherSnapshot().find((e) => e.trackId === 't4')).toEqual({ trackId: 't4', playing: { slot: 1, startTick: 0 } });
-    expect(seq.getPosition(5)).toMatchObject({ tick: expect.closeTo(230.4, 6), bar: 0, beat: 2, step: 9 });
+    // Stop returns the playhead to the start (bar 1).
+    expect(seq.getPosition(5)).toEqual({ tick: 0, bar: 0, beat: 0, step: 0 });
     expect(seq.process(10)).toEqual([]);
     seq.start(10);
     expect(notesOf(seq.process(11), 't4').map((n) => [n.tick, n.clipId])).toEqual([[48, B.id]]);
@@ -565,5 +568,374 @@ describe('Sequencer: mono parts', () => {
     const arp = notesOf(e2).filter((n) => n.source === 'arp');
     expect(arp[0]).toMatchObject({ tick: 96, pitch: 48, legato: true });
     expect(seq.takeCuts()).toMatchObject([{ tick: 96, note: { tick: 0 } }]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Pause and resume                                                    */
+/* ------------------------------------------------------------------ */
+
+describe('Sequencer: pause and resume', () => {
+  /** A 1-bar 16ths clip on t1 and a 3-bar clip on t4 (phases that only line up every 3 bars). */
+  function twoClips(swing = 0): Project {
+    let p = makeProject(120);
+    p.swing = swing;
+    p = setClip(p, 't1', 0, makeClip(1, SIXTEENTHS, 'hats'));
+    p = setClip(p, 't4', 0, makeClip(3, [[0, 60, 96], [500, 64, 48], [1000, 67, 96]], 'long'));
+    return p;
+  }
+
+  function playing(p: Project, t0: number): Sequencer {
+    const s = new Sequencer({ getProject: () => p });
+    s.launchClip('t1', 0, 0);
+    s.launchClip('t4', 0, 0);
+    s.start(t0);
+    return s;
+  }
+
+  /**
+   * What is heard with a pause from `pauseAt` to `resumeAt`: notes handed out
+   * before the pause count when they start before it (the driver cancels the
+   * rest of the look-ahead), plus everything after the resume.
+   */
+  function heardWithPause(seq: Sequencer, t0: number, pauseAt: number, resumeAt: number, until: number) {
+    const before = runTo(seq, t0, pauseAt + 0.12);
+    expect(seq.pause(pauseAt)).toBe(true);
+    // Nothing is generated while paused, however long the pause lasts.
+    expect(seq.process(resumeAt - 0.001)).toEqual([]);
+    expect(seq.resume(resumeAt)).toBe(true);
+    const after = runTo(seq, resumeAt, until);
+    return { before: before.filter((e) => e.time < pauseAt), after };
+  }
+
+  const key = (n: NoteEvent) => `${n.trackId}:${n.tick}:${n.pitch}`;
+
+  it('holds the playhead and every clip phase; Play continues exactly there, in time, with no backlog', () => {
+    const p = twoClips();
+    const t0 = 1;
+    const ref = notesOf(runTo(playing(p, t0), t0, t0 + sec(3200)));
+    const pauseTick = 1234.5; // mid-bar 4, inside a 16th
+    const pauseAt = t0 + sec(pauseTick);
+    const resumeAt = 40;
+    const seq = playing(p, t0);
+    const { before, after } = heardWithPause(seq, t0, pauseAt, resumeAt, resumeAt + sec(3200 - pauseTick));
+    // While paused (and after resuming, until the music moves on) the playhead reads the pause point.
+    expect(seq.getPosition(resumeAt).tick).toBeCloseTo(pauseTick, 6);
+    expect(seq.getTrackState('t4').playing).toMatchObject({ slot: 0, startTick: 0 });
+
+    // No backlog: nothing after the resume is timed before it.
+    expect(after.every((e) => e.time >= resumeAt - 1e-9)).toBe(true);
+    const shift = resumeAt - pauseAt;
+    const heard = [...notesOf(before), ...notesOf(after)];
+    // Every note of the uninterrupted run is heard exactly once: before the pause at its own time,
+    // after it shifted by the length of the pause (so every clip keeps its phase).
+    const expected = ref.filter((n) => n.tick < 3190);
+    const got = heard.filter((n) => n.tick < 3190);
+    expect(got.map(key)).toEqual(expected.map(key));
+    got.forEach((n, i) => {
+      const r = expected[i];
+      expect(n.time).toBeCloseTo(r.tick < pauseTick ? r.time : r.time + shift, 9);
+      expect(n.durationTicks).toBe(r.durationTicks);
+    });
+    // The 3-bar clip's second loop comes in at tick 1152 + 384 ... i.e. its notes stay on S + k*L + n.
+    expect(notesOf(after, 't4').map((n) => n.tick)).toEqual([1652, 2152, 2304, 2804]);
+    // The first beat after the resume is the next beat after the pause point.
+    const beats = ofKind(after, 'beat');
+    expect(beats[0]).toMatchObject({ tick: 1248, bar: 3, beat: 1 });
+    expect(beats[0].time).toBeCloseTo(resumeAt + sec(1248 - pauseTick), 9);
+  });
+
+  it('a swung note the pause came before plays after the resume, once', () => {
+    const p = twoClips(0.6);
+    const t0 = 0.5;
+    const ref = notesOf(runTo(playing(p, t0), t0, t0 + 6));
+    // The off-beat 16th at 792 is swung to 796.8: pause in between.
+    const pauseTick = 794;
+    const seq = playing(p, t0);
+    const pauseAt = seq.timeAt(pauseTick);
+    const resumeAt = 20;
+    const { before, after } = heardWithPause(seq, t0, pauseAt, resumeAt, resumeAt + 6 - (pauseAt - t0));
+    const shift = resumeAt - pauseAt;
+    const swungLate = notesOf(after, 't1')[0];
+    expect(swungLate.tick).toBe(792);
+    expect(swungLate.time).toBeCloseTo(resumeAt + sec(796.8 - pauseTick), 9);
+    const heard = [...notesOf(before), ...notesOf(after)];
+    const limit = ref.filter((n) => n.time + (n.time >= pauseAt ? shift : 0) < resumeAt + 5.5 - (pauseAt - t0));
+    expect(heard.slice(0, limit.length).map(key)).toEqual(limit.map(key));
+    heard.slice(0, limit.length).forEach((n, i) => expect(n.time).toBeCloseTo(limit[i].time < pauseAt ? limit[i].time : limit[i].time + shift, 9));
+  });
+
+  it('a launch queued before the pause, and one made while paused, happen at their bar after the resume', () => {
+    let p = makeProject(120);
+    const A = makeClip(1, [[0, 60], [192, 62]], 'A');
+    const B = makeClip(1, [[0, 70], [96, 72]], 'B');
+    p = setClip(p, 't4', 0, A);
+    p = setClip(p, 't4', 1, B);
+    const seq = new Sequencer({ getProject: () => p });
+    seq.launchClip('t4', 0, 0);
+    seq.start(0);
+    runTo(seq, 0, sec(300));
+    expect(seq.launchClip('t4', 1, sec(300)).atTick).toBe(384);
+    runTo(seq, sec(300), sec(350) + 0.12);
+    expect(seq.pause(sec(350))).toBe(true);
+    expect(seq.getTrackState('t4')).toMatchObject({ playing: { slot: 0 }, queued: { slot: 1, atTick: 384 } });
+    seq.resume(10);
+    const after = runTo(seq, 10, 10 + sec(700));
+    expect(ofKind(after, 'launch')).toMatchObject([{ tick: 384, slot: 1, clipId: B.id }]);
+    expect(ofKind(after, 'launch')[0].time).toBeCloseTo(10 + sec(34), 9);
+    expect(notesOf(after).map((n) => [n.tick, n.pitch])).toEqual([[384, 70], [480, 72], [768, 70], [864, 72]]);
+
+    // Paused again, a launch queues for the next bar after the pause point.
+    const at = 10 + sec(700);
+    runTo(seq, 10 + sec(700), at + 0.1);
+    seq.pause(at);
+    expect(seq.getPosition(at).tick).toBeCloseTo(1050, 6);
+    expect(seq.launchClip('t4', 0, 99)).toMatchObject({ slot: 0, atTick: 1152 });
+    expect(seq.getTrackState('t4').queued).toEqual({ slot: 0, atTick: 1152 });
+    seq.resume(30);
+    const later = runTo(seq, 30, 31);
+    expect(ofKind(later, 'launch')).toMatchObject([{ tick: 1152, slot: 0, clipId: A.id }]);
+    expect(ofKind(later, 'launch')[0].time).toBeCloseTo(30 + sec(1152 - 1050), 9);
+  });
+
+  it('Stop from a pause goes back to bar 1 with the playing clips armed; Play starts them from the top', () => {
+    const p = twoClips();
+    const seq = playing(p, 0);
+    runTo(seq, 0, 2.6);
+    seq.pause(2.5);
+    seq.stop(9);
+    expect(seq.paused).toBe(false);
+    expect(seq.playing).toBe(false);
+    expect(seq.getPosition(9)).toEqual({ tick: 0, bar: 0, beat: 0, step: 0 });
+    expect(seq.getLauncherSnapshot().filter((e) => e.playing).map((e) => [e.trackId, e.playing!.startTick])).toEqual([
+      ['t1', 0],
+      ['t4', 0],
+    ]);
+    expect(seq.resume(10)).toBe(false);
+    seq.start(10);
+    expect(notesOf(seq.process(10.01)).map((n) => [n.trackId, n.tick])).toEqual([
+      ['t1', 0],
+      ['t4', 0],
+    ]);
+  });
+
+  it('a tempo change while paused applies from the resume (live and song playback follow the project)', () => {
+    const h = new Holder(twoClips());
+    const seq = new Sequencer({ getProject: h.get });
+    seq.launchClip('t1', 0, 0);
+    seq.start(0);
+    runTo(seq, 0, 1.12);
+    seq.pause(1); // tick 192
+    h.project = { ...h.project, bpm: 60 };
+    seq.resume(5);
+    const beats = ofKind(runTo(seq, 5, 8), 'beat');
+    expect(beats.slice(0, 3).map((b) => [b.tick, b.time])).toEqual([
+      [192, expect.closeTo(5, 9)],
+      [288, expect.closeTo(6, 9)],
+      [384, expect.closeTo(7, 9)],
+    ]);
+  });
+
+  it('song mode continues from the same block and bar', () => {
+    let p = makeProject(120);
+    const intro = makeClip(1, [[0, 36]], 'intro');
+    const groove = makeClip(1, [[0, 40], [192, 41]], 'groove');
+    const pad = makeClip(2, [[96, 60, 48]], 'pad');
+    p = setClip(p, 't1', 0, intro);
+    p = setClip(p, 't1', 1, groove);
+    p = setClip(p, 't6', 1, pad);
+    p.arrangement = { tailSeconds: 1, blocks: [{ id: 'a', sceneId: p.scenes[0].id, repeats: 1 }, { id: 'b', sceneId: p.scenes[1].id, repeats: 2 }] };
+    const seq = new Sequencer({ getProject: () => p });
+    seq.start(0, { mode: { kind: 'song', fromBlock: 0 } });
+    runTo(seq, 0, sec(1000) + 0.12);
+    expect(seq.pause(sec(1000))).toBe(true); // block b, second bar of the 2-bar pad
+    expect(seq.mode).toEqual({ kind: 'song', fromBlock: 0 });
+    seq.resume(20);
+    expect(seq.mode).toEqual({ kind: 'song', fromBlock: 0 });
+    const after = runTo(seq, 20, 30);
+    // No block or launch is announced again: block b (2 bars x 2) simply carries on, its clips in phase.
+    expect(ofKind(after, 'block')).toEqual([]);
+    expect(ofKind(after, 'launch')).toEqual([]);
+    expect(notesOf(after).map((n) => [n.trackId, n.tick])).toEqual([
+      ['t1', 1152],
+      ['t6', 1248],
+      ['t1', 1344],
+      ['t1', 1536],
+      ['t1', 1728],
+    ]);
+    const end = ofKind(after, 'end');
+    expect(end).toHaveLength(1);
+    expect(end[0].tick).toBe(1920);
+    expect(end[0].time).toBeCloseTo(20 + sec(920), 9);
+  });
+
+  it('a paused replay sends the control values the take had reached again when it resumes, and keeps its tempo map', () => {
+    let p = makeProject(120);
+    p = setClip(p, 't1', 0, makeClip(1, [[0, 0], [192, 1]], 'A'));
+    const snapshot = makeSnapshot(p, [{ trackId: 't1', playing: { slot: 0, startTick: 0 } }], 0);
+    const perf: Performance = {
+      id: 'perf1',
+      name: 'Take 1',
+      createdAt: 0,
+      startTick: 0,
+      endTick: 3072,
+      snapshot,
+      events: [
+        { t: 100, type: 'macro', trackId: 't1', macro: 'tone', value: 0.1 },
+        { t: 300, type: 'macro', trackId: 't1', macro: 'tone', value: 0.7 },
+        { t: 350, type: 'param', module: 't1:filter', param: 'cutoff', value: 900 },
+        { t: 400, type: 'mute', trackId: 't2', mute: true },
+        { t: 500, type: 'master', volumeDb: -6 },
+        { t: 600, type: 'tempo', bpm: 60 },
+        { t: 1600, type: 'macro', trackId: 't1', macro: 'tone', value: 0.3 },
+        { t: 2000, type: 'tempo', bpm: 120 },
+      ],
+    };
+    p = { ...p, performances: [perf] };
+    const seq = new Sequencer({ getProject: () => p });
+    seq.start(0, { mode: { kind: 'replay', performanceId: 'perf1' } });
+    const pauseAt = sec(600) + sec(400, 60); // tick 1000, at 60 BPM since 600
+    runTo(seq, 0, pauseAt + 0.12);
+    expect(seq.pause(pauseAt)).toBe(true);
+    expect(seq.getPosition(0).tick).toBeCloseTo(1000, 6);
+    seq.resume(50);
+    const first = seq.process(50.001);
+    const sent = first.filter((e) => e.kind !== 'beat' && e.kind !== 'note');
+    expect(sent).toHaveLength(4);
+    expect(sent).toEqual(expect.arrayContaining([
+      { kind: 'macro', tick: 1000, time: 50, trackId: 't1', macro: 'tone', value: 0.7 },
+      { kind: 'param', tick: 1000, time: 50, module: 't1:filter', param: 'cutoff', value: 900 },
+      { kind: 'mute', tick: 1000, time: 50, trackId: 't2', mute: true },
+      { kind: 'master', tick: 1000, time: 50, volumeDb: -6 },
+    ]));
+    const after = [...first, ...runTo(seq, 50.001, 70)];
+    // 60 BPM from the resume, then the take's own change back to 120 at tick 2000.
+    expect(ofKind(after, 'macro').map((m) => [m.tick, m.value])).toEqual([
+      [1000, 0.7],
+      [1600, 0.3],
+    ]);
+    expect(ofKind(after, 'macro')[1].time).toBeCloseTo(50 + sec(600, 60), 9);
+    expect(ofKind(after, 'tempo').map((e) => [e.tick, e.bpm])).toEqual([[2000, 120]]);
+    expect(ofKind(after, 'end')[0].time).toBeCloseTo(50 + sec(1000, 60) + sec(1072, 120), 9);
+  });
+
+  it('cannot pause when stopped or at the end of the music; a latched arpeggio ends at the pause', () => {
+    const p = twoClips();
+    p.tracks[4].arp = { enabled: true, division: '1/16', mode: 'up', octaves: 1, latch: true, gate: 0.5 };
+    const seq = new Sequencer({ getProject: () => p });
+    expect(seq.pause(0)).toBe(false);
+    seq.start(0);
+    seq.setArpHeld('t5', [60, 64], 0.1, 0.8);
+    seq.setArpHeld('t5', [], 0.2); // latched: plays on
+    runTo(seq, 0, 1.1);
+    expect(seq.pause(1)).toBe(true);
+    expect(seq.process(4)).toEqual([]);
+    seq.resume(5);
+    expect(notesOf(runTo(seq, 5, 7), 't5')).toEqual([]);
+    // A song paused right at its end stops instead.
+    const song = { ...p, arrangement: { tailSeconds: 1, blocks: [{ id: 'a', sceneId: p.scenes[0].id, repeats: 1 }] } };
+    const s2 = new Sequencer({ getProject: () => song });
+    s2.start(0, { mode: { kind: 'song', fromBlock: 0 } });
+    runTo(s2, 0, 7); // 3 bars (the longest clip in the row) = 6 s
+    expect(s2.ended).toBe(true);
+    expect(s2.pause(6.9)).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Clips moved between pads                                            */
+/* ------------------------------------------------------------------ */
+
+describe('Sequencer: the launcher follows moved clips', () => {
+  it('a clip moved within its part keeps playing from its new slot, in phase', () => {
+    const h = new Holder(makeProject(120));
+    const A = makeClip(2, [[0, 60], [384, 62]], 'A');
+    h.project = setClip(h.project, 't4', 0, A);
+    const seq = new Sequencer({ getProject: h.get });
+    seq.launchClip('t4', 0, 0);
+    seq.start(0);
+    const before = runTo(seq, 0, sec(500));
+    // The clip moves from slot 0 to slot 3 at tick 500 (the store change, then the launcher follows).
+    h.project = setClip(setClip(h.project, 't4', 0, null), 't4', 3, A);
+    expect(seq.relocateSlots('t4', new Map([[0, 3]]), sec(500))).toBe(true);
+    seq.invalidate(sec(500));
+    expect(seq.getTrackState('t4').playing).toMatchObject({ slot: 3, startTick: 0, clipId: A.id });
+    const after = runTo(seq, sec(500), sec(1700));
+    const notes = [...notesOf(before).filter((n) => n.time < sec(500)), ...notesOf(after)];
+    expect(notes.map((n) => [n.tick, n.pitch])).toEqual([
+      [0, 60],
+      [384, 62],
+      [768, 60],
+      [1152, 62],
+      [1536, 60],
+    ]);
+    expect(ofKind(after, 'launch')).toEqual([]);
+  });
+
+  it('a clip that left its part stops there at once (sounding notes cut), and its queued launch is dropped', () => {
+    const h = new Holder(makeProject(120));
+    const A = makeClip(1, [[0, 60, 380]], 'A');
+    const B = makeClip(1, [[0, 64]], 'B');
+    h.project = setClip(setClip(h.project, 't4', 0, A), 't4', 1, B);
+    const seq = new Sequencer({ getProject: h.get });
+    seq.launchClip('t4', 0, 0);
+    seq.start(0);
+    const first = runTo(seq, 0, sec(100) + 0.12);
+    seq.launchClip('t4', 1, sec(100)); // queued for 384
+    // A moves to another part at tick 100; B moves too (both left t4).
+    h.project = setClip(setClip(h.project, 't4', 0, null), 't4', 1, null);
+    expect(seq.relocateSlots('t4', new Map([[0, null], [1, null]]), sec(100))).toBe(true);
+    const cut = seq.takeCuts();
+    expect(cut).toHaveLength(1);
+    expect(cut[0].note).toBe(notesOf(first)[0]);
+    expect(cut[0].time).toBeCloseTo(sec(100), 9);
+    expect(seq.getTrackState('t4')).toEqual({ playing: null, queued: null });
+    seq.invalidate(sec(100));
+    expect(notesOf(runTo(seq, sec(100), 4))).toEqual([]);
+  });
+
+  it('moves while stopped keep the armed clip, and while paused the held clip, on its pad', () => {
+    const h = new Holder(makeProject(120));
+    const A = makeClip(1, [[0, 60]], 'A');
+    h.project = setClip(h.project, 't4', 0, A);
+    const seq = new Sequencer({ getProject: h.get });
+    seq.launchClip('t4', 0, 0);
+    h.project = setClip(setClip(h.project, 't4', 0, null), 't4', 2, A);
+    seq.relocateSlots('t4', new Map([[0, 2]]), 0);
+    expect(seq.getLauncherSnapshot()[3].playing).toEqual({ slot: 2, startTick: 0 });
+    seq.start(1);
+    runTo(seq, 1, 2.2);
+    seq.pause(2); // tick 192
+    h.project = setClip(setClip(h.project, 't4', 2, null), 't4', 1, A);
+    seq.relocateSlots('t4', new Map([[2, 1]]), 5);
+    expect(seq.getTrackState('t4').playing).toMatchObject({ slot: 1, startTick: 0 });
+    seq.resume(10);
+    const after = notesOf(runTo(seq, 10, 14));
+    expect(after.map((n) => [n.tick, n.clipId])).toEqual([
+      [384, A.id],
+      [768, A.id],
+    ]);
+    expect(after[0].time).toBeCloseTo(10 + sec(384 - 192), 9);
+  });
+
+  it('a playing song keeps its scenes when the rows are reordered', () => {
+    let p = makeProject(120);
+    const intro = makeClip(1, [[0, 36]], 'intro');
+    const groove = makeClip(1, [[0, 40]], 'groove');
+    p = setClip(setClip(p, 't1', 0, intro), 't1', 1, groove);
+    p.arrangement = { tailSeconds: 1, blocks: [{ id: 'a', sceneId: p.scenes[0].id, repeats: 1 }, { id: 'b', sceneId: p.scenes[1].id, repeats: 1 }] };
+    const h = new Holder(p);
+    const seq = new Sequencer({ getProject: h.get });
+    seq.start(0, { mode: { kind: 'song', fromBlock: 0 } });
+    runTo(seq, 0, 0.3);
+    // Swap rows 0 and 1 (scenes and clips together).
+    h.project = { ...h.project, scenes: [h.project.scenes[1], h.project.scenes[0], ...h.project.scenes.slice(2)] };
+    h.project = setClip(setClip(h.project, 't1', 0, groove), 't1', 1, intro);
+    seq.relocateSongRows(new Map([[0, 1], [1, 0]]));
+    seq.relocateSlots('t1', new Map([[0, 1], [1, 0]]), 0.3);
+    seq.invalidate(0.3);
+    const after = runTo(seq, 0.3, 5);
+    expect(notesOf(after).map((n) => [n.tick, n.clipId])).toEqual([[384, groove.id]]);
+    expect(ofKind(after, 'block').map((b) => [b.tick, b.sceneRow])).toEqual([[384, 0]]);
   });
 });

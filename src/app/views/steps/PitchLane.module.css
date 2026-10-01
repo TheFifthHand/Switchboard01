@@ -22,7 +22,7 @@
   min-width: 0;
 }
 .octNav .octBtn[data-size] {
-  --h: 26px;
+  --h: 32px;
 }
 .keyInfo {
   min-width: 0;

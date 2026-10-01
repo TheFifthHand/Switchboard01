@@ -1,15 +1,17 @@
 /**
  * Renders every synth preset through the real mono/poly synth engines in
  * Chromium (OfflineAudioContext) and checks that each one is audible, finite,
- * level-matched within its group, and that the Tone macro really changes its
- * brightness.
+ * level-matched within its browser category (and the categories with each
+ * other), that the Tone macro really changes its brightness, that presets of
+ * a category sound measurably different from each other, and that every
+ * voice is freed after its release.
  */
 import { describe, expect, it } from 'vitest';
 import type { InstrumentContext, InstrumentFactory } from '../../src/audio/contracts';
 import { MonoSynthEngine } from '../../src/audio/instruments/monoSynth';
 import { PolySynthEngine } from '../../src/audio/instruments/polySynth';
 import { PRESETS, applyPresetToProject } from '../../src/content/presets';
-import { SYNTH_PRESETS, type PresetInfo } from '../../src/content/catalog';
+import { SOUND_CATEGORIES, SYNTH_PRESETS, type PresetInfo } from '../../src/content/catalog';
 import { parseChord, voiceLeadProgression } from '../../src/music/chords';
 import { parseNote } from '../../src/music/scales';
 import { createProject } from '../../src/project/factory';
@@ -97,6 +99,77 @@ interface Render {
   brightness: number;
   /** Spectral centroid of the phrase (mono mix), Hz. */
   centroid: number;
+  /** Band energies (dB, relative to the total) of the mono phrase: a coarse spectral fingerprint. */
+  bands: number[];
+  /** Voices still allocated after the render (every one should have been freed). */
+  voicesLeft: number;
+  envelope: number[];
+}
+
+/** Third-octave bands from 28 Hz to 14 kHz for the spectral fingerprint. */
+const BAND_EDGES = Array.from({ length: 28 }, (_, i) => 28 * Math.pow(2, i / 3));
+
+/** Long-term spectrum in third-octave bands, dB relative to the strongest band (floor -50 dB). */
+function bandProfile(x: Float32Array): number[] {
+  const n = 8192;
+  const hop = 4096;
+  const acc = new Float64Array(n / 2);
+  for (let a = 0; a + n <= x.length; a += hop) {
+    const re = new Float64Array(n);
+    const im = new Float64Array(n);
+    for (let i = 0; i < n; i++) re[i] = x[a + i] * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (n - 1)));
+    fft(re, im);
+    for (let k = 1; k < n / 2; k++) acc[k] += re[k] * re[k] + im[k] * im[k];
+  }
+  const out: number[] = [];
+  for (let b = 0; b + 1 < BAND_EDGES.length; b++) {
+    let e = 1e-20;
+    for (let k = Math.ceil((BAND_EDGES[b] * n) / SR); k < Math.min(n / 2, (BAND_EDGES[b + 1] * n) / SR); k++) e += acc[k];
+    out.push(10 * Math.log10(e));
+  }
+  const top = Math.max(...out);
+  return out.map((v) => Math.max(-50, v - top));
+}
+
+/** In-place radix-2 FFT. */
+function fft(re: Float64Array, im: Float64Array): void {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len;
+    for (let i = 0; i < n; i += len) {
+      for (let k = 0; k < len / 2; k++) {
+        const wr = Math.cos(ang * k);
+        const wi = Math.sin(ang * k);
+        const ar = re[i + k + len / 2] * wr - im[i + k + len / 2] * wi;
+        const ai = re[i + k + len / 2] * wi + im[i + k + len / 2] * wr;
+        re[i + k + len / 2] = re[i + k] - ar;
+        im[i + k + len / 2] = im[i + k] - ai;
+        re[i + k] += ar;
+        im[i + k] += ai;
+      }
+    }
+  }
+}
+
+/** RMS envelope (20 ms blocks, dB) of the mono phrase: a dynamic fingerprint. */
+function envelopeDb(x: Float32Array): number[] {
+  const block = Math.round(0.02 * SR);
+  const out: number[] = [];
+  for (let a = 0; a + block <= x.length; a += block) {
+    let z = 0;
+    for (let i = a; i < a + block; i++) z += x[i] * x[i];
+    out.push(Math.max(-60, 10 * Math.log10(z / block + 1e-20)));
+  }
+  return out;
 }
 
 /**
@@ -124,7 +197,11 @@ function gatedLoudness(l: Float32Array, r: Float32Array, frames: number): number
 
 async function render(factory: InstrumentFactory, info: PresetInfo, tone = 0.5): Promise<Render> {
   // Channels 0-1: the instrument as heard. Channels 2-3: the same through K-weighting, for loudness.
-  const ctx = new OfflineAudioContext(4, SR * RENDER_SECONDS, SR);
+  // Long enough for every release tail to finish, so leftover voices would be real leaks.
+  const notes = phrase(info);
+  const release = PRESETS[info.id].params.release ?? 0.5;
+  const end = Math.max(...notes.map((n) => 0.05 + n.time + n.duration)) + release + 0.3;
+  const ctx = new OfflineAudioContext(4, Math.ceil(SR * Math.max(RENDER_SECONDS, end)), SR);
   const ictx: InstrumentContext = { ctx, samples: { get: () => null }, noise: noiseBuffer(ctx), getBpm: () => BPM };
   const instrument = presetInstrument(info.id, tone);
   const engine = factory(ictx, instrument);
@@ -143,8 +220,11 @@ async function render(factory: InstrumentFactory, info: PresetInfo, tone = 0.5):
   weighted.connect(merger, 0, 2);
   weighted.connect(merger, 1, 3);
   merger.connect(ctx.destination);
-  for (const n of phrase(info)) engine.trigger({ pitch: n.pitch, velocity: n.velocity, time: 0.05 + n.time, duration: n.duration, legato: n.legato ?? false });
+  for (const n of notes) engine.trigger({ pitch: n.pitch, velocity: n.velocity, time: 0.05 + n.time, duration: n.duration, legato: n.legato ?? false });
   const buf = await ctx.startRendering();
+  // Let the sources' 'ended' events run, then count what is still allocated.
+  await new Promise((r) => setTimeout(r, 20));
+  const voicesLeft = engine.activeVoices();
   engine.dispose();
 
   const frames = SR * MEASURE_SECONDS;
@@ -173,6 +253,9 @@ async function render(factory: InstrumentFactory, info: PresetInfo, tone = 0.5):
     finite,
     brightness: Math.sqrt(diff / (sum + 1e-20)),
     centroid: spectralCentroid(mono, SR),
+    bands: bandProfile(mono),
+    voicesLeft,
+    envelope: envelopeDb(mono),
   };
 }
 
@@ -181,28 +264,100 @@ const median = (xs: number[]) => {
   return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 };
 
-describe('synth presets rendered through the real engines', () => {
-  it('every preset is audible, finite and level-matched within ±6 dB of its group median', async () => {
-    const factory = await loadFactory();
-    const results = new Map<string, Render>();
-    for (const info of SYNTH_PRESETS) results.set(info.id, await render(factory, info));
+/** Renders at Tone 0.5, shared by the level, distinctness and cleanup checks. */
+let designed: Map<string, Render> | null = null;
+async function designedRenders(): Promise<Map<string, Render>> {
+  if (designed) return designed;
+  const factory = await loadFactory();
+  const results = new Map<string, Render>();
+  for (const info of SYNTH_PRESETS) results.set(info.id, await render(factory, info));
+  designed = results;
+  return results;
+}
 
+/**
+ * How different two rendered presets are: mean third-octave spectrum
+ * difference (dB, where either has energy), mean difference of the 20 ms
+ * loudness contour after matching levels (dB), and the spectral-centroid
+ * ratio (octaves, weighted x6).
+ */
+function soundDistance(a: Render, b: Render): { total: number; spectral: number; contour: number; bright: number } {
+  let spectral = 0;
+  let bands = 0;
+  for (let k = 0; k < a.bands.length; k++) {
+    if (Math.max(a.bands[k], b.bands[k]) < -40) continue;
+    spectral += Math.abs(a.bands[k] - b.bands[k]);
+    bands++;
+  }
+  spectral /= Math.max(1, bands);
+  const shift = a.loudness - b.loudness;
+  const n = Math.min(a.envelope.length, b.envelope.length);
+  let contour = 0;
+  for (let k = 0; k < n; k++) contour += Math.min(30, Math.abs(a.envelope[k] - b.envelope[k] - shift));
+  contour /= n;
+  const bright = Math.abs(Math.log2(a.centroid / b.centroid));
+  return { total: spectral + contour + 6 * bright, spectral, contour, bright };
+}
+
+/** Two presets of a category must differ at least this much (the closest original pair scores well above it). */
+const MIN_SOUND_DISTANCE = 3.5;
+
+/** Allowed loudness spread inside a category, and between category medians (LU). */
+const IN_CATEGORY_LU = 4.5;
+const BETWEEN_CATEGORIES_LU = 2.5;
+
+describe('synth presets rendered through the real engines', () => {
+  it('every preset is audible, finite, frees its voices and is level-matched within its category', async () => {
+    const results = await designedRenders();
     for (const [id, r] of results) {
       expect(r.finite, `${id} produced non-finite samples`).toBe(true);
       expect(r.rmsDb, `${id} is (nearly) silent`).toBeGreaterThan(-45);
       expect(r.peak, `${id} peaks implausibly high`).toBeLessThan(4);
+      expect(r.voicesLeft, `${id} left voices allocated after their release`).toBe(0);
     }
     const problems: string[] = [];
-    for (const kind of ['bass', 'poly'] as const) {
-      const group = SYNTH_PRESETS.filter((p) => p.kind === kind);
+    const medians = new Map<string, number>();
+    for (const cat of SOUND_CATEGORIES) {
+      const group = SYNTH_PRESETS.filter((p) => p.category === cat.id);
+      if (group.length === 0) continue;
       const med = median(group.map((p) => results.get(p.id)!.loudness));
+      medians.set(cat.id, med);
       const report = group.map((p) => `${p.name} ${(results.get(p.id)!.loudness - med).toFixed(1)}`).join(', ');
-      console.info(`[presets] ${kind} loudness relative to median ${med.toFixed(1)} LUFS: ${report}`);
+      console.info(`[presets] ${cat.name} (${group.length}) loudness relative to median ${med.toFixed(1)} LUFS: ${report}`);
       for (const p of group) {
         const off = results.get(p.id)!.loudness - med;
-        if (Math.abs(off) > 6) problems.push(`${p.name} is ${off.toFixed(1)} dB from the ${kind} median`);
+        if (Math.abs(off) > IN_CATEGORY_LU) problems.push(`${p.name} is ${off.toFixed(1)} dB from the ${cat.name} median`);
       }
     }
+    // Switching a part between melodic categories (keys to a pad, a lead to a pluck) keeps it at a similar
+    // level; basses are designed to sit a few dB above the rest, as in the starters.
+    const melodic = [...medians].filter(([id]) => id !== 'bass');
+    const centre = median(melodic.map(([, m]) => m));
+    for (const [id, m] of melodic) if (Math.abs(m - centre) > BETWEEN_CATEGORIES_LU) problems.push(`${id} median is ${(m - centre).toFixed(1)} dB from the other categories`);
+    const bassLift = medians.get('bass')! - centre;
+    console.info(`[presets] melodic categories centre ${centre.toFixed(1)} LUFS; basses ${bassLift.toFixed(1)} dB above`);
+    if (bassLift < 2 || bassLift > 8) problems.push(`basses sit ${bassLift.toFixed(1)} dB above the other categories (designed: 2 to 8 dB)`);
+    expect(problems).toEqual([]);
+  });
+
+  it('presets in a category sound measurably different from each other', async () => {
+    const results = await designedRenders();
+    const problems: string[] = [];
+    const closest: string[] = [];
+    for (const cat of SOUND_CATEGORIES) {
+      const group = SYNTH_PRESETS.filter((p) => p.category === cat.id);
+      let near = { d: Infinity, label: '' };
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+          const d = soundDistance(results.get(group[i].id)!, results.get(group[j].id)!);
+          const label = `${group[i].name} / ${group[j].name} ${d.total.toFixed(1)} (spectrum ${d.spectral.toFixed(1)} dB, contour ${d.contour.toFixed(1)} dB, centroid ${d.bright.toFixed(2)} oct)`;
+          if (d.total < near.d) near = { d: d.total, label };
+          if (d.total < MIN_SOUND_DISTANCE) problems.push(label);
+        }
+      }
+      if (group.length > 1) closest.push(`${cat.name}: ${near.label}`);
+    }
+    console.info(`[presets] closest pair per category:\n  ${closest.join('\n  ')}`);
     expect(problems).toEqual([]);
   });
 
@@ -216,7 +371,7 @@ describe('synth presets rendered through the real engines', () => {
       report.push(`${info.name} ${dark.centroid.toFixed(0)} -> ${bright.centroid.toFixed(0)} Hz`);
       // The spectral centroid should move by well over half an octave (it is about an octave or more for every preset).
       if (!(bright.centroid > dark.centroid * 1.8 && bright.brightness > dark.brightness)) {
-        problems.push(`${info.name}: centroid ${dark.centroid.toFixed(0)} -> ${bright.centroid.toFixed(0)} Hz`);
+        problems.push(`${info.name}: centroid ${dark.centroid.toFixed(0)} -> ${bright.centroid.toFixed(0)} Hz, brightness ${dark.brightness.toFixed(3)} -> ${bright.brightness.toFixed(3)}`);
       }
     }
     console.info(`[presets] spectral centroid at Tone 0.1 -> 0.9: ${report.join(', ')}`);

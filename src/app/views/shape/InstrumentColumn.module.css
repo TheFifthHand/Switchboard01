@@ -55,6 +55,21 @@
   background: var(--line-soft);
 }
 
+/* "Off: turn up FM Amount": a quiet note in the group heading (plain case, not a label). */
+.sectionState {
+  order: 1;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.sectionTitle::after {
+  order: 2;
+}
+
 .knobs {
   display: flex;
   flex-wrap: wrap;

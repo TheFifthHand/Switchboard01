@@ -1,5 +1,5 @@
 /**
- * Drum kit recipes: the sound design for the five kits in
+ * Drum kit recipes: the sound design for the kits in
  * src/content/catalog.ts (KITS) across the 16-slot DRUM_SLOTS layout.
  *
  * Recipes are pure data. src/audio/instruments/drumSynth.ts turns a recipe
@@ -13,12 +13,31 @@
  * - Dust Tape — soft, saturated, darker top, lightly bit/rate reduced.
  * - Bright Steel — crisp and bright with a tight low end.
  * - Hand Percussion — congas, bongos, shakers, woods and bells.
+ * - 808 Machine — long sine boom, snappy two-tone snare, classic six-square
+ *   hats and cowbell, sine toms and conga, clave.
+ * - 909 Punch — clicky punchy kick, noisy snare, noise-heavy hats, bright
+ *   cymbals.
+ * - Trap Night — hard short kick, a long distorted 808 on Kick 2, crisp
+ *   snare, very short hats for rolls, a melodic bell.
+ * - Lo-fi Crate — heavily crushed (8-bit, 12 kHz) and saturated, dark top;
+ *   the metals keep a little more air; a vinyl crackle pad.
+ * - Studio Acoustic — beater click, ringing wired snare, noisy natural hats
+ *   with a pedal hat, many-mode toms, long cymbals, tambourine.
+ * - Electro Wire — zappy kick, laser toms, thin metallic hats, blips.
+ * - Iron Forge — heavy drive, metallic snare, anvil, pipe and sheet-metal
+ *   hits, a grinding scrape.
+ * - Minimal Click — tiny, short and dry: clicks, ticks and blips.
+ * - Breakbeat Crate — punchy, saturated funk-break kit with a cracking
+ *   snare, ghost snare, tambourine and a scratch.
+ * - Afro Latin — djembe (bass, tone, slap), talking drum, surdo, timbales,
+ *   shekere, caxixi, ganza, agogo, cuica, bell and udu.
  *
  * Each kit lists its own choke groups (KitRecipe.chokeGroups): the closed
- * hat chokes the open hat (and the pedal hat does too in Tight Circuit, the
- * only kit with one on slot 6). Shakers, tambourine and cabasa choke nothing
- * else; a new hit on slot 4, 5 or 6 still cuts that slot's own previous hit
- * (see drumKit.ts).
+ * hat chokes the open hat, and the pedal hat does too where slot 6 is one
+ * (Tight Circuit, 909 Punch, Trap Night, Studio Acoustic, Electro Wire). In
+ * Afro Latin the djembe's bass, tone and slap are one drum and cut each
+ * other. Shakers, tambourines and the like choke nothing else; a new hit on
+ * slot 4, 5 or 6 still cuts that slot's own previous hit (see drumKit.ts).
  */
 import { DRUM_SLOTS } from '../../content/catalog';
 
@@ -496,6 +515,270 @@ const HAND_PERCUSSION: KitRecipe = {
 };
 
 /* ------------------------------------------------------------------ */
+/* The extended kits                                                   */
+/* ------------------------------------------------------------------ */
+
+/** Closed hat, open hat and pedal hat on slot 6 all cut each other. */
+const PEDAL_HAT_CHOKE: readonly (readonly number[])[] = [[4, 5, 6]];
+
+const BOOM_808: KitRecipe = {
+  id: 'boom-808',
+  character: { ...CLEAN, drive: 0.15, highpass: 20 },
+  voices: [
+    // A slow, shallow sweep into a long, pure sine boom.
+    v('Kick', 0.95, { model: 'kick', startHz: 95, endHz: 49, sweep: 0.05, punchHz: 60, punchTime: 0.004, hold: 0.02, decay: 1.3, click: 0.02, clickHz: 1800, drive: 0.6, tone: 0 }),
+    v('Kick 2', 0.95, { model: 'kick', startHz: 130, endHz: 56, sweep: 0.03, punchHz: 100, punchTime: 0.004, hold: 0.01, decay: 0.45, click: 0.06, clickHz: 2500, drive: 1.0, tone: 0 }),
+    v('Snare', 0.8, { model: 'snare', bodyHz: [238, 476], bodyLevel: [1, 0.6], bodyDecay: 0.16, bend: 0.12, bendTime: 0.01, noise: 0.6, noiseDecay: 0.2, noiseLow: 1800, noiseHigh: 9000, presenceHz: 5000, presenceDb: 2, snap: 0.2, drive: 0.5 }, 0.5),
+    v('Clap', 0.8, { model: 'clap', bursts: 4, spacing: 0.011, burstDecay: 0.025, tail: 0.6, tailDecay: 0.35, bandHz: 1100, q: 1.2, highpass: 700, drive: 0.4 }),
+    ...hats({ freqs: HAT_FREQS, band: 10000, bandQ: 0.9, highpass: 7500, attack: 0.0004, decay: 0.06, noise: 0.2 }, { decay: 0.38, splash: { level: 0.25, decay: 0.08 } }, null),
+    v('Maracas', 0.4, { model: 'shaker', attack: 0.003, decay: 0.05, band: 8500, bandQ: 1, highpass: 6000, grain: 0.2, density: 4000 }),
+    v('Rimshot', 0.7, { model: 'modal', hz: 1650, partials: [[1, 1, 0.025], [0.29, 0.5, 0.02]], noise: 0.15, noiseHz: 3000, noiseQ: 1, noiseDecay: 0.006, highpass: 200 }),
+    ...toms([98, 130.8, 174.6], [0.9, 0.75, 0.6], { bend: 0.1, bendTime: 0.04, modes: [], noise: 0.03, noiseHz: 1200, noiseQ: 0.8, noiseDecay: 0.02, click: 0.02, drive: 0.3 }),
+    v('Cowbell', 0.6, { model: 'cowbell', hz: [540, 800], band: 1700, bandQ: 1.4, decay: 0.45, fast: 0.7, fastDecay: 0.03, lowpass: 0 }),
+    v('Cymbal', 0.5, { model: 'metal', freqs: HAT_FREQS, band: 8000, bandQ: 0.35, highpass: 3000, attack: 0.001, decay: 2.0, noise: 0.5, splash: { level: 0.45, decay: 0.35 }, darken: { from: 14000, to: 5500, time: 0.5 } }),
+    v('Ride', 0.5, { model: 'metal', freqs: scaled(RIDE_FREQS, 0.95), band: 7500, bandQ: 0.7, highpass: 4200, attack: 0.0005, decay: 1.8, noise: 0.15, splash: { level: 0.3, decay: 0.2 }, bell: { hz: 1100, partials: BELL_PARTIALS, level: 0.25, decay: 0.9 }, stick: 0.15 }),
+    v('Conga', 0.7, { model: 'membrane', hz: 330, bend: 0.06, bendTime: 0.008, decay: 0.25, modes: [], noise: 0, noiseHz: 2000, noiseQ: 1, noiseDecay: 0.01, click: 0.03, drive: 0.2 }),
+    v('Clave', 0.55, { model: 'modal', hz: 2500, partials: [[1, 1, 0.06]], noise: 0.02, noiseHz: 5000, noiseQ: 1, noiseDecay: 0.003, highpass: 400 }),
+  ],
+  chokeGroups: HAT_CHOKE,
+};
+
+const PUNCH_909: KitRecipe = {
+  id: 'punch-909',
+  character: { ...CLEAN, drive: 0.5, highpass: 30, shelfDb: 1 },
+  voices: [
+    v('Kick', 0.95, { model: 'kick', startHz: 280, endHz: 52, sweep: 0.016, punchHz: 400, punchTime: 0.002, hold: 0.02, decay: 0.5, click: 0.35, clickHz: 5000, drive: 2.0, tone: 8000 }),
+    v('Long Kick', 0.95, { model: 'kick', startHz: 220, endHz: 47, sweep: 0.025, punchHz: 300, punchTime: 0.003, hold: 0.04, decay: 0.8, click: 0.2, clickHz: 4000, drive: 3.0, tone: 5000 }),
+    v('Snare', 0.8, { model: 'snare', bodyHz: [180, 330], bodyLevel: [1, 0.55], bodyDecay: 0.11, bend: 0.3, bendTime: 0.008, noise: 0.6, noiseDecay: 0.22, noiseLow: 1200, noiseHigh: 11000, presenceHz: 6000, presenceDb: 3, snap: 0.4, drive: 1.4 }, 0.4),
+    v('Clap', 0.8, { model: 'clap', bursts: 4, spacing: 0.009, burstDecay: 0.018, tail: 0.45, tailDecay: 0.2, bandHz: 1500, q: 1.4, highpass: 900, drive: 0.9 }),
+    ...hats(
+      { freqs: scaled(HAT_FREQS, 1.25), band: 11000, bandQ: 0.7, highpass: 8000, attack: 0.0003, decay: 0.045, noise: 0.55 },
+      { decay: 0.42, splash: { level: 0.4, decay: 0.07 } },
+      { decay: 0.028, attack: 0.0012, noise: 0.5 },
+    ),
+    v('Rim', 0.7, { model: 'modal', hz: 520, partials: [[1, 0.5, 0.025], [2.94, 1, 0.045], [5.6, 0.3, 0.02]], noise: 0.45, noiseHz: 4500, noiseQ: 1, noiseDecay: 0.005, highpass: 300 }),
+    ...toms([116.5, 146.8, 185], [0.45, 0.4, 0.34], { bend: 0.25, bendTime: 0.03, modes: [[1.5, 0.08, 0.5]], noise: 0.04, noiseHz: 1400, noiseQ: 0.8, noiseDecay: 0.03, click: 0.04, drive: 1.4 }),
+    v('Cowbell', 0.6, { model: 'cowbell', hz: [587, 845], band: 1400, bandQ: 1.5, decay: 0.28, fast: 0.65, fastDecay: 0.035, lowpass: 7000 }),
+    v('Crash', 0.5, { model: 'metal', freqs: scaled(CRASH_FREQS, 1.15), band: 9000, bandQ: 0.45, highpass: 5000, attack: 0.0006, decay: 1.4, noise: 0.7, splash: { level: 0.5, decay: 0.2 }, darken: { from: 20000, to: 9000, time: 0.6 } }),
+    v('Ride', 0.5, { model: 'metal', freqs: scaled(RIDE_FREQS, 1.1), band: 9500, bandQ: 0.7, highpass: 5500, attack: 0.0004, decay: 2.2, noise: 0.2, splash: { level: 0.25, decay: 0.1 }, bell: { hz: 1400, partials: BELL_PARTIALS, level: 0.3, decay: 1.0 }, stick: 0.3 }),
+    v('Shaker', 0.42, { model: 'shaker', attack: 0.006, decay: 0.07, band: 9000, bandQ: 1, highpass: 6000, grain: 0.3, density: 3000 }),
+    v('Zap', 0.6, { model: 'zap', startHz: 3000, endHz: 200, sweep: 0.015, decay: 0.15, wave: 'sine', drive: 1.0 }),
+  ],
+  chokeGroups: PEDAL_HAT_CHOKE,
+};
+
+const TRAP_NIGHT: KitRecipe = {
+  id: 'trap-night',
+  character: { ...CLEAN, drive: 0.3, highpass: 25, shelfDb: 1.5 },
+  voices: [
+    v('Kick', 0.95, { model: 'kick', startHz: 200, endHz: 55, sweep: 0.015, punchHz: 350, punchTime: 0.002, hold: 0.015, decay: 0.32, click: 0.3, clickHz: 5500, drive: 2.2, tone: 9000 }),
+    // The long, distorted 808 that carries trap bass lines (tune it per note with the voice Tune).
+    v('808', 0.95, { model: 'kick', startHz: 120, endHz: 46, sweep: 0.06, punchHz: 80, punchTime: 0.004, hold: 0.05, decay: 1.8, click: 0.03, clickHz: 2000, drive: 2.5, tone: 2400 }),
+    v('Snare', 0.8, { model: 'snare', bodyHz: [210, 390], bodyLevel: [1, 0.6], bodyDecay: 0.1, bend: 0.4, bendTime: 0.006, noise: 0.6, noiseDecay: 0.18, noiseLow: 2000, noiseHigh: 12000, presenceHz: 7000, presenceDb: 4, snap: 0.6, drive: 1.6 }, 0.3),
+    v('Clap', 0.8, { model: 'clap', bursts: 4, spacing: 0.012, burstDecay: 0.022, tail: 0.7, tailDecay: 0.4, bandHz: 1250, q: 1.0, highpass: 800, drive: 0.7 }),
+    ...hats(
+      { freqs: scaled(HAT_FREQS, 1.55), band: 12000, bandQ: 1.4, highpass: 9000, attack: 0.0002, decay: 0.03, noise: 0.25 },
+      { decay: 0.3, splash: { level: 0.3, decay: 0.05 } },
+      { decay: 0.022, attack: 0.0008 },
+    ),
+    v('Rim', 0.7, { model: 'modal', hz: 600, partials: [[1, 0.4, 0.02], [3.3, 1, 0.035], [5.9, 0.4, 0.02]], noise: 0.5, noiseHz: 5500, noiseQ: 0.9, noiseDecay: 0.005, highpass: 350 }),
+    ...toms([110, 146.8, 196], [0.7, 0.6, 0.5], { bend: 0.15, bendTime: 0.03, modes: [], noise: 0.05, noiseHz: 1500, noiseQ: 0.8, noiseDecay: 0.02, click: 0.05, drive: 0.8 }),
+    v('Bell', 0.45, { model: 'modal', hz: 1046.5, partials: [[1, 1, 0.5], [2, 0.3, 0.25], [3, 0.15, 0.12], [4.2, 0.08, 0.08]], noise: 0.05, noiseHz: 4000, noiseQ: 1, noiseDecay: 0.004, highpass: 300 }),
+    v('Crash', 0.5, { model: 'metal', freqs: scaled(CRASH_FREQS, 1.3), band: 10000, bandQ: 0.5, highpass: 6000, attack: 0.0006, decay: 2.2, noise: 0.65, splash: { level: 0.5, decay: 0.2 }, darken: { from: 20000, to: 10000, time: 0.5 } }),
+    v('Ride', 0.5, { model: 'metal', freqs: scaled(RIDE_FREQS, 1.2), band: 10500, bandQ: 0.6, highpass: 6500, attack: 0.0004, decay: 1.3, noise: 0.1, splash: { level: 0.3, decay: 0.1 }, bell: { hz: 1600, partials: BELL_PARTIALS, level: 0.4, decay: 0.9 }, stick: 0.3 }),
+    v('Snap', 0.6, { model: 'snap', band: 2600, q: 2.4, decay: 0.05, tone: 2000, toneLevel: 0.25, toneDecay: 0.02 }, 0.2),
+    v('Laser', 0.55, { model: 'zap', startHz: 1500, endHz: 300, sweep: 0.04, decay: 0.2, wave: 'triangle', drive: 2 }),
+  ],
+  chokeGroups: PEDAL_HAT_CHOKE,
+};
+
+/** Lo-fi Crate metals keep more air than the crushed drums. */
+const LOFI_METAL: Partial<KitCharacter> = { lowpass: 13000, rate: 0, bits: 12, drive: 1.2 };
+
+const LOFI_CRATE: KitRecipe = {
+  id: 'lofi-crate',
+  character: { drive: 2.2, asym: 0.25, lowpass: 5000, highpass: 55, shelfDb: -2.5, bits: 10, rate: 11025 },
+  voices: [
+    v('Kick', 0.95, { model: 'kick', startHz: 120, endHz: 52, sweep: 0.04, punchHz: 60, punchTime: 0.006, hold: 0.04, decay: 0.36, click: 0.05, clickHz: 1500, drive: 2.5, tone: 1800 }),
+    v('Thump', 0.95, { model: 'kick', startHz: 95, endHz: 48, sweep: 0.05, punchHz: 30, punchTime: 0.01, hold: 0.05, decay: 0.8, click: 0.1, clickHz: 900, drive: 1.5, tone: 1200 }),
+    v('Snare', 0.76, { model: 'snare', bodyHz: [165, 280], bodyLevel: [1, 0.6], bodyDecay: 0.26, bend: 0.15, bendTime: 0.015, noise: 0.45, noiseDecay: 0.36, noiseLow: 900, noiseHigh: 4500, presenceHz: 2000, presenceDb: 3, snap: 0.08, drive: 2 }, 0.8),
+    v('Clap', 0.72, { model: 'clap', bursts: 3, spacing: 0.013, burstDecay: 0.03, tail: 0.5, tailDecay: 0.4, bandHz: 900, q: 0.8, highpass: 400, drive: 1.0 }),
+    ...hats(
+      { freqs: scaled(HAT_FREQS, 0.85), band: 7000, bandQ: 0.7, highpass: 5200, attack: 0.0008, decay: 0.045, noise: 0.6 },
+      { decay: 0.32, splash: { level: 0.3, decay: 0.1 } },
+      null,
+      LOFI_METAL,
+    ),
+    v('Shaker', 0.4, { model: 'shaker', attack: 0.025, decay: 0.08, band: 6500, bandQ: 0.6, highpass: 4500, grain: 0.8, density: 900 }, 0, LOFI_METAL),
+    v('Side Stick', 0.68, { model: 'modal', hz: 380, partials: [[1, 1, 0.08], [2.4, 0.5, 0.05], [4.1, 0.2, 0.03]], noise: 0.35, noiseHz: 1500, noiseQ: 1, noiseDecay: 0.012, highpass: 180 }),
+    ...toms([82.4, 110, 146.8], [0.4, 0.36, 0.32], { bend: 0.1, bendTime: 0.05, modes: [[1.59, 0.15, 0.5]], noise: 0.15, noiseHz: 800, noiseQ: 0.7, noiseDecay: 0.05, click: 0.03, drive: 2 }),
+    v('Cowbell', 0.55, { model: 'cowbell', hz: [520, 780], band: 1000, bandQ: 1, decay: 0.3, fast: 0.5, fastDecay: 0.05, lowpass: 3500 }),
+    v('Crash', 0.5, { model: 'metal', freqs: scaled(CRASH_FREQS, 0.85), band: 6000, bandQ: 0.4, highpass: 3000, attack: 0.0012, decay: 1.2, noise: 0.6, splash: { level: 0.4, decay: 0.3 }, darken: { from: 9000, to: 4000, time: 0.4 } }, 0, { lowpass: 10000, rate: 0 }),
+    v('Ride', 0.5, { model: 'metal', freqs: scaled(RIDE_FREQS, 0.85), band: 6500, bandQ: 0.6, highpass: 3500, attack: 0.0006, decay: 1.1, noise: 0.25, splash: { level: 0.25, decay: 0.15 }, bell: { hz: 950, partials: BELL_PARTIALS, level: 0.3, decay: 0.8 }, stick: 0.15, darken: { from: 9000, to: 6000, time: 0.6 } }, 0, { lowpass: 10000, rate: 0 }),
+    // Sparse, random dust clicks: the surface noise of an old record.
+    v('Crackle', 0.5, { model: 'shaker', attack: 0.001, decay: 0.6, band: 3000, bandQ: 0.5, highpass: 1500, grain: 1, density: 60 }),
+    v('Snap', 0.62, { model: 'snap', band: 1800, q: 2, decay: 0.11, tone: 1500, toneLevel: 0.4, toneDecay: 0.035 }, 0.3),
+  ],
+  chokeGroups: HAT_CHOKE,
+};
+
+const STUDIO_ACOUSTIC: KitRecipe = {
+  id: 'studio-acoustic',
+  character: { ...CLEAN, drive: 0.2, highpass: 30, shelfDb: 0.5 },
+  voices: [
+    // A beater click on a short, woody body.
+    v('Kick', 0.95, { model: 'kick', startHz: 110, endHz: 56, sweep: 0.012, punchHz: 140, punchTime: 0.002, hold: 0.03, decay: 0.32, click: 0.4, clickHz: 3500, drive: 0.8, tone: 6000 }),
+    v('Muffled Kick', 0.95, { model: 'kick', startHz: 95, endHz: 50, sweep: 0.015, punchHz: 90, punchTime: 0.003, hold: 0.035, decay: 0.3, click: 0.25, clickHz: 2500, drive: 0.6, tone: 2500 }),
+    v('Snare', 0.8, { model: 'snare', bodyHz: [195, 360], bodyLevel: [1, 0.55], bodyDecay: 0.2, bend: 0.12, bendTime: 0.01, noise: 0.6, noiseDecay: 0.42, noiseLow: 1500, noiseHigh: 10000, presenceHz: 4500, presenceDb: 2.5, snap: 0.3, drive: 0.6 }, 0.3),
+    v('Hand Clap', 0.78, { model: 'clap', bursts: 4, spacing: 0.0115, burstDecay: 0.02, tail: 0.45, tailDecay: 0.22, bandHz: 1250, q: 0.9, highpass: 600, drive: 0.6 }),
+    ...hats(
+      { freqs: scaled(HAT_FREQS, 1.3), band: 9500, bandQ: 0.5, highpass: 6500, attack: 0.0008, decay: 0.11, noise: 0.6 },
+      { decay: 0.85, splash: { level: 0.3, decay: 0.12 } },
+      { decay: 0.04, attack: 0.002, noise: 0.5 },
+    ),
+    v('Cross Stick', 0.68, { model: 'modal', hz: 500, partials: [[1, 1, 0.04], [2.2, 0.6, 0.025], [3.7, 0.3, 0.015]], noise: 0.3, noiseHz: 2500, noiseQ: 1.1, noiseDecay: 0.008, highpass: 250 }),
+    ...toms([98, 123.5, 155.6], [0.85, 0.75, 0.65], { bend: 0.1, bendTime: 0.06, modes: [[1.59, 0.1, 0.5], [2.14, 0.04, 0.35]], noise: 0.06, noiseHz: 1500, noiseQ: 0.6, noiseDecay: 0.06, click: 0.06, drive: 0.4 }),
+    v('Tambourine', 0.48, { model: 'jingle', freqs: [5400, 6600, 7900, 9100, 10400], hits: 3, spread: 0.015, decay: 0.3, noise: 0.35, noiseDecay: 0.05, highpass: 4500, skin: 0.1, skinHz: 300 }),
+    v('Crash', 0.5, { model: 'metal', freqs: scaled(CRASH_FREQS, 1.05), band: 7000, bandQ: 0.35, highpass: 3500, attack: 0.001, decay: 3.0, noise: 0.6, splash: { level: 0.45, decay: 0.4 }, darken: { from: 16000, to: 6000, time: 0.9 } }),
+    v('Ride', 0.5, { model: 'metal', freqs: scaled(RIDE_FREQS, 0.9), band: 8000, bandQ: 0.5, highpass: 4000, attack: 0.0005, decay: 2.6, noise: 0.25, splash: { level: 0.2, decay: 0.15 }, bell: { hz: 1250, partials: BELL_PARTIALS, level: 0.4, decay: 1.4 }, stick: 0.4, darken: { from: 13000, to: 7500, time: 1.0 } }),
+    v('Shaker', 0.42, { model: 'shaker', attack: 0.012, decay: 0.09, band: 7500, bandQ: 0.8, highpass: 5000, grain: 0.6, density: 2000 }),
+    v('Splash', 0.45, { model: 'metal', freqs: scaled(CRASH_FREQS, 1.4), band: 10000, bandQ: 0.5, highpass: 6000, attack: 0.0006, decay: 0.9, noise: 0.5, splash: { level: 0.5, decay: 0.15 } }),
+  ],
+  chokeGroups: PEDAL_HAT_CHOKE,
+};
+
+const ELECTRO_WIRE: KitRecipe = {
+  id: 'electro-wire',
+  character: { ...CLEAN, drive: 0.6, highpass: 30, shelfDb: 2 },
+  voices: [
+    // A steep 400 Hz dive with a hard punch: the zappy electro kick.
+    v('Kick', 0.95, { model: 'kick', startHz: 400, endHz: 55, sweep: 0.012, punchHz: 900, punchTime: 0.0015, hold: 0.03, decay: 0.4, click: 0.1, clickHz: 3000, drive: 2.0, tone: 7000 }),
+    v('Boom Kick', 0.95, { model: 'kick', startHz: 150, endHz: 45, sweep: 0.04, punchHz: 200, punchTime: 0.004, hold: 0.08, decay: 0.7, click: 0, clickHz: 1000, drive: 1.5, tone: 3000 }),
+    v('Snare', 0.8, { model: 'snare', bodyHz: [260, 520], bodyLevel: [1, 0.4], bodyDecay: 0.12, bend: 0.6, bendTime: 0.005, noise: 0.4, noiseDecay: 0.22, noiseLow: 2500, noiseHigh: 10000, presenceHz: 6000, presenceDb: 4, snap: 0.3, drive: 2.0 }, 0.3),
+    v('Clap', 0.8, { model: 'clap', bursts: 3, spacing: 0.0085, burstDecay: 0.015, tail: 0.4, tailDecay: 0.28, bandHz: 1800, q: 2.0, highpass: 1100, drive: 1.2 }),
+    ...hats(
+      { freqs: scaled(HAT_FREQS, 1.8), band: 13000, bandQ: 2.0, highpass: 10000, attack: 0.0002, decay: 0.055, noise: 0.1 },
+      { decay: 0.45, splash: { level: 0.2, decay: 0.05 } },
+      { decay: 0.032, attack: 0.001 },
+    ),
+    v('Rim Blip', 0.65, { model: 'modal', hz: 1800, partials: [[1, 1, 0.04], [2, 0.3, 0.02]], noise: 0.05, noiseHz: 4000, noiseQ: 1, noiseDecay: 0.003, highpass: 400 }),
+    // Big, fast pitch bends: laser toms.
+    ...toms([130.8, 174.6, 233.1], [0.35, 0.3, 0.25], { bend: 0.28, bendTime: 0.02, modes: [], noise: 0, noiseHz: 2000, noiseQ: 1, noiseDecay: 0.01, click: 0.05, drive: 1.2 }),
+    v('Metal Bell', 0.5, { model: 'cowbell', hz: [800, 1160], band: 2400, bandQ: 2.5, decay: 0.2, fast: 0.8, fastDecay: 0.02, lowpass: 0 }),
+    v('Noise Crash', 0.5, { model: 'metal', freqs: scaled(CRASH_FREQS, 1.6), band: 9000, bandQ: 0.4, highpass: 5000, attack: 0.0006, decay: 1.3, noise: 0.85, splash: { level: 0.6, decay: 0.15 }, darken: { from: 20000, to: 7000, time: 0.3 } }),
+    v('Ping Ride', 0.5, { model: 'metal', freqs: scaled(RIDE_FREQS, 1.3), band: 11000, bandQ: 1.0, highpass: 7000, attack: 0.0004, decay: 1.2, noise: 0.05, splash: { level: 0.3, decay: 0.08 }, bell: { hz: 2000, partials: BELL_PARTIALS, level: 0.5, decay: 0.6 }, stick: 0.2 }),
+    v('Laser', 0.55, { model: 'zap', startHz: 5000, endHz: 400, sweep: 0.03, decay: 0.25, wave: 'sine', drive: 1.5 }),
+    // An upward chirp (the zap model sweeps toward endHz in either direction).
+    v('Bloop', 0.55, { model: 'zap', startHz: 200, endHz: 900, sweep: 0.03, decay: 0.15, wave: 'triangle', drive: 0.5 }),
+  ],
+  chokeGroups: PEDAL_HAT_CHOKE,
+};
+
+const IRON_FORGE: KitRecipe = {
+  id: 'iron-forge',
+  character: { drive: 1.2, asym: 0.05, lowpass: 14000, highpass: 35, shelfDb: 1, bits: 24, rate: 0 },
+  voices: [
+    v('Kick', 0.95, { model: 'kick', startHz: 180, endHz: 50, sweep: 0.02, punchHz: 250, punchTime: 0.003, hold: 0.04, decay: 0.6, click: 0.2, clickHz: 3000, drive: 6, tone: 3500 }),
+    v('Pound', 0.95, { model: 'kick', startHz: 140, endHz: 44, sweep: 0.03, punchHz: 120, punchTime: 0.006, hold: 0.06, decay: 0.9, click: 0.1, clickHz: 1500, drive: 4, tone: 1500 }),
+    // A tuned, ringing metal body with heavy noise: clang more than crack.
+    v('Snare', 0.8, { model: 'snare', bodyHz: [300, 523], bodyLevel: [1, 0.9], bodyDecay: 0.14, bend: 0.2, bendTime: 0.01, noise: 0.7, noiseDecay: 0.25, noiseLow: 1200, noiseHigh: 9000, presenceHz: 3000, presenceDb: 6, snap: 0.5, drive: 1.5 }, 0.3),
+    v('Clap', 0.8, { model: 'clap', bursts: 4, spacing: 0.01, burstDecay: 0.025, tail: 0.5, tailDecay: 0.3, bandHz: 1000, q: 0.7, highpass: 500, drive: 1.2 }),
+    ...hats(
+      { freqs: scaled(HAT_FREQS, 1.2), band: 8500, bandQ: 0.6, highpass: 6000, attack: 0.0003, decay: 0.06, noise: 0.4 },
+      { decay: 0.5, splash: { level: 0.4, decay: 0.1 } },
+      null,
+    ),
+    v('Chain', 0.4, { model: 'shaker', attack: 0.002, decay: 0.08, band: 7000, bandQ: 0.6, highpass: 5200, grain: 0.8, density: 1200 }),
+    v('Pipe', 0.62, { model: 'modal', hz: 620, partials: [[1, 1, 0.15], [2.76, 0.6, 0.1], [5.4, 0.4, 0.06], [8.9, 0.2, 0.04]], noise: 0.2, noiseHz: 3000, noiseQ: 1, noiseDecay: 0.01, highpass: 300 }),
+    ...toms([87.3, 116.5, 155.6], [0.55, 0.48, 0.42], { bend: 0.2, bendTime: 0.03, modes: [[1.59, 0.1, 0.5], [2.3, 0.04, 0.3]], noise: 0.1, noiseHz: 1200, noiseQ: 0.6, noiseDecay: 0.05, click: 0.08, drive: 2 }),
+    v('Anvil', 0.5, { model: 'modal', hz: 880, partials: [[1, 1, 0.8], [2.76, 0.7, 0.5], [5.4, 0.5, 0.3], [8.93, 0.3, 0.2], [13.3, 0.15, 0.12]], noise: 0.3, noiseHz: 4000, noiseQ: 0.8, noiseDecay: 0.01, highpass: 200 }),
+    v('Noise Crash', 0.42, { model: 'metal', freqs: scaled(CRASH_FREQS, 0.95), band: 6000, bandQ: 0.3, highpass: 2500, attack: 0.001, decay: 2.0, noise: 0.8, splash: { level: 0.5, decay: 0.3 }, darken: { from: 12000, to: 4000, time: 0.6 } }),
+    v('Sheet Metal', 0.42, { model: 'metal', freqs: scaled(RIDE_FREQS, 0.8), band: 5000, bandQ: 0.8, highpass: 2500, attack: 0.0005, decay: 1.8, noise: 0.2, splash: { level: 0.3, decay: 0.15 }, bell: { hz: 700, partials: BELL_PARTIALS, level: 0.5, decay: 1.2 }, stick: 0.4 }),
+    v('Clank', 0.6, { model: 'modal', hz: 1480, partials: [[1, 1, 0.08], [1.41, 0.8, 0.06], [2.83, 0.4, 0.04]], noise: 0.4, noiseHz: 5000, noiseQ: 1, noiseDecay: 0.008, highpass: 400 }),
+    v('Grind', 0.6, { model: 'guiro', ticks: 30, duration: 0.35, accel: 1.1, band: 1800, q: 2.5, tickDecay: 0.006 }),
+  ],
+  chokeGroups: HAT_CHOKE,
+};
+
+const MINIMAL_CLICK: KitRecipe = {
+  id: 'minimal-click',
+  character: { ...CLEAN, drive: 0.1, highpass: 40 },
+  voices: [
+    v('Kick', 0.95, { model: 'kick', startHz: 160, endHz: 58, sweep: 0.01, punchHz: 300, punchTime: 0.0015, hold: 0.03, decay: 0.22, click: 0.25, clickHz: 6000, drive: 1.2, tone: 0 }),
+    v('Soft Kick', 0.95, { model: 'kick', startHz: 120, endHz: 54, sweep: 0.012, punchHz: 100, punchTime: 0.002, hold: 0.03, decay: 0.3, click: 0.05, clickHz: 3000, drive: 0.6, tone: 2000 }),
+    v('Snare', 0.78, { model: 'snare', bodyHz: [330, 610], bodyLevel: [1, 0.4], bodyDecay: 0.08, bend: 0.25, bendTime: 0.005, noise: 0.45, noiseDecay: 0.1, noiseLow: 2500, noiseHigh: 9000, presenceHz: 5500, presenceDb: 3, snap: 0.5, drive: 2 }, 0.3),
+    v('Clap', 0.78, { model: 'clap', bursts: 3, spacing: 0.0085, burstDecay: 0.02, tail: 0.7, tailDecay: 0.18, bandHz: 2200, q: 1.6, highpass: 1400, drive: 1.0 }),
+    ...hats(
+      { freqs: scaled(HAT_FREQS, 1.6), band: 12500, bandQ: 1.6, highpass: 9500, attack: 0.0002, decay: 0.035, noise: 0.15 },
+      { decay: 0.3, splash: { level: 0.2, decay: 0.04 } },
+      null,
+    ),
+    v('Tick', 0.36, { model: 'shaker', attack: 0.0005, decay: 0.015, band: 12000, bandQ: 1.5, highpass: 9000, grain: 0, density: 1000 }),
+    v('Click', 0.6, { model: 'modal', hz: 3200, partials: [[1, 1, 0.01], [1.7, 0.5, 0.008]], noise: 0.3, noiseHz: 6000, noiseQ: 1, noiseDecay: 0.002, highpass: 1000 }),
+    ...toms([146.8, 185, 233.1], [0.34, 0.3, 0.27], { bend: 0.2, bendTime: 0.015, modes: [], noise: 0.05, noiseHz: 2000, noiseQ: 1, noiseDecay: 0.01, click: 0.1, drive: 0.5 }),
+    v('Wood', 0.6, { model: 'modal', hz: 1250, partials: [[1, 1, 0.05], [2.4, 0.4, 0.03]], noise: 0.15, noiseHz: 3000, noiseQ: 1.2, noiseDecay: 0.004, highpass: 300 }),
+    v('Crash', 0.45, { model: 'metal', freqs: scaled(CRASH_FREQS, 1.5), band: 11000, bandQ: 0.6, highpass: 7000, attack: 0.0005, decay: 1.4, noise: 0.5, splash: { level: 0.35, decay: 0.2 } }),
+    v('Ping', 0.45, { model: 'metal', freqs: scaled(RIDE_FREQS, 1.4), band: 12000, bandQ: 1.2, highpass: 8000, attack: 0.0004, decay: 1.8, noise: 0.05, splash: { level: 0.35, decay: 0.2 }, bell: { hz: 2200, partials: BELL_PARTIALS, level: 0.6, decay: 0.7 }, stick: 0.2 }),
+    v('Blip', 0.6, { model: 'membrane', hz: 880, bend: 0.3, bendTime: 0.003, decay: 0.08, modes: [], noise: 0, noiseHz: 3000, noiseQ: 1, noiseDecay: 0.01, click: 0.05, drive: 0.3 }),
+    v('Dot', 0.55, { model: 'zap', startHz: 1200, endHz: 800, sweep: 0.01, decay: 0.06, wave: 'sine', drive: 0 }),
+  ],
+  chokeGroups: HAT_CHOKE,
+};
+
+const BREAK_CRATE: KitRecipe = {
+  id: 'break-crate',
+  character: { drive: 1.0, asym: 0.08, lowpass: 12000, highpass: 35, shelfDb: 1.5, bits: 12, rate: 0 },
+  voices: [
+    v('Kick', 0.95, { model: 'kick', startHz: 130, endHz: 60, sweep: 0.012, punchHz: 180, punchTime: 0.002, hold: 0.015, decay: 0.3, click: 0.35, clickHz: 2800, drive: 2.2, tone: 4500 }),
+    v('Ghost Kick', 0.95, { model: 'kick', startHz: 110, endHz: 56, sweep: 0.015, punchHz: 120, punchTime: 0.002, hold: 0.01, decay: 0.24, click: 0.2, clickHz: 2000, drive: 1.6, tone: 3000 }),
+    v('Snare', 0.8, { model: 'snare', bodyHz: [205, 375], bodyLevel: [1, 0.6], bodyDecay: 0.18, bend: 0.2, bendTime: 0.008, noise: 0.65, noiseDecay: 0.32, noiseLow: 1400, noiseHigh: 9000, presenceHz: 3500, presenceDb: 4, snap: 0.45, drive: 1.8 }, 0.4),
+    v('Clap', 0.78, { model: 'clap', bursts: 4, spacing: 0.01, burstDecay: 0.024, tail: 0.55, tailDecay: 0.32, bandHz: 1050, q: 1, highpass: 600, drive: 0.8 }),
+    ...hats(
+      { freqs: scaled(HAT_FREQS, 1.05), band: 8800, bandQ: 0.6, highpass: 6200, attack: 0.0006, decay: 0.07, noise: 0.5 },
+      { decay: 0.55, splash: { level: 0.3, decay: 0.1 } },
+      null,
+    ),
+    v('Tambourine', 0.3, { model: 'jingle', freqs: [5600, 6900, 8200, 9600, 11000], hits: 3, spread: 0.012, decay: 0.15, noise: 0.4, noiseDecay: 0.05, highpass: 4800, skin: 0.05, skinHz: 280 }),
+    v('Rim', 0.68, { model: 'modal', hz: 470, partials: [[1, 0.6, 0.025], [3.5, 1, 0.04], [5.8, 0.3, 0.02]], noise: 0.3, noiseHz: 3500, noiseQ: 1, noiseDecay: 0.008, highpass: 250 }),
+    ...toms([92.5, 116.5, 146.8], [0.5, 0.45, 0.38], { bend: 0.12, bendTime: 0.04, modes: [[1.59, 0.1, 0.55], [2.14, 0.05, 0.4]], noise: 0.05, noiseHz: 1300, noiseQ: 0.7, noiseDecay: 0.05, click: 0.06, drive: 1.2 }),
+    v('Cowbell', 0.58, { model: 'cowbell', hz: [600, 900], band: 1600, bandQ: 1.2, decay: 0.25, fast: 0.6, fastDecay: 0.04, lowpass: 5000 }),
+    v('Crash', 0.5, { model: 'metal', freqs: CRASH_FREQS, band: 7000, bandQ: 0.4, highpass: 3800, attack: 0.001, decay: 2.0, noise: 0.65, splash: { level: 0.45, decay: 0.35 }, darken: { from: 13000, to: 5500, time: 0.7 } }),
+    v('Ride', 0.5, { model: 'metal', freqs: scaled(RIDE_FREQS, 0.97), band: 8000, bandQ: 0.55, highpass: 4200, attack: 0.0005, decay: 2.1, noise: 0.3, splash: { level: 0.25, decay: 0.12 }, bell: { hz: 1150, partials: BELL_PARTIALS, level: 0.35, decay: 1.0 }, stick: 0.35, darken: { from: 12000, to: 7000, time: 0.9 } }),
+    v('Ghost Snare', 0.55, { model: 'snare', bodyHz: [215, 390], bodyLevel: [1, 0.5], bodyDecay: 0.08, bend: 0.15, bendTime: 0.006, noise: 0.5, noiseDecay: 0.12, noiseLow: 1800, noiseHigh: 8000, presenceHz: 4000, presenceDb: 2, snap: 0.2, drive: 1.5 }, 0.4),
+    v('Scratch', 0.6, { model: 'guiro', ticks: 12, duration: 0.12, accel: 0.7, band: 1200, q: 1.5, tickDecay: 0.01 }),
+  ],
+  chokeGroups: HAT_CHOKE,
+};
+
+const AFRO_LATIN: KitRecipe = {
+  id: 'afro-latin',
+  character: { ...CLEAN, drive: 0.25, highpass: 30 },
+  voices: [
+    // One djembe, three strokes: bass (low, open), tone (ringing) and slap (sharp, noisy).
+    v('Djembe Bass', 0.9, { model: 'membrane', hz: 75, bend: 0.15, bendTime: 0.02, decay: 0.35, modes: [[1.6, 0.2, 0.4]], noise: 0.15, noiseHz: 900, noiseQ: 0.8, noiseDecay: 0.03, click: 0.1, drive: 0.6 }),
+    v('Djembe Tone', 0.75, { model: 'membrane', hz: 220, bend: 0.05, bendTime: 0.015, decay: 0.3, modes: [[1.5, 0.2, 0.5], [2.1, 0.08, 0.3]], noise: 0.2, noiseHz: 1800, noiseQ: 1, noiseDecay: 0.02, click: 0.08, drive: 0.5 }),
+    v('Djembe Slap', 0.75, { model: 'membrane', hz: 340, bend: 0.08, bendTime: 0.006, decay: 0.12, modes: [[1.47, 0.3, 0.5], [2.3, 0.2, 0.3]], noise: 0.7, noiseHz: 3500, noiseQ: 0.8, noiseDecay: 0.04, click: 0.3, drive: 0.8 }),
+    // A negative bend starts flat and rises: the talking drum's squeeze.
+    v('Talking Drum', 0.75, { model: 'membrane', hz: 180, bend: -0.25, bendTime: 0.12, decay: 0.5, modes: [[1.5, 0.15, 0.5]], noise: 0.1, noiseHz: 1500, noiseQ: 1, noiseDecay: 0.02, click: 0.05, drive: 0.4 }),
+    v('Shekere', 0.45, { model: 'shaker', attack: 0.008, decay: 0.12, band: 7500, bandQ: 0.8, highpass: 5200, grain: 0.6, density: 1500 }),
+    v('Caxixi', 0.45, { model: 'shaker', attack: 0.002, decay: 0.09, band: 6000, bandQ: 1.4, highpass: 5200, grain: 0.85, density: 700 }),
+    v('Ganza', 0.42, { model: 'shaker', attack: 0.015, decay: 0.15, band: 10000, bandQ: 1.2, highpass: 7000, grain: 0.15, density: 6000 }),
+    v('Claves', 0.6, { model: 'modal', hz: 2650, partials: [[1, 1, 0.1], [3.8, 0.05, 0.03]], noise: 0.04, noiseHz: 5000, noiseQ: 1, noiseDecay: 0.003, highpass: 500 }),
+    v('Surdo', 0.9, { model: 'membrane', hz: 65.4, bend: 0.08, bendTime: 0.05, decay: 0.8, modes: [[1.59, 0.15, 0.6]], noise: 0.1, noiseHz: 600, noiseQ: 0.7, noiseDecay: 0.06, click: 0.15, drive: 0.6 }),
+    v('Timbale Lo', 0.7, { model: 'membrane', hz: 330, bend: 0.04, bendTime: 0.01, decay: 0.4, modes: [[1.6, 0.35, 0.6], [2.3, 0.25, 0.5], [3.1, 0.15, 0.4]], noise: 0.25, noiseHz: 4000, noiseQ: 0.8, noiseDecay: 0.03, click: 0.25, drive: 0.5 }),
+    v('Timbale Hi', 0.7, { model: 'membrane', hz: 440, bend: 0.04, bendTime: 0.01, decay: 0.35, modes: [[1.6, 0.35, 0.6], [2.3, 0.25, 0.5], [3.1, 0.15, 0.4]], noise: 0.25, noiseHz: 4500, noiseQ: 0.8, noiseDecay: 0.03, click: 0.25, drive: 0.5 }),
+    v('Agogo', 0.55, { model: 'modal', hz: 784, partials: [[1, 1, 0.6], [2.6, 0.3, 0.3], [4.3, 0.12, 0.15]], noise: 0.12, noiseHz: 4000, noiseQ: 1, noiseDecay: 0.005, highpass: 250 }),
+    // The cuica's squeak: an upward friction glide.
+    v('Cuica', 0.55, { model: 'zap', startHz: 400, endHz: 900, sweep: 0.08, decay: 0.25, wave: 'triangle', drive: 0.8 }),
+    v('Bell', 0.5, { model: 'modal', hz: 1175, partials: [[1, 1, 0.5], [2.4, 0.4, 0.25], [4.0, 0.2, 0.12]], noise: 0.08, noiseHz: 4000, noiseQ: 1, noiseDecay: 0.004, highpass: 300 }),
+    v('Udu', 0.75, { model: 'membrane', hz: 150, bend: -0.1, bendTime: 0.05, decay: 0.35, modes: [[2.0, 0.1, 0.4]], noise: 0, noiseHz: 1000, noiseQ: 1, noiseDecay: 0.01, click: 0.02, drive: 0.3 }),
+    v('Hand Clap', 0.7, { model: 'clap', bursts: 3, spacing: 0.012, burstDecay: 0.022, tail: 0.3, tailDecay: 0.12, bandHz: 1300, q: 1, highpass: 700, drive: 0.3 }),
+  ],
+  // Bass, tone and slap are strokes on one djembe: a new stroke cuts the last.
+  chokeGroups: [[0, 1, 2]],
+};
+
+/* ------------------------------------------------------------------ */
 /* Lookup                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -505,6 +788,16 @@ export const KIT_RECIPES: Readonly<Record<string, KitRecipe>> = {
   [DUST_TAPE.id]: DUST_TAPE,
   [BRIGHT_STEEL.id]: BRIGHT_STEEL,
   [HAND_PERCUSSION.id]: HAND_PERCUSSION,
+  [BOOM_808.id]: BOOM_808,
+  [PUNCH_909.id]: PUNCH_909,
+  [TRAP_NIGHT.id]: TRAP_NIGHT,
+  [LOFI_CRATE.id]: LOFI_CRATE,
+  [STUDIO_ACOUSTIC.id]: STUDIO_ACOUSTIC,
+  [ELECTRO_WIRE.id]: ELECTRO_WIRE,
+  [IRON_FORGE.id]: IRON_FORGE,
+  [MINIMAL_CLICK.id]: MINIMAL_CLICK,
+  [BREAK_CRATE.id]: BREAK_CRATE,
+  [AFRO_LATIN.id]: AFRO_LATIN,
 };
 
 /** Kit used for unknown ids (e.g. a project from a newer version). */

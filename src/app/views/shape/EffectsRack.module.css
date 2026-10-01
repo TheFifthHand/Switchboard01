@@ -4,7 +4,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -15,124 +15,6 @@
   color: var(--ink-3);
   font-size: var(--fs-xs);
   font-weight: 500;
-}
-
-/* ---------- add menu ---------- */
-
-.addWrap {
-  position: relative;
-}
-
-.menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  width: 270px;
-  padding: 5px;
-  border-radius: var(--r-md);
-  background: var(--shell-hi);
-  box-shadow:
-    0 0 0 1px rgba(20, 24, 28, 0.12),
-    var(--shadow-float);
-}
-
-.menuItem {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 7px 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  text-align: left;
-}
-
-.menuItem:hover,
-.menuItem:focus-visible {
-  background: var(--teal-wash);
-  box-shadow: none;
-  outline: none;
-}
-
-.menuItem:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--teal);
-}
-
-.menuLabel {
-  color: var(--ink);
-  font-size: var(--fs-md);
-  font-weight: 560;
-}
-
-.menuDesc {
-  color: var(--ink-3);
-  font-size: var(--fs-xs);
-}
-
-/* ---------- signal flow ---------- */
-
-.flow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  color: var(--ink-2);
-  font-size: var(--fs-xs);
-  font-weight: 560;
-  letter-spacing: 0.02em;
-}
-
-.flowItem {
-  display: inline-flex;
-  align-items: center;
-}
-
-.flowArrow {
-  padding: 0 5px;
-  color: var(--ink-3);
-  font-weight: 400;
-}
-
-.flowChip {
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 8px;
-  border-radius: 10px;
-  background: var(--amber-wash);
-  color: var(--amber-ink);
-}
-
-.flowChip[data-end] {
-  background: var(--surface);
-  color: var(--ink-2);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-
-/* A bypassed effect passes the sound through untouched: no signal colour, and it says so. */
-.flowChip[data-off] {
-  background: transparent;
-  color: var(--ink-3);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-
-.flowChip[data-off] .flowName {
-  text-decoration: line-through;
-  text-decoration-color: var(--line-strong);
-}
-
-.flowOff {
-  margin-left: 5px;
-  font-size: var(--fs-xs);
-  font-weight: 650;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 /* Neutral information (not teal: custom routing is about audio cables, not selection or modulation). */
@@ -163,6 +45,46 @@
   margin: 0;
   color: var(--ink-3);
   font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+/* ---------- sections ---------- */
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.groupTitle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-md);
+  font-weight: 650;
+  line-height: 18px;
+}
+
+.groupTitle::after {
+  content: '';
+  flex: 1;
+  order: 1;
+  height: 1px;
+  background: var(--line-soft);
+}
+
+.groupAction {
+  order: 2;
+}
+
+.groupHint {
+  margin: -4px 0 0;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
 }
 
 /* ---------- effect cards ---------- */
@@ -171,21 +93,42 @@
   display: grid;
   /* Wide enough for four small knobs whose values never touch ("Low-pass" next to "20.0 kHz"). */
   grid-template-columns: repeat(auto-fill, minmax(262px, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 
 .cardCell {
+  position: relative;
   display: flex;
   min-width: 0;
+}
+
+/* Where a dragged card will land: a teal bar in the gap before (or after) this card. */
+.cardCell[data-drop]::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--teal);
+  box-shadow: 0 0 0 3px var(--teal-wash);
+}
+
+.cardCell[data-drop='before']::before {
+  left: -7px;
+}
+
+.cardCell[data-drop='after']::before {
+  right: -7px;
 }
 
 .card {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
-  padding: 6px 6px 5px;
+  padding: 8px 8px 6px;
   border-radius: var(--r-md);
   background: var(--surface-hi);
   border: 1px solid var(--line-soft);
@@ -200,6 +143,18 @@
   box-shadow: 0 0 0 1px var(--teal) inset;
 }
 
+/* The card in hand follows the pointer, above everything else in the rack. */
+.card[data-dragging] {
+  position: relative;
+  z-index: 20;
+  border-color: var(--teal);
+  box-shadow:
+    0 0 0 1px var(--teal) inset,
+    var(--shadow-float);
+  opacity: 0.92;
+  transition: none;
+}
+
 .card[data-bypassed] .cardKnobs {
   opacity: 0.55;
 }
@@ -207,8 +162,36 @@
 .cardHead {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
+}
+
+.grip {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 32px;
+  margin-left: -4px;
+  border-radius: var(--r-sm);
+  color: var(--ink-3);
+  cursor: grab;
+  touch-action: none;
+}
+
+.grip:hover {
+  background: rgba(20, 24, 28, 0.06);
+  color: var(--ink);
+}
+
+.grip[data-locked] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.cards[data-dragging],
+.cards[data-dragging] * {
+  cursor: grabbing;
 }
 
 .cardName {
@@ -217,7 +200,7 @@
   align-items: center;
   gap: 7px;
   min-width: 0;
-  min-height: 26px;
+  min-height: 32px;
   margin: 0;
   padding: 0 6px 0 2px;
   border: 0;
@@ -234,8 +217,8 @@
   display: inline-grid;
   flex: none;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: var(--surface-lo);
   color: var(--ink-2);
@@ -257,11 +240,27 @@
 }
 
 .cardKnobs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: opacity var(--t-fast) var(--ease);
+}
+
+.knobRow {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
   justify-items: center;
   gap: 4px;
-  transition: opacity var(--t-fast) var(--ease);
+}
+
+/* Rows designed as a table (EQ bands): fixed columns so the bands line up. */
+.knobRow[data-fixed] {
+  grid-template-columns: repeat(var(--cols), minmax(58px, 1fr));
+}
+
+.knobRow[data-fixed] + .knobRow[data-fixed] {
+  padding-top: 4px;
+  border-top: 1px dashed var(--line-soft);
 }
 
 .cardState {
@@ -300,46 +299,12 @@
 
 /* ---------- module rows (channel, returns, LFOs) ---------- */
 
-.group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.groupTitle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 20px;
-  margin: 0;
-  color: var(--ink-3);
-  font-size: var(--fs-xs);
-  font-weight: 650;
-  letter-spacing: 0.1em;
-  line-height: 16px;
-  text-transform: uppercase;
-}
-
-.groupTitle::after {
-  content: '';
-  flex: 1;
-  order: 1;
-  height: 1px;
-  background: var(--line-soft);
-}
-
-.groupAction {
-  order: 2;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
 .modRow {
   display: grid;
-  grid-template-columns: 118px minmax(0, 1fr);
-  column-gap: 8px;
+  grid-template-columns: 128px minmax(0, 1fr);
+  column-gap: 10px;
   align-items: start;
-  padding: 4px 0;
+  padding: 6px 0;
 }
 
 .modRow + .modRow {
@@ -353,7 +318,7 @@
 .modInfo {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
   padding-top: 4px;
 }
@@ -367,7 +332,7 @@
 .modNote {
   color: var(--ink-3);
   font-size: var(--fs-xs);
-  line-height: 1.3;
+  line-height: 1.35;
 }
 
 .modTools {
@@ -380,7 +345,7 @@
 .modKnobs {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 6px;
+  gap: 6px 6px;
   transition: opacity var(--t-fast) var(--ease);
 }
 

@@ -13,7 +13,7 @@ import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { LoopsGrid } from '../../src/app/views/LoopsGrid';
 import { PartPanel } from '../../src/app/views/PartPanel';
 import { SoundBrowser, previewNotesFor } from '../../src/app/views/SoundBrowser';
-import { KITS, SYNTH_PRESETS } from '../../src/content/catalog';
+import { KITS, SYNTH_PRESETS, presetInfo } from '../../src/content/catalog';
 import { getStarter } from '../../src/content/starters';
 import { describeMacro } from '../../src/project/resolve';
 import type { Id, Instrument } from '../../src/project/types';
@@ -137,10 +137,10 @@ describe('Part menu', () => {
     expect(menu()).toBeNull();
   });
 
-  it('Change sound opens the sound browser for that part; choosing a preset changes the instrument, Undo restores it', () => {
+  it('Change instrument opens the sound browser for that part; choosing a preset changes the instrument, Undo restores it', () => {
     mountGrid();
     click(document.querySelector('button[aria-label="Options for part Chords"]')!);
-    click(item('Change sound'));
+    click(item('Change instrument'));
     expect(menu()).toBeNull();
     const d = dialog()!;
     expect(d.getAttribute('aria-labelledby')).toBeTruthy();
@@ -151,14 +151,15 @@ describe('Part menu', () => {
     const current = d.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')!;
     expect(current.textContent).toContain('Current');
     expect(document.activeElement).toBe(current);
-    // Suggested presets for a chords part come first.
-    const headings = [...d.querySelectorAll('[role="group"]')].map((g) => g.getAttribute('aria-label'));
-    expect(headings[0]).toBe('Suggested for chords');
-    const suggested = SYNTH_PRESETS.filter((p) => p.kind === 'poly' && p.roles.includes('chords')).map((p) => p.name);
-    const firstGroup = [...d.querySelectorAll('[role="group"]')[0].querySelectorAll('[role="option"]')].map((o) => o.querySelector('span span:nth-child(2)')?.textContent);
-    expect(firstGroup).toEqual(suggested);
+    // The browser opens on the category of the current sound and lists all of that category.
+    const category = presetInfo(soundIdOf(before)!)!.category;
+    const selected = d.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')!;
+    expect(selected.dataset.category).toBe(category);
+    const inCategory = SYNTH_PRESETS.filter((p) => p.category === category).map((p) => p.name);
+    const shown = [...d.querySelectorAll('[role="option"]')].map((o) => o.querySelector('span span:nth-child(2)')?.textContent);
+    expect(shown).toEqual(inCategory);
 
-    const target = SYNTH_PRESETS.find((p) => p.kind === 'poly' && p.id !== soundIdOf(before))!;
+    const target = SYNTH_PRESETS.find((p) => p.category === category && p.id !== soundIdOf(before))!;
     click(option(target.name));
     expect(soundIdOf(track('t4').instrument)).toBe(target.id);
     // The dialog stays open, now marking the new sound.
@@ -171,7 +172,7 @@ describe('Part menu', () => {
 
   it('switching a synth part to a drum kit (and back with Undo) changes the instrument kind', () => {
     mount(h(SoundBrowser, { open: true, trackId: 't3', onClose: () => {} }));
-    click(tab('Drum kits'));
+    click(tab('Drums & Percussion'));
     // The part has melody notes: the browser says what a kit will do with them.
     expect(dialog()!.textContent).toMatch(/drum kit plays only drum hits/);
     click(option(KITS[1].name));
@@ -182,9 +183,9 @@ describe('Part menu', () => {
     expect(track('t3').instrument.kind).toBe('bass');
   });
 
-  it('Sampler tab lists built-in recordings and assigns one', () => {
+  it('Recordings lists built-in recordings and assigns one', () => {
     mount(h(SoundBrowser, { open: true, trackId: 't5', onClose: () => {} }));
-    click(tab('Sampler'));
+    click(tab('Recordings'));
     expect(dialog()!.textContent).toContain('Nothing imported yet');
     click(option('Bell Hit'));
     const inst = track('t5').instrument;
@@ -303,12 +304,13 @@ describe('Part panel sound selector', () => {
   it('shows the current sound and opens the sound browser', () => {
     act(() => selectTrack('t3'));
     mount(h('div', { style: { width: '312px', height: '600px' } }, h(PartPanel)));
-    const btn = document.querySelector<HTMLButtonElement>('button[aria-label^="Sound:"]')!;
-    expect(btn.textContent).toContain('Bass synth');
+    const btn = document.querySelector<HTMLButtonElement>('button[aria-label^="Change instrument"]')!;
+    expect(btn.getAttribute('aria-label')).toContain('Bass synth');
+    expect(btn.textContent).toBe('Change instrument');
     click(btn);
     expect(dialog()!.textContent).toContain('Sound for Bass');
-    // Bass synth tab is preselected for a bass part.
-    expect(dialog()!.querySelector('[role="tab"][aria-selected="true"]')!.textContent).toContain('Bass synth');
+    // The Bass category is preselected for a bass part.
+    expect(dialog()!.querySelector('[role="tab"][aria-selected="true"]')!.textContent).toContain('Bass');
     click([...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Done')!);
     expect(dialog()).toBeNull();
   });
@@ -414,7 +416,7 @@ describe('Stopping one part', () => {
     }
   }
   const rt = () => runtimeStore.getState().tracks;
-  const bassButton = () => document.querySelector<HTMLButtonElement>('button[aria-label="Stop Bass at the next bar"], button[aria-label="Cancel the queued start of Bass"]')!;
+  const bassButton = () => document.querySelector<HTMLButtonElement>('button[aria-label^="Play Bass:"], button[aria-label="Stop Bass at the next bar"], button[aria-label="Cancel the start of Bass"]')!;
 
   it('a part queued to start can be cancelled on its own before the bar line; the playing part keeps going', async () => {
     // The real audio engine and transport for this test.
@@ -429,8 +431,9 @@ describe('Stopping one part', () => {
       await waitFor(() => rt().t1?.playingSlot === 1 && rt().t1?.queued === null && !!session.transport?.playing, 'the drums to play');
       // Into the first bar, so the next bar line is ahead.
       await waitFor(() => session.transport!.getPosition().tick > 24, 'the first bar to run');
-      expect(bassButton().getAttribute('aria-label')).toBe('Stop Bass at the next bar');
-      expect(bassButton().disabled).toBe(true);
+      // Bass is silent: its key offers to start it.
+      expect(bassButton().getAttribute('aria-label')).toMatch(/^Play Bass: /);
+      expect(bassButton().disabled).toBe(false);
 
       // Tap a Bass pad: it waits for the next bar.
       await act(async () => {
@@ -439,7 +442,7 @@ describe('Stopping one part', () => {
       const queued = rt().t3?.queued;
       expect(rt().t3?.playingSlot).toBeNull();
       expect(queued?.slot).toBe(1);
-      expect(bassButton().getAttribute('aria-label')).toBe('Cancel the queued start of Bass');
+      expect(bassButton().getAttribute('aria-label')).toBe('Cancel the start of Bass');
       expect(bassButton().disabled).toBe(false);
       expect(session.transport!.getPosition().tick).toBeLessThan(queued!.atTick);
 
@@ -452,8 +455,9 @@ describe('Stopping one part', () => {
       expect(rt().t3?.playingSlot).toBeNull();
       expect(rt().t1?.playingSlot).toBe(1);
       expect(session.transport!.playing).toBe(true);
-      expect(bassButton().getAttribute('aria-label')).toBe('Stop Bass at the next bar');
-      expect(bassButton().disabled).toBe(true);
+      expect(bassButton().getAttribute('aria-label')).toMatch(/^Play Bass: /);
+      // The drums' key stops them at the next bar.
+      expect(document.querySelector('button[aria-label="Stop Drums at the next bar"]')).not.toBeNull();
     } finally {
       act(() => real.stop.call(session));
     }

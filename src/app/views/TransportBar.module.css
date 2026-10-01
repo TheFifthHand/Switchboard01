@@ -12,29 +12,13 @@
   min-width: 0;
 }
 
-.brand {
-  display: flex;
-  flex-direction: column;
-  line-height: 1;
-  gap: 3px;
-  padding-right: 4px;
-  user-select: none;
-  flex: none;
-}
-.brandName {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  color: var(--ink);
-}
-.brandNum {
-  font-size: 11px;
-  color: var(--ink-3);
-  letter-spacing: 0.08em;
-}
-
 .views {
   flex: none;
+}
+/* Large keys, kept compact sideways so the whole strip fits one row from 1024 px. */
+.bar .views[data-size] [role='tab'] {
+  padding: 0 10px;
+  font-size: 14px;
 }
 
 .group {
@@ -99,34 +83,59 @@
 .recButtons {
   display: flex;
   align-items: center;
+  gap: 4px;
+}
+.recButtons > button[data-size] {
+  --px: 9px;
+}
+
+.playback {
   gap: 6px;
 }
 
-.play {
-  min-width: 86px;
+/* Play and Pause keep one width, so the strip never shifts when it flips. */
+.play[data-size] {
+  --h: 40px;
+  --px: 12px;
+  min-width: 84px;
+  font-size: var(--fs-lg);
+}
+.stop[data-size] {
+  --h: 40px;
+  --px: 12px;
 }
 
+/* State word above bar.beat. The word is the state in text; its colour repeats it. */
 .position {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
-  min-width: 56px;
+  gap: 1px;
+  width: 58px;
+  padding-left: 2px;
 }
-.posLabel {
-  font-size: 9px;
-  letter-spacing: 0.12em;
+.posWord {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--ink-3);
+  white-space: nowrap;
+}
+.position[data-state='playing'] .posWord,
+.position[data-state='song'] .posWord,
+.position[data-state='replay'] .posWord {
+  color: var(--amber-ink);
+}
+.position[data-state='paused'] .posWord {
+  color: var(--teal-ink);
 }
 .posValue {
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 500;
+  line-height: 20px;
   color: var(--ink);
   min-height: 20px;
-}
-.posMode {
-  color: var(--teal-ink);
-  font-weight: 700;
 }
 
 .recActive {
@@ -164,8 +173,8 @@
   line-height: 12px;
 }
 
-.muteAll {
-  min-width: 90px;
+.muteAll[data-size] {
+  --px: 10px;
 }
 
 .right {
@@ -195,8 +204,10 @@
 .save {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  height: 28px;
+  height: 32px;
+  min-width: 32px;
   padding: 0 6px;
   border: none;
   background: transparent;
@@ -249,11 +260,7 @@
   gap: 8px;
 }
 
-.tips {
-  flex: none;
-}
-
-/* The More key replaces Undo, Redo, Tips, Projects and Export below 1320 px. */
+/* More: Tips always, and whatever the strip has no room for at this width. */
 .more {
   position: relative;
   display: grid;
@@ -277,6 +284,9 @@
   box-shadow: var(--shadow-pressed);
   color: var(--ink);
 }
+.more:focus-visible {
+  box-shadow: var(--focus-ring);
+}
 /* An update is waiting (shown on the key where the strip has no room for the Update key itself); coral = attention. */
 .moreBadge {
   position: absolute;
@@ -289,36 +299,64 @@
   background: var(--coral);
   box-shadow: 0 0 0 1.5px var(--shell-hi);
 }
-@media (min-width: 1320px) {
-  .right .narrowOnly {
-    display: none;
-  }
+
+.modeSwitch {
+  flex: none;
 }
+
+/* Visually hidden, but still the key's accessible name. */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/*
+ * Undo / Redo and Projects / Export move into More where the strip has no
+ * room: Simple shows Undo / Redo from 1320 px and Projects / Export from
+ * 1440 px; Advanced (with Swing) shows them all from 1600 px. The Simple ·
+ * Advanced switch is in the strip from 1366 px.
+ */
 @media (max-width: 1319px) {
-  .right .wideOnly {
+  .right .historyKey {
     display: none;
   }
 }
-/* "Not saved" needs room: on narrower screens the More key makes it. */
 @media (max-width: 1439px) {
-  .right:has(.saveError) .wideOnly {
+  .right .fileKey {
     display: none;
   }
-  .right:has(.saveError) .narrowOnly {
-    display: grid;
+}
+@media (max-width: 1699px) {
+  .bar[data-mode='advanced'] .right .historyKey,
+  .bar[data-mode='advanced'] .right .fileKey {
+    display: none;
+  }
+}
+@media (max-width: 1365px) {
+  .right .modeSwitch {
+    display: none;
+  }
+}
+/* "Not saved" needs room: on narrower screens the More menu makes it. */
+@media (max-width: 1599px) {
+  .right:has(.saveError) .historyKey,
+  .right:has(.saveError) .fileKey {
+    display: none;
   }
 }
 /* So does a waiting Update key, until the strip is wide enough for everything. */
 @media (max-width: 1799px) {
-  .right:has(.update) .wideOnly {
+  .right:has(.update) .historyKey,
+  .right:has(.update) .fileKey {
     display: none;
   }
-  .right:has(.update) .narrowOnly {
-    display: grid;
-  }
 }
-/* 1024-1179 px: no room for the offline state or the Update key; both are in the More menu. */
-@media (min-width: 1024px) and (max-width: 1179px) {
+/* Below 1180 px: no room for the offline state or the Update key; both are in More. */
+@media (max-width: 1179px) {
   .right .offline,
   .right .update {
     display: none;
@@ -331,7 +369,8 @@
     display: none;
   }
 }
-@media (min-width: 1180px) and (max-width: 1319px) {
+/* A waiting Update key and a failed save together: below 1600 px the save shows as its coral warning key. */
+@media (min-width: 1180px) and (max-width: 1599px) {
   .right:has(.update) .saveError .saveText {
     display: none;
   }
@@ -362,9 +401,20 @@
     white-space: nowrap;
   }
 }
+/* Below 1600 px Stop shows its square only (its name stays "Stop"). */
 @media (max-width: 1599px) {
-  .brand {
-    display: none;
+  .stop[data-size] {
+    gap: 0;
+    width: 40px;
+    padding: 0;
+  }
+  .stopText {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 }
 @media (min-width: 1600px) {
@@ -376,24 +426,34 @@
   }
 }
 
-/* Below 1440 px: tighter spacing, so the save and offline states fit beside Undo, Redo, Tips, Projects and Export. */
-@media (max-width: 1439px) {
+/* Below 1600 px: tighter spacing. */
+@media (max-width: 1599px) {
   .bar {
     gap: 6px;
   }
   .group {
     padding-left: 6px;
   }
-  .play {
-    min-width: 78px;
-  }
 }
-/* Below 1366 px the save state shows as its lamp (words return on errors). */
-@media (max-width: 1365px) {
+/* Below 1600 px the save state shows as its lamp (words return on errors). */
+@media (max-width: 1599px) {
   .saveOk .saveText,
   .saveBusy .saveText,
   .savePreview .saveText {
     display: none;
+  }
+}
+
+/* Advanced (with Swing) below 1180 px: the strip wraps onto two rows rather than squeeze anything. */
+@media (min-width: 1024px) and (max-width: 1179px) {
+  .bar[data-mode='advanced'] {
+    flex-wrap: wrap;
+    height: auto;
+    row-gap: 6px;
+    padding: 6px 12px;
+  }
+  .bar[data-mode='advanced'] .right {
+    margin-left: auto;
   }
 }
 
@@ -412,8 +472,8 @@
 
 /*
  * When the page scrolls (narrow or short windows), the strip stays at the top
- * so Play/Stop and Mute All are always one press away. It stacks above the
- * panels scrolling beneath it, below menus, the guide and dialogs.
+ * so Play/Pause, Stop and Mute All are always one press away. It stacks above
+ * the panels scrolling beneath it, below menus, the guide and dialogs.
  */
 @media (max-width: 1023px), (max-height: 559px) {
   .bar {

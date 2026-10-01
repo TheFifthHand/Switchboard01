@@ -1,6 +1,12 @@
 /**
  * Every curated starter renders every scene through the real engine: finite,
  * audible, below the output ceiling, and at a comfortable, consistent level.
+ *
+ * The starters' sounds are part of the product: adding sounds, synth
+ * features or drum kits must never change them. Each scene's level is
+ * compared with the table measured for the shipped release (TEST_REPORT.md,
+ * "Starter levels"): RMS of the steady part and sample peak, both within
+ * ±0.3 dB.
  */
 import { describe, expect, it } from 'vitest';
 import { AudioEngine } from '../../src/audio/engine';
@@ -11,6 +17,20 @@ import { renderOffline } from '../../src/render/offline';
 import { isAllFinite, peak, rms } from '../../src/render/analysis';
 
 const SR = 44100;
+/** Allowed drift from the shipped levels (dB). */
+const TOLERANCE_DB = 0.3;
+
+/** TEST_REPORT.md "Starter levels": [RMS dBFS, peak dBFS] per scene, as shipped. */
+const SHIPPED: Record<string, readonly (readonly [number, number])[]> = {
+  house: [[-30.7, -13.3], [-19.3, -5.7], [-18.0, -1.3], [-25.2, -9.5]],
+  synthwave: [[-30.3, -14.3], [-20.6, -5.5], [-19.3, -3.7], [-23.0, -9.1]],
+  ambient: [[-26.9, -8.4], [-21.6, -6.2], [-20.2, -4.0], [-22.6, -6.9]],
+  techno: [[-30.1, -5.9], [-18.7, -3.5], [-16.9, -2.3], [-20.2, -5.8]],
+  breakbeat: [[-27.9, -8.1], [-19.7, -3.8], [-17.8, -2.1], [-22.9, -9.1]],
+  drumAndBass: [[-28.8, -10.7], [-20.0, -4.3], [-18.5, -3.3], [-22.6, -9.2]],
+  downtempo: [[-31.9, -13.1], [-21.3, -4.5], [-20.2, -4.0], [-23.6, -10.0]],
+  garage: [[-30.3, -11.4], [-20.5, -1.6], [-18.5, -1.0], [-24.3, -6.0]],
+};
 
 async function renderRow(project: ReturnType<(typeof STARTERS)[number]['build']>, row: number, bars: number) {
   const bank = new SampleBank(SR);
@@ -23,17 +43,30 @@ async function renderRow(project: ReturnType<(typeof STARTERS)[number]['build']>
   for (let i = from; i < buf.length; i++) mono[i - from] = 0.5 * (L[i] + R[i]);
   let near = 0;
   for (let i = 0; i < buf.length; i++) if (Math.abs(L[i]) > OUTPUT_CEILING * 0.97 || Math.abs(R[i]) > OUTPUT_CEILING * 0.97) near++;
-  return { finite: isAllFinite(L) && isAllFinite(R), peak: Math.max(peak(L), peak(R)), rmsDb: 20 * Math.log10(Math.max(1e-9, rms(mono))), nearCeiling: near / buf.length };
+  const pk = Math.max(peak(L), peak(R));
+  return {
+    finite: isAllFinite(L) && isAllFinite(R),
+    peak: pk,
+    peakDb: 20 * Math.log10(Math.max(1e-9, pk)),
+    rmsDb: 20 * Math.log10(Math.max(1e-9, rms(mono))),
+    nearCeiling: near / buf.length,
+  };
 }
 
 describe('curated starters through the real engine', () => {
   for (const starter of STARTERS) {
-    it(`${starter.name}: every scene is audible, finite and below the ceiling`, async () => {
+    it(`${starter.name}: every scene is audible, finite, below the ceiling and sounds as shipped`, async () => {
       const project = starter.build();
+      const shipped = SHIPPED[starter.id];
+      expect(shipped, `no shipped levels for ${starter.id}`).toBeDefined();
       const rows: string[] = [];
+      const drift: string[] = [];
       for (let row = 0; row < 4; row++) {
         const r = await renderRow(project, row, 4);
-        rows.push(`${project.scenes[row].name}: ${r.rmsDb.toFixed(1)} dBFS rms, peak ${r.peak.toFixed(3)}, near-ceiling ${(r.nearCeiling * 100).toFixed(2)}%`);
+        const [rmsRef, peakRef] = shipped[row];
+        rows.push(
+          `${project.scenes[row].name}: ${r.rmsDb.toFixed(2)} dBFS rms (shipped ${rmsRef.toFixed(1)}), peak ${r.peakDb.toFixed(2)} dBFS (shipped ${peakRef.toFixed(1)}), near-ceiling ${(r.nearCeiling * 100).toFixed(2)}%`,
+        );
         expect(r.finite, rows.join('\n')).toBe(true);
         expect(r.peak, rows.join('\n')).toBeLessThanOrEqual(OUTPUT_CEILING + 1e-5);
         expect(r.rmsDb, rows.join('\n')).toBeGreaterThan(-40);
@@ -44,7 +77,12 @@ describe('curated starters through the real engine', () => {
           expect(r.rmsDb, rows.join('\n')).toBeGreaterThan(-26);
           expect(r.rmsDb, rows.join('\n')).toBeLessThan(-10);
         }
+        // The table is rounded to 0.1 dB: allow that rounding on top of the tolerance.
+        if (Math.abs(r.rmsDb - rmsRef) > TOLERANCE_DB + 0.05) drift.push(`${project.scenes[row].name} rms ${(r.rmsDb - rmsRef).toFixed(2)} dB`);
+        if (Math.abs(r.peakDb - peakRef) > TOLERANCE_DB + 0.05) drift.push(`${project.scenes[row].name} peak ${(r.peakDb - peakRef).toFixed(2)} dB`);
       }
+      console.info(`[starters] ${starter.name}\n  ${rows.join('\n  ')}`);
+      expect(drift, rows.join('\n')).toEqual([]);
     }, 120_000);
   }
 });

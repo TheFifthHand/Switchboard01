@@ -1,9 +1,13 @@
 /**
  * Shared building blocks for the effect modules (filter, drive, delay,
- * reverb, chorus, phaser, crusher).
+ * reverb, chorus, phaser, crusher, EQ, compressor, gate, auto pan, stereo
+ * width, flanger, tape).
  *
  * - `EffectModule`: common ModuleNode plumbing (ports, bypass crossfade,
- *   smoothed automation with change detection, timers, disposal).
+ *   smoothed automation with change detection, timers, disposal, worklet
+ *   processors told to stop).
+ * - `stereoWorklet` / `workletParam` / `WorkletFlush`: worklet-backed stages
+ *   and their sample-accurate state reset (Mute All).
  * - `BypassSwitch`: crossfades between the processed path and a direct path.
  * - `ControlBus`: an audio-rate control value (smoothed base + modulation
  *   input) that is clamped and mapped through WaveShaper curves into
@@ -387,6 +391,59 @@ export class ControlBus {
 }
 
 /* ------------------------------------------------------------------ */
+/* Worklet-backed stages                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A stereo AudioWorkletNode for one of the engine's processors, with an
+ * error that names the missing processor (the engine loads every processor
+ * source before it builds modules, see loadEngineWorklets).
+ */
+export function stereoWorklet(
+  ctx: BaseAudioContext,
+  processor: string,
+  label: string,
+  opts: { parameterData?: Record<string, number>; processorOptions?: unknown } = {},
+): AudioWorkletNode {
+  try {
+    return new AudioWorkletNode(ctx, processor, {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [2],
+      channelCount: 2,
+      channelCountMode: 'explicit',
+      channelInterpretation: 'speakers',
+      parameterData: opts.parameterData,
+      processorOptions: opts.processorOptions,
+    });
+  } catch (e) {
+    throw new Error(`${label} needs the '${processor}' worklet loaded into the audio context first (${String(e)})`);
+  }
+}
+
+/** A named AudioParam of a worklet node (throws a clear error if the processor lacks it). */
+export function workletParam(node: AudioWorkletNode, name: string, label: string): AudioParam {
+  const param = node.parameters.get(name);
+  if (!param) throw new Error(`${label} worklet is missing its '${name}' parameter`);
+  return param;
+}
+
+/**
+ * Resets a studio processor's internal state (envelopes, delay lines,
+ * filter memories) sample-accurately: every processor watches a k-rate
+ * "flush" counter. Works the same live and offline (a port message would
+ * arrive at an unpredictable render quantum).
+ */
+export class WorkletFlush {
+  private count = 0;
+  constructor(private readonly param: AudioParam) {}
+  fire(time: number): void {
+    this.count += 1;
+    this.param.setValueAtTime(this.count, time);
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Effect module base                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -407,6 +464,7 @@ export abstract class EffectModule implements ModuleNode {
   /** Last target scheduled per smoothed AudioParam (skips redundant events). */
   private readonly targets = new Map<AudioParam, number>();
   private readonly timers = new Set<number>();
+  private readonly worklets: AudioWorkletNode[] = [];
 
   protected constructor(env: ModuleEnv, id: Id) {
     this.env = env;
@@ -449,6 +507,9 @@ export abstract class EffectModule implements ModuleNode {
     this.disposed = true;
     for (const id of this.timers) this.env.clearTimer(id);
     this.timers.clear();
+    // Let worklet processors stop and be collected once disconnected.
+    for (const w of this.worklets) w.port.postMessage('dispose');
+    this.worklets.length = 0;
     for (const n of this.owned) {
       if (n instanceof AudioScheduledSourceNode) {
         try {
@@ -469,6 +530,12 @@ export abstract class EffectModule implements ModuleNode {
     this.owned.add(node);
     return node;
   };
+
+  /** Track a worklet node: disconnected and told to stop on dispose. */
+  protected ownWorklet(node: AudioWorkletNode): AudioWorkletNode {
+    this.worklets.push(node);
+    return this.own(node);
+  }
 
   /** Disconnect and forget nodes replaced during the module's life (see forgetParams for their params). */
   protected release(nodes: Iterable<AudioNode>): void {

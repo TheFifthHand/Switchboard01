@@ -8,7 +8,8 @@ import { validateProject } from '../../src/project/validate';
 import type { Patch, Performance, PortRef, Project } from '../../src/project/types';
 import { ProjectStore } from '../../src/state/projectStore';
 import { addBlock, moveBlock, removeBlock, setBlockRepeats, setTailSeconds } from '../../src/state/commands/arrangement';
-import { copyClip, createClip, duplicateClipContent, duplicateClipToSlot, pasteClip, setClipBars } from '../../src/state/commands/clips';
+import { clipDropProblem, copyClip, copyClipTo, createClip, duplicateClipContent, duplicateClipToSlot, moveClip, pasteClip, setClipBars } from '../../src/state/commands/clips';
+import { moveScene } from '../../src/state/commands/scenes';
 import {
   addNote,
   addRecordedNotes,
@@ -387,6 +388,128 @@ describe('clip commands', () => {
     expect(store.getState().tracks[0].clips[3]!.notes.map((n) => n.pitch)).toEqual([3]);
     pasteClip(store, 't4', 0, copied);
     expect(store.getState().tracks[3].clips[0]!.id).not.toBe(copied.id);
+  });
+});
+
+describe('moving and copying clips between pads', () => {
+  /** t1 = drums; t3 = bass, t4 = chords, t8 = sampler (all melodic). */
+  function withClips() {
+    const store = fresh();
+    createClip(store, 't3', 0, 1, 'Bass A');
+    addNote(store, 't3', 0, { tick: 0, pitch: 36, velocity: 1, duration: 48 });
+    createClip(store, 't3', 1, 2, 'Bass B');
+    createClip(store, 't4', 2, 1, 'Chords');
+    createClip(store, 't1', 0, 1, 'Beat');
+    toggleStep(store, 't1', 0, 0, 0);
+    store.clearHistory();
+    return store;
+  }
+  const names = (store: ProjectStore, i: number) => store.getState().tracks[i].clips.map((c) => c?.name ?? null);
+
+  it('moves a clip onto an empty pad (same id, one undo step), across parts of the same kind', () => {
+    const store = withClips();
+    const id = store.getState().tracks[2].clips[0]!.id;
+    expect(moveClip(store, 't3', 0, 't3', 3)).toMatchObject({ changed: true, swapped: false });
+    expect(names(store, 2)).toEqual([null, 'Bass B', null, 'Bass A']);
+    expect(store.getState().tracks[2].clips[3]!.id).toBe(id);
+    expect(store.undoLabel()).toBe('Move clip');
+    // Bass to chords: both melodic.
+    expect(moveClip(store, 't3', 3, 't4', 0).changed).toBe(true);
+    expect(store.getState().tracks[3].clips[0]!.id).toBe(id);
+    expect(store.getState().tracks[3].clips[0]!.notes.map((n) => n.pitch)).toEqual([36]);
+    store.undo();
+    store.undo();
+    expect(names(store, 2)).toEqual(['Bass A', 'Bass B', null, null]);
+    expect(store.getState().tracks[3].clips[0]).toBeNull();
+    expect(store.canUndo()).toBe(false);
+  });
+
+  it('dropping onto an occupied pad swaps the two clips', () => {
+    const store = withClips();
+    expect(moveClip(store, 't3', 0, 't3', 1)).toMatchObject({ changed: true, swapped: true });
+    expect(names(store, 2)).toEqual(['Bass B', 'Bass A', null, null]);
+    expect(store.undoLabel()).toBe('Swap clips');
+    expect(moveClip(store, 't3', 1, 't4', 2)).toMatchObject({ swapped: true });
+    expect(names(store, 2)).toEqual(['Bass B', 'Chords', null, null]);
+    expect(names(store, 3)).toEqual([null, null, 'Bass A', null]);
+    store.undo();
+    store.undo();
+    expect(names(store, 2)).toEqual(['Bass A', 'Bass B', null, null]);
+    expect(names(store, 3)).toEqual([null, null, 'Chords', null]);
+  });
+
+  it('copies onto an empty pad, or replaces an occupied one (one undo step), with fresh ids', () => {
+    const store = withClips();
+    const src = store.getState().tracks[2].clips[0]!;
+    const r = copyClipTo(store, 't3', 0, 't3', 2);
+    expect(r).toMatchObject({ changed: true, replaced: false });
+    const copy = store.getState().tracks[2].clips[2]!;
+    expect(copy.id).toBe(r.clipId);
+    expect(copy.id).not.toBe(src.id);
+    expect(copy.notes.map((n) => [n.tick, n.pitch])).toEqual([[0, 36]]);
+    expect(copy.notes[0].id).not.toBe(src.notes[0].id);
+    expect(copyClipTo(store, 't3', 0, 't4', 2)).toMatchObject({ changed: true, replaced: true });
+    expect(names(store, 3)).toEqual([null, null, 'Bass A', null]);
+    expect(store.undoLabel()).toBe('Copy clip');
+    store.undo();
+    expect(names(store, 3)).toEqual([null, null, 'Chords', null]);
+    expect(names(store, 2)).toEqual(['Bass A', 'Bass B', 'Bass A', null]);
+  });
+
+  it('refuses drum steps onto a melodic part (and back) with an explanation, and changes nothing', () => {
+    const store = withClips();
+    const before = store.getState();
+    const m = moveClip(store, 't1', 0, 't3', 3);
+    expect(m).toMatchObject({ changed: false, reason: 'invalid' });
+    expect(m.message).toMatch(/Drums plays drum steps and Bass plays melodic notes/);
+    expect(copyClipTo(store, 't4', 2, 't1', 1)).toMatchObject({ changed: false, reason: 'invalid' });
+    expect(clipDropProblem(before, 't3', 't8')).toBeNull();
+    expect(clipDropProblem(before, 't1', 't2')).toBeNull();
+    expect(moveClip(store, 't3', 0, 't3', 0)).toMatchObject({ changed: false });
+    expect(moveClip(store, 't3', 2, 't3', 0)).toMatchObject({ changed: false, reason: 'not-found' });
+    expect(store.getState()).toBe(before);
+    expect(store.canUndo()).toBe(false);
+  });
+
+  it('is refused while a performance take locks clip edits', () => {
+    const store = withClips();
+    // Like a take: only the edits it records go through.
+    store.setLock('Recording a performance', (label) => label.startsWith('track:Change'));
+    expect(moveClip(store, 't3', 0, 't3', 3).refused).toBe('Recording a performance');
+    expect(copyClipTo(store, 't3', 0, 't3', 3).refused).toBe('Recording a performance');
+    expect(moveScene(store, 0, 2).refused).toBe('Recording a performance');
+  });
+});
+
+describe('scene rows', () => {
+  it('moving a scene moves every part’s clip in the row with it; song blocks keep their scenes (one undo step)', () => {
+    const store = fresh();
+    createClip(store, 't1', 0, 1, 'Beat 1');
+    createClip(store, 't3', 0, 1, 'Bass 1');
+    createClip(store, 't3', 2, 1, 'Bass 3');
+    createClip(store, 't5', 3, 1, 'Lead 4');
+    addBlock(store, store.getState().scenes[0].id, 0);
+    store.clearHistory();
+    const before = store.getState();
+    const sceneIds = before.scenes.map((s) => s.id);
+    const blocks = before.arrangement.blocks;
+    expect(moveScene(store, 0, 2).changed).toBe(true);
+    const p = store.getState();
+    expect(p.scenes.map((s) => s.id)).toEqual([sceneIds[1], sceneIds[2], sceneIds[0], sceneIds[3]]);
+    expect(p.tracks[0].clips.map((c) => c?.name ?? null)).toEqual([null, null, 'Beat 1', null]);
+    expect(p.tracks[2].clips.map((c) => c?.name ?? null)).toEqual([null, 'Bass 3', 'Bass 1', null]);
+    expect(p.tracks[4].clips.map((c) => c?.name ?? null)).toEqual([null, null, null, 'Lead 4']);
+    expect(p.arrangement.blocks).toBe(blocks);
+    expect(validateProject(structuredClone(p)).ok).toBe(true);
+    expect(store.undoLabel()).toBe('Move scene');
+    expect(moveScene(store, 3, 0).changed).toBe(true);
+    expect(store.getState().scenes[0].id).toBe(sceneIds[3]);
+    expect(moveScene(store, 1, 1).changed).toBe(false);
+    expect(moveScene(store, 0, 4)).toMatchObject({ changed: false, reason: 'invalid' });
+    store.undo();
+    store.undo();
+    expect(store.getState().scenes).toEqual(before.scenes);
+    expect(store.getState().tracks).toEqual(before.tracks);
   });
 });
 

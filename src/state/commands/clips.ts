@@ -1,7 +1,7 @@
-/** Clip slot edits: create, delete, rename, length, duplicate, paste, clear, copy. */
+/** Clip slot edits: create, delete, rename, length, duplicate, paste, clear, copy, move between pads. */
 import { cloneClip, cloneClipWithNewIds, reIdNotes } from '../../project/clone';
 import { createClip as makeClip } from '../../project/factory';
-import { TICKS_PER_BAR, type Clip, type ClipBars, type Id, type Project } from '../../project/types';
+import { TICKS_PER_BAR, type Clip, type ClipBars, type Id, type Project, type Track } from '../../project/types';
 import { VALIDATION_LIMITS, sanitizeClip } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
 import { NOT_FOUND, clipAt, cleanName, draftClip, draftTrack, findTrack, isSlot, refuse, run, type CommandResult } from './common';
@@ -134,4 +134,90 @@ export function clearTrackClips(store: ProjectStore, trackId: Id): CommandResult
     const dt = draftTrack(d, trackId);
     dt.clips = dt.clips.map(() => null);
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Move and copy between pads                                          */
+/* ------------------------------------------------------------------ */
+
+/** What a part's clips hold: drum steps (kit sounds 0-15) or melodic notes (pitches). */
+export type ClipContent = 'steps' | 'notes';
+
+export function clipContentOf(track: Pick<Track, 'instrument'>): ClipContent {
+  return track.instrument.kind === 'drums' ? 'steps' : 'notes';
+}
+
+const CONTENT_WORDS: Record<ClipContent, string> = { steps: 'drum steps', notes: 'melodic notes' };
+
+/**
+ * Why a clip from `from` cannot go to `to`, or null when it can: a drum
+ * pattern (kit sounds) and a melodic pattern (pitches) mean different things,
+ * so clips only move or copy between parts of the same content.
+ */
+export function clipDropProblem(p: Project, fromTrackId: Id, toTrackId: Id): string | null {
+  const from = findTrack(p, fromTrackId);
+  const to = findTrack(p, toTrackId);
+  if (!from || !to) return 'That part no longer exists.';
+  const a = clipContentOf(from);
+  const b = clipContentOf(to);
+  if (a === b) return null;
+  return `${from.name} plays ${CONTENT_WORDS[a]} and ${to.name} plays ${CONTENT_WORDS[b]}: a clip only moves between parts of the same kind (drum parts, or melodic parts).`;
+}
+
+export interface ClipMoveResult extends CommandResult {
+  /** The clip that was on the target pad and moved to the source pad (a swap). */
+  swapped?: boolean;
+}
+
+/**
+ * Move a clip to another pad, in one undo step. Onto an empty pad the clip
+ * moves (keeping its id); onto an occupied pad the two clips swap. Between
+ * parts both must hold the same kind of clip (see clipDropProblem). The
+ * launcher follows a moved clip within its part; see Session for playback.
+ */
+export function moveClip(store: ProjectStore, fromTrackId: Id, fromSlot: number, toTrackId: Id, toSlot: number): ClipMoveResult {
+  const p = store.getState();
+  const clip = clipAt(p, fromTrackId, fromSlot);
+  if (!clip) return NOT_FOUND('clip');
+  if (!findTrack(p, toTrackId) || !isSlot(toSlot)) return refuse('invalid', 'Unknown clip slot.');
+  if (fromTrackId === toTrackId && fromSlot === toSlot) return refuse('invalid', 'The clip is already there.');
+  const problem = fromTrackId === toTrackId ? null : clipDropProblem(p, fromTrackId, toTrackId);
+  if (problem) return refuse('invalid', problem);
+  const other = clipAt(p, toTrackId, toSlot);
+  const r = run(store, other ? 'clip:Swap clips' : 'clip:Move clip', (d) => {
+    const a = draftTrack(d, fromTrackId);
+    const b = draftTrack(d, toTrackId);
+    const moving = a.clips[fromSlot];
+    a.clips[fromSlot] = b.clips[toSlot];
+    b.clips[toSlot] = moving;
+  });
+  return { ...r, swapped: !!other };
+}
+
+export interface ClipCopyResult extends CommandResult {
+  clipId?: Id;
+  /** A clip was on the target pad and the copy replaced it. */
+  replaced?: boolean;
+}
+
+/**
+ * Copy a clip onto another pad (new ids), in one undo step. Onto an occupied
+ * pad the copy replaces what was there. Between parts both must hold the same
+ * kind of clip.
+ */
+export function copyClipTo(store: ProjectStore, fromTrackId: Id, fromSlot: number, toTrackId: Id, toSlot: number): ClipCopyResult {
+  const p = store.getState();
+  const clip = clipAt(p, fromTrackId, fromSlot);
+  if (!clip) return NOT_FOUND('clip');
+  const target = findTrack(p, toTrackId);
+  if (!target || !isSlot(toSlot)) return refuse('invalid', 'Unknown clip slot.');
+  if (fromTrackId === toTrackId && fromSlot === toSlot) return refuse('invalid', 'Choose a different pad to copy to.');
+  const problem = fromTrackId === toTrackId ? null : clipDropProblem(p, fromTrackId, toTrackId);
+  if (problem) return refuse('invalid', problem);
+  const replaced = !!target.clips[toSlot];
+  const copy = cloneClipWithNewIds(clip);
+  const r = run(store, 'clip:Copy clip', (d) => {
+    draftTrack(d, toTrackId).clips[toSlot] = copy;
+  });
+  return { ...r, clipId: copy.id, replaced };
 }

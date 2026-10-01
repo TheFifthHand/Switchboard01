@@ -46,9 +46,29 @@
 }
 
 .group[data-size='sm'] .segment {
-  height: 28px;
+  /* Nothing clickable is smaller than 32 px. */
+  height: 32px;
   padding: 0 10px 0 8px;
   font-size: var(--fs-sm);
+}
+
+/* Large: primary choices such as the views (40 px keys). */
+.group[data-size='lg'] .segment {
+  height: 40px;
+  padding: 0 14px 0 11px;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+/* Without lamps the keys are evenly padded; the engaged one is raised and bold. */
+.group[data-lamp='off'] .segment {
+  padding: 0 12px;
+}
+.group[data-lamp='off'][data-size='sm'] .segment {
+  padding: 0 10px;
+}
+.group[data-lamp='off'] .segment[data-selected] {
+  font-weight: 650;
 }
 
 .segment:hover:not(:disabled):not([data-selected]) {

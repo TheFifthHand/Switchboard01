@@ -40,11 +40,17 @@ export const MAX_EXTRA_LFOS = 3;
 /**
  * Starting params for effects inserted into a chain. Delay and reverb default
  * to 100% wet (right for a send return); as inserts they start partly wet so
- * the dry sound is kept.
+ * the dry sound is kept. Effects whose registry defaults are transparent
+ * (drive at 0, an open filter, a 16-bit crusher) start with a moderate
+ * setting instead, so adding one is heard straight away; the EQ starts flat
+ * on purpose (it is a tool for the user's own changes).
  */
 export const INSERT_DEFAULTS: Partial<Record<ModuleType, ParamValues>> = {
   delay: { mix: 0.3 },
   reverb: { mix: 0.25 },
+  drive: { amount: 0.35 },
+  filter: { cutoff: 2400 },
+  crusher: { bits: 8, downsample: 3 },
 };
 
 const LOCKED: ConnectionCheck = { ok: false, code: 'locked', message: CONNECTION_MESSAGES.locked };

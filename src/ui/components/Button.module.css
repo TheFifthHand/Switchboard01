@@ -99,7 +99,8 @@
   box-shadow: var(--btn-shadow), 0 0 0 2px var(--shell-hi), 0 0 0 4px var(--teal);
 }
 
-.button:disabled {
+.button:disabled,
+.button[aria-disabled='true'] {
   cursor: default;
   opacity: 0.45;
 }

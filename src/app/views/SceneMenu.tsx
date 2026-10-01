@@ -1,10 +1,10 @@
 /**
  * Scene menu for the side buttons of the Loops grid ('⋯', right-click, the
- * menu key or F2): rename the scene, launch it, add it to the arrangement or
- * export it as a WAV loop.
+ * menu key or F2): rename the scene, launch it, move the row up or down (its
+ * clips move with it), add it to the arrangement or export it as a WAV loop.
  */
 import { useState } from 'react';
-import type { Id } from '../../project/types';
+import { SCENE_ROWS, type Id } from '../../project/types';
 import { DEFAULT_BLOCK_REPEATS, addBlock, renameScene } from '../../state/commands';
 import { shallowEqual } from '../../state/store';
 import { session, useProject } from '../instance';
@@ -76,6 +76,32 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
         }}
       >
         Launch scene
+      </MenuItem>
+      <MenuItem
+        icon="chevronUp"
+        hint="Alt+↑"
+        keyShortcut="Alt+ArrowUp"
+        disabled={row === 0}
+        disabledReason="Already the top row"
+        onSelect={() => {
+          onClose();
+          session.moveScene(row, row - 1);
+        }}
+      >
+        Move up
+      </MenuItem>
+      <MenuItem
+        icon="chevronDown"
+        hint="Alt+↓"
+        keyShortcut="Alt+ArrowDown"
+        disabled={row === SCENE_ROWS - 1}
+        disabledReason="Already the bottom row"
+        onSelect={() => {
+          onClose();
+          session.moveScene(row, row + 1);
+        }}
+      >
+        Move down
       </MenuItem>
       <MenuSeparator />
       <MenuItem

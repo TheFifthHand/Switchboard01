@@ -1,6 +1,6 @@
 .app {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) 100px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   height: 100vh;
   height: 100dvh;
   min-height: 560px;

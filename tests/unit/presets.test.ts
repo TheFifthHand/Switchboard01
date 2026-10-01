@@ -91,17 +91,19 @@ describe('preset library contents', () => {
     });
   }
 
-  it('level-matches the groups: basses loud, chords a little lower, pads lower still', () => {
+  it('keeps level trims in a sane window: basses loud, the melodic categories lower (measured in tests/browser/presets.test.ts)', () => {
     const level = (id: string) => PRESETS[id].params.level;
-    const basses = SYNTH_PRESETS.filter((p) => p.kind === 'bass');
-    const chords = SYNTH_PRESETS.filter((p) => p.kind === 'poly' && p.roles[0] === 'chords');
-    const pads = SYNTH_PRESETS.filter((p) => p.kind === 'poly' && p.roles[0] === 'pad');
-    for (const p of basses) expect(level(p.id), p.id).toBeGreaterThanOrEqual(-4);
-    for (const p of basses) expect(level(p.id), p.id).toBeLessThanOrEqual(0);
-    for (const p of chords) expect(level(p.id), p.id).toBeGreaterThanOrEqual(-8);
-    for (const p of chords) expect(level(p.id), p.id).toBeLessThanOrEqual(-3);
-    const chordMedian = [...chords.map((p) => level(p.id))].sort((a, b) => a - b)[Math.floor(chords.length / 2)];
-    for (const p of pads) expect(level(p.id), p.id).toBeLessThanOrEqual(chordMedian);
+    for (const p of SYNTH_PRESETS) {
+      expect(level(p.id), p.id).toBeGreaterThanOrEqual(-14);
+      expect(level(p.id), p.id).toBeLessThanOrEqual(2);
+    }
+    const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+    const basses = med(SYNTH_PRESETS.filter((p) => p.category === 'bass').map((p) => level(p.id)));
+    const pads = med(SYNTH_PRESETS.filter((p) => p.category === 'pads').map((p) => level(p.id)));
+    const keys = med(SYNTH_PRESETS.filter((p) => p.category === 'keys').map((p) => level(p.id)));
+    expect(basses).toBeGreaterThan(keys);
+    // Sustained pads need the most trim for the same loudness.
+    expect(pads).toBeLessThanOrEqual(keys);
   });
 
   it('makes every preset sonically distinct from every other of its kind', () => {
@@ -147,6 +149,49 @@ describe('preset library contents', () => {
     expect(p('poly-lumen-chords').detune).toBeGreaterThanOrEqual(10);
     for (const id of ['poly-halo-pad', 'poly-warm-drift', 'poly-night-choir', 'poly-tape-shimmer', 'poly-air-grain']) {
       expect(p(id).attack, id).toBeGreaterThan(0.5);
+    }
+    // The extended library: what each description promises is in the design.
+    expect(p('bass-808-boom').subWave).toBe(1);
+    expect(p('bass-808-boom').pitchEnv).toBeGreaterThan(0);
+    expect(p('bass-808-boom').decay).toBeGreaterThan(1);
+    expect(p('bass-reese').unisonDetune).toBeGreaterThanOrEqual(10);
+    expect(p('bass-pure-sub').subWave).toBe(1);
+    expect(p('bass-pure-sub').wave).toBe(SINE);
+    expect(p('bass-zap').pitchEnv).toBeGreaterThanOrEqual(12);
+    for (const id of ['bass-fm-slap', 'bass-growl', 'poly-tine-piano', 'poly-crystal-ep', 'poly-glass-pad', 'poly-fm-lead', 'poly-tubular-bell', 'poly-metal-clang', 'poly-kalimba']) expect(p(id).fmAmount, id).toBeGreaterThan(0.1);
+    expect(p('poly-crystal-ep').fmRatio).toBeGreaterThan(10);
+    expect(Number.isInteger(p('poly-tine-piano').fmRatio)).toBe(true);
+    expect(Number.isInteger(p('poly-tubular-bell').fmRatio)).toBe(false);
+    expect(Number.isInteger(p('poly-metal-clang').fmRatio)).toBe(false);
+    expect(p('poly-supersaw-pad').unison).toBe(7);
+    expect(p('poly-supersaw-lead').unison).toBeGreaterThanOrEqual(5);
+    for (const id of ['poly-string-ensemble', 'poly-cinematic-strings', 'poly-choir-ooh', 'poly-wooden-flute', 'poly-drawbar-organ']) expect(p(id).vibrato, id).toBeGreaterThan(0);
+    expect(p('poly-drawbar-organ').sustain).toBe(1);
+    expect(p('poly-drawbar-organ').velocity).toBe(0);
+    expect(p('poly-analog-pad').drift).toBeGreaterThanOrEqual(0.5);
+    expect(p('poly-warped-tape').drift).toBeGreaterThanOrEqual(0.5);
+    expect(p('poly-sweep-riser').pitchEnv).toBeLessThan(0);
+    expect(p('poly-sweep-riser').attack).toBeGreaterThanOrEqual(3);
+    expect(p('poly-downlifter').pitchEnv).toBeGreaterThan(0);
+    expect(p('poly-laser-zap').pitchEnv).toBeGreaterThan(0);
+    expect(p('poly-laser-zap').sustain).toBe(0);
+    expect(p('poly-ocean-wash').noise).toBe(1);
+    expect(p('poly-ocean-wash').noiseColor).toBeLessThan(0.5);
+    expect(p('poly-breath-pad').noiseColor).toBeGreaterThan(0.5);
+    expect(p('poly-synth-brass').pitchEnv).toBeLessThan(0);
+    for (const id of ['poly-kalimba', 'poly-marimba', 'poly-vibraphone', 'poly-tubular-bell', 'poly-glockenspiel', 'poly-music-box', 'poly-harp', 'poly-steel-drum', 'poly-koto-pluck', 'poly-harpsichord']) expect(p(id).sustain, id).toBe(0);
+  });
+
+  it('the shipped presets use none of the new synth features, so they (and the starters) sound exactly as before', () => {
+    const shipped = ['bass-round-sub', 'bass-rubber-pluck', 'bass-acid-line', 'bass-velvet-saw', 'bass-organ-short', 'bass-dub-pressure', 'poly-glass-keys', 'poly-lumen-chords', 'poly-house-stab', 'poly-short-pluck', 'poly-neon-lead', 'poly-soft-whistle', 'poly-mallet-bell', 'poly-halo-pad', 'poly-warm-drift', 'poly-air-grain', 'poly-night-choir', 'poly-tape-shimmer'];
+    const features = ['subWave', 'unison', 'unisonDetune', 'fmAmount', 'fmRatio', 'fmDecay', 'noiseColor', 'pitchEnv', 'pitchDecay', 'vibrato', 'vibratoRate', 'drift'];
+    for (const id of shipped) {
+      const info = SYNTH_PRESETS.find((x) => x.id === id)!;
+      const specs = INSTRUMENT_PARAMS[info.kind];
+      for (const f of features) {
+        const spec = specById(specs, f);
+        if (spec) expect(PRESETS[id].params[f], `${id}.${f}`).toBe(spec.default);
+      }
     }
   });
 
@@ -317,8 +362,14 @@ describe('applyKitToProject', () => {
       const p = produce(blank, (d) => applyKitToProject(d, lead.id, k.id));
       expect(level(p, lead.id), k.id).toBe(k.level);
     }
-    // Every standard kit shares the main drums' matched level; hand percussion needs less trim.
-    for (const k of KITS) expect(k.level, k.id).toBe(k.id === 'hand-percussion' ? -4.5 : -11);
+    // The shipped kits keep their matched levels (saved projects and starters rely on them); hand percussion
+    // needs less trim. Every kit's level is measured against them in tests/browser/omni-sounds-kits.test.ts.
+    for (const id of ['round-machine', 'tight-circuit', 'dust-tape', 'bright-steel']) expect(kitInfo(id)!.level, id).toBe(-11);
+    expect(kitInfo('hand-percussion')!.level).toBe(-4.5);
+    for (const k of KITS) {
+      expect(k.level, k.id).toBeGreaterThanOrEqual(-14);
+      expect(k.level, k.id).toBeLessThanOrEqual(-3);
+    }
   });
 
   it('keeps the user\'s trim relative to the matched level when changing between kit families', () => {

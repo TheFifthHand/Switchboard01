@@ -21,6 +21,11 @@
  * - While the knob can be changed, its tip ends with these gestures and the
  *   value double-click returns to, so mouse users can find fine drag and
  *   typed entry too.
+ * - Labels are full words and wrap to at most two lines. When a small knob in
+ *   a row has a label that can wrap ("Reverb Amount"), every small knob of
+ *   that row reserves two label lines, so the values stay aligned; rows of
+ *   short labels and lone knobs (a compact strip) stay one line tall.
+ *   `labelLines` sets it explicitly.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import { clampParam, formatParam, fromNormalized, toNormalized, type ParamSpec } from '../../project/params';
@@ -69,6 +74,11 @@ export interface KnobProps {
   /** Technical detail (defaults to spec.detail). */
   detail?: string;
   showValue?: boolean;
+  /**
+   * Label lines to reserve. Default: 2 for a small knob in a row where some small knob's label can
+   * wrap, else 1. Labels wrap to two lines at most either way.
+   */
+  labelLines?: 1 | 2;
   id?: string;
   className?: string;
 }
@@ -89,6 +99,15 @@ function isShortStepped(spec: ParamSpec): boolean {
 function travelPx(spec: ParamSpec): number {
   if (isShortStepped(spec)) return Math.min(KNOB_DRAG_TRAVEL_PX, Math.max(64, stepCount(spec) * 32));
   return KNOB_DRAG_TRAVEL_PX;
+}
+
+/**
+ * True when a small knob's label may need a second line. Every single word of the parameter
+ * registry fits one line of a small knob (the longest, "Resonance", is ~58 px of the 62 px), so
+ * only names of several words can wrap, and those under ten characters ("Mono Bass") still fit.
+ */
+export function labelMayWrap(label: string): boolean {
+  return label.length >= 10 && /\s/.test(label.trim());
 }
 
 function isBipolar(spec: ParamSpec): boolean {
@@ -164,6 +183,7 @@ export function Knob(props: KnobProps) {
     tip,
     detail,
     showValue = true,
+    labelLines,
     id,
     className,
   } = props;
@@ -511,6 +531,9 @@ export function Knob(props: KnobProps) {
       data-readonly={readOnly || undefined}
       data-dragging={dragging || undefined}
       data-tone={arcTone}
+      data-label-lines={labelLines}
+      data-wraps={labelMayWrap(shownLabel) || undefined}
+      style={labelLines ? ({ '--label-lines': labelLines } as CSSProperties) : undefined}
     >
       <Tooltip name={name} tip={tip ?? spec.tip} detail={tipDetail} hint={interactive ? knobGestureHint(spec) : undefined}>
         <div
@@ -552,11 +575,13 @@ export function Knob(props: KnobProps) {
             {controlledBy && (
               <span className={styles.badge} aria-hidden="true">
                 <Icon name="link" size={10} />
-                {controlledBy}
+                <span className={styles.badgeText}>{controlledBy}</span>
               </span>
             )}
           </div>
-          <div className={styles.label}>{shownLabel}</div>
+          <div className={styles.label}>
+            <span className={styles.labelText}>{shownLabel}</span>
+          </div>
           {showValue && (
             <div className={styles.value} data-kind={optionKnob ? 'option' : 'number'} aria-hidden="true" style={entry ? { visibility: 'hidden' } : undefined}>
               {modulated && <Icon name="wave" size={10} className={styles.modMark} />}

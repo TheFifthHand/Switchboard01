@@ -1,0 +1,88 @@
+/*
+ * Mix layout.
+ * - Wide enough: mixer and mastering side by side, filling the workspace
+ *   (Simple from 1280 px; Advanced, whose strips carry two more knobs, from 1800 px).
+ * - Narrower: mixer on top at the workspace height, mastering below; the view scrolls.
+ * - Below 1024 px (200 % zoom), the page scrolls (App switches to auto rows).
+ * The strips scroll sideways inside the mixer if they ever run out of room,
+ * so all eight parts and the master stay reachable.
+ */
+
+.view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: max(560px, 100%) auto;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  padding: 10px 14px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.view[data-mode='advanced'] {
+  grid-template-rows: max(600px, 100%) auto;
+}
+
+/* Side by side, both filling the workspace height (a very short workspace scrolls instead of clipping faders). */
+@media (min-width: 1280px) {
+  .view[data-mode='simple'] {
+    grid-template-columns: minmax(0, 1fr) minmax(380px, 34%);
+    grid-template-rows: minmax(470px, 1fr);
+  }
+}
+
+@media (min-width: 1800px) {
+  .view[data-mode='advanced'] {
+    grid-template-columns: minmax(0, 1fr) minmax(480px, 34%);
+    grid-template-rows: minmax(600px, 1fr);
+  }
+}
+
+@media (max-width: 1023px) {
+  .view,
+  .view[data-mode='advanced'] {
+    height: auto;
+    grid-template-rows: 560px auto;
+    overflow: visible;
+  }
+  .view[data-mode='advanced'] {
+    grid-template-rows: 740px auto;
+  }
+}
+
+.mixer,
+.mastering {
+  min-width: 0;
+  min-height: 0;
+}
+
+.mixerBody {
+  display: flex;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 10px;
+}
+
+.strips {
+  display: grid;
+  grid-template-columns: repeat(var(--parts, 8), minmax(78px, 1fr)) minmax(104px, 1fr);
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: min-content;
+  min-height: 0;
+}
+
+.hint {
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.solo {
+  color: var(--amber-ink);
+  font-size: var(--fs-sm);
+  font-weight: 650;
+}

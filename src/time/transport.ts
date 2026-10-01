@@ -226,6 +226,8 @@ export interface TransportStats {
 
 export interface TransportPosition extends SeqPosition {
   playing: boolean;
+  /** Holding at a pause (the position is where it paused). */
+  paused: boolean;
 }
 
 interface Timed {
@@ -322,6 +324,55 @@ export class RealtimeTransport {
     this.stopAt(this.ctx.currentTime);
   }
 
+  /** Paused: holding its position and every clip's phase (see Sequencer.pause). */
+  get paused(): boolean {
+    return this.sequencer.paused;
+  }
+
+  /**
+   * Pause now: every voice is released (not-yet-started ones cancelled), the
+   * engine's clicks, pump ducks and automation end as at Stop, and the
+   * sequencer holds its position for `resume()`. Returns false when nothing
+   * was playing; when the music had already reached its end it stops instead
+   * (also false).
+   */
+  pause(): boolean {
+    this.assertAlive();
+    if (!this.sequencer.playing) return false;
+    const now = this.ctx.currentTime;
+    if (!this.sequencer.pause(now)) {
+      this.stopAt(now);
+      return false;
+    }
+    this.dispatcher.releaseAll(now);
+    this.engine.transportStopped(now);
+    this.queue = [];
+    this.horizon = now;
+    this.ensureTicker();
+    return true;
+  }
+
+  /**
+   * Continue from the pause, in time: the paused tick plays `START_OFFSET`
+   * from now (like Play), every clip in its phase, with nothing from before
+   * the pause played late. Returns false when not paused.
+   */
+  resume(): boolean {
+    this.assertAlive();
+    if (!this.sequencer.paused) return false;
+    const now = this.ctx.currentTime;
+    // Not-yet-started notes of the idle arpeggiator (keys pressed while paused) belong to its free clock.
+    this.dispatcher.cancelFrom(now);
+    this.queue = [];
+    const t = now + START_OFFSET;
+    this.sequencer.resume(t);
+    this.engine.transportStarted(t, this.sequencer.tickAt(t), this.sequencer.bpm);
+    this.horizon = now;
+    this.schedule(now);
+    this.ensureTicker();
+    return true;
+  }
+
   private stopAt(now: number): void {
     const wasPlaying = this.sequencer.playing;
     this.sequencer.stop(now);
@@ -381,6 +432,22 @@ export class RealtimeTransport {
     for (const r of results) if (r.atTick < this.sequencer.generatedTick) from = Math.min(from, r.atTime);
     if (from < Infinity) this.invalidateFrom(Math.max(from, now), now);
     this.dispatcher.applyCuts(this.sequencer.takeCuts(), now);
+  }
+
+  /** Clips moved between a part's slots: the launcher follows (see Sequencer.relocateSlots). */
+  relocateSlots(trackId: Id, slots: ReadonlyMap<number, number | null>): void {
+    this.assertAlive();
+    const now = this.ctx.currentTime;
+    const at = now + INVALIDATE_MARGIN;
+    if (!this.sequencer.relocateSlots(trackId, slots, at)) return;
+    if (this.sequencer.playing) this.invalidateFrom(at, now);
+  }
+
+  /** Scene rows were reordered: a playing song keeps its scenes (see Sequencer.relocateSongRows). */
+  relocateSongRows(rows: ReadonlyMap<number, number>): void {
+    this.assertAlive();
+    const now = this.ctx.currentTime;
+    if (this.sequencer.relocateSongRows(rows) && this.sequencer.playing) this.invalidateFrom(now + INVALIDATE_MARGIN, now);
   }
 
   setTempo(bpm: number): void {
@@ -444,7 +511,7 @@ export class RealtimeTransport {
   }
 
   getPosition(): TransportPosition {
-    return { ...this.sequencer.getPosition(this.ctx.currentTime), playing: this.sequencer.playing };
+    return { ...this.sequencer.getPosition(this.ctx.currentTime), playing: this.sequencer.playing, paused: this.sequencer.paused };
   }
 
   /* ---------------------------------------------------------------- */

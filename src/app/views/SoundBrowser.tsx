@@ -1,21 +1,27 @@
 /**
- * Sound browser: choose the sound of one part — a drum kit, a bass or poly
- * synth preset (presets suggested for the part's role first), or a sampler
- * recording (built-in or imported into this project).
+ * Sound browser: any part can become any instrument. Sounds are grouped in
+ * categories (Drums & Percussion, Bass, Keys, Pads & Strings, Leads, Plucks
+ * & Bells, Textures & FX, Recordings) with icons and counts; a search finds
+ * sounds across every category by name, tag, category or description.
  *
- * Choosing applies the sound at once (one undoable edit) and keeps the
- * dialog open so sounds can be compared. Preview plays a short chord on the
+ * Choosing a sound applies it at once (one undoable edit) and keeps the
+ * dialog open so sounds can be compared. Preview plays a short example on the
  * part with its *current* sound as a session 'preview' note (drums: kick,
  * snare and hat together; bass: the key's root; poly: a triad in the project
- * key; sampler: the recording at its original pitch). Previews bypass the
- * arpeggiator and Musical Assist and are never recorded.
+ * key; sampler: the recording at its original pitch). Previews play the exact
+ * pitch, bypass the arpeggiator and Musical Assist and are never recorded.
+ *
+ * Keyboard: the category list is a vertical tab list (arrows, Home/End);
+ * in the sound list arrows move by on-screen position, Enter or Space
+ * chooses; in the search field ArrowDown jumps to the results and Escape
+ * clears the search (a second Escape closes the dialog).
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Button, Dialog, Notice, SegmentedControl, Switch } from '../../ui/components';
-import { BUILTIN_SAMPLES, KITS, SYNTH_PRESETS } from '../../content/catalog';
+import { Button, Dialog, Icon, Notice, Switch, type IconName } from '../../ui/components';
+import { ALL_SOUNDS, SOUND_CATEGORIES, categoryOfSound, kitInfo, soundCategoryInfo, soundMatchScore, type CatalogSound, type SoundCategory } from '../../content/catalog';
 import { SCALES, keyLabel } from '../../music/scales';
 import { IMPORT_LIMITS } from '../../persistence/audioImport';
-import type { Id, Instrument, InstrumentKind, Project, SampleMeta, TrackRole } from '../../project/types';
+import type { Id, Instrument, InstrumentKind, Project, SampleMeta } from '../../project/types';
 import { changeInstrumentSound } from '../../state/commands';
 import { shallowEqual } from '../../state/store';
 import { session, useProject } from '../instance';
@@ -23,34 +29,26 @@ import { notify, runtimeStore, useRuntime } from '../runtime';
 import { INSTRUMENT_LABEL, soundName } from '../labels';
 import styles from './SoundBrowser.module.css';
 
-interface SoundEntry {
-  kind: InstrumentKind;
-  id: string;
-  name: string;
-  description: string;
-}
+type SoundEntry = Pick<CatalogSound, 'kind' | 'id' | 'name' | 'description' | 'category' | 'tags'>;
 
 interface Section {
+  id: string;
   heading: string;
   entries: SoundEntry[];
+  /** Shown instead of cards when there are none. */
+  empty?: string;
 }
 
-const TABS: readonly { value: InstrumentKind; label: string }[] = [
-  { value: 'drums', label: 'Drum kits' },
-  { value: 'bass', label: 'Bass synth' },
-  { value: 'poly', label: 'Poly synth' },
-  { value: 'sampler', label: 'Sampler' },
-];
-
-const ROLE_WORDS: Record<TrackRole, string> = {
-  drums: 'drums',
-  percussion: 'percussion',
-  bass: 'bass lines',
-  chords: 'chords',
-  lead: 'leads',
-  pad: 'pads',
-  texture: 'textures',
-  sampler: 'sampler parts',
+/** Icon of each category (always shown with its name). */
+export const CATEGORY_ICON: Record<SoundCategory, IconName> = {
+  drums: 'drum',
+  bass: 'wave',
+  keys: 'keys',
+  pads: 'stereo',
+  leads: 'sparkle',
+  plucks: 'bell',
+  textures: 'spectrum',
+  recordings: 'mic',
 };
 
 export function soundIdOf(inst: Instrument): string {
@@ -65,33 +63,60 @@ export function soundIdOf(inst: Instrument): string {
   }
 }
 
-function synthSections(kind: 'bass' | 'poly', role: TrackRole): Section[] {
-  const all = SYNTH_PRESETS.filter((p) => p.kind === kind).map((p) => ({ kind, id: p.id, name: p.name, description: p.description, roles: p.roles }));
-  const suggested = all.filter((p) => p.roles.includes(role));
-  const rest = all.filter((p) => !suggested.includes(p));
-  const label = kind === 'bass' ? 'bass' : 'poly synth';
-  if (suggested.length === 0) return [{ heading: `All ${label} presets`, entries: all }];
-  const out: Section[] = [{ heading: `Suggested for ${ROLE_WORDS[role]}`, entries: suggested }];
-  if (rest.length) out.push({ heading: `Other ${label} presets`, entries: rest });
-  return out;
+function importedEntries(samples: readonly SampleMeta[]): SoundEntry[] {
+  return samples.map((s) => ({
+    kind: 'sampler' as const,
+    id: s.id,
+    name: s.name,
+    description: `Your recording: ${s.duration.toFixed(1)} s, ${s.channels === 1 ? 'mono' : 'stereo'}, plays at its original pitch.`,
+    category: 'recordings' as const,
+    tags: ['imported', 'recording', 'sample'],
+  }));
 }
 
-function sectionsFor(kind: InstrumentKind, role: TrackRole, samples: readonly SampleMeta[]): Section[] {
-  switch (kind) {
-    case 'drums':
-      return [{ heading: 'Drum kits', entries: KITS.map((k) => ({ kind, id: k.id, name: k.name, description: k.description })) }];
-    case 'bass':
-    case 'poly':
-      return synthSections(kind, role);
-    case 'sampler':
-      return [
-        { heading: 'Built-in recordings', entries: BUILTIN_SAMPLES.map((s) => ({ kind, id: s.id, name: s.name, description: s.description })) },
-        {
-          heading: 'Imported into this project',
-          entries: samples.map((s) => ({ kind, id: s.id, name: s.name, description: `${s.duration.toFixed(1)} s · ${s.channels === 1 ? 'mono' : 'stereo'} · plays at its original pitch` })),
-        },
-      ];
+/** Every sound the browser can offer: the built-in library plus this project's recordings. */
+function allEntries(samples: readonly SampleMeta[]): SoundEntry[] {
+  return [...ALL_SOUNDS, ...importedEntries(samples)];
+}
+
+const NOTHING_IMPORTED = 'Nothing imported yet. Import a WAV or MP3 below and it appears here for every part of this project.';
+
+/** The sections of one category (drums split into kits and percussion; recordings into built-in and imported). */
+export function categorySections(category: SoundCategory, samples: readonly SampleMeta[]): Section[] {
+  if (category === 'drums') {
+    const kits = ALL_SOUNDS.filter((s) => s.category === 'drums');
+    const family = (s: SoundEntry) => kitInfo(s.id)?.family ?? 'kit';
+    return [
+      { id: 'drums:kit', heading: 'Drum kits', entries: kits.filter((s) => family(s) === 'kit') },
+      { id: 'drums:percussion', heading: 'Percussion', entries: kits.filter((s) => family(s) === 'percussion') },
+    ];
   }
+  if (category === 'recordings') {
+    return [
+      { id: 'rec:builtin', heading: 'Built-in recordings', entries: ALL_SOUNDS.filter((s) => s.category === 'recordings') },
+      { id: 'rec:imported', heading: 'Imported into this project', entries: importedEntries(samples), empty: NOTHING_IMPORTED },
+    ];
+  }
+  const info = soundCategoryInfo(category);
+  return [{ id: category, heading: info.name, entries: ALL_SOUNDS.filter((s) => s.category === category) }];
+}
+
+/** Search results across every category, best matches first within each category. */
+export function searchSections(query: string, samples: readonly SampleMeta[], only?: SoundCategory): Section[] {
+  const scored = allEntries(samples)
+    .map((entry, order) => ({ entry, order, score: soundMatchScore(entry, query) }))
+    .filter((x) => x.score > 0 && (!only || x.entry.category === only));
+  return SOUND_CATEGORIES.flatMap((c) => {
+    const hits = scored.filter((x) => x.entry.category === c.id).sort((a, b) => b.score - a.score || a.order - b.order);
+    return hits.length ? [{ id: `search:${c.id}`, heading: c.name, entries: hits.map((h) => h.entry) }] : [];
+  });
+}
+
+/** Number of sounds per category (for a query: matches per category). */
+function categoryCounts(samples: readonly SampleMeta[], query: string): Record<SoundCategory, number> {
+  const out = Object.fromEntries(SOUND_CATEGORIES.map((c) => [c.id, 0])) as Record<SoundCategory, number>;
+  for (const e of allEntries(samples)) if (!query || soundMatchScore(e, query) > 0) out[e.category]++;
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -179,10 +204,10 @@ function usePreview(trackId: Id) {
 }
 
 /* ------------------------------------------------------------------ */
-/* List navigation                                                     */
+/* Keyboard navigation                                                 */
 /* ------------------------------------------------------------------ */
 
-/** Arrow keys move through the cards by their on-screen position (two columns). */
+/** Arrow keys move through the cards by their on-screen position. */
 function neighbour(list: HTMLElement, from: HTMLElement, key: string): HTMLElement | null {
   const opts = Array.from(list.querySelectorAll<HTMLElement>('[role="option"]'));
   const i = opts.indexOf(from);
@@ -224,6 +249,9 @@ export function SoundBrowser({ open, trackId, onClose }: SoundBrowserProps) {
   return <SoundBrowserDialog trackId={trackId} onClose={onClose} />;
 }
 
+/** 'all' shows search matches from every category. */
+type Scope = SoundCategory | 'all';
+
 function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void }) {
   const info = useProject(
     (p) => {
@@ -231,7 +259,6 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
       if (!t) return null;
       return {
         name: t.name,
-        role: t.role,
         kind: t.instrument.kind,
         soundId: soundIdOf(t.instrument),
         sound: soundName(p, t.instrument),
@@ -246,18 +273,29 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
   const takeLocked = useRuntime((s) => s.recording === 'performance');
   const recordingNotesHere = useRuntime((s) => s.recording === 'notes' && s.recordTarget?.trackId === trackId);
   const previewOff = takeLocked || recordingNotesHere;
-  const [tab, setTab] = useState<InstrumentKind>(info?.kind ?? 'poly');
+  const currentCategory = info ? categoryOfSound(info.kind, info.soundId || null) : undefined;
+  const startCategory: SoundCategory = currentCategory ?? (info?.kind === 'drums' ? 'drums' : info?.kind === 'sampler' ? 'recordings' : 'keys');
+  const [category, setCategory] = useState<SoundCategory>(startCategory);
+  const [query, setQuery] = useState('');
+  const [scope, setScope] = useState<Scope>(startCategory);
   const [autoPreview, setAutoPreview] = useState(true);
   const [active, setActive] = useState<string | null>(null);
   const [importing, setImporting] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<{ ok: boolean; message: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
   const currentRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
+  const searchId = useId();
   const preview = usePreview(trackId);
 
-  const sections = useMemo(() => (info ? sectionsFor(tab, info.role, samples) : []), [tab, info, samples]);
+  const searching = query.trim().length > 0;
+  const sections = useMemo(
+    () => (searching ? searchSections(query, samples, scope === 'all' ? undefined : scope) : categorySections(category, samples)),
+    [searching, query, samples, scope, category],
+  );
+  const counts = useMemo(() => categoryCounts(samples, searching ? query : ''), [samples, searching, query]);
   const entries = useMemo(() => sections.flatMap((s) => s.entries), [sections]);
   const keyOf = (e: SoundEntry) => `${e.kind}:${e.id}`;
   const currentKey = info ? `${info.kind}:${info.soundId}` : '';
@@ -272,6 +310,31 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
       if (!session.accepted(changeInstrumentSound(session.store, trackId, entry.kind, entry.id))) return;
     }
     if (autoPreview && !previewOff) void preview();
+  };
+
+  const selectCategory = (c: SoundCategory, focus: boolean) => {
+    setActive(null);
+    if (searching) setScope(c);
+    else setCategory(c);
+    if (focus) tabsRef.current?.querySelector<HTMLElement>(`[data-category="${c}"]`)?.focus();
+  };
+
+  const tabIds: Scope[] = [...(searching ? (['all'] as const) : []), ...SOUND_CATEGORIES.map((c) => c.id)];
+  const selectedTab: Scope = searching ? scope : category;
+  const onTabsKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const i = tabIds.indexOf(selectedTab);
+    let next: Scope | undefined;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') next = tabIds[(i + 1) % tabIds.length];
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') next = tabIds[(i - 1 + tabIds.length) % tabIds.length];
+    else if (e.key === 'Home') next = tabIds[0];
+    else if (e.key === 'End') next = tabIds[tabIds.length - 1];
+    if (!next) return;
+    e.preventDefault();
+    if (next === 'all') {
+      setScope('all');
+      setActive(null);
+      tabsRef.current?.querySelector<HTMLElement>('[data-category="all"]')?.focus();
+    } else selectCategory(next, true);
   };
 
   const onListKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -293,6 +356,22 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
     }
   };
 
+  const onSearchKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape' && query) {
+      // First Escape clears the search; the next one closes the dialog.
+      e.preventDefault();
+      e.stopPropagation();
+      setQuery('');
+      setScope(category);
+    } else if (e.key === 'ArrowDown') {
+      const first = listRef.current?.querySelector<HTMLElement>('[role="option"][tabindex="0"]') ?? listRef.current?.querySelector<HTMLElement>('[role="option"]');
+      if (first) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  };
+
   const onImport = async (file: File | undefined) => {
     if (!file) return;
     setImporting(file.name);
@@ -303,8 +382,12 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
     if (res.ok && autoPreview && !isRecordingPart(runtimeStore.getState(), trackId)) void preview();
   };
 
-  const crossToDrums = info.hasNotes && info.kind !== 'drums' && tab === 'drums';
-  const crossFromDrums = info.hasNotes && info.kind === 'drums' && tab !== 'drums';
+  const visibleKinds = new Set<InstrumentKind>(entries.map((e) => e.kind));
+  const showsDrums = visibleKinds.has('drums');
+  const showsMelodic = visibleKinds.has('bass') || visibleKinds.has('poly') || visibleKinds.has('sampler');
+  const crossToDrums = info.hasNotes && info.kind !== 'drums' && showsDrums;
+  const crossFromDrums = info.hasNotes && info.kind === 'drums' && showsMelodic;
+  const melodicWord = visibleKinds.has('sampler') && !visibleKinds.has('bass') && !visibleKinds.has('poly') ? 'sampler' : 'synth';
   const previewWhat =
     info.kind === 'drums'
       ? 'a kick, snare and hat together'
@@ -315,6 +398,10 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
           : 'the recording at its original pitch';
   const canPreview = !(info.kind === 'sampler' && !info.soundId) && !previewOff;
   const previewTip = `Plays ${previewWhat} on ${info.name} with its current sound (${info.sound})${info.arp ? ' as held notes (previews skip the arpeggiator)' : ''}.`;
+  const showImport = searching ? scope === 'recordings' : category === 'recordings';
+  const resultCount = entries.length;
+  const panelLabel = searching ? `Sounds matching "${query.trim()}"` : soundCategoryInfo(category).name;
+  const blurb = searching ? null : soundCategoryInfo(category).blurb;
 
   return (
     <Dialog
@@ -323,10 +410,11 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
       title={`Sound for ${info.name}`}
       description={
         <>
-          Choosing a sound changes <strong>{info.name}</strong> right away, and Undo brings the previous one back. Use Preview to compare them; close this window to play them on the keyboard.
+          Any part can play any sound. Choosing one changes <strong>{info.name}</strong> right away, and Undo brings the previous one back. Use Preview to compare.
         </>
       }
       size="lg"
+      className={styles.dialog}
       initialFocusRef={currentRef}
       actions={
         <>
@@ -336,13 +424,7 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
               Now: <strong>{info.sound}</strong> · {INSTRUMENT_LABEL[info.kind]}
             </span>
           </span>
-          <Switch
-            label="Preview on choose"
-            size="sm"
-            checked={autoPreview}
-            onChange={setAutoPreview}
-            tip="Plays a short example each time you choose a sound."
-          />
+          <Switch label="Preview on choose" size="sm" checked={autoPreview} onChange={setAutoPreview} tip="Plays a short example each time you choose a sound." />
           <Button icon="play" onClick={() => void preview()} disabled={!canPreview} tip={previewTip}>
             Preview
           </Button>
@@ -352,108 +434,199 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
         </>
       }
     >
-      <div className={styles.tabs}>
-        <SegmentedControl<InstrumentKind>
-          label="Sound type"
-          kind="tabs"
-          size="sm"
-          options={TABS}
-          value={tab}
-          onChange={(v) => {
-            setTab(v);
-            setActive(null);
-          }}
-          controls={panelId}
-        />
-      </div>
-
-      <div id={panelId} role="tabpanel" aria-label={TABS.find((t) => t.value === tab)?.label} className={styles.panel}>
-        {takeLocked && (
-          <Notice tone="warning" className={styles.notice}>
-            A performance is recording, so sound choices are locked until you stop. Preview is off while the take runs.
-          </Notice>
-        )}
-        {recordingNotesHere && (
-          <Notice tone="warning" className={styles.notice}>
-            Record Notes is recording into {info.name}, so Preview is off while you record. You can still choose a sound.
-          </Notice>
-        )}
-        {crossToDrums && (
-          <Notice tone="info" className={styles.notice}>
-            The clips on {info.name} hold melody notes. A drum kit plays only drum hits, so they stay silent until you add drum steps. Undo switches back.
-          </Notice>
-        )}
-        {crossFromDrums && (
-          <Notice tone="info" className={styles.notice}>
-            The clips on {info.name} hold drum hits, which a {tab === 'sampler' ? 'sampler' : 'synth'} would play as very low notes. Write new notes after switching; Undo switches back.
-          </Notice>
-        )}
-
-        <div ref={listRef} role="listbox" aria-label={`${TABS.find((t) => t.value === tab)?.label} for ${info.name}`} aria-disabled={takeLocked || undefined} className={styles.list} onKeyDown={onListKey}>
-          {sections.map((section) => (
-            <div key={section.heading} role="group" aria-label={section.heading} className={styles.section}>
-              <h3 className={styles.heading} aria-hidden="true">
-                {section.heading}
-              </h3>
-              {section.entries.length === 0 ? (
-                <p className={styles.empty}>Nothing imported yet. Import a WAV or MP3 below and it appears here for every part of this project.</p>
-              ) : (
-                <div className={styles.grid}>
-                  {section.entries.map((entry) => {
-                    const k = keyOf(entry);
-                    const current = k === currentKey;
-                    return (
-                      <div
-                        key={k}
-                        ref={current ? currentRef : undefined}
-                        role="option"
-                        aria-selected={current}
-                        aria-disabled={takeLocked || undefined}
-                        tabIndex={k === tabStop ? 0 : -1}
-                        data-key={k}
-                        data-current={current || undefined}
-                        className={styles.card}
-                        onClick={() => choose(entry)}
-                        onFocus={() => setActive(k)}
-                      >
-                        <span className={styles.cardHead}>
-                          <span className={styles.lamp} aria-hidden="true" />
-                          <span className={styles.cardName}>{entry.name}</span>
-                          {current && <span className={styles.badge}>Current</span>}
-                        </span>
-                        <span className={styles.cardDesc}>{entry.description}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ))}
+      <div className={styles.layout}>
+        <div className={styles.side}>
+          <label className={styles.search} htmlFor={searchId}>
+            <Icon name="search" size={16} />
+            <span className="visually-hidden">Search all sounds</span>
+            <input
+              id={searchId}
+              type="search"
+              className={styles.searchInput}
+              placeholder="Search: piano, 808, strings…"
+              value={query}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(e) => {
+                const v = e.currentTarget.value;
+                setQuery(v);
+                setActive(null);
+                // A new search looks everywhere; a category tab narrows it afterwards.
+                setScope(v.trim() ? 'all' : category);
+              }}
+              onKeyDown={onSearchKey}
+            />
+          </label>
+          <div ref={tabsRef} role="tablist" aria-orientation="vertical" aria-label="Sound categories" className={styles.tabs} onKeyDown={onTabsKey}>
+            {searching && (
+              <button
+                type="button"
+                role="tab"
+                data-category="all"
+                aria-selected={scope === 'all'}
+                aria-controls={panelId}
+                tabIndex={scope === 'all' ? 0 : -1}
+                className={styles.tab}
+                onClick={() => {
+                  setScope('all');
+                  setActive(null);
+                }}
+              >
+                <Icon name="search" size={18} />
+                <span className={styles.tabName}>All matches</span>
+                <span className={styles.count}>
+                  {Object.values(counts).reduce((a, b) => a + b, 0)}
+                  <span className="visually-hidden"> sounds</span>
+                </span>
+              </button>
+            )}
+            {SOUND_CATEGORIES.map((c) => {
+              const selected = selectedTab === c.id;
+              const n = counts[c.id];
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  role="tab"
+                  data-category={c.id}
+                  aria-selected={selected}
+                  aria-controls={panelId}
+                  tabIndex={selected ? 0 : -1}
+                  className={styles.tab}
+                  data-empty={searching && n === 0 ? true : undefined}
+                  data-current={c.id === currentCategory || undefined}
+                  onClick={() => selectCategory(c.id, false)}
+                >
+                  <Icon name={CATEGORY_ICON[c.id]} size={18} />
+                  <span className={styles.tabName}>{c.name}</span>
+                  {c.id === currentCategory && <span className="visually-hidden"> (current sound is here)</span>}
+                  <span className={styles.count}>
+                    {n}
+                    <span className="visually-hidden">{n === 1 ? ' sound' : ' sounds'}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        {tab === 'sampler' && (
-          <div className={styles.import}>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg"
-              className="visually-hidden"
-              tabIndex={-1}
-              aria-hidden="true"
-              onChange={(e) => {
-                const f = e.currentTarget.files?.[0];
-                e.currentTarget.value = '';
-                void onImport(f);
-              }}
-            />
-            <Button icon="upload" size="sm" onClick={() => fileRef.current?.click()} disabled={!!importing || takeLocked} tip={IMPORT_LIMITS.description}>
-              {importing ? 'Importing…' : 'Import WAV or MP3…'}
-            </Button>
-            <span className={styles.importNote} role="status" data-tone={importResult && !importResult.ok ? 'error' : undefined}>
-              {importing ? `Decoding "${importing}" on this device…` : importResult ? importResult.message : IMPORT_LIMITS.description}
-            </span>
+        <div id={panelId} role="tabpanel" aria-label={panelLabel} className={styles.panel}>
+          <div className={styles.panelHead}>
+            <h3 className={styles.panelTitle}>{panelLabel}</h3>
+            {blurb && <p className={styles.blurb}>{blurb}</p>}
+            <p className="visually-hidden" aria-live="polite">
+              {searching ? (resultCount === 0 ? `No sounds match "${query.trim()}".` : `${resultCount} ${resultCount === 1 ? 'sound matches' : 'sounds match'} "${query.trim()}".`) : ''}
+            </p>
           </div>
-        )}
+          {takeLocked && (
+            <Notice tone="warning" className={styles.notice}>
+              A performance is recording, so sound choices are locked until you stop. Preview is off while the take runs.
+            </Notice>
+          )}
+          {recordingNotesHere && (
+            <Notice tone="warning" className={styles.notice}>
+              Record Notes is recording into {info.name}, so Preview is off while you record. You can still choose a sound.
+            </Notice>
+          )}
+          {crossToDrums && (
+            <Notice tone="info" className={styles.notice}>
+              The clips on {info.name} hold melody notes. A drum kit plays only drum hits, so they stay silent until you add drum steps. Undo switches back.
+            </Notice>
+          )}
+          {crossFromDrums && (
+            <Notice tone="info" className={styles.notice}>
+              The clips on {info.name} hold drum hits, which a {melodicWord} would play as very low notes. Write new notes after switching; Undo switches back.
+            </Notice>
+          )}
+
+          <div
+            ref={listRef}
+            role="listbox"
+            aria-label={`${panelLabel}: sounds for ${info.name}`}
+            aria-disabled={takeLocked || undefined}
+            className={styles.list}
+            onKeyDown={onListKey}
+          >
+            {searching && resultCount === 0 && (
+              <p className={styles.empty}>
+                No sounds match “{query.trim()}”. Try a simpler word such as piano, bass, bell, pad or kick{scope !== 'all' ? ', or look in All matches' : ''}.
+              </p>
+            )}
+            {sections.map((section) => (
+              <div key={section.id} role="group" aria-label={section.heading} className={styles.section}>
+                {(sections.length > 1 || searching) && (
+                  <h4 className={styles.heading} aria-hidden="true">
+                    {searching && <Icon name={CATEGORY_ICON[section.entries[0]?.category ?? 'keys']} size={14} />}
+                    {section.heading}
+                  </h4>
+                )}
+                {section.entries.length === 0 ? (
+                  section.empty ? <p className={styles.empty}>{section.empty}</p> : null
+                ) : (
+                  <div className={styles.grid}>
+                    {section.entries.map((entry) => {
+                      const k = keyOf(entry);
+                      const current = k === currentKey;
+                      const cardId = `${panelId}-${section.id}-${entry.id}`.replace(/[^A-Za-z0-9_-]/g, '_');
+                      return (
+                        <div
+                          key={k}
+                          ref={current ? currentRef : undefined}
+                          role="option"
+                          aria-selected={current}
+                          aria-disabled={takeLocked || undefined}
+                          aria-labelledby={`${cardId}-name`}
+                          aria-describedby={`${cardId}-desc`}
+                          tabIndex={k === tabStop ? 0 : -1}
+                          data-key={k}
+                          data-current={current || undefined}
+                          className={styles.card}
+                          onClick={() => choose(entry)}
+                          onFocus={() => setActive(k)}
+                        >
+                          <span className={styles.cardHead}>
+                            <span className={styles.lamp} aria-hidden="true" />
+                            <span id={`${cardId}-name`} className={styles.cardName}>
+                              {entry.name}
+                            </span>
+                            {current && <span className={styles.badge}>Current</span>}
+                          </span>
+                          <span id={`${cardId}-desc`} className={styles.cardDesc}>
+                            <span className={styles.kind}>{INSTRUMENT_LABEL[entry.kind]}</span> {entry.description}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {showImport && (
+            <div className={styles.import}>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".wav,.mp3,audio/wav,audio/x-wav,audio/mpeg"
+                className="visually-hidden"
+                tabIndex={-1}
+                aria-hidden="true"
+                onChange={(e) => {
+                  const f = e.currentTarget.files?.[0];
+                  e.currentTarget.value = '';
+                  void onImport(f);
+                }}
+              />
+              <Button icon="upload" size="sm" onClick={() => fileRef.current?.click()} disabled={!!importing || takeLocked} tip={IMPORT_LIMITS.description}>
+                {importing ? 'Importing…' : 'Import WAV or MP3…'}
+              </Button>
+              <span className={styles.importNote} role="status" data-tone={importResult && !importResult.ok ? 'error' : undefined}>
+                {importing ? `Decoding "${importing}" on this device…` : importResult ? importResult.message : IMPORT_LIMITS.description}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
     </Dialog>
   );

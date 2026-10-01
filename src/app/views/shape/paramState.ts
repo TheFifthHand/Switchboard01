@@ -7,7 +7,7 @@
  */
 import { MODULE_DEFS } from '../../../project/modules';
 import { macroControlledParams, resolveAllParams, type MacroControl } from '../../../project/resolve';
-import type { Id, ParamValues, PatchModule, Project } from '../../../project/types';
+import type { Id, ModuleType, ParamValues, PatchModule, Project } from '../../../project/types';
 import { MACRO_SPECS } from '../../macros';
 
 interface Derived {
@@ -19,13 +19,27 @@ interface Derived {
 
 const cache = new WeakMap<Project, Derived>();
 
+/**
+ * Modulation inputs named differently from the knob they move. Every other
+ * input has the id of its parameter ("cutoff", "mix", "width"…).
+ */
+const PORT_PARAM: Partial<Record<ModuleType, Record<string, string>>> = {
+  // The EQ's "Mids" input sweeps the middle band's pitch.
+  eq: { mid: 'midFreq' },
+};
+
 export function derived(p: Project): Derived {
   let d = cache.get(p);
   if (!d) {
     const modulated = new Set<string>();
     // An LFO switched Off moves nothing (the engine silences its cables).
     const off = new Set(p.patch.modules.filter((m) => m.type === 'lfo' && m.bypass).map((m) => m.id));
-    for (const c of p.patch.connections) if (!off.has(c.from.module)) modulated.add(`${c.to.module}.${c.to.port}`);
+    const typeOf = new Map(p.patch.modules.map((m) => [m.id, m.type]));
+    for (const c of p.patch.connections) {
+      if (off.has(c.from.module)) continue;
+      const type = typeOf.get(c.to.module);
+      modulated.add(`${c.to.module}.${(type && PORT_PARAM[type]?.[c.to.port]) ?? c.to.port}`);
+    }
     d = { controlled: macroControlledParams(p), resolved: resolveAllParams(p), modulated };
     cache.set(p, d);
   }
@@ -49,7 +63,7 @@ export function effectiveValue(p: Project, moduleIdStr: Id, param: string): numb
   return derived(p).resolved.get(moduleIdStr)?.[param];
 }
 
-/** True when a modulation cable reaches the input of the same name as the parameter. */
+/** True when a modulation cable reaches the input that moves this parameter. */
 export function isModulated(p: Project, moduleIdStr: Id, param: string): boolean {
   return derived(p).modulated.has(`${moduleIdStr}.${param}`);
 }

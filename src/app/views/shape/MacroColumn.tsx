@@ -22,7 +22,7 @@ import { moduleName } from './paramState';
 import styles from './MacroColumn.module.css';
 
 /** One-line summary of what each macro is for. */
-const MACRO_CAPTION: Record<MacroId, string> = {
+export const MACRO_CAPTION: Record<MacroId, string> = {
   tone: 'Darker ↔ brighter',
   space: 'Room around the sound',
   echo: 'Echoes in time',
@@ -31,16 +31,37 @@ const MACRO_CAPTION: Record<MacroId, string> = {
   pump: 'Ducks with the beat',
 };
 
-interface Row {
+export interface MacroRow {
   target: MacroTarget;
   label: string;
   spec?: ParamSpec;
 }
+type Row = MacroRow;
 
 function sameRows(a: readonly Row[], b: readonly Row[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
   return a.every((r, i) => r.target === b[i].target && r.label === b[i].label && r.spec === b[i].spec);
+}
+
+/** The settings a macro of a part moves, named as the rack names them ("Filter Cutoff", "Drive 2 Mix"). */
+export function useMacroRows(trackId: Id, macro: MacroId): MacroRow[] {
+  return useProject<Row[]>((p) => {
+    const t = p.tracks.find((x) => x.id === trackId);
+    if (!t) return [];
+    return describeMacro(p, t, macro).map((d) => {
+      const mod = p.patch.modules.find((m) => m.id === d.target.module);
+      if (!mod) return d;
+      const modName = moduleName(p, mod, trackId);
+      const paramName = d.spec?.label ?? d.target.param;
+      return { ...d, label: paramName === modName ? `${modName} amount` : `${modName} ${paramName}` };
+    });
+  }, sameRows);
+}
+
+/** The macro knob's technical detail: what it moves, or that it does nothing. */
+export function macroDetail(rows: readonly MacroRow[]): string {
+  return rows.length ? `Moves ${rows.map((r) => r.label).join(', ')}.` : 'This macro has no mappings, so it does nothing.';
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
@@ -131,7 +152,7 @@ function PumpNote(props: { trackId: Id }) {
   return (
     <p className={styles.note}>
       <strong>How Pump works:</strong> a tempo-synchronized ducking envelope. While the transport plays, the part’s volume dips at every {rate} note and swells back, locked to the beat grid. It does
-      not listen to the drums or any other sound (no audio sidechain). Pump Rate in the channel strip sets how often.
+      not listen to the drums or any other sound (no audio sidechain). Pump Speed in the channel strip sets how often.
     </p>
   );
 }
@@ -140,18 +161,7 @@ function MacroCard(props: { trackId: Id; macro: MacroId }) {
   const { trackId, macro } = props;
   const spec = MACRO_SPECS[macro];
   const value = useProject((p) => p.tracks.find((t) => t.id === trackId)?.macros[macro] ?? 0);
-  const rows = useProject<Row[]>((p) => {
-    const t = p.tracks.find((x) => x.id === trackId);
-    if (!t) return [];
-    // describeMacro gives target + spec; the label is rebuilt with the rack's module names ("LFO Depth", "Drive 2 Mix").
-    return describeMacro(p, t, macro).map((d) => {
-      const mod = p.patch.modules.find((m) => m.id === d.target.module);
-      if (!mod) return d;
-      const modName = moduleName(p, mod, trackId);
-      const paramName = d.spec?.label ?? d.target.param;
-      return { ...d, label: paramName === modName ? `${modName} amount` : `${modName} ${paramName}` };
-    });
-  }, sameRows);
+  const rows = useMacroRows(trackId, macro);
   return (
     <section className={styles.card} aria-label={`${spec.label} macro`} data-macro={macro}>
       <div className={styles.knobCell}>
@@ -161,7 +171,7 @@ function MacroCard(props: { trackId: Id; macro: MacroId }) {
           size="md"
           id={`shape-macro-${macro}`}
           tip={spec.tip}
-          detail={rows.length ? `Moves ${rows.map((r) => r.label).join(', ')}.` : 'This macro has no mappings, so it does nothing.'}
+          detail={macroDetail(rows)}
           onChange={(v, info) => session.setMacro(trackId, macro, v, info.gesture)}
         />
       </div>

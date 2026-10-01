@@ -3,6 +3,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  gap: 8px;
 }
 
 .grid {
@@ -10,7 +11,7 @@
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr)) 104px;
-  grid-template-rows: auto repeat(4, minmax(52px, 1fr)) auto;
+  grid-template-rows: auto repeat(4, minmax(52px, 1fr));
   gap: 8px;
 }
 
@@ -18,75 +19,183 @@
   display: contents;
 }
 
-/* Column headers */
+/* ---------- Column headers ---------- */
 .header {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 7px 7px;
+  gap: 5px;
+  padding: 5px 5px 6px;
   border-radius: var(--r-md);
   background: var(--surface-hi);
   border: 1px solid var(--line-soft);
   min-width: 0;
-  transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+  transition:
+    border-color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
 }
 .headerSelected {
   border-color: var(--teal);
   box-shadow: 0 0 0 1px var(--teal) inset;
   background: linear-gradient(180deg, var(--surface-hi), var(--teal-wash));
 }
+/* A part that cannot be heard (muted, or not soloed while others are): its name and sound dim; its keys stay usable. */
+.header[data-dim] .headerMain {
+  opacity: 0.55;
+}
 .headerMain {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr);
   grid-template-rows: auto auto;
-  column-gap: 6px;
+  column-gap: 4px;
   row-gap: 1px;
-  text-align: left;
-  border: none;
-  background: transparent;
-  padding: 0;
   min-width: 0;
+  min-height: 36px;
+  padding: 1px 2px;
+  border: none;
   border-radius: var(--r-sm);
+  background: transparent;
+  text-align: left;
 }
 .trackNum {
   grid-row: 1 / 3;
-  align-self: center;
-  font-size: 11px;
+  align-self: start;
+  padding-top: 2px;
+  font-size: var(--fs-sm);
   color: var(--ink-3);
-  width: 14px;
 }
 .trackName {
-  font-size: var(--fs-md);
-  font-weight: 600;
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  line-height: 18px;
   color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .trackSound {
-  font-size: 11px;
-  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  line-height: 15px;
+  color: var(--ink-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* M, S and '⋯'. On narrow screens the '⋯' wraps to its own line instead of spilling into the next column. */
-.headerTools {
+/* Narrow columns: the number gives its room to the name. */
+@container (max-width: 70px) {
+  .trackNum {
+    display: none;
+  }
+  .headerMain {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .trackName {
+    font-size: var(--fs-md);
+  }
+}
+
+/* Mute and Solo: labelled toggles with icons. Icon over word side by side; stacked in very narrow columns; one line in wide ones. */
+.toggles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+.toggle {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  height: 40px;
+  padding: 0 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, #fdfdfc, #eef0f1);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  line-height: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+@container (min-width: 132px) {
+  .toggle {
+    flex-direction: row;
+    gap: 5px;
+    height: 34px;
+    font-size: var(--fs-sm);
+  }
+}
+@container (max-width: 76px) {
+  .toggles {
+    grid-template-columns: 1fr;
+  }
+}
+.toggle svg {
+  flex: none;
+}
+.toggle:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+/* Muted = coral (attention), Solo = amber; the pressed key also sits lower and its word stays. */
+.toggle[data-kind='mute'][aria-pressed='true'] {
+  background: var(--coral);
+  border-color: var(--coral);
+  color: #fff;
+  box-shadow: var(--shadow-pressed);
+}
+.toggle[data-kind='solo'][aria-pressed='true'] {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--amber-ink);
+  box-shadow: var(--shadow-pressed);
+}
+
+/* Part play/stop, the meter (or Muted / Not soloed / Solo) and the part's '⋯'. */
+.headBottom {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 3px 4px;
+  gap: 4px;
+  min-width: 0;
+}
+.partPlay {
+  flex: none;
+}
+.meter,
+.status {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.meter {
+  display: flex;
+  align-items: center;
+}
+.status {
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  line-height: 14px;
+  color: var(--coral-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status[data-status='solo'] {
+  color: var(--amber-ink);
 }
 .headerMore {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 20px;
+  width: 32px;
+  height: 32px;
   flex: none;
   margin-left: auto;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink-3);
 }
@@ -101,59 +210,52 @@
   border-color: var(--teal);
   color: var(--teal-ink);
 }
-.ms {
-  width: 22px;
-  height: 20px;
-  flex: none;
-  border-radius: 4px;
-  border: 1px solid var(--line);
-  background: var(--pad);
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--ink-2);
-  padding: 0;
-  box-shadow: var(--shadow-raised);
+/* Not room for the meter between the keys: it takes its own line under them. */
+@container (max-width: 119px) {
+  .meter,
+  .status {
+    order: 3;
+    flex: 1 1 100%;
+  }
+  .status {
+    white-space: normal;
+  }
 }
-.msMute {
-  background: var(--coral);
-  border-color: var(--coral);
-  color: #fff;
-  box-shadow: var(--shadow-pressed);
-}
-.msSolo {
-  background: var(--amber);
-  border-color: var(--amber);
-  color: var(--amber-ink);
-  box-shadow: var(--shadow-pressed);
-}
-.meter {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  padding: 1px 1px 0;
-}
-.meterOff {
-  opacity: 0.35;
+/* Very narrow: the play key takes the row; part options stay on right-click, F2 and Shift+F10 of the header. */
+@container (max-width: 67px) {
+  .partPlay[data-size] {
+    flex: 1 1 100%;
+    width: auto;
+  }
+  .headerMore {
+    display: none;
+  }
 }
 
-/* Clip pad cell: the pad fills it; the selected pad carries a '⋯' key. */
+/* ---------- Clip pads ---------- */
 .cell {
   position: relative;
   min-width: 0;
   min-height: 0;
+  border-radius: 10px;
+  transition: opacity var(--t-fast) var(--ease);
+}
+/* Muted or not soloed: the column's pads dim (they keep playing in time). */
+.cell[data-dim] {
+  opacity: 0.5;
 }
 .more {
   position: absolute;
-  top: 5px;
-  right: 5px;
+  right: 3px;
+  bottom: 3px;
   z-index: 1;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 22px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 7px;
   background: linear-gradient(180deg, #ffffff, var(--pad-lo));
   box-shadow: var(--shadow-raised);
   color: var(--ink-2);
@@ -168,24 +270,136 @@
   box-shadow: var(--shadow-pressed);
 }
 
-/* Scenes */
+/* Moving a clip (drag or keyboard): the source is marked, valid pads are outlined, the pad under it is lit. */
+.cell[data-drop] {
+  opacity: 1;
+}
+.cell[data-drop]::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 12px;
+  pointer-events: none;
+}
+.cell[data-drop='source'] {
+  opacity: 0.55;
+}
+.cell[data-drop='source']::after {
+  border: 2px dashed var(--teal);
+}
+.cell[data-drop='ok']::after {
+  border: 2px dashed color-mix(in srgb, var(--teal) 45%, transparent);
+}
+.cell[data-drop='ok'][data-over]::after {
+  border: 3px solid var(--teal);
+  box-shadow: 0 0 0 3px var(--teal-wash);
+}
+.cell[data-drop='no'] {
+  opacity: 0.4;
+}
+.cell[data-drop='no'][data-over]::after {
+  border: 3px solid var(--coral);
+}
+.dropNote {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--coral);
+  color: #fff;
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--teal);
+  border-radius: var(--r-md);
+  background: var(--shell-hi);
+  box-shadow: var(--shadow-float);
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  pointer-events: none;
+  transform: translate(-9999px, 0);
+}
+.ghost[data-copy] {
+  border-color: var(--amber);
+}
+
+/* ---------- Scenes ---------- */
+.sceneHeader {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 0 2px;
+}
+.sceneHeaderText {
+  padding: 0 4px;
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.stopAll {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--shell-hi);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--ink-2);
+  box-shadow: var(--shadow-raised);
+}
+.stopAll:active {
+  box-shadow: var(--shadow-pressed);
+}
 .sceneCell {
   position: relative;
   display: grid;
   min-width: 0;
   min-height: 0;
+  border-radius: var(--r-md);
+}
+.sceneCell[data-drag] {
+  opacity: 0.55;
+}
+.sceneCell[data-over]::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 3px solid var(--teal);
+  border-radius: 11px;
+  pointer-events: none;
 }
 .sceneMore {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 2px;
+  right: 2px;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 22px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: 6px;
   background: transparent;
   color: var(--ink-3);
 }
@@ -200,27 +414,23 @@
   border-color: var(--teal);
   color: var(--teal-ink);
 }
-.sceneHeader {
-  align-self: end;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  color: var(--ink-3);
-  padding: 0 4px 6px;
-}
 .scene {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
   gap: 2px;
+  min-width: 0;
   padding: 6px 10px;
   border-radius: var(--r-md);
   border: 1px solid var(--line);
   background: linear-gradient(180deg, var(--shell-hi), var(--shell));
   box-shadow: var(--shadow-raised);
   text-align: left;
-  min-width: 0;
-  transition: box-shadow var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+  touch-action: none;
+  transition:
+    box-shadow var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
 }
 .scene:active {
   box-shadow: var(--shadow-pressed);
@@ -230,46 +440,95 @@
   background: linear-gradient(180deg, var(--shell-hi), var(--amber-wash));
 }
 .sceneIcon {
-  font-size: 9px;
+  display: inline-flex;
   color: var(--ink-3);
 }
 .sceneLit .sceneIcon {
   color: var(--amber);
 }
 .sceneName {
-  font-size: var(--fs-md);
-  font-weight: 600;
+  max-width: 100%;
+  font-size: var(--fs-lg);
+  font-weight: 650;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 100%;
 }
 .sceneCount {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--ink-3);
 }
 
-/* Stop row */
-.stop {
-  justify-self: center;
+/* ---------- Selected pad actions ---------- */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 5px 8px 5px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface-hi);
+  min-width: 0;
 }
-.stopAll {
-  height: 30px;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--line);
-  background: var(--shell-hi);
+.actions[data-moving] {
+  border-color: var(--teal);
+  background: var(--teal-wash);
+}
+.actionsText {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
   font-size: var(--fs-sm);
-  font-weight: 600;
   color: var(--ink-2);
-  box-shadow: var(--shadow-raised);
+  overflow: hidden;
 }
-.stopAll:active {
-  box-shadow: var(--shadow-pressed);
+.actionsWhat {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 650;
+  color: var(--ink);
+}
+.actionsWhere {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+.actionKeys {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 /* Component shadows would otherwise hide the global focus ring. */
 .stopAll:focus-visible,
 .scene:focus-visible,
-.ms:focus-visible {
+.toggle:focus-visible,
+.headerMore:focus-visible,
+.sceneMore:focus-visible,
+.more:focus-visible {
   box-shadow: var(--focus-ring);
+}
+
+/* Narrow windows: a slimmer scene column, and clip names a size down. */
+@media (max-width: 1365px) {
+  .grid {
+    grid-template-columns: repeat(8, minmax(0, 1fr)) 92px;
+    gap: 6px;
+  }
+}
+@media (max-width: 1179px) {
+  .grid {
+    --pad-label-size: var(--fs-md);
+  }
 }

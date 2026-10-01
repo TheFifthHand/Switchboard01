@@ -1,8 +1,9 @@
 /**
- * A patch module drawn as a hardware block: name, short panel legend, an
- * On/Off (bypass) switch for effects and LFOs, and labelled sockets on its
- * edges — audio inputs left, outputs right, modulation inputs on the bottom
- * edge. Amber rings carry sound, teal rings carry modulation.
+ * A patch module drawn as a hardware block: its full name (an LFO also
+ * shows the depth it runs at), an On/Off (bypass) switch for effects and
+ * LFOs, and labelled sockets on its edges — audio inputs left, outputs right,
+ * modulation inputs on the bottom edge. Amber rings carry sound, teal rings
+ * carry modulation.
  */
 import { memo, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Switch, Tooltip } from '../../../ui/components';
@@ -231,13 +232,9 @@ export const ModuleBlock = memo(function ModuleBlock(props: ModuleBlockProps) {
             </span>
           </Tooltip>
         )}
-        {geom.type === 'lfo' ? (
-          <LfoDepth moduleId={geom.id} trackId={geom.trackId} />
-        ) : (
-          <span className={`${styles.legend} mono`} aria-hidden="true">
-            {def.short}
-          </span>
-        )}
+        {/* Full names only: no abbreviated panel legends ("FILT", "CHOR"), so long names like
+            "Stereo Width" or "Compressor 2" have the whole head to themselves. */}
+        {geom.type === 'lfo' && <LfoDepth moduleId={geom.id} trackId={geom.trackId} />}
         {switchInHead && bypassSwitch}
       </div>
       {sub && <div className={styles.blockSub}>{sub}</div>}

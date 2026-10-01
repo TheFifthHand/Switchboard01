@@ -21,7 +21,8 @@ import { DRUM_SLOTS, KITS } from '../../src/content/catalog';
 
 const SR = 48000;
 const KIT_IDS = KITS.map((k) => k.id);
-const STANDARD = KIT_IDS.filter((id) => id !== 'hand-percussion');
+/** Kits with the standard drum-kit layout (the rest are percussion sets). */
+const STANDARD = KITS.filter((k) => k.family === 'kit').map((k) => k.id);
 const db = (x: number) => 20 * Math.log10(Math.max(x, 1e-12));
 
 /** Default-decay renders of every kit, shared by the tests below. */
@@ -118,13 +119,17 @@ describe('kit recipes and names', () => {
       expect(groups.some((g) => g.includes(4) && g.includes(5))).toBe(true);
       for (const g of groups) for (const slot of g) expect(n[slot]).toMatch(/Hat$/);
     }
-    // Slot 6 is a pedal hat only in Tight Circuit; elsewhere a shaker that leaves the hats alone.
-    expect(getKitVoiceNames('tight-circuit')[6]).toBe('Pedal Hat');
-    expect(getKitRecipe('tight-circuit').chokeGroups).toEqual([[4, 5, 6]]);
-    for (const id of ['round-machine', 'dust-tape', 'bright-steel']) {
-      expect(getKitVoiceNames(id)[6]).toBe('Shaker');
-      expect(getKitRecipe(id).chokeGroups).toEqual([[4, 5]]);
+    // Slot 6 chokes the hats exactly where it is a pedal hat; elsewhere it is a shaker-like sound that leaves them alone.
+    for (const id of STANDARD) {
+      const pedal = getKitVoiceNames(id)[6] === 'Pedal Hat';
+      expect(getKitRecipe(id).chokeGroups, id).toEqual(pedal ? [[4, 5, 6]] : [[4, 5]]);
     }
+    expect(getKitVoiceNames('tight-circuit')[6]).toBe('Pedal Hat');
+    for (const id of ['round-machine', 'dust-tape', 'bright-steel']) expect(getKitVoiceNames(id)[6]).toBe('Shaker');
+    for (const id of ['punch-909', 'trap-night', 'studio-acoustic', 'electro-wire']) expect(getKitVoiceNames(id)[6], id).toBe('Pedal Hat');
+    // Percussion sets: only strokes of one drum cut each other (the djembe's bass, tone and slap).
+    expect(getKitRecipe('afro-latin').chokeGroups).toEqual([[0, 1, 2]]);
+    expect(getKitVoiceNames('afro-latin').slice(0, 3)).toEqual(['Djembe Bass', 'Djembe Tone', 'Djembe Slap']);
     const hp = getKitVoiceNames('hand-percussion');
     expect(hp.slice(4, 7)).toEqual(['Shaker', 'Tambourine', 'Cabasa']);
     expect(hp).toContain('Low Conga');

@@ -8,6 +8,9 @@
  * - The inner engine is created on the first `update()` (the module
  *   constructor only receives params, the engine needs the full Instrument)
  *   and swapped with a short crossfade when the instrument kind changes.
+ * - Pitch bend (MIDI wheel): a ConstantSource in cents, created on first
+ *   use and glided to each new value, added to the engine's pitchMod bus so
+ *   playing and future notes bend together. Drum kits are not bent.
  */
 import type { Id, Instrument, ParamValues } from '../../project/types';
 import { MODULE_DEFS } from '../../project/modules';
@@ -16,6 +19,8 @@ import type { ModuleEnv, ModuleNode } from './types';
 
 /** Crossfade when the instrument kind changes. */
 export const INSTRUMENT_SWAP_FADE = 0.03;
+/** Glide time constant of pitch-bend changes (MIDI wheel steps become smooth). */
+export const BEND_TAU = 0.004;
 
 function modAmount(port: string): number {
   return MODULE_DEFS.instrument.ports.find((p) => p.id === port && p.direction === 'in')?.modRange?.amount ?? 0;
@@ -36,6 +41,8 @@ export class InstrumentModule implements ModuleNode {
   private current: EngineSlot | null = null;
   private readonly retiring = new Set<EngineSlot>();
   private instrument: Instrument | null = null;
+  private bend: ConstantSourceNode | null = null;
+  private bendCents = 0;
   private disposed = false;
 
   constructor(
@@ -105,6 +112,7 @@ export class InstrumentModule implements ModuleNode {
     gain.connect(this.out);
     this.pitchIn.connect(engine.pitchMod);
     this.cutoffIn.connect(engine.cutoffMod);
+    if (this.bend && engine.kind !== 'drums') this.bend.connect(engine.pitchMod);
     engine.update(instrument, time);
     const hadPrevious = this.current !== null;
     this.retire(time);
@@ -148,6 +156,13 @@ export class InstrumentModule implements ModuleNode {
     } catch {
       // Not connected.
     }
+    if (this.bend) {
+      try {
+        this.bend.disconnect(engine.pitchMod);
+      } catch {
+        // Not connected (drum kit).
+      }
+    }
     try {
       this.cutoffIn.disconnect(engine.cutoffMod);
     } catch {
@@ -168,6 +183,28 @@ export class InstrumentModule implements ModuleNode {
       // Already disconnected by the engine's own dispose.
     }
     slot.gain.disconnect();
+  }
+
+  /** Current pitch bend in cents (the target of the glide). */
+  get pitchBend(): number {
+    return this.bendCents;
+  }
+
+  /** Bend playing and future notes to `cents` from `time` (glided). Drum kits ignore it. */
+  setPitchBend(cents: number, time: number): void {
+    if (this.disposed || !Number.isFinite(cents)) return;
+    const ctx = this.env.ctx;
+    const t = Math.max(Number.isFinite(time) ? time : 0, ctx.currentTime);
+    if (!this.bend) {
+      if (cents === 0) return;
+      this.bend = new ConstantSourceNode(ctx, { offset: 0 });
+      this.bend.start();
+      const engine = this.current?.engine;
+      if (engine && engine.kind !== 'drums') this.bend.connect(engine.pitchMod);
+    }
+    this.bendCents = cents;
+    this.bend.offset.cancelScheduledValues(t);
+    this.bend.offset.setTargetAtTime(cents, t, BEND_TAU);
   }
 
   trigger(note: NoteTrigger): VoiceHandle | null {
@@ -218,6 +255,15 @@ export class InstrumentModule implements ModuleNode {
     }
     for (const s of this.retiring) this.destroySlot(s);
     this.retiring.clear();
+    if (this.bend) {
+      try {
+        this.bend.stop();
+      } catch {
+        // Already stopped.
+      }
+      this.bend.disconnect();
+      this.bend = null;
+    }
     this.out.disconnect();
     this.pitchIn.disconnect();
     this.cutoffIn.disconnect();

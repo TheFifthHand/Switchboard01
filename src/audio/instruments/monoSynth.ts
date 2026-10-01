@@ -2,9 +2,18 @@
  * Mono bass synth (InstrumentEngine for `bass` instruments).
  *
  * Per note:
- *   OscillatorNode (wave) ─────────────► oscGain ─┐
- *   square sub-oscillator (-1200 ct) ──► subGain ─┴► low-pass ► low-pass (24 dB/oct)
+ *   OscillatorNode (wave) [+ two Unison copies] ─► oscGain ─┐
+ *   sub-oscillator (Sub Shape, -1200 ct) ─────────► subGain ─┴► low-pass ► low-pass (24 dB/oct)
  *   ► pre-gain ► WaveShaper tanh (2x oversampled) ► level compensation ► VCA ► output (level dB)
+ *
+ *   FM (FM Amount > 0): sine modulator at FM Ratio × the note (it glides with
+ *   the note) ─► depth ─► envelope ─► main oscillator frequency (not the sub).
+ *   Pitch Sweep ≠ 0: a decaying offset on every oscillator's detune (a legato
+ *   note does not sweep, as it does not restrike).
+ *   Unison Detune > 0: two copies of the main wave at ± the detune, starting
+ *   at other phases; the three share the main oscillator's level.
+ *   Every one of these is neutral by default and builds no nodes then, so a
+ *   sound that does not use them renders exactly as before they existed.
  *
  * - Filter envelope: detune of both filter stages jumps to envAmount x
  *   (up to +6000 ct = 5 octaves, velocity-scaled) and decays toward 0 over
@@ -31,6 +40,7 @@ import { BASS_PARAMS, dbToGain, readParam } from '../../project/params';
 import type { BassInstrument, Instrument } from '../../project/types';
 import type { InstrumentContext, InstrumentEngine, NoteTrigger, VoiceHandle } from '../contracts';
 import { PARAM_SMOOTHING } from '../modules/types';
+import { FM_SUSTAIN, UNISON_PHASES, fmDeviationHz, fmRatioCents, phasedOscillator } from './synthParts';
 import {
   BaseVoice,
   GainEnvelope,
@@ -54,8 +64,9 @@ const MONO_PEAK = 0.6;
 const OSC_LEVEL = 0.6;
 const WAVE_TYPES: readonly OscillatorType[] = ['sawtooth', 'square', 'triangle', 'sine'];
 const WAVE_GAIN: readonly number[] = [1, 0.72, 1.2, 1];
-/** Sub-oscillator (square) level at sub = 100%. */
+/** Sub-oscillator level at sub = 100%: square, and sine (RMS-matched to the square). */
 const SUB_LEVEL = 0.42;
+const SUB_SINE_LEVEL = SUB_LEVEL * Math.SQRT2;
 /** Filter envelope depth at envAmount = 100%: +5 octaves. */
 const ENV_MAX_CENTS = 6000;
 /** A legato note continues the previous envelope only if it is above this fraction of the new peak. */
@@ -112,6 +123,13 @@ interface BassSettings {
   wave: number;
   octave: number;
   sub: number;
+  subWave: number;
+  unisonDetune: number;
+  fmAmount: number;
+  fmRatio: number;
+  fmDecay: number;
+  pitchEnv: number;
+  pitchDecay: number;
   cutoff: number;
   resonance: number;
   envAmount: number;
@@ -133,6 +151,13 @@ function readSettings(instrument: BassInstrument, sampleRate: number): BassSetti
     wave: r('wave'),
     octave: r('octave'),
     sub: r('sub'),
+    subWave: r('subWave'),
+    unisonDetune: r('unisonDetune'),
+    fmAmount: r('fmAmount'),
+    fmRatio: r('fmRatio'),
+    fmDecay: r('fmDecay'),
+    pitchEnv: r('pitchEnv'),
+    pitchDecay: r('pitchDecay'),
     cutoff: Math.min(r('cutoff'), sampleRate * 0.45),
     resonance: r('resonance'),
     envAmount: r('envAmount'),
@@ -173,6 +198,15 @@ function frac(x: number): number {
   return x - Math.floor(x);
 }
 
+function subLevel(s: BassSettings): number {
+  return s.sub * (s.subWave === 1 ? SUB_SINE_LEVEL : SUB_LEVEL);
+}
+
+/** Level of each main oscillator: the Unison copies share the single oscillator's level. */
+function oscLevel(s: BassSettings, copies: number): number {
+  return (OSC_LEVEL * (WAVE_GAIN[s.wave] ?? 1)) / Math.sqrt(1 + copies);
+}
+
 class MonoVoice extends BaseVoice {
   /** Oscillator base frequency (both oscillators; the sub is detuned -1200 ct). */
   readonly freq: ParamTimeline;
@@ -187,6 +221,9 @@ class MonoVoice extends BaseVoice {
   private readonly subGain: GainNode;
   private readonly pre: GainNode;
   private readonly post: GainNode;
+  /** Unison copies of the main oscillator and their detune direction (-1 / +1). */
+  private readonly copies: { osc: OscillatorNode; sign: number }[] = [];
+  private readonly fm: { mod: OscillatorNode; depth: GainNode; noteHz: number; velocityScale: number } | null = null;
 
   constructor(ctx: BaseAudioContext, init: MonoVoiceInit, hooks: VoiceHooks) {
     const s = init.settings;
@@ -201,9 +238,15 @@ class MonoVoice extends BaseVoice {
 
     const wave = WAVE_TYPES[s.wave] ?? 'sawtooth';
     const osc = new OscillatorNode(ctx, { type: wave, frequency: init.fromHz });
-    const sub = new OscillatorNode(ctx, { type: 'square', frequency: init.fromHz, detune: -1200 });
-    const oscGain = new GainNode(ctx, { gain: OSC_LEVEL * (WAVE_GAIN[s.wave] ?? 1) });
-    this.subGain = new GainNode(ctx, { gain: s.sub * SUB_LEVEL });
+    const sub = new OscillatorNode(ctx, { type: s.subWave === 1 ? 'sine' : 'square', frequency: init.fromHz, detune: -1200 });
+    if (s.unisonDetune > 0) {
+      for (const sign of [-1, 1]) {
+        const phase = UNISON_PHASES[sign < 0 ? 1 : 2];
+        this.copies.push({ osc: phasedOscillator(ctx, s.wave, phase, init.fromHz, sign * s.unisonDetune), sign });
+      }
+    }
+    const oscGain = new GainNode(ctx, { gain: oscLevel(s, this.copies.length) });
+    this.subGain = new GainNode(ctx, { gain: subLevel(s) });
     const [q1, q2] = bassFilterQ(s.resonance);
     this.f1 = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: s.cutoff, Q: q1 });
     this.f2 = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: s.cutoff, Q: q2 });
@@ -213,16 +256,57 @@ class MonoVoice extends BaseVoice {
     this.post = new GainNode(ctx, { gain: driveCompensation(k) });
 
     osc.connect(oscGain).connect(this.f1);
+    if (this.copies.length) {
+      // The copies meet in their own bus first, so oscGain sums exactly two inputs (in any order, the same result).
+      const copyBus = new GainNode(ctx, { gain: 1 });
+      for (const c of this.copies) c.osc.connect(copyBus);
+      copyBus.connect(oscGain);
+      this.addNodes(copyBus);
+    }
     sub.connect(this.subGain).connect(this.f1);
     this.f1.connect(this.f2).connect(this.pre).connect(shaper).connect(this.post).connect(vca).connect(init.destination);
     this.addNodes(oscGain, this.subGain, this.f1, this.f2, this.pre, shaper, this.post, vca);
-    this.link(init.pitchMod, osc.detune);
-    this.link(init.pitchMod, sub.detune);
+    const mains = [osc, ...this.copies.map((c) => c.osc)];
+    const oscillators = [osc, sub, ...this.copies.map((c) => c.osc)];
+
+    // FM: a sine modulator at FM Ratio x the note bends the main oscillator(s); a legato note does not restrike it.
+    if (s.fmAmount > 0) {
+      const mod = new OscillatorNode(ctx, { type: 'sine', frequency: init.fromHz, detune: fmRatioCents(s.fmRatio) });
+      const velocityScale = velocityAmount(init.velocity, s.velocity);
+      const depth = new GainNode(ctx, { gain: fmDeviationHz(s.fmAmount, s.fmRatio, init.toHz, ctx.sampleRate) * velocityScale });
+      const env = new GainNode(ctx, { gain: 0 });
+      mod.connect(depth).connect(env);
+      for (const m of mains) env.connect(m.frequency);
+      this.addNodes(depth, env);
+      const fmEnv = new ParamTimeline([env.gain], 0);
+      if (init.legato) fmEnv.set(T, FM_SUSTAIN);
+      else {
+        fmEnv.set(T, 1);
+        fmEnv.target(T, FM_SUSTAIN, s.fmDecay / 3);
+      }
+      this.fm = { mod, depth, noteHz: init.toHz, velocityScale };
+      oscillators.push(mod);
+    }
+
+    // Pitch sweep (not on a legato note: it continues rather than restrikes).
+    let sweep: ConstantSourceNode | null = null;
+    if (s.pitchEnv !== 0 && !init.legato) {
+      sweep = new ConstantSourceNode(ctx, { offset: 0 });
+      const env = new ParamTimeline([sweep.offset], 0);
+      env.set(T, s.pitchEnv * 100);
+      env.target(T, 0, s.pitchDecay / 3);
+      for (const o of oscillators) sweep.connect(o.detune);
+    }
+
+    for (const o of oscillators) this.link(init.pitchMod, o.detune);
     this.link(init.cutoffMod, this.f1.detune);
     this.link(init.cutoffMod, this.f2.detune);
 
     // Pitch: fromHz (held through any silent pre-roll), then glide to toHz.
-    this.freq = new ParamTimeline([osc.frequency, sub.frequency], init.fromHz);
+    this.freq = new ParamTimeline(
+      oscillators.map((o) => o.frequency),
+      init.fromHz,
+    );
     this.freq.set(preStart, init.fromHz);
     if (init.fromHz !== init.toHz) {
       if (s.glide > 0) this.freq.rampExp(T, T + s.glide, init.toHz);
@@ -265,6 +349,14 @@ class MonoVoice extends BaseVoice {
     sub.start(this.subStart);
     this.addSource(osc);
     this.addSource(sub);
+    for (const o of oscillators.slice(2)) {
+      o.start(this.oscStart);
+      this.addSource(o);
+    }
+    if (sweep) {
+      sweep.start(T);
+      this.addSource(sweep);
+    }
   }
 
   /** Oscillator phase (in cycles) at `t`, from the scheduled frequency; pitch modulation is not included. */
@@ -285,9 +377,14 @@ class MonoVoice extends BaseVoice {
     this.f2.frequency.setTargetAtTime(s.cutoff, time, PARAM_SMOOTHING);
     this.f1.Q.setTargetAtTime(q1, time, PARAM_SMOOTHING);
     this.f2.Q.setTargetAtTime(q2, time, PARAM_SMOOTHING);
-    this.subGain.gain.setTargetAtTime(s.sub * SUB_LEVEL, time, PARAM_SMOOTHING);
+    this.subGain.gain.setTargetAtTime(subLevel(s), time, PARAM_SMOOTHING);
     this.pre.gain.setTargetAtTime(k / DRIVE_RANGE, time, PARAM_SMOOTHING);
     this.post.gain.setTargetAtTime(driveCompensation(k), time, PARAM_SMOOTHING);
+    for (const c of this.copies) c.osc.detune.setTargetAtTime(c.sign * s.unisonDetune, time, PARAM_SMOOTHING);
+    if (this.fm) {
+      this.fm.mod.detune.setTargetAtTime(fmRatioCents(s.fmRatio), time, PARAM_SMOOTHING);
+      this.fm.depth.gain.setTargetAtTime(fmDeviationHz(s.fmAmount, s.fmRatio, this.fm.noteHz, this.ctx.sampleRate) * this.fm.velocityScale, time, PARAM_SMOOTHING);
+    }
   }
 }
 
@@ -332,7 +429,10 @@ export class MonoSynthEngine implements InstrumentEngine {
       next.cutoff !== prev.cutoff ||
       next.resonance !== prev.resonance ||
       next.drive !== prev.drive ||
-      next.sub !== prev.sub
+      next.sub !== prev.sub ||
+      next.unisonDetune !== prev.unisonDetune ||
+      next.fmAmount !== prev.fmAmount ||
+      next.fmRatio !== prev.fmRatio
     ) {
       for (const v of this.voices) v.applyLive(next, t);
     }

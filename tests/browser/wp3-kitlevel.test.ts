@@ -15,7 +15,7 @@ import { BLANK } from '../../src/content/starters/blank';
 import { HOUSE } from '../../src/content/starters/house';
 import type { Project } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
-import { selectModule, selectTrack, setCablesOpen } from '../../src/state/uiStore';
+import { selectModule, selectTrack, setCablesOpen, setUiMode } from '../../src/state/uiStore';
 import { cleanup, fire, key, mount } from './ui-harness';
 
 const project = (): Project => session.store.getState();
@@ -27,6 +27,8 @@ function setup(p: Project, trackId: string) {
     selectTrack(trackId);
     setCablesOpen(false);
     selectModule(null);
+    // The kit-wide knobs live in the instrument panel, shown with every setting (Advanced).
+    setUiMode('advanced');
   });
   const m = mount(h(TipsProvider, { enabled: false }, h(ShapeView)), { width: 1366 });
   m.container.style.height = '720px';

@@ -78,9 +78,11 @@ test('keyboard only: Jump In, reach every essential control, play a note, change
   const tour = await tabTour(page, 150);
   const names = tour.map((t) => t.name);
   const reach = (re: RegExp) => expect(names.some((n) => re.test(n)), `${re} not reachable by Tab. Seen: ${names.join(' / ')}`).toBe(true);
-  reach(/^Play$|^Stop$/);
+  reach(/^Play$|^Pause$/);
+  reach(/^Stop$/);
   reach(/Tempo|BPM/);
-  reach(/Swing/);
+  // Swing is an Advanced control; the Simple · Advanced switch is on the strip at 1366 px.
+  reach(/^Simple$|^Advanced$/);
   reach(/Notes/);
   reach(/Performance/);
   reach(/Master/);

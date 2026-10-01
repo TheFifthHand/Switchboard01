@@ -1,0 +1,72 @@
+/* Floating, grouped menu: groups flow into as many columns as fit (three at full width). */
+.menu {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+  align-content: start;
+  gap: 4px 10px;
+  padding: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--r-lg);
+  background: var(--shell-hi);
+  box-shadow:
+    0 0 0 1px rgba(20, 24, 28, 0.12),
+    var(--shadow-float);
+  scrollbar-width: thin;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-bottom: 6px;
+}
+
+.groupTitle {
+  padding: 4px 10px 4px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  line-height: 16px;
+  text-transform: uppercase;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 44px;
+  margin: 0;
+  padding: 6px 10px 7px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  text-align: left;
+}
+
+.item:hover {
+  background: var(--teal-wash);
+}
+
+.item:focus-visible {
+  background: var(--teal-wash);
+  box-shadow: inset 0 0 0 2px var(--teal);
+  outline: none;
+}
+
+.itemLabel {
+  color: var(--ink);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 17px;
+}
+
+.itemDesc {
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  line-height: 15px;
+}

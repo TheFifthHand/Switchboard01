@@ -93,7 +93,7 @@ describe('Quick guide', () => {
 
     // Step 1: Play / Stop.
     expect(callout().dataset.guideStep).toBe('play');
-    expect(callout().getAttribute('aria-label')).toBe('Quick guide, step 1 of 3: Play and stop');
+    expect(callout().getAttribute('aria-label')).toBe('Quick guide, step 1 of 3: Play and pause');
     expect(callout().textContent).toContain('1 of 3');
     // The text follows the transport: nothing armed yet, then playing.
     expect(callout().textContent).toContain('Tap a pad to begin');
@@ -261,7 +261,8 @@ describe('Quick guide', () => {
       const m = document.getElementById('macros')!.getBoundingClientRect();
       expect(m.left).toBeGreaterThanOrEqual(0);
       expect(m.right).toBeLessThanOrEqual(window.innerWidth);
-      // The ring follows the control to its new place, and nothing says it is missing.
+      // The ring follows the control to its new place (after the scroll settles), and nothing says it is missing.
+      await settle();
       const ring = document.querySelector<HTMLElement>('[data-guide-ring="sound"]')!.getBoundingClientRect();
       expect(Math.abs(ring.left - (m.left - 5))).toBeLessThan(2);
       expect(callout().textContent).not.toContain('Play view');

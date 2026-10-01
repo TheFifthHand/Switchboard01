@@ -1,143 +1,36 @@
 /**
- * EFFECTS column: the selected part's insert chain, its channel strip, the
- * shared returns and its LFOs.
+ * EFFECTS column (Advanced): the selected part's insert chain with every
+ * setting, its channel strip, the shared effects and its LFOs.
  *
  * The rack edits the same `project.patch` as the cable panel (through the
  * patch commands), so every change here shows up there immediately and vice
- * versa. When the part's routing is not a simple chain the rack lists the
- * part's effects without reordering and points to the cable panel.
+ * versa. Effects are reordered by dragging a card's grip or with its arrow
+ * buttons (the keyboard alternative); each move is one undo step. When the
+ * part's routing is not a simple chain the rack lists the part's effects
+ * without reordering and points to the cable panel. While a performance take
+ * records, routing edits are locked and the rack says so; knobs keep working.
  */
-import { memo, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Button, Icon, IconButton, Notice, Panel, Switch, Tooltip } from '../../../ui/components';
-import { DELAY_ID, MASTER_ID, REVERB_ID, moduleId as mid } from '../../../project/factory';
-import { connectionKind, findModule, inputPortDef, trackChain } from '../../../project/graph';
-import { INSERTABLE_EFFECTS, MODULE_DEFS, PATCH_LIMITS } from '../../../project/modules';
+import { memo, useCallback, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
+import { Button, Icon, IconButton, Panel, Switch, Tooltip } from '../../../ui/components';
+import { DELAY_ID, REVERB_ID, moduleId as mid } from '../../../project/factory';
+import { findModule, inputPortDef } from '../../../project/graph';
+import { MODULE_DEFS, PATCH_LIMITS } from '../../../project/modules';
 import { MODULE_PARAMS } from '../../../project/params';
-import type { Id, ModuleType, Patch } from '../../../project/types';
+import type { Id, ModuleType } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { shallowEqual } from '../../../state/store';
 import { selectModule, setCablesOpen } from '../../../state/uiStore';
 import { session, useProject, useUi } from '../../instance';
 import { notify } from '../../runtime';
-import { samePlan, type RepairPlan } from '../cables/model';
-import { repairCableName, restoreConnection as restoreFor, restorePlanFor } from '../cables/restore';
+import { AddEffectMenu } from './AddEffectMenu';
+import { RACK_ROWS, rackRows } from './effectCatalog';
 import { ParamKnob } from './ParamKnob';
 import { moduleName, sameItems } from './paramState';
+import { FlowLine, LockNotice, PathWarning, focusLater, onAudiblePath, useEditLock, usePartEffects } from './shared';
+import { useEffectDrag, type EffectDragView } from './useEffectDrag';
 import styles from './EffectsRack.module.css';
 
-const focusLater = (id: string, fallback?: string) =>
-  requestAnimationFrame(() => {
-    const el = document.getElementById(id) as HTMLButtonElement | null;
-    if (el && !el.disabled) el.focus();
-    else if (fallback) (document.getElementById(fallback) as HTMLElement | null)?.focus();
-  });
-
-/* ------------------------------------------------------------------ */
-/* Add effect menu                                                     */
-/* ------------------------------------------------------------------ */
-
-function AddEffectMenu(props: { trackId: Id; disabled: boolean; disabledReason?: string }) {
-  const { trackId, disabled, disabledReason } = props;
-  const [open, setOpen] = useState(false);
-  const menuId = useId();
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
-    const onDown = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (menuRef.current?.contains(t) || buttonRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    document.addEventListener('pointerdown', onDown, true);
-    return () => document.removeEventListener('pointerdown', onDown, true);
-  }, [open]);
-
-  const close = (refocus: boolean) => {
-    setOpen(false);
-    if (refocus) buttonRef.current?.focus();
-  };
-
-  const add = (type: ModuleType) => {
-    close(true);
-    const r = cmd.insertEffect(session.store, trackId, type);
-    if (session.accepted(r) && r.moduleId) {
-      selectModule(r.moduleId);
-      const newId = r.moduleId;
-      requestAnimationFrame(() => document.getElementById(`rack-card-${newId}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
-    }
-  };
-
-  const onMenuKey = (e: KeyboardEvent<HTMLDivElement>) => {
-    const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
-    const i = items.indexOf(document.activeElement as HTMLButtonElement);
-    let next = -1;
-    switch (e.key) {
-      case 'ArrowDown':
-        next = (i + 1) % items.length;
-        break;
-      case 'ArrowUp':
-        next = (i - 1 + items.length) % items.length;
-        break;
-      case 'Home':
-        next = 0;
-        break;
-      case 'End':
-        next = items.length - 1;
-        break;
-      case 'Escape':
-        e.preventDefault();
-        e.stopPropagation();
-        close(true);
-        return;
-      case 'Tab':
-        close(false);
-        return;
-      default:
-        return;
-    }
-    e.preventDefault();
-    items[next]?.focus();
-  };
-
-  return (
-    <div className={styles.addWrap}>
-      <Button
-        ref={buttonRef}
-        size="sm"
-        icon="plus"
-        iconRight="chevronDown"
-        disabled={disabled}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        onClick={() => setOpen((o) => !o)}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowDown' && !open) {
-            e.preventDefault();
-            setOpen(true);
-          }
-        }}
-        tip={disabled ? disabledReason : 'Add an effect at the end of this part’s chain, just before its channel.'}
-        detail={`Up to ${PATCH_LIMITS.maxEffectsPerTrack} effects per part.`}
-      >
-        Add effect
-      </Button>
-      {open && (
-        <div ref={menuRef} id={menuId} className={styles.menu} role="menu" aria-label="Add effect" onKeyDown={onMenuKey}>
-          {INSERTABLE_EFFECTS.map((type) => (
-            <button key={type} type="button" role="menuitem" tabIndex={-1} className={styles.menuItem} onClick={() => add(type)}>
-              <span className={styles.menuLabel}>{MODULE_DEFS[type].label}</span>
-              <span className={styles.menuDesc}>{MODULE_DEFS[type].description}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+const ADD_ID = 'shape-add-effect';
 
 /* ------------------------------------------------------------------ */
 /* Effect cards                                                        */
@@ -149,35 +42,43 @@ interface CardInfo {
   name: string;
 }
 
-/** True when an audio path runs from the part's instrument through `id` to the master output. */
-function onAudiblePath(patch: Patch, trackId: Id, id: Id): boolean {
-  const audio = patch.connections.filter((c) => connectionKind(patch, c) === 'audio');
-  const walk = (start: Id, forward: boolean): Set<Id> => {
-    const seen = new Set<Id>([start]);
-    const stack = [start];
-    while (stack.length) {
-      const cur = stack.pop()!;
-      for (const c of audio) {
-        const [a, b] = forward ? [c.from.module, c.to.module] : [c.to.module, c.from.module];
-        if (a === cur && !seen.has(b)) {
-          seen.add(b);
-          stack.push(b);
-        }
-      }
-    }
-    return seen;
-  };
-  return walk(mid.inst(trackId), true).has(id) && walk(MASTER_ID, false).has(id);
-}
-
 /**
  * Where a card sits: 'chain' = at `index` of a linear chain of `count` effects (movable);
  * 'custom' = the part's routing is not a simple chain; 'outside' = not part of the part's linear chain.
  */
 type CardMode = 'chain' | 'custom' | 'outside';
 
-const EffectCard = memo(function EffectCard(props: { trackId: Id; moduleId: Id; mode: CardMode; index?: number; count?: number }) {
-  const { trackId, moduleId, mode, index = 0, count = 1 } = props;
+function CardKnobs(props: { trackId: Id; moduleId: Id; type: ModuleType }) {
+  const { trackId, moduleId, type } = props;
+  const rows = rackRows(type);
+  const fixed = RACK_ROWS[type] !== undefined;
+  return (
+    <div className={styles.cardKnobs}>
+      {rows.map((row, i) => (
+        <div key={i} className={styles.knobRow} data-fixed={fixed || undefined} style={fixed ? ({ '--cols': Math.max(...rows.map((r) => r.length)) } as CSSProperties) : undefined}>
+          {row.map((spec) => (
+            <ParamKnob key={spec.id} moduleId={moduleId} param={spec.id} spec={spec} ownerTrackId={trackId} size="sm" />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+interface EffectCardProps {
+  trackId: Id;
+  moduleId: Id;
+  mode: CardMode;
+  index?: number;
+  count?: number;
+  /** Card to focus after this one is removed. */
+  next?: Id | null;
+  locked: boolean;
+  onGripDown?(e: PointerEvent<HTMLElement>, id: Id): void;
+}
+
+const EffectCard = memo(function EffectCard(props: EffectCardProps) {
+  const { trackId, moduleId, mode, index = 0, count = 1, next = null, locked, onGripDown } = props;
   const inChain = mode === 'chain';
   const info = useProject<CardInfo | null>((p) => {
     const m = findModule(p.patch, moduleId);
@@ -189,6 +90,7 @@ const EffectCard = memo(function EffectCard(props: { trackId: Id; moduleId: Id; 
   const { name, bypass } = info;
   const leftId = `rack-${moduleId}-left`;
   const rightId = `rack-${moduleId}-right`;
+  const nameId = `rack-${moduleId}-name`;
 
   const move = (dir: -1 | 1) => {
     // The card's DOM moves (and a button at the end of the chain becomes disabled), which drops focus
@@ -203,15 +105,27 @@ const EffectCard = memo(function EffectCard(props: { trackId: Id; moduleId: Id; 
     if (!session.accepted(r)) return;
     if (selected) selectModule(null);
     notify(silent ? `Removed ${name}.` : `Removed ${name}. The sound now flows straight past it.`, 'info', 'undo');
+    focusLater(next ? `rack-${next}-name` : ADD_ID, ADD_ID);
   };
 
   const status = silent ? 'not heard: no path from the instrument to the output' : mode === 'outside' ? 'patched outside the chain' : null;
   const label = [name, inChain ? `effect ${index + 1} of ${count}` : null, status, bypass ? 'bypassed' : null].filter(Boolean).join(', ');
+  const canDrag = inChain && count > 1 && onGripDown;
   return (
-    <article id={`rack-card-${moduleId}`} className={styles.card} data-bypassed={bypass || undefined} data-selected={selected || undefined} aria-label={label}>
+    <article id={`rack-card-${moduleId}`} className={styles.card} data-type={info.type} data-bypassed={bypass || undefined} data-selected={selected || undefined} aria-label={label}>
       <header className={styles.cardHead}>
+        {canDrag && (
+          <Tooltip
+            name="Drag to reorder"
+            tip={locked ? 'Effects cannot be moved while a performance records.' : `Drag ${name} to a new place in the chain. The arrow buttons below do the same from the keyboard.`}
+          >
+            <span className={styles.grip} data-locked={locked || undefined} aria-hidden="true" data-grip={moduleId} onPointerDown={(e) => onGripDown(e, moduleId)}>
+              <Icon name="drag" size={16} />
+            </span>
+          </Tooltip>
+        )}
         <Tooltip tip={selected ? `${name} is selected: it is highlighted in the cable panel too.` : `Select ${name}: it is highlighted in the cable panel too.`}>
-          <button type="button" className={styles.cardName} aria-pressed={selected} onClick={() => selectModule(selected ? null : moduleId)}>
+          <button id={nameId} type="button" className={styles.cardName} aria-pressed={selected} onClick={() => selectModule(selected ? null : moduleId)}>
             {inChain && <span className={`${styles.slot} mono`}>{index + 1}</span>}
             <span className={styles.cardTitle}>{name}</span>
           </button>
@@ -226,11 +140,7 @@ const EffectCard = memo(function EffectCard(props: { trackId: Id; moduleId: Id; 
           </span>
         ) : null}
       </header>
-      <div className={styles.cardKnobs}>
-        {MODULE_PARAMS[info.type].map((spec) => (
-          <ParamKnob key={spec.id} moduleId={moduleId} param={spec.id} spec={spec} ownerTrackId={trackId} size="sm" />
-        ))}
-      </div>
+      <CardKnobs trackId={trackId} moduleId={moduleId} type={info.type} />
       <footer className={styles.cardFoot}>
         <Switch
           size="sm"
@@ -239,6 +149,7 @@ const EffectCard = memo(function EffectCard(props: { trackId: Id; moduleId: Id; 
           checked={!bypass}
           onText="On"
           offText="Off"
+          disabled={locked}
           tip={bypass ? `Turn ${name} back on.` : `Bypass ${name}: the sound passes through unprocessed.`}
           onChange={(on) => session.accepted(cmd.setBypass(session.store, moduleId, !on))}
         />
@@ -251,7 +162,7 @@ const EffectCard = memo(function EffectCard(props: { trackId: Id; moduleId: Id; 
                 size="sm"
                 label={`Move ${name} earlier`}
                 tip="Earlier in the chain: the sound reaches this effect sooner."
-                disabled={index === 0}
+                disabled={index === 0 || locked}
                 onClick={() => move(-1)}
               />
               <IconButton
@@ -260,17 +171,25 @@ const EffectCard = memo(function EffectCard(props: { trackId: Id; moduleId: Id; 
                 size="sm"
                 label={`Move ${name} later`}
                 tip="Later in the chain: this effect processes what the earlier ones made."
-                disabled={index === count - 1}
+                disabled={index === count - 1 || locked}
                 onClick={() => move(1)}
               />
             </>
           )}
-          <IconButton icon="trash" size="sm" variant="danger" label={`Remove ${name}`} tip="Take this effect out. The sound keeps flowing; Undo puts it back." onClick={remove} />
+          <IconButton icon="trash" size="sm" variant="danger" disabled={locked} label={`Remove ${name}`} tip="Take this effect out. The sound keeps flowing; Undo puts it back." onClick={remove} />
         </span>
       </footer>
     </article>
   );
 });
+
+/** Where a dragged card would land, relative to one cell: a bar before it, after it, or none. */
+function dropMark(drag: EffectDragView | null, effects: readonly Id[], id: Id): 'before' | 'after' | undefined {
+  if (!drag || drag.index === drag.from || id === drag.id) return undefined;
+  const others = effects.filter((e) => e !== drag.id);
+  if (drag.index < others.length) return others[drag.index] === id ? 'before' : undefined;
+  return others[others.length - 1] === id ? 'after' : undefined;
+}
 
 /* ------------------------------------------------------------------ */
 /* Channel, returns, LFOs                                              */
@@ -296,7 +215,7 @@ function ChannelRow(props: { trackId: Id }) {
   const exists = useProject((p) => !!findModule(p.patch, ch));
   if (!exists) return null;
   return (
-    <ModuleRow title="Channel" note="Level, pan, sends and pump" label="Channel strip">
+    <ModuleRow title="Channel" note="Level, pan, the amounts sent to the shared Reverb and Delay, and pump" label="Channel strip">
       {MODULE_PARAMS.channel.map((spec) => (
         <ParamKnob key={spec.id} moduleId={ch} param={spec.id} spec={spec} ownerTrackId={trackId} size="sm" />
       ))}
@@ -304,8 +223,8 @@ function ChannelRow(props: { trackId: Id }) {
   );
 }
 
-function ReturnRow(props: { trackId: Id; id: Id }) {
-  const { trackId, id } = props;
+function ReturnRow(props: { trackId: Id; id: Id; locked: boolean }) {
+  const { trackId, id, locked } = props;
   const info = useProject<CardInfo | null>((p) => {
     const m = findModule(p.patch, id);
     return m ? { type: m.type, bypass: m.bypass, name: MODULE_DEFS[m.type].label } : null;
@@ -315,7 +234,13 @@ function ReturnRow(props: { trackId: Id; id: Id }) {
     return (
       <div className={styles.missing}>
         The shared {label} is not in the patch.{' '}
-        <Button size="sm" variant="ghost" onClick={() => session.accepted(cmd.restoreTrackPatch(session.store, trackId))} tip="Put this part’s default routing back, including the shared returns.">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={locked}
+          onClick={() => session.accepted(cmd.restoreTrackPatch(session.store, trackId))}
+          tip="Put this part’s default routing back, including the shared effects."
+        >
           Restore routing
         </Button>
       </div>
@@ -325,7 +250,7 @@ function ReturnRow(props: { trackId: Id; id: Id }) {
   return (
     <ModuleRow
       title={name}
-      note={id === REVERB_ID ? 'Shared room for every part' : 'Shared echo, locked to tempo'}
+      note={id === REVERB_ID ? 'One room for every part. Reverb Amount sets how much of this part goes in.' : 'One echo for every part, locked to the tempo. Echo Amount sets how much goes in.'}
       label={`Shared ${name} return`}
       bypassed={bypass}
       tools={
@@ -334,6 +259,7 @@ function ReturnRow(props: { trackId: Id; id: Id }) {
           label={`Shared ${name}`}
           hideLabel
           checked={!bypass}
+          disabled={locked}
           tip={bypass ? `Turn the shared ${name} back on (for every part).` : `Turn the shared ${name} off for every part: they are heard without it.`}
           onChange={(on) => session.accepted(cmd.setBypass(session.store, id, !on))}
         />
@@ -346,8 +272,8 @@ function ReturnRow(props: { trackId: Id; id: Id }) {
   );
 }
 
-function LfoRow(props: { trackId: Id; id: Id }) {
-  const { trackId, id } = props;
+function LfoRow(props: { trackId: Id; id: Id; locked: boolean }) {
+  const { trackId, id, locked } = props;
   const info = useProject<CardInfo | null>((p) => {
     const m = findModule(p.patch, id);
     return m ? { type: m.type, bypass: m.bypass, name: moduleName(p, m, trackId) } : null;
@@ -368,7 +294,10 @@ function LfoRow(props: { trackId: Id; id: Id }) {
   const extra = id !== mid.lfo(trackId);
   const remove = () => {
     const r = cmd.removeEffect(session.store, id);
-    if (session.accepted(r)) notify(`Removed ${name} and its cables.`, 'info', 'undo');
+    if (session.accepted(r)) {
+      notify(`Removed ${name} and its cables.`, 'info', 'undo');
+      focusLater('shape-add-lfo');
+    }
   };
   return (
     <ModuleRow
@@ -387,10 +316,11 @@ function LfoRow(props: { trackId: Id; id: Id }) {
             label={name}
             hideLabel
             checked={!bypass}
+            disabled={locked}
             tip={bypass ? `Turn ${name} back on.` : `Stop ${name}'s movement.`}
             onChange={(on) => session.accepted(cmd.setBypass(session.store, id, !on))}
           />
-          {extra && <IconButton icon="trash" size="sm" variant="danger" label={`Remove ${name}`} tip="Remove this LFO and its cables. Undo puts them back." onClick={remove} />}
+          {extra && <IconButton icon="trash" size="sm" variant="danger" disabled={locked} label={`Remove ${name}`} tip="Remove this LFO and its cables. Undo puts them back." onClick={remove} />}
         </>
       }
     >
@@ -401,8 +331,21 @@ function LfoRow(props: { trackId: Id; id: Id }) {
   );
 }
 
-function Lfos(props: { trackId: Id }) {
-  const { trackId } = props;
+function Section(props: { label: string; title: string; hint?: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <section className={styles.group} aria-label={props.label}>
+      <h3 className={styles.groupTitle}>
+        <span>{props.title}</span>
+        {props.action}
+      </h3>
+      {props.hint && <p className={styles.groupHint}>{props.hint}</p>}
+      {props.children}
+    </section>
+  );
+}
+
+function Lfos(props: { trackId: Id; locked: boolean }) {
+  const { trackId, locked } = props;
   const ids = useProject<Id[]>((p) => p.patch.modules.filter((m) => m.type === 'lfo' && m.trackId === trackId).map((m) => m.id), sameItems);
   const add = () => {
     const r = cmd.addLfo(session.store, trackId);
@@ -412,18 +355,30 @@ function Lfos(props: { trackId: Id }) {
     notify('Added an LFO. Drag from its Mod Out to a teal socket in the cable panel to make something move.', 'info', 'undo');
   };
   return (
-    <section className={styles.group} aria-label="Movement">
-      <h3 className={styles.groupTitle}>
-        Movement
-        <Button size="sm" variant="ghost" icon="plus" onClick={add} tip="Add another tempo-synced LFO to this part, then cable it to what should move." className={styles.groupAction}>
+    <Section
+      label="Movement"
+      title="Movement (LFOs)"
+      hint="Tempo-synced movers: cable one to a teal socket to make that setting sway with the beat."
+      action={
+        <Button
+          id="shape-add-lfo"
+          size="sm"
+          variant="ghost"
+          icon="plus"
+          disabled={locked}
+          onClick={add}
+          tip="Add another tempo-synced LFO to this part, then cable it to what should move."
+          className={styles.groupAction}
+        >
           Add LFO
         </Button>
-      </h3>
+      }
+    >
       {ids.length === 0 && <p className={styles.hint}>This part has no LFO.</p>}
       {ids.map((id) => (
-        <LfoRow key={id} trackId={trackId} id={id} />
+        <LfoRow key={id} trackId={trackId} id={id} locked={locked} />
       ))}
-    </section>
+    </Section>
   );
 }
 
@@ -431,61 +386,33 @@ function Lfos(props: { trackId: Id }) {
 /* Column                                                              */
 /* ------------------------------------------------------------------ */
 
-interface RepairInfo {
-  plan: RepairPlan;
-  cable: string;
-}
-
-const sameRepair = (a: RepairInfo | null, b: RepairInfo | null) => a === b || (!!a && !!b && samePlan(a.plan, b.plan) && a.cable === b.cable);
-
-function FlowLine(props: { trackId: Id; chain: readonly Id[] }) {
-  const { trackId, chain } = props;
-  const names = useProject<string[]>(
-    (p) => chain.map((id) => (id === mid.inst(trackId) ? 'Instrument' : id === mid.channel(trackId) ? 'Channel' : moduleName(p, findModule(p.patch, id), trackId))),
-    sameItems,
-  );
-  const off = useProject<boolean[]>((p) => chain.map((id) => findModule(p.patch, id)?.bypass ?? false), sameItems);
-  const steps = [...names.map((name, i) => ({ name, off: off[i] ?? false, end: i === 0 || i === names.length - 1 })), { name: 'Master', off: false, end: true }];
-  return (
-    <ol className={styles.flow} aria-label="Signal flow">
-      {steps.map((step, i) => (
-        <li key={i} className={styles.flowItem}>
-          {i > 0 && (
-            <span className={styles.flowArrow} aria-hidden="true">
-              →
-            </span>
-          )}
-          <span className={styles.flowChip} data-end={step.end || undefined} data-off={step.off || undefined}>
-            <span className={styles.flowName}>{step.name}</span>
-            {step.off && <span className={styles.flowOff}> off</span>}
-          </span>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
 export function EffectsRack(props: { trackId: Id; className?: string }) {
   const { trackId, className } = props;
-  const chain = useProject((p) => trackChain(p.patch, trackId), sameItems);
-  const partEffects = useProject<Id[]>((p) => p.patch.modules.filter((m) => m.trackId === trackId && MODULE_DEFS[m.type].family === 'effect').map((m) => m.id), sameItems);
-  // What Restore Connection would do (null while the part is heard), and the cable it would add.
-  const repair = useProject<RepairInfo | null>((p) => {
-    const plan = restorePlanFor(p, trackId);
-    return plan && { plan, cable: plan.kind === 'connect' ? repairCableName(p, plan, trackId) : '' };
-  }, sameRepair);
+  const { chain, effects, offPath } = usePartEffects(trackId);
+  const lock = useEditLock();
+  const locked = lock !== null;
   const linear = chain !== null;
-  const effects = linear ? chain.slice(1, -1) : partEffects;
-  // Effects of this part that its linear chain does not pass through (unpatched, or patched elsewhere with cables).
-  const offPath = linear ? partEffects.filter((id) => !chain.includes(id)) : [];
+  const full = linear && effects.length >= PATCH_LIMITS.maxEffectsPerTrack;
   const restore = () => {
     if (session.accepted(cmd.restoreTrackPatch(session.store, trackId))) notify('Restored this part’s default routing.', 'info', 'undo');
   };
-  // The same action as the cable panel's Restore Connection: one missing cable when that is enough.
-  const restoreConnection = () => {
-    const out = restoreFor(trackId);
-    if (!out.changed) return;
-    notify(out.plan.kind === 'connect' ? `Connected ${out.cable}: this part is heard again.` : 'Restored this part’s default cables, so it reaches the output again.', 'info', 'undo');
+  const names = useProject<string[]>((p) => effects.map((id) => moduleName(p, findModule(p.patch, id), trackId)), sameItems);
+  const nameOf = useCallback((id: Id) => names[effects.indexOf(id)] ?? 'the effect', [names, effects]);
+  const { drag, onGripDown } = useEffectDrag({
+    effects,
+    lock,
+    nameOf,
+    cellOf: (id) => document.querySelector<HTMLElement>(`[data-rack-cell="${CSS.escape(id)}"]`),
+    cardOf: (id) => document.getElementById(`rack-card-${id}`),
+  });
+  const addReason = locked
+    ? 'Effects cannot be added while a performance records.'
+    : !linear
+      ? 'This part has custom routing: add and place effects with the cable panel, or restore its default routing.'
+      : `This part already has ${PATCH_LIMITS.maxEffectsPerTrack} effects, the most it can hold. Remove one to add another.`;
+  const onAdded = (id: Id) => {
+    selectModule(id);
+    requestAnimationFrame(() => document.getElementById(`rack-card-${id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
   };
 
   return (
@@ -495,63 +422,73 @@ export function EffectsRack(props: { trackId: Id; className?: string }) {
       className={className}
       bodyClassName={styles.scroll}
       dense
-      actions={<AddEffectMenu trackId={trackId} disabled={!linear} disabledReason="This part has custom routing: add and place effects with the cable panel, or restore its default routing." />}
+      actions={<AddEffectMenu id={ADD_ID} trackId={trackId} disabled={!linear || full || locked} disabledReason={addReason} onAdded={onAdded} />}
     >
-      {repair && (
-        <Notice tone="warning" title="This part has no path to the output." action={{ label: 'Restore Connection', onAction: restoreConnection }}>
-          Its sound never reaches the master, so you will not hear it.{' '}
-          {repair.plan.kind === 'connect'
-            ? `Restore Connection plugs in ${repair.cable}; everything else stays as you patched it.`
-            : 'No single cable can reconnect it, so Restore Connection puts its default cables back: effects and LFOs you added to it, and its cables to other parts, are removed. Undo brings them back.'}
-        </Notice>
-      )}
-      {linear ? (
-        <FlowLine trackId={trackId} chain={chain} />
-      ) : (
-        <div className={styles.custom} role="status">
-          <Icon name="cable" size={16} className={styles.customIcon} />
-          <span>
-            <strong>Custom routing — edit it with the cables below.</strong> This part’s effects are listed here; their order is set by the cables.
-          </span>
-          <Button size="sm" variant="ghost" onClick={restore} tip="Rebuild the default chain Instrument → Drive → Filter → Channel for this part. Undo brings your cables back.">
-            Restore default
-          </Button>
-        </div>
-      )}
-      {effects.length === 0 ? (
-        <p className={styles.hint}>{linear ? 'No insert effects: the instrument goes straight to its channel. Add one above.' : 'This part has no effect modules of its own.'}</p>
-      ) : (
-        <div className={styles.cards} role="list" aria-label={linear ? 'Insert effects in signal order' : 'Effects of this part'}>
-          {effects.map((id, i) => (
-            <div key={id} role="listitem" className={styles.cardCell}>
-              <EffectCard trackId={trackId} moduleId={id} mode={linear ? 'chain' : 'custom'} index={i} count={effects.length} />
-            </div>
-          ))}
-        </div>
-      )}
-      {offPath.length > 0 && (
-        <section className={styles.group} aria-label="Outside the chain">
-          <h3 className={styles.groupTitle}>Outside the chain</h3>
-          <p className={styles.hint}>Effects of this part that are not between its instrument and channel. The cable panel shows where they are patched; one with no path to the output is not heard.</p>
-          <div className={styles.cards} role="list" aria-label="Effects outside the chain">
-            {offPath.map((id) => (
-              <div key={id} role="listitem" className={styles.cardCell}>
-                <EffectCard trackId={trackId} moduleId={id} mode="outside" />
+      <PathWarning trackId={trackId} />
+      <LockNotice lock={lock} />
+      <Section
+        label="Insert effects"
+        title="In this part’s chain"
+        hint={linear ? (effects.length > 1 ? 'The sound passes through these in order. Drag a card by its grip, or use its arrows, to reorder.' : undefined) : undefined}
+      >
+        {linear ? (
+          <FlowLine trackId={trackId} chain={chain} />
+        ) : (
+          <div className={styles.custom} role="status">
+            <Icon name="cable" size={16} className={styles.customIcon} />
+            <span>
+              <strong>Custom routing — edit it with the cables below.</strong> This part’s effects are listed here; their order is set by the cables.
+            </span>
+            <Button size="sm" variant="ghost" disabled={locked} onClick={restore} tip="Rebuild the default chain Instrument → Drive → Filter → Channel for this part. Undo brings your cables back.">
+              Restore default
+            </Button>
+          </div>
+        )}
+        {effects.length === 0 ? (
+          <p className={styles.hint}>{linear ? 'No insert effects: the instrument goes straight to its channel. Add one above.' : 'This part has no effect modules of its own.'}</p>
+        ) : (
+          <div className={styles.cards} role="list" aria-label={linear ? 'Insert effects in signal order' : 'Effects of this part'} data-dragging={drag ? true : undefined}>
+            {effects.map((id, i) => (
+              <div key={id} role="listitem" className={styles.cardCell} data-rack-cell={id} data-drop={dropMark(drag, effects, id)}>
+                <EffectCard
+                  trackId={trackId}
+                  moduleId={id}
+                  mode={linear ? 'chain' : 'custom'}
+                  index={i}
+                  count={effects.length}
+                  next={effects[i + 1] ?? effects[i - 1] ?? null}
+                  locked={locked}
+                  onGripDown={linear ? onGripDown : undefined}
+                />
               </div>
             ))}
           </div>
-        </section>
+        )}
+        {full && !locked && <p className={styles.hint}>{addReason}</p>}
+      </Section>
+      {offPath.length > 0 && (
+        <Section
+          label="Outside the chain"
+          title="Outside the chain"
+          hint="Effects of this part that are not between its instrument and channel. The cable panel shows where they are patched; one with no path to the output is not heard."
+        >
+          <div className={styles.cards} role="list" aria-label="Effects outside the chain">
+            {offPath.map((id, i) => (
+              <div key={id} role="listitem" className={styles.cardCell}>
+                <EffectCard trackId={trackId} moduleId={id} mode="outside" next={offPath[i + 1] ?? offPath[i - 1] ?? effects[0] ?? null} locked={locked} />
+              </div>
+            ))}
+          </div>
+        </Section>
       )}
-      <section className={styles.group} aria-label="Mix">
-        <h3 className={styles.groupTitle}>Mix</h3>
+      <Section label="Mix" title="Channel">
         <ChannelRow trackId={trackId} />
-      </section>
-      <section className={styles.group} aria-label="Shared returns">
-        <h3 className={styles.groupTitle}>Shared returns</h3>
-        <ReturnRow trackId={trackId} id={REVERB_ID} />
-        <ReturnRow trackId={trackId} id={DELAY_ID} />
-      </section>
-      <Lfos trackId={trackId} />
+      </Section>
+      <Section label="Shared returns" title="Shared effects" hint="Every part can send to these two. Their settings change the room and echo for all parts.">
+        <ReturnRow trackId={trackId} id={REVERB_ID} locked={locked} />
+        <ReturnRow trackId={trackId} id={DELAY_ID} locked={locked} />
+      </Section>
+      <Lfos trackId={trackId} locked={locked} />
     </Panel>
   );
 }

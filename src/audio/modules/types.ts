@@ -50,6 +50,8 @@ export interface ModuleNode {
   setTempo?(bpm: number, time: number): void;
   /** Transport started at `time` at musical `tick`: align LFO phase etc. */
   transportStarted?(time: number, tick: number, bpm: number): void;
+  /** Transport stopped at `time`: tempo-synced movement keeps running freely from its phase. */
+  transportStopped?(time: number): void;
   /** Clear internal state/tails immediately (Mute All / panic). */
   flush?(): void;
   /** Cancel automation scheduled after `time`. */

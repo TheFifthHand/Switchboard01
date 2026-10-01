@@ -14,7 +14,13 @@ import { ReverbModule } from './reverb';
 import { ChorusModule } from './chorus';
 import { PhaserModule } from './phaser';
 import { CrusherModule } from './crusher';
-import { pendingEffect } from './pending';
+import { EqModule } from './eq';
+import { CompressorModule } from './compressor';
+import { GateModule } from './gate';
+import { AutoPanModule } from './autopan';
+import { WidenerModule } from './widener';
+import { FlangerModule } from './flanger';
+import { TapeModule } from './tape';
 
 export const MODULE_CONSTRUCTORS: Readonly<Record<ModuleType, ModuleConstructor>> = {
   instrument: InstrumentModule,
@@ -26,14 +32,13 @@ export const MODULE_CONSTRUCTORS: Readonly<Record<ModuleType, ModuleConstructor>
   chorus: ChorusModule,
   phaser: PhaserModule,
   crusher: CrusherModule,
-  // TEMPORARY until the wave-1 studio-engine work implements them (see pending.ts).
-  eq: pendingEffect('eq'),
-  compressor: pendingEffect('compressor'),
-  gate: pendingEffect('gate'),
-  autopan: pendingEffect('autopan'),
-  widener: pendingEffect('widener'),
-  flanger: pendingEffect('flanger'),
-  tape: pendingEffect('tape'),
+  eq: EqModule,
+  compressor: CompressorModule,
+  gate: GateModule,
+  autopan: AutoPanModule,
+  widener: WidenerModule,
+  flanger: FlangerModule,
+  tape: TapeModule,
   lfo: LfoModule,
   master: MasterModule,
 };

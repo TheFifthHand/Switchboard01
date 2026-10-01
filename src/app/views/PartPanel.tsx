@@ -1,25 +1,45 @@
 /**
- * The selected part's sound controls: six macros, Variation, lock, level/pan.
+ * The selected part (right of the pads): Mute, Solo and Volume at the top
+ * (Pan in Advanced), the instrument card with Change instrument, the six
+ * macros with a one-line caption each, Variation and Lock.
  */
 import { useState } from 'react';
-import { Button, Icon, Knob, Tooltip } from '../../ui/components';
+import { Button, Icon, Knob, Tooltip, type IconName } from '../../ui/components';
 import { CHANNEL_PARAMS, specById } from '../../project/params';
 import { moduleId } from '../../project/factory';
 import { describeMacro } from '../../project/resolve';
-import { MACRO_IDS, type MacroId } from '../../project/types';
+import { MACRO_IDS, type Instrument, type MacroId } from '../../project/types';
 import { applyVariation, setLocked } from '../../state/commands';
 import { hashString } from '../../project/rng';
 import { describeVariation } from '../../music/variation';
 import { setView, uiStore } from '../../state/uiStore';
 import { session, useProject, useUi } from '../instance';
 import { notify, runtimeStore } from '../runtime';
-import { INSTRUMENT_LABEL, soundName } from '../labels';
+import { soundName } from '../labels';
 import { MACRO_SPECS } from '../macros';
 import { SoundBrowser } from './SoundBrowser';
 import styles from './PartPanel.module.css';
 
 const LEVEL_SPEC = specById(CHANNEL_PARAMS, 'level')!;
 const PAN_SPEC = specById(CHANNEL_PARAMS, 'pan')!;
+
+/** The instrument type in plain words, with its icon. */
+const INSTRUMENT_TYPE: Record<Instrument['kind'], { name: string; icon: IconName }> = {
+  drums: { name: 'Drum kit', icon: 'drum' },
+  bass: { name: 'Bass synth', icon: 'wave' },
+  poly: { name: 'Synth', icon: 'keys' },
+  sampler: { name: 'Sampler', icon: 'mic' },
+};
+
+/** One line under each macro: what turning it does. */
+const MACRO_CAPTION: Record<MacroId, string> = {
+  tone: 'Dark ↔ bright',
+  space: 'Room around it',
+  echo: 'Echoes in time',
+  motion: 'Moves in time',
+  drive: 'Warmth to grit',
+  pump: 'Ducks in time',
+};
 
 function MacroKnob(props: { trackId: string; macro: MacroId }) {
   const { trackId, macro } = props;
@@ -32,15 +52,20 @@ function MacroKnob(props: { trackId: string; macro: MacroId }) {
   // The detail lists what this part's macro really moves (its live mappings), never a fixed description.
   const moves = targets ? `Moves: ${targets}.` : 'No mappings: this macro does nothing.';
   return (
-    <Knob
-      spec={spec}
-      value={value}
-      size="md"
-      onChange={(v, info) => session.setMacro(trackId, macro, v, info.gesture)}
-      tip={spec.tip}
-      detail={`${moves} ${spec.detail ? `${spec.detail} ` : ''}Shape shows and edits what it moves.`}
-      id={`macro-${macro}`}
-    />
+    <div className={styles.macro}>
+      <Knob
+        spec={spec}
+        value={value}
+        size="lg"
+        onChange={(v, info) => session.setMacro(trackId, macro, v, info.gesture)}
+        tip={spec.tip}
+        detail={`${moves} ${spec.detail ? `${spec.detail} ` : ''}Shape shows and edits what it moves.`}
+        id={`macro-${macro}`}
+      />
+      <span className={styles.macroCaption} aria-hidden="true">
+        {targets ? MACRO_CAPTION[macro] : 'Moves nothing yet'}
+      </span>
+    </div>
   );
 }
 
@@ -85,17 +110,23 @@ function vary(trackId: string): void {
 
 export function PartPanel() {
   const trackId = useUi((s) => s.selectedTrackId);
+  const advanced = useUi((s) => s.uiMode === 'advanced');
   const header = useProject(
     (p) => {
       const t = p.tracks.find((x) => x.id === trackId);
-      return t ? { name: t.name, sound: soundName(p, t.instrument), kind: t.instrument.kind, locked: t.locked, index: p.tracks.indexOf(t) } : null;
+      return t ? { name: t.name, sound: soundName(p, t.instrument), kind: t.instrument.kind, locked: t.locked, mute: t.mute, solo: t.solo, index: p.tracks.indexOf(t) } : null;
     },
-    (a, b) => a === b || (!!a && !!b && a.name === b.name && a.sound === b.sound && a.kind === b.kind && a.locked === b.locked && a.index === b.index),
+    (a, b) =>
+      a === b ||
+      (!!a && !!b && a.name === b.name && a.sound === b.sound && a.kind === b.kind && a.locked === b.locked && a.mute === b.mute && a.solo === b.solo && a.index === b.index),
   );
-  const level = useProject((p) => p.patch.modules.find((m) => m.id === moduleId.channel(trackId))?.params.level ?? 0);
-  const pan = useProject((p) => p.patch.modules.find((m) => m.id === moduleId.channel(trackId))?.params.pan ?? 0);
+  const anySolo = useProject((p) => p.tracks.some((t) => t.solo));
+  const level = useProject((p) => p.patch.modules.find((m) => m.id === moduleId.channel(trackId))?.params.level ?? LEVEL_SPEC.default);
+  const pan = useProject((p) => p.patch.modules.find((m) => m.id === moduleId.channel(trackId))?.params.pan ?? PAN_SPEC.default);
   const [soundOpen, setSoundOpen] = useState(false);
   if (!header) return null;
+  const type = INSTRUMENT_TYPE[header.kind];
+  const status = header.mute ? 'Muted' : anySolo && !header.solo ? 'Not soloed' : header.solo ? 'Solo' : null;
   return (
     <section className={styles.panel} aria-labelledby="part-title">
       <div className={styles.head}>
@@ -104,22 +135,56 @@ export function PartPanel() {
           <h2 id="part-title" className={styles.title}>
             {header.name}
           </h2>
+          {status && (
+            <span className={styles.status} data-status={status === 'Solo' ? 'solo' : 'off'}>
+              {status}
+            </span>
+          )}
         </div>
-        <Button size="sm" variant="ghost" icon="settings" onClick={() => setView('shape')} tip="Open the Shape view: all sound settings, effects and cables for this part.">
+        <Button size="sm" variant="ghost" icon="sliders" onClick={() => setView('shape')} tip="Open the Shape view: every sound setting and effect of this part.">
           Shape
         </Button>
       </div>
 
-      <Tooltip tip="Choose a different drum kit, synth preset or recording for this part. Undo brings the old one back.">
-        <button type="button" className={styles.soundButton} onClick={() => setSoundOpen(true)} aria-haspopup="dialog" aria-label={`Sound: ${header.sound}, ${INSTRUMENT_LABEL[header.kind]}. Change sound`}>
-          <span className={styles.soundKind}>{INSTRUMENT_LABEL[header.kind]}</span>
-          <span className={styles.sound}>{header.sound}</span>
-          <span className={styles.soundAction} aria-hidden="true">
-            Change
-            <Icon name="chevronDown" size={12} />
-          </span>
-        </button>
-      </Tooltip>
+      <div className={styles.mix} role="group" aria-label={`${header.name}: mute, solo and volume`}>
+        <div className={styles.mixKeys}>
+          <Tooltip tip={header.mute ? `Unmute ${header.name}.` : `Silence ${header.name} (it keeps playing in time).`} detail="M mutes the selected part.">
+            <button type="button" className={styles.toggle} data-kind="mute" aria-pressed={header.mute} aria-keyshortcuts="M" onClick={() => session.setMute(trackId, !header.mute)}>
+              <Icon name="speaker" size={16} />
+              <span>Mute</span>
+            </button>
+          </Tooltip>
+          <Tooltip tip={header.solo ? `Stop soloing ${header.name}.` : `Hear only the soloed parts.`} detail="Solo has no key: S plays a note. M mutes the selected part.">
+            <button type="button" className={styles.toggle} data-kind="solo" aria-pressed={header.solo} aria-keyshortcuts="S" onClick={() => session.setSolo(trackId, !header.solo)}>
+              <Icon name="headphones" size={16} />
+              <span>Solo</span>
+            </button>
+          </Tooltip>
+        </div>
+        <Knob spec={LEVEL_SPEC} value={level} size="lg" label="Volume" onChange={(v, info) => session.setModuleParam(moduleId.channel(trackId), 'level', v, info.gesture)} className={styles.volume} />
+        {advanced && <Knob spec={PAN_SPEC} value={pan} size="sm" onChange={(v, info) => session.setModuleParam(moduleId.channel(trackId), 'pan', v, info.gesture)} />}
+      </div>
+
+      <div className={styles.instrument}>
+        <span className={styles.instrumentIcon} aria-hidden="true">
+          <Icon name={type.icon} size={22} />
+        </span>
+        <div className={styles.instrumentText}>
+          <span className={styles.instrumentType}>{type.name}</span>
+          <span className={styles.instrumentSound}>{header.sound}</span>
+        </div>
+        <Button
+          size="md"
+          variant="primary"
+          onClick={() => setSoundOpen(true)}
+          aria-haspopup="dialog"
+          aria-label={`Change instrument (now ${type.name}: ${header.sound})`}
+          tip="Choose a different drum kit, synth sound or recording for this part. Undo brings the old one back."
+          className={styles.change}
+        >
+          Change instrument
+        </Button>
+      </div>
 
       <div className={styles.macros} role="group" aria-label={`${header.name} macros`}>
         {MACRO_IDS.map((m) => (
@@ -136,11 +201,6 @@ export function PartPanel() {
             {header.locked ? 'Locked' : 'Lock'}
           </Button>
         </Tooltip>
-      </div>
-
-      <div className={styles.mix}>
-        <Knob spec={LEVEL_SPEC} value={level} size="sm" onChange={(v, info) => session.setModuleParam(moduleId.channel(trackId), 'level', v, info.gesture)} />
-        <Knob spec={PAN_SPEC} value={pan} size="sm" onChange={(v, info) => session.setModuleParam(moduleId.channel(trackId), 'pan', v, info.gesture)} />
       </div>
       <SoundBrowser open={soundOpen} trackId={trackId} onClose={() => setSoundOpen(false)} />
     </section>

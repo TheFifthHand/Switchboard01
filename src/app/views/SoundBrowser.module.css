@@ -1,15 +1,173 @@
+/* A wide dialog: category list on the left, sounds on the right. */
+.dialog.dialog[data-size] {
+  width: min(980px, 100%);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 228px minmax(0, 1fr);
+  gap: 16px;
+  /* A fixed height so switching categories never makes the dialog jump; the list scrolls inside. */
+  height: clamp(250px, calc(100vh - 262px), 560px);
+  min-height: 0;
+}
+
+/* ---------- left: search + categories ---------- */
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-hi);
+  color: var(--ink-3);
+  box-shadow: inset 0 1px 2px rgba(20, 24, 28, 0.08);
+}
+.search:focus-within {
+  border-color: var(--teal);
+  box-shadow: var(--focus-ring);
+}
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-md);
+}
+.searchInput::placeholder {
+  color: var(--ink-3);
+}
+
 .tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.tab {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding-bottom: 10px;
+  min-height: 40px;
+  padding: 6px 10px 6px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
 }
+.tab:hover {
+  background: var(--surface-hi);
+  color: var(--ink);
+}
+.tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.tab[aria-selected='true'] {
+  border-color: var(--teal);
+  background: var(--teal-wash);
+  color: var(--ink);
+}
+.tab[aria-selected='true']::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--teal);
+}
+.tab[data-empty] {
+  color: var(--ink-3);
+}
+.tabName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.count {
+  flex: none;
+  min-width: 24px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-lo);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.tab[aria-selected='true'] .count {
+  background: var(--surface-hi);
+}
+/* The category that holds the part's current sound: a teal dot (with text for screen readers). */
+.tab[data-current]::after {
+  content: '';
+  position: absolute;
+  top: 7px;
+  left: 26px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 0 2px var(--teal-wash);
+}
+
+/* ---------- right: the sounds ---------- */
 
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  min-height: 300px;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.panelHead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+.panelTitle {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-lg);
+  font-weight: 650;
+}
+.blurb {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
 }
 
 .notice {
@@ -20,6 +178,13 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Room for the focus ring of the cards at the edges. */
+  padding: 3px 6px 6px 3px;
+  scrollbar-width: thin;
 }
 .list[aria-disabled='true'] .card {
   opacity: 0.6;
@@ -32,10 +197,13 @@
   gap: 6px;
 }
 .heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-3);
 }
@@ -50,17 +218,17 @@
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
+  gap: 8px;
 }
 
 .card {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-height: 54px;
-  padding: 8px 12px 9px;
+  gap: 3px;
+  min-height: 64px;
+  padding: 9px 12px 10px;
   border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
   background: linear-gradient(180deg, #fbfbfb 0%, var(--surface-hi) 100%);
@@ -79,6 +247,7 @@
   box-shadow: var(--shadow-pressed);
 }
 .card:focus-visible {
+  outline: none;
   box-shadow: var(--shadow-raised), var(--focus-ring);
 }
 .card[data-current] {
@@ -124,7 +293,7 @@
   border-radius: 4px;
   background: var(--teal);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -136,8 +305,17 @@
   color: var(--ink-3);
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   overflow: hidden;
+}
+.kind {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.kind::after {
+  content: ' ·';
+  color: var(--ink-3);
+  font-weight: 400;
 }
 
 .import {
@@ -177,4 +355,24 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Narrow windows: the categories become a wrapping row above the sounds. */
+@media (max-width: 760px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    height: auto;
+  }
+  .tabs {
+    flex-direction: row;
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+  .tab {
+    flex: 1 1 150px;
+  }
+  .list {
+    max-height: 60vh;
+  }
 }

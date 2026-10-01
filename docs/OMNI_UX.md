@@ -54,7 +54,8 @@ Record Notes: Pause stops the recording pass (one undo step) and pauses playback
   real level meter.
 - A muted column is dimmed (pads and header) and shows **Muted**; with any solo active, non-soloed
   columns dim and show "Not soloed".
-- Keyboard: **M** mutes / unmutes the selected part, **S** solos it (not while typing).
+- Keyboard: **M** mutes / unmutes the selected part (not while typing). Solo has no letter key on
+  purpose: S plays a note on the computer keyboard, and one key must never do two things.
 - Empty pads are quiet: a faint outline and "+" only (no "Empty" text); hover/focus shows
   "Add clip". Clip pads: name large, length small, state word (Ready / Next bar / Playing /
   Stopping / Rec) as today.

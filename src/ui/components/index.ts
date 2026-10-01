@@ -16,6 +16,22 @@ export {
   type KnobChangeInfo,
   type KnobSize,
 } from './Knob';
+export {
+  Fader,
+  faderPosition,
+  faderValue,
+  faderStep,
+  FADER_FINE_FACTOR,
+  FADER_DB_STEP,
+  FADER_DB_FINE_STEP,
+  FADER_KEY_STEP,
+  FADER_KEY_FINE_STEP,
+  FADER_PAGE_STEP,
+  FADER_BURST_IDLE_MS,
+  FADER_DB_MARKS,
+  type FaderProps,
+  type FaderChangeInfo,
+} from './Fader';
 export { Pad, velocityFromPosition, PAD_KEY_VELOCITY, PAD_STATE_TEXT, type PadProps, type PadState, type PadPressEvent } from './Pad';
 export { Button, IconButton, type ButtonProps, type IconButtonProps, type ButtonVariant, type ButtonSize, type Tone } from './Button';
 export { Switch, Toggle, type SwitchProps, type ToggleProps } from './Toggle';

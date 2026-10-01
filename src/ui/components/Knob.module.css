@@ -2,6 +2,9 @@
   --dial: 44px;
   --w: 68px;
   --arc: var(--amber);
+  --label-fs: var(--fs-sm);
+  --label-lh: 15px;
+  --label-lines: 1;
   position: relative;
   display: inline-flex;
   flex-direction: column;
@@ -12,14 +15,29 @@
   -webkit-user-select: none;
 }
 
+/* Small knobs: 11 px labels, so the longest single word of the registry ("Resonance") fits the
+   label box and longer names wrap to a second line ("Reverb / Amount"). */
 .knob[data-size='sm'] {
   --dial: 34px;
   --w: 54px;
+  --label-fs: var(--fs-xs);
+  --label-lh: 13px;
 }
 
 .knob[data-size='lg'] {
   --dial: 60px;
   --w: 84px;
+  --label-fs: var(--fs-md);
+}
+
+/* A row of small knobs where one label can wrap ([data-wraps]): every small knob of the row reserves
+   two label lines, so one- and two-line labels ("Pan", "Reverb Amount") take the same height and the
+   values line up. Rows of short labels and a lone small knob (the transport's Master) stay compact.
+   The `labelLines` prop overrides this with an inline value. */
+.knob[data-size='sm'][data-wraps],
+.knob[data-size='sm']:has(~ .knob[data-size='sm'][data-wraps]),
+.knob[data-size='sm'][data-wraps] ~ .knob[data-size='sm'] {
+  --label-lines: 2;
 }
 
 .knob[data-tone='teal'] {
@@ -181,21 +199,35 @@
   background: var(--ink-3);
 }
 
+/* The label box always has room for the reserved lines (centred within it), so a one-line and a
+   two-line label take the same height and the values below them stay in line. */
 .label {
-  max-width: calc(100% + 8px);
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: calc(100% + 8px);
+  min-height: calc(var(--label-lh) * var(--label-lines));
   margin-top: 5px;
-  overflow: hidden;
   color: var(--ink-2);
-  font-size: var(--fs-sm);
+  font-size: var(--label-fs);
   font-weight: 500;
-  line-height: 15px;
+  line-height: var(--label-lh);
   text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.labelText {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: break-word;
+  text-wrap: balance;
 }
 
 .knob[data-size='lg'] .label {
-  font-size: var(--fs-md);
   color: var(--ink);
 }
 
@@ -255,6 +287,14 @@
   white-space: nowrap;
   transform: translateX(-50%);
   box-shadow: 0 0 0 1.5px var(--surface-hi);
+}
+
+/* A long controller name ("Chords Space") never spreads over the neighbouring knobs; the full name
+   is in the value text and the tip. */
+.badgeText {
+  max-width: calc(var(--w) - 6px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .knob[data-size='lg'] .badge {

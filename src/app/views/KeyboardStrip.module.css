@@ -2,8 +2,8 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  height: 100%;
-  padding: 5px 16px;
+  height: 100px;
+  padding: 5px 16px 5px 8px;
   background: linear-gradient(180deg, var(--shell), var(--shell-lo));
   border-top: 1px solid var(--line);
   min-width: 0;
@@ -14,7 +14,7 @@
   grid-template-columns: auto auto auto;
   grid-template-rows: auto auto;
   align-items: center;
-  gap: 4px 6px;
+  gap: 2px 6px;
   flex: none;
 }
 .octLabel {
@@ -33,7 +33,7 @@
 }
 .reset {
   grid-column: 1 / 4;
-  height: 22px;
+  height: 32px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--shell-hi);
@@ -75,7 +75,8 @@
 
 /* Below 1024 px: the keyboard takes the full width; key and arp controls wrap underneath. */
 @media (max-width: 1023px) {
-  .strip {
+  .strip,
+  .strip[data-collapsed] {
     flex-wrap: wrap;
     height: auto;
     row-gap: 8px;
@@ -86,4 +87,43 @@
     max-width: none;
     order: -1;
   }
+}
+
+.fold {
+  flex: none;
+  align-self: flex-start;
+}
+/* Folded: a slim bar; the computer keys still play. */
+.strip[data-collapsed] {
+  height: 44px;
+  gap: 10px;
+}
+.strip[data-collapsed] .fold {
+  align-self: center;
+}
+.foldedLabel {
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  color: var(--ink-2);
+}
+.foldedNote {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Simple: the key as a summary instead of the pickers. */
+.keySummary {
+  margin: 0;
+  padding: 0 2px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  color: var(--ink-2);
+  line-height: 28px;
+}
+.keySummary strong {
+  color: var(--ink);
+  font-weight: 650;
 }

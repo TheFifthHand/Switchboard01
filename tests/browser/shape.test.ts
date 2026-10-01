@@ -18,7 +18,7 @@ import { FILTER_PARAMS, formatParam } from '../../src/project/params';
 import { macroTargetValue } from '../../src/project/resolve';
 import type { Project } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
-import { drumVoiceFor, selectModule, selectTrack, setCablesOpen, uiStore } from '../../src/state/uiStore';
+import { drumVoiceFor, selectModule, selectTrack, setCablesOpen, setUiMode, uiStore } from '../../src/state/uiStore';
 import { actFrame, cleanup, fire, key, mount, pointer, pointIn, wait } from './ui-harness';
 
 const project = (): Project => session.store.getState();
@@ -31,6 +31,8 @@ function setup(trackId: string) {
     selectTrack(trackId);
     setCablesOpen(false);
     selectModule(null);
+    // These tests cover every control: the Advanced layout (Simple is covered in omni-shape-simple).
+    setUiMode('advanced');
   });
   const m = mount(h(TipsProvider, { enabled: false }, h(ShapeView)), { width: 1366 });
   m.container.style.height = '720px';
@@ -241,7 +243,7 @@ describe('Shape view', () => {
     expect(trackChain(project().patch, 't3')).toEqual(['t3:inst', 't3:drive', 't3:filter', 't3:ch']);
 
     click(button(rack, /Add effect/));
-    const menu = rack.querySelector<HTMLElement>('[role="menu"]')!;
+    const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
     expect(menu).not.toBeNull();
     click(button(menu, /^Chorus/));
     expect(trackChain(project().patch, 't3')).toEqual(['t3:inst', 't3:drive', 't3:filter', 't3:chorus', 't3:ch']);
@@ -282,16 +284,18 @@ describe('Shape view', () => {
     expect(project().patch.connections.map((c) => [c.from, c.to])).toEqual(original.connections.map((c) => [c.from, c.to]));
   });
 
-  it('shows the per-part effect limit as a refusal', () => {
+  it('says when the part holds as many effects as it can, and Add effect is unavailable', () => {
     const m = setup('t3');
     act(() => {
       for (let i = 0; i < PATCH_LIMITS.maxEffectsPerTrack - 2; i++) cmd.insertEffect(session.store, 't3', 'crusher');
     });
     const rack = panel(m.container, 'Effects');
     expect(rack.textContent).toContain(`${PATCH_LIMITS.maxEffectsPerTrack} of ${PATCH_LIMITS.maxEffectsPerTrack}`);
+    expect(button(rack, /Add effect/).disabled).toBe(true);
+    expect(rack.textContent).toContain(`This part already has ${PATCH_LIMITS.maxEffectsPerTrack} effects, the most it can hold. Remove one to add another.`);
+    // The command refuses too, with the same limit.
     const modules = project().patch.modules.length;
-    click(button(rack, /Add effect/));
-    click(button(rack.querySelector<HTMLElement>('[role="menu"]')!, /^Phaser/));
+    act(() => void session.accepted(cmd.insertEffect(session.store, 't3', 'phaser')));
     expect(project().patch.modules.length).toBe(modules);
     expect(runtimeStore.getState().notice?.text).toMatch(new RegExp(`up to ${PATCH_LIMITS.maxEffectsPerTrack} effects`));
   });
@@ -414,7 +418,7 @@ describe('Shape view', () => {
     expect(cables.textContent).not.toContain('Phaser');
     const rack = panel(m.container, 'Effects');
     click(button(rack, /Add effect/));
-    click(button(rack.querySelector<HTMLElement>('[role="menu"]')!, /^Phaser/));
+    click(button(document.querySelector<HTMLElement>('[role="menu"]')!, /^Phaser/));
     expect(cables.textContent).toContain('Phaser');
 
     click(button(cables, /^Hide/));
@@ -530,7 +534,7 @@ describe('Shape view', () => {
       expect(t4.querySelector('svg')).toBeNull();
       const t5 = m.container.querySelector<HTMLElement>('#shape-part-t5')!;
       expect(t5.getAttribute('aria-label')).toMatch(/, muted/);
-      expect(t5.querySelector('[class*="muted"]')?.textContent).toBe('M');
+      expect(t5.querySelector('[class*="muted"]')?.textContent).toBe('Muted');
     } finally {
       act(() => runtimeStore.setState((s) => ({ ...s, playing: false, tracks: {} })));
     }

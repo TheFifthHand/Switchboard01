@@ -15,7 +15,7 @@ import { session } from '../../src/app/instance';
 import { offlineStore, patchRuntime, runtimeStore, type OfflineState } from '../../src/app/runtime';
 import type { BootInfo } from '../../src/app/session';
 import { deleteDb } from '../../src/persistence/db';
-import { setGuideDone, setTipsEnabled } from '../../src/state/uiStore';
+import { setGuideDone, setTipsEnabled, setUiMode } from '../../src/state/uiStore';
 import { cleanup, mount, wait } from './ui-harness';
 
 let boot: BootInfo;
@@ -25,6 +25,8 @@ beforeEach(async () => {
   act(() => {
     setGuideDone(true);
     setTipsEnabled(true);
+    // The default (and remembered) mode; Advanced has its own sweep in omni-play-layout.
+    setUiMode('simple');
   });
   boot = await session.boot();
 });
@@ -116,10 +118,16 @@ describe('Offline readiness in the transport', () => {
       expect(status!.querySelector('svg')).not.toBeNull();
       expectStripFits(text);
     }
-    // Saved and every wide-screen control stay in view next to it.
+    // Saved, Undo, Redo and the Simple · Advanced switch stay in view next to it; Projects and Export are in More.
     setOffline('ready');
-    for (const name of [/^Autosave: /, /^Undo/, /^Redo/, /^Projects \(open:/, 'Export']) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
+    for (const name of [/^Autosave: /, /^Undo/, /^Redo/, /^More:/]) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
+    for (const name of ['Simple', 'Advanced']) expect(shown([...bar().querySelectorAll('[role="radio"]')].find((r) => r.textContent === name)), name).toBe(true);
     expect(buttonNamed(/^Autosave: /, bar())!.textContent).toContain('Preview');
+    // From 1440 px Projects and Export are on the strip too.
+    await page.viewport(1440, 900);
+    await settle();
+    for (const name of [/^Projects \(open:/, 'Export']) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
+    expectStripFits('1440 px, offline ready');
   });
 
   it('fits the strip at every width from 1024 to 1920 px, with an update waiting, a preview or a failed save', async () => {

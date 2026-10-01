@@ -26,7 +26,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  height: 28px;
+  height: 32px;
   padding: 0 8px 0 10px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);

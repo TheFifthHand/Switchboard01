@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Button, TipsProvider, ToastProvider, useToasts } from '../ui/components';
-import { isTypingTarget } from '../ui/hooks/useComputerKeyboard';
+import { DRUM_KEYS, NOTE_KEYS, isTypingTarget } from '../ui/hooks/useComputerKeyboard';
 import { setTipsEnabled } from '../state/uiStore';
 import { session, useUi } from './instance';
 import { notify, useRuntime } from './runtime';
@@ -22,6 +22,9 @@ import { ArrangeView } from './views/arrange/ArrangeView';
 import { MixView } from './views/mix/MixView';
 import { downloadBlob } from './download';
 import styles from './App.module.css';
+
+/** Physical keys the computer keyboard plays notes or drum pads with. */
+const NOTE_KEY_CODES: ReadonlySet<string> = new Set([...NOTE_KEYS, ...DRUM_KEYS].map((k) => k.code));
 
 function Notices() {
   const notice = useRuntime((s) => s.notice);
@@ -98,8 +101,22 @@ export function App({ boot }: { boot: BootInfo }) {
     if (!uiStore.getState().guideDone) setGuide(true);
   };
 
-  // Global shortcuts: Space = play/stop, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y = undo/redo.
+  // Global shortcuts: Space = Play/Pause, Shift+Space = Stop, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y = undo/redo,
+  // M = mute / unmute the selected part.
   useEffect(() => {
+    /**
+     * M mutes / unmutes the selected part. M plays no note on the computer
+     * keyboard, so it means the same everywhere (except while typing). Solo has
+     * no letter on purpose: S plays a note, and one key must not do two things.
+     * Runs in the capture phase so it can claim the key first.
+     */
+    const onPartKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing) return;
+      if (e.key.toLowerCase() !== 'm' || NOTE_KEY_CODES.has(e.code)) return;
+      if (isTypingTarget(e.target) || document.querySelector('[aria-modal="true"]')) return;
+      e.preventDefault();
+      session.toggleMute(uiStore.getState().selectedTrackId);
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || isTypingTarget(e.target)) return;
       // Shortcuts belong to an open modal dialog while it is showing.
@@ -121,7 +138,8 @@ export function App({ boot }: { boot: BootInfo }) {
         // Space on a focused button or slider activates that control instead.
         if (t && t !== document.body && t.closest('button, [role="tab"], [role="radio"], a, summary')) return;
         e.preventDefault();
-        void session.togglePlay();
+        if (e.shiftKey) session.stop();
+        else void session.togglePlay();
       }
     };
     // Never leave notes hanging when focus leaves the window.
@@ -129,6 +147,7 @@ export function App({ boot }: { boot: BootInfo }) {
     const onVis = () => {
       if (document.visibilityState === 'hidden') release();
     };
+    window.addEventListener('keydown', onPartKey, true);
     window.addEventListener('keydown', onKey);
     window.addEventListener('blur', release);
     document.addEventListener('visibilitychange', onVis);
@@ -150,6 +169,7 @@ export function App({ boot }: { boot: BootInfo }) {
     };
     window.addEventListener('sb:open-export', onOpenExport);
     return () => {
+      window.removeEventListener('keydown', onPartKey, true);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('blur', release);
       document.removeEventListener('visibilitychange', onVis);

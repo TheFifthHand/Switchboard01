@@ -18,7 +18,7 @@ export function soundName(project: Project, inst: Instrument): string {
 export const INSTRUMENT_LABEL: Record<Instrument['kind'], string> = {
   drums: 'Drum kit',
   bass: 'Bass synth',
-  poly: 'Poly synth',
+  poly: 'Synth',
   sampler: 'Sampler',
 };
 

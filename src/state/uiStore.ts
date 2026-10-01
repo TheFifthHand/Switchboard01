@@ -38,6 +38,8 @@ export interface UiState {
   selectedModuleId: Id | null;
   /** Simple (default) or Advanced: how much of the instrument is shown. Remembered. */
   uiMode: UiMode;
+  /** The on-screen keyboard is folded to a slim bar (computer keys still play). Remembered. */
+  keyboardCollapsed: boolean;
 }
 
 export const UI_STORAGE_KEY = 'switchboard01.ui';
@@ -46,7 +48,7 @@ export const OCTAVE_RANGE = { min: 1, max: 7 } as const;
 const VIEWS: readonly View[] = ['play', 'shape', 'arrange', 'mix'];
 const UI_MODES: readonly UiMode[] = ['simple', 'advanced'];
 const PAD_MODES: readonly PadMode[] = ['loops', 'drums', 'notes', 'steps'];
-const PERSISTED = ['selectedTrackId', 'view', 'padMode', 'keyboardOctave', 'notesOctave', 'tipsEnabled', 'guideDone', 'uiMode'] as const;
+const PERSISTED = ['selectedTrackId', 'view', 'padMode', 'keyboardOctave', 'notesOctave', 'tipsEnabled', 'guideDone', 'uiMode', 'keyboardCollapsed'] as const;
 type Persisted = Pick<UiState, (typeof PERSISTED)[number]>;
 
 export function defaultUiState(): UiState {
@@ -66,6 +68,7 @@ export function defaultUiState(): UiState {
     recordArmed: false,
     selectedModuleId: null,
     uiMode: 'simple',
+    keyboardCollapsed: false,
   };
 }
 
@@ -107,6 +110,7 @@ function readPersisted(storage: KeyValueStorage | null): Partial<Persisted> {
     if (typeof o.tipsEnabled === 'boolean') out.tipsEnabled = o.tipsEnabled;
     if (typeof o.guideDone === 'boolean') out.guideDone = o.guideDone;
     if (UI_MODES.includes(o.uiMode as UiMode)) out.uiMode = o.uiMode as UiMode;
+    if (typeof o.keyboardCollapsed === 'boolean') out.keyboardCollapsed = o.keyboardCollapsed;
     return out;
   } catch {
     return {};
@@ -212,6 +216,9 @@ export function selectModule(moduleId: Id | null, store: UiStore = uiStore): voi
 }
 export function setUiMode(mode: UiMode, store: UiStore = uiStore): void {
   if (UI_MODES.includes(mode)) set(store, { uiMode: mode });
+}
+export function setKeyboardCollapsed(collapsed: boolean, store: UiStore = uiStore): void {
+  set(store, { keyboardCollapsed: !!collapsed });
 }
 
 /** Per-part lookups with defaults. */

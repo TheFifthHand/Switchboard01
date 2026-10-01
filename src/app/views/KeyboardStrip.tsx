@@ -1,8 +1,10 @@
 /**
  * The small keyboard: ~2 octaves, octave shift, computer-key legends,
  * Musical Assist (in-key notes) with a visible explanation and a chromatic
- * mode, and the key selector. A drum part gets one key per kit sound (16),
- * with no octave to shift.
+ * mode. Simple shows the key as a summary ("Key: G Dorian"); Advanced adds
+ * the key and scale pickers and the arpeggiator strip. A drum part gets one
+ * key per kit sound (16), with no octave to shift. The keyboard folds to a
+ * slim bar (remembered); the computer keys still play then.
  *
  * Every held key (mouse, touch or computer key) keeps the release of the note
  * it started, so changing the part, the octave or the arpeggiator while it is
@@ -12,7 +14,7 @@ import { useCallback, useMemo, useRef } from 'react';
 import { IconButton, MiniKeyboard, Select, Switch, Tooltip, noteKeyLabels, useComputerKeyboard, useKeyCapLabels } from '../../ui/components';
 import { ROOT_NAMES, SCALES, SCALE_ORDER, keyLabel, noteName, scaleMask } from '../../music/scales';
 import { setAssist, setKey } from '../../state/commands';
-import { OCTAVE_RANGE, setKeyboardOctave, shiftKeyboardOctave } from '../../state/uiStore';
+import { OCTAVE_RANGE, setKeyboardCollapsed, setKeyboardOctave, shiftKeyboardOctave } from '../../state/uiStore';
 import { DRUM_VOICES, type ScaleId } from '../../project/types';
 import { session, useProject, useUi } from '../instance';
 import { useRuntime } from '../runtime';
@@ -37,6 +39,8 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   const padMode = useUi((s) => s.padMode);
   const view = useUi((s) => s.view);
   const octave = useUi((s) => s.keyboardOctave);
+  const advanced = useUi((s) => s.uiMode === 'advanced');
+  const collapsed = useUi((s) => s.keyboardCollapsed);
   const trackName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
   const kind = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind);
   const isDrums = kind === 'drums';
@@ -45,6 +49,10 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   const scale = useProject((p) => p.scale);
   const assist = useProject((p) => p.assist);
   const held = useRuntime((s) => s.held[trackId]);
+  const arpOn = useProject((p) => {
+    const t = p.tracks.find((x) => x.id === trackId);
+    return !!t && t.arp.enabled && t.instrument.kind !== 'drums';
+  });
   const capLabels = useKeyCapLabels();
 
   const baseNote = isDrums ? KIT_BASE_NOTE : (octave + 1) * 12;
@@ -117,8 +125,45 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
         ? 'Recordings play as pressed'
         : `Snapping to ${keyLabel(root, scale)}`;
 
+  const keyName = keyLabel(root, scale);
+  // Simple hides the arpeggiator strip; a part whose arpeggiator is on still says so.
+  const arpNote = !advanced && arpOn ? 'Arpeggiator on (settings in Advanced)' : null;
+  const assistSwitch = (
+    <Tooltip tip={assistTip} detail="Recorded notes follow the same rule. Recordings (sampler parts) are never re-pitched by Assist.">
+      <div>
+        <Switch checked={assist} onChange={(on) => session.accepted(setAssist(session.store, on))} label="Musical Assist" onText="IN KEY" offText="CHROMATIC" tone="teal" size="sm" />
+      </div>
+    </Tooltip>
+  );
+  const foldKey = (
+    <IconButton
+      icon={collapsed ? 'chevronUp' : 'chevronDown'}
+      label={collapsed ? 'Show the keyboard' : 'Hide the keyboard'}
+      tip={collapsed ? 'Show the on-screen keyboard.' : 'Fold the keyboard away to give the pads more room. The computer keys still play.'}
+      size="sm"
+      variant="ghost"
+      aria-expanded={!collapsed}
+      onClick={() => setKeyboardCollapsed(!collapsed)}
+      className={styles.fold}
+    />
+  );
+
+  if (collapsed) {
+    return (
+      <section ref={stripRef} className={styles.strip} data-collapsed="" aria-label="Keyboard">
+        {foldKey}
+        <span className={styles.foldedLabel}>Keyboard</span>
+        <span className={styles.foldedNote}>
+          {isDrums ? `${trackName}: computer keys play the kit sounds.` : `Computer keys play ${trackName}. ${assist ? `Key: ${keyName}.` : 'Chromatic.'}`}
+        </span>
+        {props.children}
+      </section>
+    );
+  }
+
   return (
     <section ref={stripRef} className={styles.strip} aria-label="Keyboard">
+      {foldKey}
       <div className={styles.octave}>
         <IconButton icon="octaveDown" label="Octave down (Z)" size="sm" onClick={() => shiftKeyboardOctave(-1)} disabled={isDrums || octave <= OCTAVE_RANGE.min} />
         <div className={styles.octLabel}>
@@ -147,20 +192,24 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
       </div>
 
       <div className={styles.assist}>
-        <div className={styles.keyRow}>
-          <Select label="Key" layout="inline" size="sm" value={String(root)} options={ROOT_OPTIONS} onChange={(v) => session.accepted(setKey(session.store, Number(v), scale))} width={60} tip="The home note of the project. Notes pads and Musical Assist use it." />
-          <Select label="Scale" hideLabel size="sm" value={scale} options={SCALE_OPTIONS} onChange={(v) => session.accepted(setKey(session.store, root, v as ScaleId))} width={132} tip="Which notes belong to the key." />
-        </div>
-        <Tooltip tip={assistTip} detail="Recorded notes follow the same rule. Recordings (sampler parts) are never re-pitched by Assist.">
-          <div>
-            <Switch checked={assist} onChange={(on) => session.accepted(setAssist(session.store, on))} label="Musical Assist" onText="IN KEY" offText="CHROMATIC" tone="teal" size="sm" />
+        {advanced ? (
+          <div className={styles.keyRow}>
+            <Select label="Key" layout="inline" size="sm" value={String(root)} options={ROOT_OPTIONS} onChange={(v) => session.accepted(setKey(session.store, Number(v), scale))} width={60} tip="The home note of the project. Notes pads and Musical Assist use it." />
+            <Select label="Scale" hideLabel size="sm" value={scale} options={SCALE_OPTIONS} onChange={(v) => session.accepted(setKey(session.store, root, v as ScaleId))} width={132} tip="Which notes belong to the key." />
           </div>
-        </Tooltip>
+        ) : (
+          <Tooltip tip={`The project's key is ${keyName}. The Notes pads and Musical Assist use it.`} detail="Advanced shows the key and scale pickers.">
+            <p className={styles.keySummary} tabIndex={0}>
+              Key: <strong>{keyName}</strong>
+            </p>
+          </Tooltip>
+        )}
+        {assistSwitch}
         <p className={styles.assistNote} aria-live="polite">
-          {assistNote}
+          {arpNote ?? assistNote}
         </p>
       </div>
-      <ArpStrip trackId={trackId} stripRef={stripRef} />
+      {advanced && <ArpStrip trackId={trackId} stripRef={stripRef} />}
       {props.children}
     </section>
   );

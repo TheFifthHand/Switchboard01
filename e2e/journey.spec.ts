@@ -83,7 +83,9 @@ test('Jump In → groove → switch clips → Tone/Space → keyboard → record
   expect(types.has('noteOn')).toBe(true);
   expect(types.has('scene')).toBe(true);
 
-  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  // At 1366 px Export is in the More menu (the strip shows it from 1440 px).
+  await page.getByRole('button', { name: /^More:/ }).click();
+  await page.getByRole('menuitem', { name: /Export WAV/ }).click();
   const dialog = page.getByRole('dialog', { name: 'Export audio' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel('What to export')).toHaveValue(`perf:${perf.id}`);

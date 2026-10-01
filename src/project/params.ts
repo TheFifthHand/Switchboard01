@@ -35,11 +35,31 @@ const p = (s: ParamSpec): ParamSpec => s;
 /* ------------------------------------------------------------------ */
 
 export const WAVE_OPTIONS = ['Saw', 'Square', 'Triangle', 'Sine'] as const;
+/** Sub-oscillator shapes of the bass synth. */
+export const SUB_WAVE_OPTIONS = ['Square', 'Sine'] as const;
+
+/*
+ * Synth voice features shared by the bass and poly synths (FM, pitch sweep).
+ * Every default is neutral: a sound saved before these existed plays exactly
+ * as it did, and a voice only builds the extra nodes a sound actually uses.
+ */
+const FM_AMOUNT = p({ id: 'fmAmount', label: 'FM Amount', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'Makes the main tone bell-like, glassy or metallic: electric pianos, bells, mallets, hard basses. Zero is off.', detail: 'Frequency modulation of the main oscillator by a hidden sine at FM Ratio × the note (index up to 8, velocity-scaled). Turned up from zero, it starts with the next note.' });
+const FM_RATIO = p({ id: 'fmRatio', label: 'FM Ratio', min: 0.5, max: 16, default: 1, unit: 'x', curve: 'exp', tip: 'The colour of the FM tone: whole numbers (1, 2, 3) sound like pianos and organs, in-between values like bells and metal.', detail: 'Modulator frequency as a multiple of the note frequency.' });
+const FM_DECAY = p({ id: 'fmDecay', label: 'FM Decay', min: 0.02, max: 8, default: 0.8, unit: 's', curve: 'exp', tip: 'How long the bright FM strike lasts. Long settings keep the tone bright while a note is held.', detail: 'FM depth envelope: from its peak toward 20% of it over this time.' });
+const PITCH_SWEEP = p({ id: 'pitchEnv', label: 'Pitch Sweep', min: -24, max: 24, default: 0, unit: 'st', curve: 'lin', tip: 'Each note starts this far above (or, if negative, below) its pitch and slides onto it: drops, zaps, scoops and risers.', detail: 'Pitch envelope in semitones on every oscillator. Turned away from zero, it starts with the next note.' });
+const SWEEP_TIME = p({ id: 'pitchDecay', label: 'Sweep Time', min: 0.005, max: 8, default: 0.1, unit: 's', curve: 'exp', tip: 'How long the pitch sweep takes to arrive on the note.', detail: 'Exponential glide of the pitch envelope (about 95% of the way after this time).' });
 
 export const BASS_PARAMS: readonly ParamSpec[] = [
   p({ id: 'wave', label: 'Wave', min: 0, max: 3, default: 0, unit: '', curve: 'enum', options: WAVE_OPTIONS, tip: 'Changes the basic character: Saw is buzzy, Square is hollow, Triangle and Sine are round.', detail: 'Main oscillator waveform.' }),
   p({ id: 'octave', label: 'Octave', min: -2, max: 2, default: 0, unit: '', curve: 'int', tip: 'Moves the whole bass up or down by octaves.', detail: 'Transposition in octaves, applied to every note.' }),
-  p({ id: 'sub', label: 'Sub', min: 0, max: 1, default: 0.4, unit: '%', curve: 'lin', tip: 'Adds weight underneath the note.', detail: 'Square sub-oscillator one octave below.' }),
+  p({ id: 'sub', label: 'Sub', min: 0, max: 1, default: 0.4, unit: '%', curve: 'lin', tip: 'Adds weight underneath the note.', detail: 'Sub-oscillator one octave below (shape: Sub Shape).' }),
+  p({ id: 'subWave', label: 'Sub Shape', min: 0, max: 1, default: 0, unit: '', curve: 'enum', options: SUB_WAVE_OPTIONS, tip: 'Square gives a buzzy, present sub; Sine a pure, deep one that is felt more than heard.', detail: 'Sub-oscillator waveform.' }),
+  p({ id: 'unisonDetune', label: 'Unison Detune', min: 0, max: 50, default: 0, unit: 'ct', curve: 'lin', tip: 'Adds two slightly detuned copies of the wave for a thick, moving "reese" bass. Zero is a single clean tone.', detail: 'Two extra oscillators at ± this many cents with offset start phases; the three are level-matched to one. Turned up from zero, it starts with the next note.' }),
+  FM_AMOUNT,
+  FM_RATIO,
+  FM_DECAY,
+  PITCH_SWEEP,
+  SWEEP_TIME,
   p({ id: 'cutoff', label: 'Cutoff', min: 40, max: 12000, default: 700, unit: 'Hz', curve: 'exp', tip: 'Opens or closes the filter: lower is darker and rounder.', detail: '24 dB/oct low-pass cutoff frequency.' }),
   p({ id: 'resonance', label: 'Resonance', min: 0, max: 1, default: 0.25, unit: '%', curve: 'lin', tip: 'Adds a vocal, squelchy peak at the filter edge.', detail: 'Filter Q, limited to a controlled maximum.' }),
   p({ id: 'envAmount', label: 'Filter Envelope', min: 0, max: 1, default: 0.45, unit: '%', curve: 'lin', tip: 'How much each note opens the filter — more gives a plucky "bow".', detail: 'Filter envelope depth, up to +5 octaves.' }),
@@ -61,7 +81,18 @@ export const POLY_PARAMS: readonly ParamSpec[] = [
   p({ id: 'detune', label: 'Detune', min: 0, max: 40, default: 7, unit: 'ct', curve: 'lin', tip: 'Slightly out-of-tune tones make a wider, shimmering sound.', detail: 'Oscillator 2 detune in cents.' }),
   p({ id: 'osc2Level', label: 'Tone 2 Level', min: 0, max: 1, default: 0.5, unit: '%', curve: 'lin', tip: 'Balance of the second tone.', detail: 'Oscillator 2 level.' }),
   p({ id: 'noise', label: 'Noise', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'Adds breath and air.', detail: 'White noise level into the filter.' }),
-  p({ id: 'width', label: 'Width', min: 0, max: 1, default: 0.3, unit: '%', curve: 'lin', tip: 'Spreads the sound between left and right.', detail: 'Stereo spread of the two oscillators.' }),
+  p({ id: 'width', label: 'Width', min: 0, max: 1, default: 0.3, unit: '%', curve: 'lin', tip: 'Spreads the sound between left and right.', detail: 'Stereo spread of the two oscillators (and of the Unison copies).' }),
+  p({ id: 'unison', label: 'Unison', min: 1, max: 7, default: 1, unit: '', curve: 'int', tip: 'Stacks copies of Tone 1 for a thick, wide sound: 1 is a single tone, 5 to 7 make a huge "supersaw".', detail: 'Unison voices of oscillator 1, tuned apart by Unison Detune, spread by Width, each starting at a different phase. Starts with the next note. Above 4 copies (or together with FM) the part plays fewer notes at once, never fewer than 6.' }),
+  p({ id: 'unisonDetune', label: 'Unison Detune', min: 0, max: 60, default: 20, unit: 'ct', curve: 'lin', tip: 'How far apart the stacked copies are tuned: a little shimmers, a lot sounds huge and wobbly.', detail: 'Spread of the unison voices in cents (the outermost at ± this value). No effect with Unison 1.' }),
+  FM_AMOUNT,
+  FM_RATIO,
+  FM_DECAY,
+  p({ id: 'noiseColor', label: 'Noise Colour', min: 0, max: 1, default: 0.5, unit: '%', curve: 'lin', tip: 'Darker noise rumbles like wind and sea; brighter noise hisses like breath. 50% is plain white noise.', detail: 'Below 50%: low-pass on the noise down to 300 Hz; above: high-pass up to 8 kHz (level partly compensated). Moved away from 50%, it starts with the next note.' }),
+  PITCH_SWEEP,
+  SWEEP_TIME,
+  p({ id: 'vibrato', label: 'Vibrato', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'A gentle pitch wobble that fades in on held notes, like a singer or a string player.', detail: 'Per-note sine vibrato up to ±50 cents, fading in over 0.35 s. Turned up from zero, it starts with the next note.' }),
+  p({ id: 'vibratoRate', label: 'Vibrato Speed', min: 1, max: 12, default: 5.5, unit: 'Hz', curve: 'exp', tip: 'How fast the vibrato wobbles.', detail: 'Vibrato rate.' }),
+  p({ id: 'drift', label: 'Drift', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'Makes every note slightly different in tuning and brightness, like an old analogue synth.', detail: 'Per-note random detune (up to ±10 cents per oscillator) and filter offset (up to ±1/4 octave), seeded from the note so renders repeat exactly.' }),
   p({ id: 'cutoff', label: 'Cutoff', min: 60, max: 18000, default: 3200, unit: 'Hz', curve: 'exp', tip: 'Brighter or darker: opens or closes the synth filter.', detail: '12 dB/oct low-pass cutoff.' }),
   p({ id: 'resonance', label: 'Resonance', min: 0, max: 1, default: 0.15, unit: '%', curve: 'lin', tip: 'Emphasises the filter edge for a more resonant tone.', detail: 'Filter Q, limited to a controlled maximum.' }),
   p({ id: 'filterEnv', label: 'Filter Envelope', min: 0, max: 1, default: 0.3, unit: '%', curve: 'lin', tip: 'Makes each note open up brighter at the start.', detail: 'Filter envelope depth, up to +4 octaves.' }),
@@ -293,9 +324,9 @@ export const MASTERING_PARAMS: readonly ParamSpec[] = [
   p({ id: 'highGain', label: 'Highs', min: -6, max: 6, default: 0, unit: 'dB', curve: 'lin', tip: 'More or less brightness in the whole mix.', detail: 'High shelf gain.' }),
   p({ id: 'highFreq', label: 'Highs Pitch', min: 2000, max: 12000, default: 5000, unit: 'Hz', curve: 'exp', tip: 'Where the Highs control starts.', detail: 'High shelf corner.' }),
   p({ id: 'air', label: 'Air', min: 0, max: 6, default: 0, unit: 'dB', curve: 'lin', tip: 'A gentle lift of the very top for an open, expensive sound.', detail: 'High shelf at 14 kHz.' }),
-  p({ id: 'glue', label: 'Glue', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'Gently compresses the whole mix so the parts feel like one song. Zero is off.', detail: 'Bus compressor: threshold and ratio rise together (up to −24 dB, 4:1); slow attack, auto release, automatic make-up.' }),
+  p({ id: 'glue', label: 'Glue', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'Gently compresses the whole mix so the parts feel like one song. Zero is off.', detail: 'Peak-sensing bus compressor: threshold and ratio rise together (up to −24 dB, 4:1); attack set by Punch, automatic release and make-up.' }),
   p({ id: 'punch', label: 'Punch', min: 0, max: 1, default: 0.5, unit: '%', curve: 'lin', tip: 'Higher lets more of each drum hit through the Glue.', detail: 'Glue attack from 1 ms to 30 ms.' }),
-  p({ id: 'saturation', label: 'Warmth', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'Adds analogue-style harmonics and density. Zero is clean.', detail: 'Oversampled soft saturation, level-compensated.' }),
+  p({ id: 'saturation', label: 'Warmth', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'Adds analogue-style harmonics and density. Zero is clean.', detail: 'Soft saturation at 4x oversampling, level-compensated.' }),
   p({ id: 'width', label: 'Width', min: 0, max: 1.6, default: 1, unit: 'x', curve: 'lin', tip: 'Narrower or wider stereo image. 1 is unchanged.', detail: 'Mid/side side gain.' }),
   p({ id: 'monoBass', label: 'Mono Bass', min: 20, max: 300, default: 20, unit: 'Hz', curve: 'exp', tip: 'Keeps everything below this pitch in the centre, for solid lows on every system. All the way down is off.', detail: 'Sides high-passed at this frequency; 20 Hz = off.' }),
   p({ id: 'loudness', label: 'Loudness', min: 0, max: 15, default: 0, unit: 'dB', curve: 'lin', tip: 'Pushes the whole mix into the limiter: louder, with less dynamic range. The peak ceiling stays at −1 dBFS.', detail: 'Gain into the output limiter.' }),

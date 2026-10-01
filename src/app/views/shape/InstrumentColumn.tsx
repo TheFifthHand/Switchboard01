@@ -1,8 +1,11 @@
 /**
  * INSTRUMENT column: every synthesis parameter of the selected part.
  *
- * - Bass / poly synths: parameters grouped into Oscillators, Filter,
- *   Envelope and Output sections (anything else lands in "More").
+ * - Bass / poly synths: parameters grouped by what they do — Tones,
+ *   Unison, FM, Noise, Pitch & movement, Filter, Envelope, Output (anything
+ *   unlisted lands in "More"). A group whose main control is at zero says
+ *   "Off" and which control turns it on, so its other knobs never look
+ *   broken.
  * - Drum kits: kit-wide parameters plus a 16-voice table with tune, decay,
  *   level and pan per voice and an audition button.
  * - Samplers: the sampler editor (recording, waveform trim, playback, tempo).
@@ -23,25 +26,33 @@ import { useRuntime } from '../../runtime';
 import { SamplerEditor } from '../sampler/SamplerEditor';
 import { SoundBrowser } from '../SoundBrowser';
 import { ParamKnob } from './ParamKnob';
+import { effectiveValue } from './paramState';
 import styles from './InstrumentColumn.module.css';
 
 interface Section {
   title: string;
   params: readonly string[];
+  /** The group does nothing while this control sits at `off`; the header then says so. */
+  gate?: { param: string; off: number; hint: string };
 }
 
 type SectionKind = 'bass' | 'poly' | 'drums';
 
 const SYNTH_SECTIONS: Record<SectionKind, readonly Section[]> = {
   bass: [
-    { title: 'Oscillator', params: ['wave', 'octave', 'sub', 'glide'] },
+    { title: 'Tones', params: ['wave', 'octave', 'sub', 'subWave', 'unisonDetune', 'glide'] },
+    { title: 'FM', params: ['fmAmount', 'fmRatio', 'fmDecay'], gate: { param: 'fmAmount', off: 0, hint: 'turn up FM Amount' } },
+    { title: 'Pitch Sweep', params: ['pitchEnv', 'pitchDecay'], gate: { param: 'pitchEnv', off: 0, hint: 'set a Pitch Sweep' } },
     { title: 'Filter', params: ['cutoff', 'resonance', 'envAmount', 'filterDecay'] },
     { title: 'Envelope', params: ['attack', 'decay', 'sustain', 'release'] },
     { title: 'Output', params: ['drive', 'velocity', 'level'] },
   ],
   poly: [
-    { title: 'Oscillators', params: ['osc1Wave', 'osc2Wave', 'osc2Semi', 'detune', 'osc2Level'] },
-    { title: 'Noise & width', params: ['noise', 'width'] },
+    { title: 'Tones', params: ['osc1Wave', 'osc2Wave', 'osc2Semi', 'detune', 'osc2Level'] },
+    { title: 'Unison', params: ['unison', 'unisonDetune', 'width'] },
+    { title: 'FM', params: ['fmAmount', 'fmRatio', 'fmDecay'], gate: { param: 'fmAmount', off: 0, hint: 'turn up FM Amount' } },
+    { title: 'Noise', params: ['noise', 'noiseColor'], gate: { param: 'noise', off: 0, hint: 'turn up Noise' } },
+    { title: 'Pitch & movement', params: ['pitchEnv', 'pitchDecay', 'vibrato', 'vibratoRate', 'drift'] },
     { title: 'Filter', params: ['cutoff', 'resonance', 'filterEnv', 'filterDecay'] },
     { title: 'Envelope', params: ['attack', 'decay', 'sustain', 'release'] },
     { title: 'Output', params: ['velocity', 'level'] },
@@ -50,11 +61,18 @@ const SYNTH_SECTIONS: Record<SectionKind, readonly Section[]> = {
 };
 
 /** Sections with every registry parameter placed exactly once (unlisted ones go to "More"). */
-function sectionsFor(kind: SectionKind): { title: string; specs: ParamSpec[] }[] {
+interface ResolvedSection {
+  title: string;
+  specs: ParamSpec[];
+  gate?: Section['gate'];
+}
+
+function sectionsFor(kind: SectionKind): ResolvedSection[] {
   const all = INSTRUMENT_PARAMS[kind];
   const used = new Set<string>();
-  const out = SYNTH_SECTIONS[kind].map((s) => ({
+  const out: ResolvedSection[] = SYNTH_SECTIONS[kind].map((s) => ({
     title: s.title,
+    gate: s.gate,
     specs: s.params.flatMap((id) => {
       const spec = specById(all, id);
       if (!spec) return [];
@@ -67,7 +85,7 @@ function sectionsFor(kind: SectionKind): { title: string; specs: ParamSpec[] }[]
   return out.filter((s) => s.specs.length > 0);
 }
 
-const SECTIONS: Record<SectionKind, { title: string; specs: ParamSpec[] }[]> = {
+const SECTIONS: Record<SectionKind, ResolvedSection[]> = {
   bass: sectionsFor('bass'),
   poly: sectionsFor('poly'),
   drums: sectionsFor('drums'),
@@ -97,7 +115,10 @@ function ParamSections(props: { trackId: Id; kind: SectionKind; kitId?: string }
     <div className={styles.sections}>
       {sections.map((section) => (
         <section key={section.title} className={styles.section} aria-label={section.title}>
-          <h3 className={styles.sectionTitle}>{section.title}</h3>
+          <h3 className={styles.sectionTitle}>
+            {section.title}
+            {section.gate && <GateState trackId={trackId} gate={section.gate} />}
+          </h3>
           <div className={styles.knobs}>
             {section.specs.map((spec) => (
               <ParamKnob key={spec.id} moduleId={inst} param={spec.id} spec={spec} ownerTrackId={trackId} instrumentTrackId={trackId} size="sm" />
@@ -107,6 +128,17 @@ function ParamSections(props: { trackId: Id; kind: SectionKind; kitId?: string }
       ))}
     </div>
   );
+}
+
+/** "Off: turn up FM Amount" while a group's main control is at its off value. */
+function GateState(props: { trackId: Id; gate: NonNullable<Section['gate']> }) {
+  const { trackId, gate } = props;
+  const off = useProject((p) => {
+    const v = effectiveValue(p, moduleId.inst(trackId), gate.param) ?? p.tracks.find((t) => t.id === trackId)?.instrument.params[gate.param];
+    return v === undefined || v === gate.off;
+  });
+  if (!off) return null;
+  return <span className={styles.sectionState}>Off: {gate.hint}</span>;
 }
 
 /* ------------------------------------------------------------------ */

@@ -85,8 +85,20 @@ Rules:
   engines when the instrument kind changes.
 - Every connection is `source output → connection GainNode → target input`. Mod inputs are GainNodes
   internally wired to the right AudioParams with the port's range.
-- Master: sum → master volume → Mute All gain → look-ahead peak limiter (AudioWorklet, ceiling
-  −1 dBFS) → final safety clipper (WaveShaper bounded to the ceiling) → destination.
+- Master: sum → master volume → **mastering chain** (`Project.mastering`: low cut → EQ lows / mids /
+  highs / air → Glue bus compressor → Warmth saturation → width + mono bass → Loudness drive; no
+  added latency; neutral or off is bit-identical to no chain; `setMasteringBypass` is a
+  listening-only A/B that never touches the project or exports) → Mute All gain → look-ahead peak
+  limiter (AudioWorklet, ceiling −1 dBFS) → final safety clipper (WaveShaper bounded to the
+  ceiling) → destination.
+- Meters: per-part and master peak/RMS (AnalyserNodes); a loudness AudioWorklet on the final output
+  (ITU-R BS.1770 / EBU R128: momentary, short-term, gated integrated, 4× true peak; restarted when
+  playback starts from the top or by `resetLoudness()`); `readSpectrum()` (log-spaced band energy
+  20 Hz–20 kHz); the Glue's gain reduction.
+- Insert effects: filter, drive, delay, reverb, chorus, phaser, bit crusher, EQ, compressor, gate,
+  auto pan, stereo width, flanger, tape. Worklets (limiter, crusher, dynamics, fx, mastering,
+  loudness) load once per context from Blob URLs. Mute All clears every tail sample-accurately.
+- `setPitchBend(trackId, cents, time)` bends a part's playing and future notes (MIDI pitch wheel).
 - Tempo-synced modules (delay, LFO, pump) follow `tempoChanged()`; LFO phase aligns on
   `transportStarted()`. An LFO switched Off keeps its phase but its cables glide to 0 (it moves
   nothing); a shared return switched Off mutes its output.
@@ -94,9 +106,11 @@ Rules:
   where the kit has one). Sampler One-shot plays the whole trimmed region whatever the note length
   (Stop, Mute All, steals and released previews end it); Loop bakes an end-of-loop crossfade into
   the audio leading into the region start, so every repeat keeps the region's own attack.
-- Deterministic: noise, impulse responses, random LFO steps and drum synthesis are seeded. Renders of
-  the same project match to within float rounding (Chromium sums a node's inputs in an unspecified
-  order, so the last bits can differ, ~1e-7 ≈ −140 dBFS).
+- Deterministic: noise, impulse responses, random LFO steps, drum synthesis, tape hiss and synth
+  drift are seeded. Renders of the same project match to within float rounding: Chromium sums a
+  node's inputs in an unspecified order, so the last bits can differ — up to ~5e-5 for a full
+  starter, and ~5e-4 (−66 dBFS) when a loud mastering preset drives the limiter hard; single-voice
+  paths render bit-identically.
 - Constant output latency: the master limiter's 5 ms look-ahead plus one 128-frame render quantum
   (`engineLatencyFrames`), identical live and in exports. Record Notes compensates for it together
   with the device's output latency.
@@ -118,6 +132,12 @@ Rules:
 - Stall policy: if the ticker falls more than 250 ms behind (background throttling, suspended
   context) the transport stops coherently (no backlog is played) and raises a `stalled` state that
   the UI shows with a Resume button.
+- Pause / Resume: Pause records the musical position (tick, each playing clip's phase, queued
+  launches, song block, replay position), releases held notes and stops scheduling; Play restarts
+  the sequencer at that tick with the same launcher state (`relocateSlots` / `relocateSongRows`), so
+  playback continues in time with no backlog. Stop returns to bar 1 with the previously playing
+  clips armed. Pause is unavailable while a performance take records; during Record Notes it ends
+  the pass first.
 - `RealtimeTransport` emits `arpNote` when the audio clock reaches an arpeggiator note that was not
   cancelled; Record Notes records those (at their real grid tick and gate) on arp parts.
 - After a stall, Resume restarts what was playing: the song from its block, a replay from its start,

@@ -1,7 +1,7 @@
 /**
  * Part menu for a Loops column header ('⋯', right-click, the menu key or
- * F2): rename the part, change its sound, lock it against Variation and open
- * its full sound settings. Every change is an undoable project command.
+ * F2): rename the part, change its instrument, lock it against Variation and
+ * open its full sound settings. Every change is an undoable project command.
  */
 import { useState } from 'react';
 import type { Id } from '../../project/types';
@@ -74,7 +74,7 @@ export function TrackMenu({ trackId, anchor, returnFocus, ignore, startInRename,
           onChangeSound(trackId);
         }}
       >
-        Change sound…
+        Change instrument…
       </MenuItem>
       <MenuItem
         icon="settings"

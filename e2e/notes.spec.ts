@@ -80,6 +80,9 @@ test('a key held while the part or the octave changes stops when it is let go', 
 });
 
 test('switching the arpeggiator on while a key is held does not leave the note sounding', async ({ page }) => {
+  // The arpeggiator strip is an Advanced control.
+  await page.getByRole('radio', { name: 'Advanced', exact: true }).click();
+  await page.locator('body').focus();
   await page.keyboard.down('KeyA');
   await expect.poll(() => held(page)).toBe(1);
   await page.getByRole('switch', { name: 'Arp', exact: true }).click();

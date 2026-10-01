@@ -34,9 +34,11 @@ export interface SegmentedControlProps<T extends string> {
   kind?: 'tabs' | 'radio';
   /** Tabs: id of the panel the tabs control (or a function per value). */
   controls?: string | ((value: T) => string);
-  size?: 'sm' | 'md';
+  size?: 'sm' | 'md' | 'lg';
   /** Stretch segments to fill the width. */
   block?: boolean;
+  /** Show the teal lamp on each key (default). Without it the engaged key is still raised and bold. */
+  lamp?: boolean;
   disabled?: boolean;
   id?: string;
   className?: string;
@@ -51,6 +53,7 @@ export function SegmentedControl<T extends string>({
   controls,
   size = 'md',
   block = false,
+  lamp = true,
   disabled = false,
   id,
   className,
@@ -111,6 +114,7 @@ export function SegmentedControl<T extends string>({
       className={[styles.group, className].filter(Boolean).join(' ')}
       data-size={size}
       data-block={block || undefined}
+      data-lamp={lamp ? undefined : 'off'}
     >
       {options.map((o, i) => {
         const selected = i === selectedIndex;
@@ -135,8 +139,8 @@ export function SegmentedControl<T extends string>({
             onClick={() => !selected && onChange(o.value)}
             onKeyDown={(e) => onKeyDown(e, i)}
           >
-            <span className={styles.lamp} aria-hidden="true" />
-            {o.icon && <Icon name={o.icon} size={size === 'sm' ? 14 : 16} />}
+            {lamp && <span className={styles.lamp} aria-hidden="true" />}
+            {o.icon && <Icon name={o.icon} size={size === 'sm' ? 14 : size === 'lg' ? 18 : 16} />}
             <span className={styles.text}>{o.label}</span>
             {o.keyHint && (
               <span className={styles.key} aria-hidden="true">

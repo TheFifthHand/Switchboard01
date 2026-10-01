@@ -336,3 +336,42 @@
 .pad[data-state='empty'] .key {
   background: transparent;
 }
+
+/* Clip pads: the name large, the length small. */
+.pad[data-label='lg'] .label {
+  /* A narrow grid may set --pad-label-size smaller. */
+  font-size: var(--pad-label-size, var(--fs-lg));
+  line-height: 18px;
+}
+.pad[data-label='lg'] .sublabel,
+.pad[data-label='lg'] .caption {
+  font-size: var(--fs-sm);
+  line-height: 15px;
+}
+
+/* Quiet empty pads: a faint outline and "+"; "Add clip" (the label) shows on hover and keyboard focus. */
+.pad[data-quiet] {
+  --pad-shadow: inset 0 0 0 1px rgba(20, 24, 28, 0.1);
+  background: transparent;
+  color: var(--ink-3);
+}
+.pad[data-quiet]:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.45);
+  color: var(--ink-2);
+}
+.pad[data-quiet] .plus {
+  opacity: 0.55;
+}
+.pad[data-quiet] .label {
+  opacity: 0;
+  font-size: var(--fs-sm);
+  transition: opacity var(--t-fast) var(--ease);
+}
+.pad[data-quiet]:hover .label,
+.pad[data-quiet]:focus-visible .label {
+  opacity: 1;
+}
+.pad[data-quiet]:hover .plus,
+.pad[data-quiet]:focus-visible .plus {
+  opacity: 1;
+}

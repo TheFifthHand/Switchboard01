@@ -593,9 +593,11 @@ export interface ClipMenuProps {
   /** Open straight into the rename field (F2). */
   startInRename?: boolean;
   onClose(): void;
+  /** Start moving this clip with the keyboard (arrow keys, Enter); the menu closes first. */
+  onMove?(): void;
 }
 
-export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRename, onClose }: ClipMenuProps) {
+export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRename, onClose, onMove }: ClipMenuProps) {
   const info = useProject(
     (p) => {
       const t = p.tracks.find((x) => x.id === trackId);
@@ -674,6 +676,18 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
       </MenuItem>
       <MenuKeyRow label="Length" unit="bars" row="length" options={LENGTH_OPTIONS} value={info.bars} onSelect={(b) => act(() => clipActions.setBars(trackId, slot, b))} />
       <MenuSeparator />
+      {onMove && (
+        <MenuItem
+          icon="drag"
+          hint="or drag the pad"
+          onSelect={() => {
+            onClose();
+            onMove();
+          }}
+        >
+          Move…
+        </MenuItem>
+      )}
       <MenuItem
         icon="duplicate"
         disabled={info.duplicateTo === null}

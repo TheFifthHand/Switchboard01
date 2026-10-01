@@ -1,9 +1,19 @@
+/**
+ * The transport strip, left to right in clear groups (docs/OMNI_UX.md):
+ * views · Play/Pause, Stop and the position with its state word · tempo
+ * (Swing in Advanced) · recording · master volume, meter and Mute All · the
+ * Simple · Advanced switch, save state, Undo/Redo, Projects, Export and the
+ * More menu. On narrower windows secondary controls move into the More menu
+ * (it always holds Tips), so every control stays one press away without
+ * squeezing the always-visible ones.
+ */
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { Button, Icon, IconButton, Knob, Meter, NumberField, SegmentedControl, Switch, Tooltip, useRafLoop } from '../../ui/components';
+import { Button, Icon, IconButton, Knob, Meter, NumberField, SegmentedControl, Tooltip, useRafLoop } from '../../ui/components';
 import { BPM_SPEC, MASTER_VOLUME_SPEC, SWING_SPEC } from '../../project/params';
-import { setTipsEnabled, setView, type View } from '../../state/uiStore';
+import { setTipsEnabled, setUiMode, setView, type UiMode, type View } from '../../state/uiStore';
 import { session, useAutosave, useHistory, useProject, useUi } from '../instance';
-import { useOffline, useRuntime } from '../runtime';
+import { notify, transportWord, useOffline, useRuntime } from '../runtime';
+import { PAUSE_UNAVAILABLE_MESSAGE } from '../session';
 import type { MeterFrame } from '../../audio/contracts';
 import { OfflineMenuItems, OfflineStatus } from './OfflineStatus';
 import { RecordOptions, quantizeCaption, recordOptionsCaption } from './RecordOptions';
@@ -11,10 +21,15 @@ import { MOD_ARIA, MOD_KEY, MenuItem, MenuSeparator, MoreIcon, Popover, anchorFr
 import styles from './TransportBar.module.css';
 
 const VIEW_OPTIONS = [
-  { value: 'play', label: 'Play' },
-  { value: 'shape', label: 'Shape' },
-  { value: 'arrange', label: 'Arrange' },
-  { value: 'mix', label: 'Mix' },
+  { value: 'play', label: 'Play', tip: 'Play: the pads, the selected part’s sound and the keyboard.' },
+  { value: 'shape', label: 'Shape', tip: 'Shape: the selected part’s sound in detail, its effects and cables.' },
+  { value: 'arrange', label: 'Arrange', tip: 'Arrange: put scenes in order as a song, and replay recorded performances.' },
+  { value: 'mix', label: 'Mix', tip: 'Mix: a channel strip per part, the master and mastering.' },
+] as const;
+
+const MODE_OPTIONS = [
+  { value: 'simple', label: 'Simple', tip: 'Simple: the essentials, large. Nothing is lost: Advanced shows every control again.' },
+  { value: 'advanced', label: 'Advanced', tip: 'Advanced: every control (swing, key and scale, arpeggiator, cables, pan …). Your music does not change.' },
 ] as const;
 
 const meterFrame: MeterFrame = { masterPeakL: 0, masterPeakR: 0, masterRms: 0, limiterReductionDb: 0, tracks: [] };
@@ -32,30 +47,105 @@ export function readMeterFrame(): MeterFrame {
   return meterFrame;
 }
 
+/** "3.2" (bar.beat, from 1), or "Count" during a count-in. */
+function positionText(tick: number, bar: number, beat: number): string {
+  return tick < 0 ? 'Count' : `${bar + 1}.${beat + 1}`;
+}
+
+/** The current position: Stopped at 1.1, the paused position, or the playhead while playing. */
+function heldPositionText(): string {
+  const t = session.transport;
+  if (!t || !t.paused) return '1.1';
+  const p = t.getPosition();
+  return positionText(p.tick, p.bar, p.beat);
+}
+
+/** Bar.beat with the transport's state word above it (Playing / Paused / Stopped / Song / Replay). */
 function Position() {
   const ref = useRef<HTMLSpanElement>(null);
   const playing = useRuntime((s) => s.playing);
+  const paused = useRuntime((s) => s.paused);
   const mode = useRuntime((s) => s.mode);
-  // The label says what drives playback: live pads, the arrangement (SONG) or a take (REPLAY).
-  const label = playing && mode === 'song' ? 'SONG' : playing && mode === 'replay' ? 'REPLAY' : 'BAR.BEAT';
+  const word = transportWord({ playing, paused, mode });
   const last = useRef('');
   useRafLoop(() => {
     const t = session.transport;
     if (!ref.current || !t) return;
     const p = t.getPosition();
-    const text = p.tick < 0 ? 'Count' : `${p.bar + 1}.${p.beat + 1}`;
+    const text = positionText(p.tick, p.bar, p.beat);
     if (text !== last.current) {
       last.current = text;
       ref.current.textContent = text;
     }
   }, playing);
+  if (!playing) last.current = '';
   return (
-    <div className={styles.position} role="timer" aria-label={label === 'BAR.BEAT' ? 'Bar and beat' : `Bar and beat, playing the ${label === 'SONG' ? 'song' : 'recorded performance'}`}>
-      <span className={`${styles.posLabel} ${label !== 'BAR.BEAT' ? styles.posMode : ''}`}>{label}</span>
-      <span ref={ref} className={`${styles.posValue} mono`}>
-        {playing ? '' : '1.1'}
+    <div className={styles.position} data-state={word.toLowerCase()} role="group" aria-label="Position">
+      <span className={styles.posWord} role="status">
+        {word}
+      </span>
+      <span ref={ref} className={`${styles.posValue} mono`} role="timer" aria-label="Bar and beat">
+        {playing ? '' : heldPositionText()}
       </span>
     </div>
+  );
+}
+
+/** One key: ▶ Play when stopped or paused, ❚❚ Pause while playing. */
+function PlayPauseButton() {
+  const playing = useRuntime((s) => s.playing);
+  const paused = useRuntime((s) => s.paused);
+  const mode = useRuntime((s) => s.mode);
+  const take = useRuntime((s) => s.recording === 'performance');
+  const blocked = playing && take;
+  const tip = blocked
+    ? PAUSE_UNAVAILABLE_MESSAGE
+    : playing
+      ? `Pause: hold the position${mode === 'song' ? ' in the song' : ''}. Play continues from exactly here, in time.`
+      : paused
+        ? 'Continue from where you paused, in time.'
+        : 'Start the lit clips from bar 1.';
+  return (
+    <Button
+      variant="transport"
+      icon={playing ? 'pause' : 'play'}
+      lit={playing}
+      aria-disabled={blocked || undefined}
+      onClick={() => (blocked ? notify(PAUSE_UNAVAILABLE_MESSAGE, 'warn') : void session.togglePlay())}
+      tip={tip}
+      detail="Space plays and pauses. Shift+Space stops."
+      aria-keyshortcuts="Space"
+      className={styles.play}
+    >
+      {playing ? 'Pause' : 'Play'}
+    </Button>
+  );
+}
+
+function StopButton() {
+  const playing = useRuntime((s) => s.playing);
+  const paused = useRuntime((s) => s.paused);
+  const take = useRuntime((s) => s.recording === 'performance');
+  const idle = !playing && !paused;
+  return (
+    <Button
+      variant="transport"
+      icon="stop"
+      disabled={idle}
+      onClick={() => session.stop()}
+      tip={
+        idle
+          ? 'Stopped at bar 1.'
+          : take
+            ? 'Stop playback and the performance recording (the take is kept). Back to bar 1.'
+            : 'Stop and go back to bar 1. The clips that were playing stay lit and start again from the top on Play.'
+      }
+      detail="Shift+Space also stops."
+      aria-keyshortcuts="Shift+Space"
+      className={styles.stop}
+    >
+      <span className={styles.stopText}>Stop</span>
+    </Button>
   );
 }
 
@@ -185,7 +275,7 @@ function RecordGroup() {
           onClick={() => void session.toggleRecordNotes()}
           aria-label={recording === 'notes' ? 'Stop recording notes' : 'Record Notes'}
           tip={recording === 'notes' ? 'Stop recording notes. Undo then removes the whole pass in one step.' : 'Record what you play on the keyboard or drum pads into the selected clip.'}
-          detail="Timing, metronome and count-in are in Recording options (the metronome button). With the part's arpeggiator on, the notes it plays are recorded."
+          detail="Timing, metronome and count-in are in Recording options (the metronome button). With the part's arpeggiator on, the notes it plays are recorded. Pause also ends the pass."
           className={recording === 'notes' ? styles.recActive : undefined}
         >
           Notes
@@ -199,7 +289,7 @@ function RecordGroup() {
           onClick={() => void session.togglePerformance()}
           aria-label={recording === 'performance' ? 'Stop recording performance' : 'Record Performance'}
           tip={recording === 'performance' ? 'Stop and keep this performance. Replay or export it in Arrange.' : 'Capture everything you do — launches, notes, knob moves — as a replayable performance.'}
-          detail="Cables and sound choices are locked while recording so the take replays exactly. Mute All ends the recording."
+          detail="Cables and sound choices are locked while recording so the take replays exactly. Pause is not available during a take; Mute All ends the recording."
           className={recording === 'performance' ? styles.recActive : undefined}
         >
           Performance
@@ -211,26 +301,25 @@ function RecordGroup() {
 }
 
 /**
- * Narrow screens (below 1320 px, e.g. 200 % zoom): Undo, Redo, Tips,
- * Projects and Export move into this menu so every control stays reachable
- * without squeezing the always-visible transport controls. It also lists the
- * offline state and, when a new version waits, the Update action (marked on
- * the key itself), for widths where the strip has no room for them.
+ * The More menu: Tips, and whatever the strip has no room for at this width
+ * (Undo, Redo, Projects, Export, the Simple · Advanced switch, the offline
+ * state and the Update action, which the key marks when one waits).
  */
 function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; projectName: string }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const history = useHistory();
   const tipsEnabled = useUi((s) => s.tipsEnabled);
+  const uiMode = useUi((s) => s.uiMode);
   const updateReady = useOffline().state === 'update-ready';
   const close = () => setOpen(false);
   return (
     <>
-      <Tooltip name="More" tip={updateReady ? 'A new version is ready: Update is in this menu. Also Undo, Redo, Tips, your projects and WAV export.' : 'Undo, Redo, Tips, your projects and WAV export.'}>
+      <Tooltip name="More" tip={updateReady ? 'A new version is ready: Update is in this menu. Also Tips, Undo, Redo, your projects and WAV export.' : 'Tips, Undo, Redo, Simple or Advanced, your projects and WAV export.'}>
         <button
           ref={btnRef}
           type="button"
-          className={`${styles.more} ${styles.narrowOnly}`}
+          className={styles.more}
           aria-label={updateReady ? 'More: update ready, undo, redo, tips, projects and export' : 'More: undo, redo, tips, projects and export'}
           aria-haspopup="menu"
           aria-expanded={open}
@@ -271,6 +360,18 @@ function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; projectN
           </MenuItem>
           <MenuSeparator />
           <MenuItem
+            icon="sliders"
+            role="menuitemcheckbox"
+            checked={uiMode === 'advanced'}
+            hint={uiMode === 'advanced' ? 'Advanced' : 'Simple'}
+            onSelect={() => {
+              setUiMode(uiMode === 'advanced' ? 'simple' : 'advanced');
+              close();
+            }}
+          >
+            Show every control (Advanced)
+          </MenuItem>
+          <MenuItem
             icon="info"
             role="menuitemcheckbox"
             checked={tipsEnabled}
@@ -310,42 +411,27 @@ function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; projectN
 
 export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): void }) {
   const view = useUi((s) => s.view);
+  const uiMode = useUi((s) => s.uiMode);
   const bpm = useProject((p) => p.bpm);
   const swing = useProject((p) => p.swing);
   const masterDb = useProject((p) => p.masterVolumeDb);
   const projectName = useProject((p) => p.name);
-  const playing = useRuntime((s) => s.playing);
   const muteAll = useRuntime((s) => s.muteAll);
   const takeRecording = useRuntime((s) => s.recording === 'performance');
-  const tipsEnabled = useUi((s) => s.tipsEnabled);
   const history = useHistory();
+  const advanced = uiMode === 'advanced';
 
   return (
-    <header className={styles.bar} aria-label="Transport">
-      <div className={styles.brand} aria-label="SWITCHBOARD / 01">
-        <span className={styles.brandName}>SWITCHBOARD</span>
-        <span className={`${styles.brandNum} mono`}>/ 01</span>
-      </div>
+    <header className={styles.bar} data-mode={uiMode} aria-label="Transport">
+      <SegmentedControl<View> label="View" kind="tabs" options={VIEW_OPTIONS} value={view} onChange={(v) => setView(v)} size="lg" lamp={false} className={styles.views} />
 
-      <SegmentedControl<View> label="View" kind="tabs" options={VIEW_OPTIONS} value={view} onChange={(v) => setView(v)} size="sm" className={styles.views} />
-
-      <div className={styles.group}>
-        <Button
-          variant="transport"
-          icon={playing ? 'stop' : 'play'}
-          pressed={playing}
-          onClick={() => void session.togglePlay()}
-          tip={playing ? 'Stop playback. Clips stay selected for next time.' : 'Start playback of the lit clips.'}
-          detail="Space bar also plays and stops."
-          aria-keyshortcuts="Space"
-          className={styles.play}
-        >
-          {playing ? 'Stop' : 'Play'}
-        </Button>
+      <div className={`${styles.group} ${styles.playback}`} role="group" aria-label="Playback">
+        <PlayPauseButton />
+        <StopButton />
         <Position />
       </div>
 
-      <div className={styles.group}>
+      <div className={styles.group} role="group" aria-label="Tempo">
         <NumberField
           label="Tempo"
           layout="stacked"
@@ -356,29 +442,31 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           fineStep={0.1}
           unit="BPM"
           size="sm"
-          chars={5}
+          chars={4}
           tip={BPM_SPEC.tip}
           onChange={(v, info) => session.setBpm(v, info.gesture)}
         />
-        <NumberField
-          label="Swing"
-          layout="stacked"
-          value={Math.round(swing * 100)}
-          min={0}
-          max={100}
-          step={1}
-          unit="%"
-          size="sm"
-          chars={3}
-          tip={SWING_SPEC.tip}
-          detail={SWING_SPEC.detail}
-          onChange={(v, info) => session.setSwing(v / 100, info.gesture)}
-        />
+        {advanced && (
+          <NumberField
+            label="Swing"
+            layout="stacked"
+            value={Math.round(swing * 100)}
+            min={0}
+            max={100}
+            step={1}
+            unit="%"
+            size="sm"
+            chars={4}
+            tip={SWING_SPEC.tip}
+            detail={SWING_SPEC.detail}
+            onChange={(v, info) => session.setSwing(v / 100, info.gesture)}
+          />
+        )}
       </div>
 
       <RecordGroup />
 
-      <div className={styles.group}>
+      <div className={`${styles.group} ${styles.output}`} role="group" aria-label="Output">
         <Knob spec={MASTER_VOLUME_SPEC} value={masterDb} size="sm" onChange={(v, info) => session.setMasterVolume(v, info.gesture)} label="Master" className={styles.master} />
         <div className={styles.meters}>
           <Meter read={() => readMeterFrame().masterPeakL} label="Master left level" orientation="vertical" length={36} thickness={5} />
@@ -404,6 +492,15 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
       </div>
 
       <div className={styles.right}>
+        <SegmentedControl<UiMode>
+          label="Simple or Advanced"
+          options={MODE_OPTIONS}
+          value={uiMode}
+          onChange={(m) => setUiMode(m)}
+          size="sm"
+          lamp={false}
+          className={styles.modeSwitch}
+        />
         <SaveStatus />
         <IconButton
           icon="undo"
@@ -413,7 +510,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           size="sm"
           variant="ghost"
           aria-keyshortcuts="Control+Z"
-          className={styles.wideOnly}
+          className={styles.historyKey}
         />
         <IconButton
           icon="redo"
@@ -423,20 +520,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           size="sm"
           variant="ghost"
           aria-keyshortcuts="Control+Shift+Z"
-          className={styles.wideOnly}
-        />
-        <Switch
-          label="Tips"
-          hideLabel
-          onText="Tips"
-          offText="Tips"
-          size="sm"
-          tone="teal"
-          checked={tipsEnabled}
-          onChange={(on) => setTipsEnabled(on)}
-          tip="Explanations like this one appear when you point at or tab to a control."
-          detail="Remembered in this browser. Icon buttons still show their names when Tips are off."
-          className={`${styles.tips} ${styles.wideOnly}`}
+          className={styles.historyKey}
         />
         <Button
           variant="ghost"
@@ -445,7 +529,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           onClick={props.onOpenLibrary}
           tip={`Projects: open, rename, duplicate, import and export. Open now: ${projectName}.`}
           aria-label={`Projects (open: ${projectName})`}
-          className={`${styles.project} ${styles.wideOnly}`}
+          className={`${styles.project} ${styles.fileKey}`}
         >
           <span className={styles.projectName}>{projectName}</span>
         </Button>
@@ -455,7 +539,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           icon="download"
           onClick={props.onOpenExport}
           tip="Export a WAV file: your song, a scene or a recorded performance."
-          className={`${styles.export} ${styles.wideOnly}`}
+          className={`${styles.export} ${styles.fileKey}`}
         >
           <span className={styles.exportText}>Export</span>
         </Button>

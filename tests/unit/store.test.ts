@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createClip, createProject } from '../../src/project/factory';
 import { HISTORY_LIMIT, ProjectStore, displayLabel } from '../../src/state/projectStore';
 import { createStore, shallowEqual, useStore } from '../../src/state/store';
-import { createUiStore, selectSlot, setClipboard, setKeyboardOctave, setPadMode, setTipsEnabled, shiftKeyboardOctave, UI_STORAGE_KEY, type KeyValueStorage } from '../../src/state/uiStore';
+import { createUiStore, selectSlot, setClipboard, setKeyboardCollapsed, setKeyboardOctave, setPadMode, setTipsEnabled, setUiMode, shiftKeyboardOctave, UI_STORAGE_KEY, type KeyValueStorage, type UiMode } from '../../src/state/uiStore';
 
 function clockFrom(start: number) {
   let t = start;
@@ -325,6 +325,19 @@ describe('UI store', () => {
     expect(ui.getState().tipsEnabled).toBe(false);
     const hostile = memoryStorage({ [UI_STORAGE_KEY]: JSON.stringify({ view: 'evil', keyboardOctave: 99, selectedTrackId: '<script>' }) });
     expect(createUiStore(hostile).getState()).toMatchObject({ view: 'play', keyboardOctave: 7, selectedTrackId: 't1' });
+  });
+
+  it('starts in Simple with the keyboard shown, and remembers Advanced and a folded keyboard', () => {
+    const storage = memoryStorage();
+    const ui = createUiStore(storage);
+    expect(ui.getState()).toMatchObject({ uiMode: 'simple', keyboardCollapsed: false });
+    setUiMode('advanced', ui);
+    setKeyboardCollapsed(true, ui);
+    setUiMode('expert' as UiMode, ui);
+    expect(ui.getState()).toMatchObject({ uiMode: 'advanced', keyboardCollapsed: true });
+    expect(createUiStore(storage).getState()).toMatchObject({ uiMode: 'advanced', keyboardCollapsed: true });
+    const hostile = memoryStorage({ [UI_STORAGE_KEY]: JSON.stringify({ uiMode: 'expert', keyboardCollapsed: 'yes' }) });
+    expect(createUiStore(hostile).getState()).toMatchObject({ uiMode: 'simple', keyboardCollapsed: false });
   });
 
   it('keeps a detached clipboard copy', () => {
