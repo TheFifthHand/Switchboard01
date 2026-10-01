@@ -255,11 +255,29 @@ export interface Patch {
 /* Arrangement & performances                                          */
 /* ------------------------------------------------------------------ */
 
+/** Most passes one song block can hold (its length = pass length × repeats). */
+export const MAX_BLOCK_REPEATS = 16;
+/** Longest block label, in characters. */
+export const MAX_BLOCK_LABEL = 40;
+
+/**
+ * One section of the song: a scene played `repeats` times.
+ *
+ * `parts` changes what single parts play in this block only, without
+ * touching the scene: a track id maps to the scene whose clip that part
+ * plays here (layering another scene's part in), or to null (the part is
+ * silent in this block). Parts not listed follow the block's scene. A part
+ * whose chosen scene has no clip in that part's row is silent.
+ */
 export interface ArrangementBlock {
   id: Id;
   sceneId: Id;
-  /** 1..8 */
+  /** 1..MAX_BLOCK_REPEATS */
   repeats: number;
+  /** Optional name shown instead of the scene name (e.g. "Verse 2"). */
+  label?: string;
+  /** Per-part changes for this block: trackId → sceneId to play, or null for silent. */
+  parts?: Record<Id, Id | null>;
 }
 
 export interface Arrangement {

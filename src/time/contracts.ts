@@ -49,7 +49,7 @@ export type SeqEvent =
   | { kind: 'tempo'; tick: number; time: number; bpm: number }
   | { kind: 'swing'; tick: number; time: number; swing: number }
   | { kind: 'master'; tick: number; time: number; volumeDb: number }
-  | { kind: 'block'; tick: number; time: number; blockIndex: number; sceneRow: number }
+  | { kind: 'block'; tick: number; time: number; blockIndex: number; blockId: Id; sceneRow: number }
   | { kind: 'end'; tick: number; time: number };
 
 export type PlayMode =

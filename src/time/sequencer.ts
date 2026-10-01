@@ -31,6 +31,7 @@ import {
   type Project,
   type Track,
 } from '../project/types';
+import { blockBars, blockRowOverrides, clampRepeats } from '../project/arrangement';
 import type { LaunchResult, PlayMode, SeqEvent, StartOptions, TrackLaunchState } from './contracts';
 import { MAX_SWING_TICKS, TempoMap, clampBpm, clampSwing, swingWarp } from './clock';
 import { EMPTY_LATCH, arpDivisionTicks, arpGateTicks, arpGridAtOrAfter, arpInput, arpNoteAt, updateLatch, type LatchState } from './arp';
@@ -64,7 +65,10 @@ export interface SongBlockPlan {
   /** Index into project.arrangement.blocks. */
   index: number;
   blockId: Id;
+  /** The block's scene row (what every part plays unless `parts` says otherwise). */
   row: number;
+  /** Parts that play another row in this block (null = silent there); see project/arrangement.ts. */
+  parts: Readonly<Record<Id, number | null>>;
   bars: number;
   repeats: number;
   startTick: number;
@@ -121,10 +125,10 @@ export function songBlocks(project: Project): SongBlockPlan[] {
   project.arrangement.blocks.forEach((b, index) => {
     const row = project.scenes.findIndex((s) => s.id === b.sceneId);
     if (row < 0) return;
-    const bars = sceneBars(project, row);
-    const repeats = clampInt(b.repeats, 1, 8);
+    const bars = blockBars(project, b);
+    const repeats = clampRepeats(b.repeats);
     const len = bars * repeats * TICKS_PER_BAR;
-    out.push({ index, blockId: b.id, row, bars, repeats, startTick: tick, endTick: tick + len });
+    out.push({ index, blockId: b.id, row, parts: blockRowOverrides(project, b), bars, repeats, startTick: tick, endTick: tick + len });
     tick += len;
   });
   return out;
@@ -1446,7 +1450,7 @@ export class Sequencer {
     if (song) {
       while (song.next < song.blocks.length && song.blocks[song.next].startTick <= at) {
         const b = song.blocks[song.next++];
-        this.push(out, { kind: 'block', tick: at, time: this.clock.timeAt(at), blockIndex: b.index, sceneRow: b.row });
+        this.push(out, { kind: 'block', tick: at, time: this.clock.timeAt(at), blockIndex: b.index, blockId: b.blockId, sceneRow: b.row });
       }
     }
     const byId = new Map(project.tracks.map((t) => [t.id, t]));

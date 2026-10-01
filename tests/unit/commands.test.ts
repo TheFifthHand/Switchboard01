@@ -523,7 +523,7 @@ describe('arrangement commands', () => {
     moveBlock(store, 0, 4);
     expect(store.getState().arrangement.blocks[4].sceneId).toBe(scenes[0].id);
     setBlockRepeats(store, add.blockId!, 99);
-    expect(store.getState().arrangement.blocks.find((b) => b.id === add.blockId)!.repeats).toBe(8);
+    expect(store.getState().arrangement.blocks.find((b) => b.id === add.blockId)!.repeats).toBe(16);
     setBlockRepeats(store, add.blockId!, 0);
     expect(store.getState().arrangement.blocks.find((b) => b.id === add.blockId)!.repeats).toBe(1);
     setTailSeconds(store, 25);

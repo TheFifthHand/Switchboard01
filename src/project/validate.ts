@@ -31,6 +31,8 @@ import {
 import {
   DRUM_VOICES,
   MACRO_IDS,
+  MAX_BLOCK_LABEL,
+  MAX_BLOCK_REPEATS,
   MAX_TRACKS,
   PROJECT_SCHEMA,
   PROJECT_VERSION,
@@ -772,12 +774,13 @@ function validateMusicCore(raw: Obj, sampleIds: ReadonlySet<Id>, issues: Issues)
 /* Arrangement                                                         */
 /* ------------------------------------------------------------------ */
 
-function validateArrangement(raw: unknown, scenes: readonly Scene[], issues: Issues): Arrangement {
+function validateArrangement(raw: unknown, scenes: readonly Scene[], tracks: readonly Track[], issues: Issues): Arrangement {
   if (!isObj(raw)) {
     issues.warn('Reset a missing arrangement.');
     return { blocks: [], tailSeconds: 3 };
   }
   const sceneIds = new Set(scenes.map((s) => s.id));
+  const trackIds = new Set(tracks.map((t) => t.id));
   const blocks: ArrangementBlock[] = [];
   const ids = new Set<Id>();
   const rawBlocks = Array.isArray(raw.blocks) ? (raw.blocks as unknown[]) : [];
@@ -797,9 +800,32 @@ function validateArrangement(raw: unknown, scenes: readonly Scene[], issues: Iss
       id = uid('blk');
     }
     ids.add(id as string);
-    const repeats = isNum(b.repeats) ? clamp(Math.round(b.repeats), 1, 8) : 1;
+    const repeats = isNum(b.repeats) ? clamp(Math.round(b.repeats), 1, MAX_BLOCK_REPEATS) : 1;
     if (repeats !== b.repeats) issues.warn('Adjusted an invalid repeat count.');
-    blocks.push({ id: id as string, sceneId: b.sceneId, repeats });
+    const block: ArrangementBlock = { id: id as string, sceneId: b.sceneId, repeats };
+    if (b.label !== undefined) {
+      const label = typeof b.label === 'string' ? b.label.replace(/\s+/g, ' ').trim().slice(0, MAX_BLOCK_LABEL) : '';
+      if (label) block.label = label;
+      if (label !== b.label) issues.warn('Adjusted a song block name.');
+    }
+    if (b.parts !== undefined) {
+      const parts: Record<Id, Id | null> = {};
+      let dropped = !isObj(b.parts);
+      if (isObj(b.parts)) {
+        for (const [trackId, v] of Object.entries(b.parts)) {
+          // A part change for a deleted part, or pointing at a deleted scene, is dropped (the part follows the block's scene).
+          if (!trackIds.has(trackId) || !(v === null || (typeof v === 'string' && sceneIds.has(v)))) {
+            dropped = true;
+            continue;
+          }
+          if (v === b.sceneId) continue;
+          parts[trackId] = v;
+        }
+      }
+      if (dropped) issues.warn('Removed part changes for parts or scenes that no longer exist.');
+      if (Object.keys(parts).length) block.parts = parts;
+    }
+    blocks.push(block);
   }
   let tailSeconds = 3;
   if (isNum(raw.tailSeconds)) {
@@ -1096,7 +1122,7 @@ function validateProjectInner(input: unknown, issues: Issues): Project | null {
     tracks: core.tracks,
     scenes: core.scenes,
     patch: core.patch,
-    arrangement: validateArrangement(raw.arrangement, core.scenes, issues),
+    arrangement: validateArrangement(raw.arrangement, core.scenes, core.tracks, issues),
     performances,
     samples,
     seed,

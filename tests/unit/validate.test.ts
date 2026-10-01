@@ -207,7 +207,7 @@ describe('validateProject repairs recoverable problems', () => {
     const space = r.project.tracks[1].macroMap.space;
     expect(space[space.length - 1]).toEqual({ module: 't2:ch', param: 'sendA', min: 0, max: 1, curve: 'lin' });
     expect(r.project.arrangement.blocks.some((b) => b.sceneId === 'missing')).toBe(false);
-    expect(r.project.arrangement.blocks[0].repeats).toBe(8);
+    expect(r.project.arrangement.blocks[0].repeats).toBe(16);
     expect(r.project.tracks[7].instrument).toMatchObject({ kind: 'sampler', sampleId: null });
     expect(r.warnings.length).toBeGreaterThan(5);
   });

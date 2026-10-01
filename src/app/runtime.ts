@@ -34,6 +34,8 @@ export interface RuntimeState {
   mode: PlayMode;
   replayId: Id | null;
   songBlock: number | null;
+  /** Id of the song block playing now (stable across edits made while the song plays). */
+  songBlockId: Id | null;
   tracks: Record<Id, TrackRuntime>;
   recording: RecordingState;
   /** Clip that Record Notes writes into. */
@@ -77,6 +79,7 @@ export const runtimeStore = createStore<RuntimeState>({
   mode: 'live',
   replayId: null,
   songBlock: null,
+  songBlockId: null,
   tracks: {},
   recording: 'off',
   recordTarget: null,

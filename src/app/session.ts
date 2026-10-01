@@ -490,7 +490,7 @@ export class Session {
         setTrackRuntime(ev.trackId, { playingSlot: ev.slot, queued });
         if (this.noteRec && ev.trackId === this.noteRec.trackId && ev.slot !== this.noteRec.slot) this.stopRecordNotes();
       }),
-      t.on('block', (ev) => patchRuntime({ songBlock: ev.blockIndex })),
+      t.on('block', (ev) => patchRuntime({ songBlock: ev.blockIndex, songBlockId: ev.blockId })),
       t.on('beat', (ev) => {
         const counting = runtimeStore.getState().countingIn;
         if (counting !== ev.countIn) patchRuntime({ countingIn: ev.countIn });
@@ -509,7 +509,7 @@ export class Session {
           playing: false,
           paused: false,
           mode: 'live',
-          songBlock: null,
+          songBlock: null, songBlockId: null,
           countingIn: false,
           stalled:
             s.reason === 'suspended'
@@ -658,7 +658,7 @@ export class Session {
     this.armDefaultSceneIfIdle();
     this.transport!.start({ mode: { kind: 'live' }, countInBars: 0 });
     this.stallResume = null;
-    patchRuntime({ playing: true, paused: false, mode: 'live', stalled: null, songBlock: null });
+    patchRuntime({ playing: true, paused: false, mode: 'live', stalled: null, songBlock: null, songBlockId: null });
     this.refreshLauncherRuntime();
   }
 
@@ -670,7 +670,7 @@ export class Session {
     if (this.transport) this.transport.stop();
     if (this.replayingId) this.endReplay();
     this.stallResume = null;
-    patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, countingIn: false });
+    patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, countingIn: false });
     this.refreshLauncherRuntime();
   }
 
@@ -714,8 +714,11 @@ export class Session {
     else await this.play();
   }
 
-  /** Play the arrangement from a block. */
-  async playSong(fromBlock = 0): Promise<void> {
+  /**
+   * Play the arrangement from a block, or from bar `opts.fromBar` (0-based, on
+   * the song timeline as the Arrange lane draws it).
+   */
+  async playSong(fromBlock = 0, opts: { fromBar?: number } = {}): Promise<void> {
     if (!(await this.startAudio())) return;
     this.finishTake('stop');
     this.stopRecordNotes();
@@ -724,9 +727,11 @@ export class Session {
       notify('The arrangement is empty. Add scene blocks in Arrange first.', 'warn');
       return;
     }
-    this.transport!.start({ mode: { kind: 'song', fromBlock } });
+    const fromBar = opts.fromBar;
+    const fromTick = fromBar !== undefined && Number.isFinite(fromBar) ? Math.max(0, Math.floor(fromBar)) * TICKS_PER_BAR : undefined;
+    this.transport!.start({ mode: { kind: 'song', fromBlock }, fromTick });
     this.stallResume = null;
-    patchRuntime({ playing: true, paused: false, mode: 'song', songBlock: fromBlock, stalled: null });
+    patchRuntime({ playing: true, paused: false, mode: 'song', songBlock: fromBlock, songBlockId: null, stalled: null });
     this.refreshLauncherRuntime();
   }
 
@@ -1337,7 +1342,7 @@ export class Session {
     const countIn = Math.max(0, Math.min(4, Math.round(countInBars)));
     t.start({ mode: { kind: 'live' }, countInBars: countIn });
     this.stallResume = null;
-    patchRuntime({ playing: true, paused: false, mode: 'live', songBlock: null, countingIn: countIn > 0, stalled: null });
+    patchRuntime({ playing: true, paused: false, mode: 'live', songBlock: null, songBlockId: null, countingIn: countIn > 0, stalled: null });
     this.refreshLauncherRuntime();
     return true;
   }
