@@ -89,7 +89,7 @@ describe('Arrange layout', () => {
     [1920, 1080],
     [960, 540],
   ] as const) {
-    it(`at ${w} x ${hh}: the lane fits, rows are 14–18 px, the page never scrolls sideways`, async () => {
+    it(`at ${w} x ${hh}: the lane fits, rows grow with the height (15 px at 768, up to 24 at 1080), targets are big enough, the page never scrolls sideways`, async () => {
       await openArrange(w, hh);
       const doc = document.scrollingElement!;
       expect(doc.scrollWidth, 'page scrolls sideways').toBeLessThanOrEqual(window.innerWidth);
@@ -97,13 +97,14 @@ describe('Arrange layout', () => {
       expect(panel.left).toBeGreaterThanOrEqual(0);
       expect(panel.right).toBeLessThanOrEqual(w);
       expect(songPanel().scrollWidth).toBeLessThanOrEqual(songPanel().clientWidth + 1);
-      // Part rows: one cell per part, 14–18 px tall, aligned with the part names.
+      // Part rows: one cell per part, aligned with the part names; they grow with the window's height.
       const cells = [...blockEls()[1].querySelectorAll<HTMLElement>('[data-cell]')];
       expect(cells.length).toBe(8);
+      const [lo, hi] = hh >= 1080 ? [22, 24] : hh <= 768 ? [14.5, 16] : [15, 24];
       for (const c of cells) {
         const ch = c.getBoundingClientRect().height;
-        expect(ch).toBeGreaterThanOrEqual(14);
-        expect(ch).toBeLessThanOrEqual(18);
+        expect(ch).toBeGreaterThanOrEqual(lo);
+        expect(ch).toBeLessThanOrEqual(hi);
       }
       const names = [...laneEl().querySelectorAll<HTMLElement>('[aria-hidden="true"] > div')].filter((d) => d.textContent === 'Drums');
       expect(names.length).toBe(1);
@@ -113,20 +114,48 @@ describe('Arrange layout', () => {
       const last = blockEls()[blockEls().length - 1];
       expect(scroller.scrollWidth).toBeGreaterThanOrEqual(Math.floor(last.getBoundingClientRect().right - scroller.getBoundingClientRect().left + scroller.scrollLeft) - 1);
       expect(scroller.getBoundingClientRect().right).toBeLessThanOrEqual(panel.right);
-      // Header buttons and the scene cards' + keep a usable size.
+      // Header buttons keep a usable size; on a block with room (Groove) they are 32 px.
       const play = blockEls()[0].querySelector<HTMLElement>('[aria-label^="Play song from block 1"]')!;
-      expect(play.getBoundingClientRect().height).toBeGreaterThanOrEqual(26);
+      expect(play.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
+      const wide = blockEls()[1];
+      if (wide.getBoundingClientRect().width >= 150) {
+        for (const b of wide.querySelectorAll<HTMLElement>('[aria-label^="Play song from block 2"], [aria-haspopup="menu"][aria-label*="block actions"]')) {
+          expect(b.getBoundingClientRect().width).toBeGreaterThanOrEqual(32);
+          expect(b.getBoundingClientRect().height).toBeGreaterThanOrEqual(32);
+        }
+      }
+      // Scissors: a 24 px target.
+      const split = wide.querySelector<HTMLElement>('[aria-label^="Split Groove"]')!;
+      expect(split.getBoundingClientRect().width).toBeGreaterThanOrEqual(24);
+      expect(split.getBoundingClientRect().height).toBeGreaterThanOrEqual(24);
+      // The lane's view tools (Follow, zoom, Fit song) are on screen with the palette.
+      for (const name of ['Follow playhead', 'Zoom out', 'Zoom in', 'Fit song']) {
+        const b = [...document.querySelectorAll<HTMLElement>('[role="group"][aria-label="Song lane view"] button')].find((x) => (x.getAttribute('aria-label') ?? x.textContent) === name)!;
+        const r = b.getBoundingClientRect();
+        expect(r.right, name).toBeLessThanOrEqual(panel.right);
+        // At 200 % zoom the Arrange view scrolls down to the palette; at laptop and desktop size it is in view.
+        if (hh >= 768) expect(r.bottom, name).toBeLessThanOrEqual(hh);
+      }
       if (w === 1366) {
         // Laptop: the song panel stays compact so the Performances panel keeps real room below it.
         expect(songPanel().getBoundingClientRect().height).toBeLessThanOrEqual(400);
         expect(perfPanel().getBoundingClientRect().height).toBeGreaterThanOrEqual(150);
         expect(perfPanel().getBoundingClientRect().bottom).toBeLessThanOrEqual(hh);
       }
-      // Advanced adds detail but no width.
+      // Advanced adds detail but no width; the part picker arrows are 24 px wide.
       act(() => setUiMode('advanced'));
       await settle();
       expect(doc.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
       expect(blockEls()[1].textContent).toContain('4 × 4');
+      const pick = blockEls()[1].querySelector<HTMLElement>('[aria-label^="Choose what"]')!;
+      expect(pick.getBoundingClientRect().width).toBeGreaterThanOrEqual(24);
+      // Split Groove: the Join button on the seam is a 24 px target.
+      act(() => split.click());
+      await settle();
+      const join = document.querySelector<HTMLElement>('[data-join]')!;
+      expect(join.getBoundingClientRect().height).toBeGreaterThanOrEqual(24);
+      expect(join.getBoundingClientRect().width).toBeGreaterThanOrEqual(24);
+      if (w === 1366) expect(perfPanel().getBoundingClientRect().bottom).toBeLessThanOrEqual(hh);
     });
   }
 

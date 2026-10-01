@@ -16,6 +16,10 @@
  *   plays; at the switch tick the old clip's notes are cut (their duration is
  *   truncated to end at the switch tick) and the new clip starts at local
  *   position 0.
+ * - Song mode: parts switch at block starts. An edit to what the block
+ *   playing plays switches its parts at the edit point instead (the playhead
+ *   at now + the invalidate margin), in phase with the block start; see
+ *   Sequencer.replanSong. A 'launch' event then lies off the bar line.
  * - A clip that started at tick S with length L plays note n at
  *   S + k*L + n.tick for k = 0, 1, 2 ...
  * - Events are generated for windows of ticks. Each event belongs to exactly

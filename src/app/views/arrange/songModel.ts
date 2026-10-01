@@ -5,6 +5,7 @@
  */
 import { blockBars, blockParts, sceneRow } from '../../../project/arrangement';
 import { MAX_BLOCK_REPEATS, type ArrangementBlock, type Id, type Project } from '../../../project/types';
+import { layerChanges, type LayerMode } from '../../../state/commands/arrangement';
 
 /**
  * How one part sounds in one block:
@@ -100,17 +101,23 @@ export function passesText(n: number): string {
   return n === 1 ? '1 pass' : `${n} passes`;
 }
 
+/** The edge-drag bubble: "3 passes · 12 bars" (Advanced adds how it is made: "(4 × 3)"). */
+export function resizeText(passBars: number, repeats: number, advanced = false): string {
+  return `${passesText(repeats)} · ${barsText(passBars * repeats)}${advanced ? ` (${passBars} × ${repeats})` : ''}`;
+}
+
 /** "16 bars (4 × 4)": the length with how it is made. */
 export function lengthDetail(v: BlockView): string {
   return `${barsText(v.totalBars)} (${v.passBars} × ${v.repeats})`;
 }
 
 /** Accessible name of a block. */
-export function blockLabel(v: BlockView, count: number, opts: { current?: boolean; selected?: boolean } = {}): string {
+export function blockLabel(v: BlockView, count: number, opts: { current?: boolean; next?: boolean; selected?: boolean } = {}): string {
   if (v.missing) return `Block ${v.index + 1} of ${count}: its scene no longer exists, so the song skips it${opts.selected ? ', selected' : ''}`;
   const named = v.label ? `${v.label} (scene ${v.sceneName})` : v.name;
   const changes = v.changes ? `, ${v.changes === 1 ? '1 part changed' : `${v.changes} parts changed`}` : '';
-  return `Block ${v.index + 1} of ${count}: ${named}, ${barsText(v.passBars)} × ${v.repeats} = ${barsText(v.totalBars)}${changes}${opts.current ? ', playing now' : ''}${opts.selected ? ', selected' : ''}`;
+  const now = opts.current ? ', playing now' : opts.next ? ', plays next' : '';
+  return `Block ${v.index + 1} of ${count}: ${named}, ${barsText(v.passBars)} × ${v.repeats} = ${barsText(v.totalBars)}${changes}${now}${opts.selected ? ', selected' : ''}`;
 }
 
 /** What a cell says, in words (its accessible name and tooltip). */
@@ -186,27 +193,67 @@ export function partChoices(p: Project, b: ArrangementBlock, trackId: Id): PartC
 
 export interface LayerPreview {
   sceneName: string;
+  mode: LayerMode;
+  /** The card's scene is the block's own scene: dropping it does nothing. */
+  same: boolean;
   /** Parts that would change, with the clip they would play. */
   changes: Map<Id, string>;
+  /** How many parts 'replace' would change (to say what Shift would do). */
+  replaceCount: number;
 }
 
 /**
- * What layering scene `sceneId` into block `b` would change (mirrors the
- * layerScene command): every part with a clip in that scene plays it here.
+ * What layering scene `sceneId` into block `b` would change (exactly the
+ * parts the layerScene command changes in that mode).
  */
-export function layerPreview(p: Project, b: ArrangementBlock, sceneId: Id): LayerPreview {
+export function layerPreview(p: Project, b: ArrangementBlock, sceneId: Id, mode: LayerMode = 'fill'): LayerPreview {
   const row = sceneRow(p, sceneId);
   const changes = new Map<Id, string>();
   const sceneName = p.scenes[row]?.name ?? 'scene';
-  if (row < 0) return { sceneName, changes };
-  for (const t of p.tracks) {
-    const clip = t.clips[row];
-    if (!clip) continue;
-    const has = b.parts !== undefined && Object.prototype.hasOwnProperty.call(b.parts, t.id);
-    const cur = has ? b.parts![t.id] : undefined;
-    const want = sceneId === b.sceneId ? undefined : sceneId;
-    if (cur === want) continue;
-    changes.set(t.id, clip.name);
+  const same = sceneId === b.sceneId;
+  if (row < 0 || same) return { sceneName, mode, same, changes, replaceCount: 0 };
+  for (const id of layerChanges(p, b, sceneId, mode)) {
+    const clip = p.tracks.find((t) => t.id === id)?.clips[row];
+    if (clip) changes.set(id, clip.name);
   }
-  return { sceneName, changes };
+  const replaceCount = mode === 'replace' ? changes.size : layerChanges(p, b, sceneId, 'replace').length;
+  return { sceneName, mode, same, changes, replaceCount };
+}
+
+/**
+ * What dropping a scene card on a block says (the block header and the
+ * card under the pointer), and whether the drop would change anything.
+ */
+export function layerText(preview: LayerPreview, blockName: string): { title: string; hint: string | null; changes: boolean } {
+  const { sceneName: scene, mode, same, changes, replaceCount } = preview;
+  if (same) return { title: `${blockName} already plays ${scene}`, hint: 'Drop between blocks to add another one', changes: false };
+  if (mode === 'replace') {
+    if (changes.size) return { title: `Replace ${blockName}’s parts with ${scene}’s`, hint: `${partsCount(changes.size)} · release Shift to fill only silent parts`, changes: true };
+    return { title: `${scene} adds nothing new to ${blockName}`, hint: null, changes: false };
+  }
+  if (changes.size) return { title: `Layer ${scene} into ${blockName}`, hint: replaceCount > changes.size ? `Fills ${partsCount(changes.size)} · Shift replaces ${partsCount(replaceCount)}` : `Fills ${partsCount(changes.size)}`, changes: true };
+  if (replaceCount) return { title: `Nothing silent to fill in ${blockName}`, hint: `Hold Shift to replace ${partsCount(replaceCount)} with ${scene}’s`, changes: false };
+  return { title: `${scene} adds nothing new to ${blockName}`, hint: null, changes: false };
+}
+
+function partsCount(n: number): string {
+  return n === 1 ? '1 part' : `${n} parts`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Part cells: what a click does, and what it says it did              */
+/* ------------------------------------------------------------------ */
+
+/** The tooltip of a part cell: what a click on it does. */
+export function cellTip(v: Pick<BlockView, 'name'>, c: CellView): string {
+  const t = cellToggle(c);
+  if (t === 'picker') return `Click: choose what ${c.partName} plays in ${v.name}`;
+  return t.choice === null ? `Click: switch ${c.partName} off in this block` : `Click: switch ${c.partName} back on in this block`;
+}
+
+/** The toast after a cell click ("Drums off in Groove"). */
+export function cellToast(part: string, block: string, choice: Id | null | undefined, from: string | null): string {
+  if (choice === null) return `${part} off in ${block}`;
+  if (choice === undefined) return `${part} back on in ${block}`;
+  return `${part} plays ${from ?? 'another scene'} in ${block}`;
 }

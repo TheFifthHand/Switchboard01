@@ -490,8 +490,13 @@ export class Session {
         setTrackRuntime(ev.trackId, { playingSlot: ev.slot, queued });
         if (this.noteRec && ev.trackId === this.noteRec.trackId && ev.slot !== this.noteRec.slot) this.stopRecordNotes();
       }),
-      // A block deleted while it plays has no place in the arrangement (index -1) until the next one starts.
-      t.on('block', (ev) => patchRuntime({ songBlock: ev.blockIndex >= 0 ? ev.blockIndex : null, songBlockId: ev.blockId })),
+      // Found by id: the block may have moved since its event was scheduled. One deleted meanwhile is
+      // never named: the plan has the block taking over from it.
+      t.on('block', (ev) => {
+        const i = this.store.getState().arrangement.blocks.findIndex((b) => b.id === ev.blockId);
+        if (i >= 0) patchRuntime({ songBlock: i, songBlockId: ev.blockId });
+        else this.syncSongBlock();
+      }),
       t.on('beat', (ev) => {
         const counting = runtimeStore.getState().countingIn;
         if (counting !== ev.countIn) patchRuntime({ countingIn: ev.countIn });
@@ -500,7 +505,9 @@ export class Session {
       t.on('arpNote', (ev) => this.recordArpNote(ev)),
       t.on('stalled', (s) => {
         const rt = runtimeStore.getState();
-        this.stallResume = { mode: rt.mode, songBlock: rt.songBlock, songBlockId: rt.songBlockId, replayId: this.replayingId };
+        // The transport found the song block where the music stopped before the stop cleared the song.
+        const songBlockId = rt.mode === 'song' ? (s.songBlockId ?? rt.songBlockId) : rt.songBlockId;
+        this.stallResume = { mode: rt.mode, songBlock: rt.songBlock, songBlockId, replayId: this.replayingId };
         this.finishTake('stalled');
         this.stopRecordNotes();
         this.releaseAllNotes();
@@ -558,11 +565,14 @@ export class Session {
    * (in phase) or stays armed or queued, from its new pad. A clip moved to
    * another part stops on its old part at once and does not start by itself
    * on the new one (tap it there). A copy or paste that replaces a playing
-   * clip plays in its place, as before. Song playback keeps its scenes.
+   * clip plays in its place, as before. Song playback keeps its scenes; while
+   * the song plays (or is paused) a clip that left its part is left to the
+   * song replan, which switches the part off and back on (Undo) itself.
    */
   private followMovedClips(p: Project, prev: Project): void {
     const t = this.transport;
     if (!t) return;
+    const song = this.sequencer?.mode.kind === 'song';
     if (p.scenes !== prev.scenes) {
       const rows = new Map<number, number>();
       prev.scenes.forEach((s, i) => {
@@ -582,7 +592,9 @@ export class Session {
         if (!c || tr.clips[s]?.id === c.id) return;
         const to = tr.clips.findIndex((x) => x?.id === c.id);
         if (to >= 0) slots.set(s, to);
-        else if (partOf.has(c.id)) slots.set(s, null);
+        // Song mode: the part's slot is empty now, so it is silent at once; stopping it here as well
+        // would put it outside the song's plan, and an Undo could not bring it back.
+        else if (partOf.has(c.id) && !song) slots.set(s, null);
       });
       if (!slots.size) continue;
       t.relocateSlots(tr.id, slots);
@@ -608,31 +620,37 @@ export class Session {
     if (songSignature(p) === songSignature(prev)) return false;
     const changed = t.replanSong();
     this.syncSongBlock();
-    // Pads show what each part switches to at the next bar.
+    // Pads show what each part plays now, or switches to when the next block starts.
     if (changed) this.refreshLauncherRuntime();
     return changed;
   }
 
-  /** The runtime's song block is the block playing now (by id) at its place in the arrangement; null once it was deleted. */
+  /**
+   * The runtime's song block is the block the plan has at the playhead, at
+   * its place in the arrangement. An edit can change it without a 'block'
+   * event: a split or join continues in the block that now covers the
+   * playhead, and a block deleted while it plays hands over (at the next bar
+   * line) to the block reported here already. Null when nothing follows.
+   */
   private syncSongBlock(): void {
     const seq = this.sequencer;
     const t = this.transport;
     const rt = runtimeStore.getState();
     if (!seq || !t || rt.mode !== 'song') return;
-    let id = rt.songBlockId;
-    if (id === null) {
-      const tick = t.getPosition().tick;
-      id = seq.songPlan()?.find((b) => tick < b.endTick)?.blockId ?? null;
-    }
-    if (id === null) return;
-    const i = this.store.getState().arrangement.blocks.findIndex((b) => b.id === id);
+    const id = seq.songBlockAt(t.getPosition().tick)?.blockId ?? null;
+    const i = id === null ? -1 : this.store.getState().arrangement.blocks.findIndex((b) => b.id === id);
     const songBlock = i >= 0 ? i : null;
     if (songBlock !== rt.songBlock || id !== rt.songBlockId) patchRuntime({ songBlock, songBlockId: id });
   }
 
-  /** A part whose playing (or armed) clip was deleted stops, so undo does not silently resume it. */
+  /**
+   * A part whose playing (or armed) clip was deleted stops, so undo does not
+   * silently resume it. Not in song mode: the empty slot is already silent
+   * and the song replan switches the part off at once (Undo switches it back
+   * on), while a stop queued here would outlast an Undo.
+   */
   private stopPartsWithoutClip(p: Project): void {
-    if (!this.sequencer || !this.transport || this.replayingId) return;
+    if (!this.sequencer || !this.transport || this.replayingId || this.sequencer.mode.kind === 'song') return;
     const rt = runtimeStore.getState().tracks;
     for (const t of p.tracks) {
       const slot = rt[t.id]?.playingSlot;
@@ -807,7 +825,8 @@ export class Session {
 
   /**
    * Resume after a stall: start the same thing again. The live pads resume
-   * with the same clips, the song from the block that was playing, and a
+   * with the same clips, the song from the block that was playing (from the
+   * block taking over, when the playing one had just been deleted), and a
    * replayed take from its start.
    */
   async resumeAfterStall(): Promise<void> {
@@ -818,7 +837,7 @@ export class Session {
     if (this.transport?.playing) return;
     const replayId = resume?.mode === 'replay' ? resume.replayId : null;
     if (resume?.mode === 'song') {
-      // The block that was playing, found by id (blocks may have moved meanwhile).
+      // The block where it stopped, found by id (blocks may have moved meanwhile).
       const blocks = this.store.getState().arrangement.blocks;
       const byId = resume.songBlockId ? blocks.findIndex((b) => b.id === resume.songBlockId) : -1;
       await this.playSong(byId >= 0 ? byId : Math.min(resume.songBlock ?? 0, Math.max(0, blocks.length - 1)));

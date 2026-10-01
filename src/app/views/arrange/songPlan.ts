@@ -9,8 +9,8 @@
  * and is null whenever the song is not playing or paused.
  */
 import { createStore, useStore } from '../../../state/store';
-import { songBlocks, type SongBlockPlan } from '../../../time/sequencer';
-import { TICKS_PER_BAR, type Id, type Project } from '../../../project/types';
+import { songBlocks, songLaneTick, type SongBlockPlan } from '../../../time/sequencer';
+import { TICKS_PER_BAR, type Project } from '../../../project/types';
 import { session } from '../../instance';
 import { runtimeStore } from '../../runtime';
 
@@ -63,41 +63,28 @@ export function getSongPlan(): readonly SongBlockPlan[] | null {
   return planStore.getState();
 }
 
-let lane: { project: Project; starts: Map<Id, number>; total: number } | null = null;
+let lane: { project: Project; blocks: SongBlockPlan[] } | null = null;
 
-/** Start bar of every block on the lane (current order), cached per project. */
-function laneOf(p: Project): { starts: Map<Id, number>; total: number } {
-  if (lane?.project !== p) {
-    const blocks = songBlocks(p);
-    lane = { project: p, starts: new Map(blocks.map((b) => [b.blockId, b.startTick / TICKS_PER_BAR])), total: (blocks.at(-1)?.endTick ?? 0) / TICKS_PER_BAR };
-  }
-  return lane;
+/** The blocks on the lane (current order), cached per project. */
+function laneOf(p: Project): SongBlockPlan[] {
+  if (lane?.project !== p) lane = { project: p, blocks: songBlocks(p) };
+  return lane.blocks;
 }
 
 /**
  * Where transport tick `tick` is on the song timeline as the lane draws it:
  * bars from the song start (fractional), in the current block order. That is
  * the lane start of the block playing at `tick` plus how far into it the
- * playhead is, so blocks moved or resized before it are accounted for. A
- * block deleted while it plays sits just before the block that follows it.
- * Null when the song is not playing or paused.
+ * playhead is, so blocks moved or resized before it are accounted for; it
+ * never runs past that block's end on the lane. A block deleted while it
+ * plays sounds on to the next bar line while the playhead waits where the
+ * block that takes over starts (see `songLaneTick`). Null when the song is
+ * not playing or paused.
  */
 export function songTimelineBar(tick: number): number | null {
   const plan = planStore.getState();
   if (!plan || !Number.isFinite(tick)) return null;
-  if (!plan.length) return 0;
-  const { starts, total } = laneOf(session.store.getState());
-  let i = plan.findIndex((b) => tick < b.endTick);
-  if (i < 0) i = plan.length - 1;
-  const b = plan[i];
-  const start = starts.get(b.blockId);
-  if (start !== undefined) return start + (tick - b.startTick) / TICKS_PER_BAR;
-  const left = (b.endTick - tick) / TICKS_PER_BAR;
-  for (let j = i + 1; j < plan.length; j++) {
-    const next = starts.get(plan[j].blockId);
-    if (next !== undefined) return Math.max(0, next - left);
-  }
-  return Math.max(0, total - left);
+  return songLaneTick(plan, laneOf(session.store.getState()), tick) / TICKS_PER_BAR;
 }
 
 /** Identity of a layout: blocks, scene lengths and repeats in order. */

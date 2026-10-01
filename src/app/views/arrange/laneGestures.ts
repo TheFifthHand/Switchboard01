@@ -9,24 +9,33 @@
  *   and during a gesture every pointer move only writes transforms. React
  *   re-renders only when something visible changes kind (a drag starts, Copy
  *   is toggled, a layer target changes, the drop).
- * - Geometry is read once when a gesture starts (and again after a scroll or
- *   resize); pointer moves never read layout.
+ * - Slides are Web Animations with both ends given, so nothing ever forces a
+ *   layout to start one (a block React just moved in the DOM still slides),
+ *   and a slide retargeted mid-way starts where the block is on screen.
+ * - Geometry is read once when a gesture starts (and again after the page or
+ *   window moves the lane); pointer moves and the lane's own scrolling never
+ *   read layout: the scroll position and the visible width are tracked.
  * - What a drag shows is what its drop commits: the preview order comes from
  *   orderAfterMove, the same function the moveBlocks command uses.
  * - Every gesture ends through one path (`finish`), which removes every
  *   listener it added and releases pointer capture: on drop, Escape, a release
- *   away from the lane, pointercancel, lost capture, window blur, a hidden tab,
- *   an outside change to the song, or the lane unmounting.
+ *   away from the lane, pointercancel, loss of our pointer capture, window
+ *   blur, a hidden tab, an outside change to the song, or the lane unmounting.
+ * - While something is carried, other pointers (a second finger, a pen) are
+ *   ignored on the lane: they cannot edit the song under the drag.
  */
 import type { Id } from '../../../project/types';
+import type { LayerMode } from '../../../state/commands/arrangement';
 import { orderAfterMove } from '../../../state/commands';
 import {
   DRAG_THRESHOLD_PX,
   NO_TARGET,
   autoScrollVelocity,
+  badgePlacement,
   cardTarget,
   edgeStepPx,
   fullGap,
+  ghostFlips,
   packPositions,
   repeatsFromEdge,
   sameCardTarget,
@@ -35,14 +44,12 @@ import {
   type LaneSelection,
 } from './songDrag';
 import { blockWidth, type SongLayout } from './songLayout';
+import { EASE_SLIDE_CSS, EASE_SPRING_CSS, RESIZE_SLIDE_MS, SETTLE_MS, SLIDE_MS, ZOOM_MS, easeSlide, easeSpring, prefersReducedMotion } from './laneMotion';
 
 /** Room after the last block (px) for dropping at the end. */
 export const END_ROOM = 48;
 /** How far above or below the lane (px) a drop still counts. */
 export const DROP_MARGIN = 40;
-/** Lifted look while a block is carried (also the start of its settle animation). */
-const LIFT = 'translate3d(VAR_X, -3px, 0) scale(1.015)';
-const SETTLE_MS = 300;
 /**
  * A scene card resting on a boundary for this long opens the insertion slot
  * (until then a line marks it). Passing over a boundary on the way to the
@@ -52,7 +59,7 @@ export const SLOT_DELAY_MS = 140;
 
 export type DragUi =
   | { kind: 'move'; ids: Id[]; copy: boolean; outside: boolean }
-  | { kind: 'card'; sceneId: Id; layerInto: Id | null; outside: boolean }
+  | { kind: 'card'; sceneId: Id; layerInto: Id | null; replace: boolean; outside: boolean }
   | { kind: 'resize'; id: Id };
 
 export interface LaneHost {
@@ -65,29 +72,38 @@ export interface LaneHost {
   slotEl(): HTMLElement | null;
   bubbleEl(): HTMLElement | null;
   ghostEl(): HTMLElement | null;
-  /** The status text inside the clone or ghost ("Move to position 3"). */
+  /** The status text inside the clone or ghost ("Move to position 3"), the clone's label chip, the ghost's second line. */
   labelEl(): HTMLElement | null;
+  badgeEl(): HTMLElement | null;
+  ghostHintEl(): HTMLElement | null;
+  /** The lane and the scene palette: where other pointers are ignored while something is carried. */
+  contains(node: Node): boolean;
 
   layout(): SongLayout;
+  /** Visible width of the lane (px; from its ResizeObserver, so reading it costs no layout). */
+  viewport(): number;
   /** Blocks in song order, with whether their scene exists. */
   order(): readonly { id: Id; layerable: boolean; name: string }[];
   selection(): LaneSelection;
-  /** The edit lock reason (a performance take records), or null. */
-  locked(): string | null;
+  /** A performance take records: the song cannot be edited. */
+  locked(): boolean;
   /** Width of a new block of this scene at the current scale. */
   sceneWidth(sceneId: Id): number;
   sceneName(sceneId: Id): string;
+  /** What dropping the card on a block would do ("Layer Lift into Groove" and a second line). */
+  layerText(blockId: Id, sceneId: Id, mode: LayerMode): { title: string; hint: string | null };
 
   setDragUi(ui: DragUi | null): void;
   selectOnly(id: Id): void;
-  refuse(message: string): void;
+  /** A gesture was refused because the song is locked: say so quietly on the lane. */
+  refuseLocked(): void;
 
   /** Commit a move (copy: duplicate) of `ids` to insertion gap `gap` of the full list; returns the ids that land (moved or new), or null. */
   commitMove(ids: Id[], gap: number, copy: boolean): Id[] | null;
   commitInsert(sceneId: Id, gap: number): Id | null;
-  commitLayer(blockId: Id, sceneId: Id): void;
+  commitLayer(blockId: Id, sceneId: Id, mode: LayerMode): void;
   commitRepeats(id: Id, repeats: number): void;
-  /** Live label for the edge bubble ("×3 · 12 bars"). */
+  /** Live label for the edge bubble ("3 passes · 12 bars"). */
   resizeLabel(id: Id, repeats: number): string;
 }
 
@@ -136,12 +152,16 @@ interface CardDrag extends Base, Geometry {
   /** The insertion slot is open (the blocks after it moved aside); before that a line marks it. */
   open: boolean;
   outside: boolean;
+  /** Shift held: layering replaces the block's parts instead of filling its silent ones. */
+  replace: boolean;
 }
 
-interface Resize extends Base {
+interface Resize extends Base, Geometry {
   kind: 'resize';
   id: Id;
   startX: number;
+  /** The lane's scroll position when the drag started (scrolling during the drag adds to the distance). */
+  scroll0: number;
   r0: number;
   r: number;
   step: number;
@@ -158,25 +178,43 @@ type Gesture = Press | MoveDrag | CardDrag | Resize | Ended;
 
 type Listener = [EventTarget, string, EventListener, AddEventListenerOptions | boolean];
 
+/** A running Web Animation of a block's x, with what it needs to know where the block is now. */
+interface Slide {
+  anim: Animation;
+  from: number;
+  to: number;
+  dur: number;
+  ease: (t: number) => number;
+}
+
 const translate = (x: number) => `translate3d(${Math.round(x)}px, 0, 0)`;
-const lifted = (x: number) => LIFT.replace('VAR_X', `${Math.round(x)}px`);
+/** Lifted look while a block is carried (also the start of its settle animation). */
+const lifted = (x: number) => `translate3d(${Math.round(x)}px, -3px, 0) scale(1.015)`;
 
 export class LaneGestures {
   private g: Gesture | null = null;
   private listeners: Listener[] = [];
   private raf = 0;
   private lastFrame = 0;
+  /** A pointer move arrived while the lane auto-scrolls: the next frame applies it. */
+  private pendingMove = false;
+  /** The lane's scroll position as last seen or set (tracked, never read during a gesture). */
   private scrollLeft = 0;
+  /** Width last written to the content (px). */
+  private contentPx = 0;
   private suppressClick = false;
   /** Last written position / width / passes per block element (skip unchanged writes). */
   private written = new WeakMap<HTMLElement, { x: number; w: number; p: number }>();
+  private slides = new WeakMap<HTMLElement, Slide>();
+  private running = new Set<Animation>();
   private lastScale = 0;
   /** Blocks that just landed: they settle from where they were dropped. */
   private settle: { from: Map<Id, number>; tries: number } | null = null;
-  /** Blocks still springing into place (each drop's own timer ends its own). */
-  private settling = new Set<HTMLElement>();
-  private settleTimers = new Set<number>();
   private slotTimer = 0;
+  private badge: { side: string; shift: number } | null = null;
+  /** Where the lifted copy was last put (view coordinates), to write only changes. */
+  private cloneAt: { el: HTMLElement | null; x: number } = { el: null, x: NaN };
+  private ghostAt = '';
 
   constructor(private host: LaneHost) {}
 
@@ -190,25 +228,45 @@ export class LaneGestures {
     return this.suppressClick;
   }
 
+  /** The lane's scroll position as the gestures know it. */
+  get scroll(): number {
+    return this.scrollLeft;
+  }
+
+  /**
+   * The lane is being auto-scrolled by a drag: its scroll events are the echo
+   * of positions already applied, so the lane need not read the position (a
+   * read after the pointer moved would force a style and layout update).
+   */
+  get scrolling(): boolean {
+    return this.raf !== 0 && this.dragging;
+  }
+
   /* ---------------------------------------------------------------- */
   /* Placement                                                        */
   /* ---------------------------------------------------------------- */
 
-  /** Called by the lane after every render: place the blocks (or the live preview) and settle dropped blocks. */
-  sync(): void {
+  /**
+   * Called by the lane after every render: place the blocks (or the live
+   * preview) and settle dropped blocks. A change of scale places them at once
+   * (the lane animates a zoom itself, see `animateZoom`). `keepView` keeps the
+   * content at least as wide as what is in view (false for a zoom, which
+   * scrolls to its own anchor and asks for `minWidth` to have room for it).
+   */
+  sync(keepView = true, minWidth = 0): void {
     const g = this.g;
     if (g && (g.kind === 'move' || g.kind === 'card' || g.kind === 'resize')) {
       this.preview(g);
       return;
     }
     const layout = this.host.layout();
-    const animate = this.lastScale === 0 || layout.pxPerBar === this.lastScale;
+    const animate = this.lastScale !== 0 && layout.pxPerBar === this.lastScale;
     this.lastScale = layout.pxPerBar;
-    this.placeBase(animate);
+    this.placeBase(animate, keepView, minWidth);
     this.runSettle();
   }
 
-  private placeBase(animate: boolean): void {
+  private placeBase(animate: boolean, keepView = true, minWidth = 0): void {
     const layout = this.host.layout();
     const x = new Map<Id, number>();
     const w = new Map<Id, number>();
@@ -218,37 +276,84 @@ export class LaneGestures {
       w.set(b.id, b.width);
       p.set(b.id, b.repeats);
     }
-    this.place(x, w, p, layout.contentWidth + END_ROOM, { animate, flush: true });
+    this.place(x, w, p, Math.max(minWidth, layout.contentWidth + END_ROOM), { animate, keepView });
     this.hideSlot();
   }
 
   /**
-   * Write block positions. `flush` first lets the browser see the current
-   * positions (React may have just moved elements in the DOM, and a moved
-   * element would otherwise jump instead of sliding).
+   * Write block positions (sliding from where each block is now when
+   * `animate`), widths and passes, and the content width. The content never
+   * gets narrower than what is in view, so a shorter song does not pull the
+   * lane (and the block under the pointer) sideways; the extra room goes at
+   * the next placement after a scroll.
    */
-  private place(x: Map<Id, number>, w: Map<Id, number> | null, passes: Map<Id, number> | null, contentWidth: number, opts: { animate: boolean; flush: boolean }): void {
-    const track = this.host.track();
+  private place(x: Map<Id, number>, w: Map<Id, number> | null, passes: Map<Id, number> | null, contentWidth: number, opts: { animate: boolean; dur?: number; keepView?: boolean }): void {
     const content = this.host.content();
-    if (!track) return;
-    if (!opts.animate) track.dataset.instant = '';
-    if (opts.flush) void track.offsetWidth;
+    const animate = opts.animate && !prefersReducedMotion();
+    const dur = opts.dur ?? SLIDE_MS;
     for (const [id, bx] of x) {
       const el = this.host.blockEl(id);
       if (!el) continue;
       const prev = this.written.get(el);
       const bw = w?.get(id) ?? prev?.w ?? 0;
       const bp = passes?.get(id) ?? prev?.p ?? 1;
-      if (!prev || prev.x !== bx) el.style.transform = translate(bx);
+      if (!prev || prev.x !== bx) {
+        if (animate && prev) this.slide(el, this.currentX(el, prev.x), bx, dur);
+        else {
+          this.stopSlide(el);
+          el.style.transform = translate(bx);
+        }
+      }
       if (!prev || prev.w !== bw) el.style.width = `${bw}px`;
       if (!prev || prev.p !== bp) el.style.setProperty('--passes', String(bp));
       this.written.set(el, { x: bx, w: bw, p: bp });
     }
-    if (content) content.style.width = `max(100%, ${Math.ceil(contentWidth)}px)`;
-    if (!opts.animate) {
-      void track.offsetWidth;
-      delete track.dataset.instant;
+    // Keeping the view only ever stops the content shrinking under it; it never makes it wider.
+    const kept = this.contentPx ? Math.min(this.contentPx, Math.floor(this.scrollLeft) + this.host.viewport()) : 0;
+    const width = Math.ceil(opts.keepView === false ? contentWidth : Math.max(contentWidth, kept));
+    if (content && width !== this.contentPx) {
+      this.contentPx = width;
+      content.style.width = `max(100%, ${width}px)`;
     }
+  }
+
+  /** Where a block is on screen now (its running slide, or where it was placed). */
+  private currentX(el: HTMLElement, fallback: number): number {
+    const s = this.slides.get(el);
+    if (!s) return fallback;
+    const t = Number(s.anim.currentTime ?? 0) / s.dur;
+    if (s.anim.playState === 'finished' || t >= 1) return s.to;
+    return s.from + (s.to - s.from) * s.ease(Math.max(0, t));
+  }
+
+  private stopSlide(el: HTMLElement): void {
+    const s = this.slides.get(el);
+    if (!s) return;
+    this.slides.delete(el);
+    this.running.delete(s.anim);
+    delete el.dataset.settling;
+    s.anim.cancel();
+  }
+
+  private track(el: HTMLElement, anim: Animation, from: number, to: number, dur: number, ease: (t: number) => number, done?: () => void): void {
+    this.slides.set(el, { anim, from, to, dur, ease });
+    this.running.add(anim);
+    const end = () => {
+      this.running.delete(anim);
+      if (this.slides.get(el)?.anim === anim) this.slides.delete(el);
+      done?.();
+    };
+    anim.onfinish = end;
+    anim.oncancel = end;
+  }
+
+  /** Slide a block from x `from` to `to` (its resting transform is `to` at once; the animation only shows the way there). */
+  private slide(el: HTMLElement, from: number, to: number, dur: number): void {
+    this.stopSlide(el);
+    el.style.transform = translate(to);
+    if (Math.abs(from - to) < 0.5 || dur <= 0 || typeof el.animate !== 'function') return;
+    const anim = el.animate([{ transform: translate(from) }, { transform: translate(to) }], { duration: dur, easing: EASE_SLIDE_CSS });
+    this.track(el, anim, from, to, dur, easeSlide);
   }
 
   private runSettle(): void {
@@ -264,29 +369,54 @@ export class LaneGestures {
       s.from.delete(id);
     }
     if (!s.from.size || ++s.tries > 3) this.settle = null;
-    if (!els.length) return;
-    // Start where the block was dropped (lifted), then spring into the slot.
-    for (const [el, from] of els) {
-      el.style.transition = 'none';
-      el.style.transform = lifted(from);
-      el.dataset.settling = '';
-    }
-    void this.host.track()?.offsetWidth;
-    for (const [el, , to] of els) {
-      el.style.transition = '';
+    // Spring from where the block was let go (lifted) into its slot, starting with the next frame.
+    for (const [el, from, to] of els) {
+      this.stopSlide(el);
       el.style.transform = translate(to);
       const prev = this.written.get(el);
       if (prev) prev.x = to;
+      if (prefersReducedMotion() || typeof el.animate !== 'function') continue;
+      el.dataset.settling = '';
+      const anim = el.animate([{ transform: lifted(from) }, { transform: translate(to) }], { duration: SETTLE_MS, easing: EASE_SPRING_CSS });
+      this.track(el, anim, from, to, SETTLE_MS, easeSpring, () => {
+        if (!this.slides.has(el)) delete el.dataset.settling;
+      });
     }
-    for (const [el] of els) this.settling.add(el);
-    const timer = window.setTimeout(() => {
-      this.settleTimers.delete(timer);
-      for (const [el] of els) {
-        delete el.dataset.settling;
-        this.settling.delete(el);
-      }
-    }, SETTLE_MS);
-    this.settleTimers.add(timer);
+  }
+
+  /**
+   * After a change of scale: every block glides from where it was on screen
+   * (`from`, lane coordinates after the change) to its new place and width.
+   */
+  animateZoom(from: ReadonlyMap<Id, { x: number; w: number }>): void {
+    if (prefersReducedMotion()) return;
+    const layout = this.host.layout();
+    for (const b of layout.blocks) {
+      const f = from.get(b.id);
+      const el = this.host.blockEl(b.id);
+      if (!f || !el || typeof el.animate !== 'function') continue;
+      if (Math.abs(f.x - b.x) < 0.5 && Math.abs(f.w - b.width) < 0.5) continue;
+      this.stopSlide(el);
+      const anim = el.animate(
+        [
+          { transform: translate(f.x), width: `${f.w}px` },
+          { transform: translate(b.x), width: `${b.width}px` },
+        ],
+        { duration: ZOOM_MS, easing: EASE_SLIDE_CSS },
+      );
+      this.track(el, anim, f.x, b.x, ZOOM_MS, easeSlide);
+    }
+  }
+
+  /** Where each block is on screen now, in lane coordinates (for a zoom to start from). */
+  positions(): Map<Id, { x: number; w: number }> {
+    const out = new Map<Id, { x: number; w: number }>();
+    for (const b of this.host.layout().blocks) {
+      const el = this.host.blockEl(b.id);
+      const prev = el ? this.written.get(el) : undefined;
+      out.set(b.id, { x: el && prev ? this.currentX(el, prev.x) : b.x, w: prev?.w ?? b.width });
+    }
+    return out;
   }
 
   /* ---------------------------------------------------------------- */
@@ -322,9 +452,9 @@ export class LaneGestures {
     if (e.button !== 0 || !e.isPrimary) return false;
     if (this.g && 'down' in this.g && this.g.down === e) return false;
     if (this.g) {
-      // Another finger while something is carried: ignore it.
+      // Another pointer while something is carried: ignore it.
       if (this.dragging && e.pointerId !== this.g.pointerId) return false;
-      // The same pointer pressing again: its release never reached us. Put things back and start over.
+      // The same pointer pressing again (its release never reached us), or a press that never became a drag: start over.
       this.cancel(false);
     }
     this.suppressClick = false;
@@ -346,10 +476,13 @@ export class LaneGestures {
     this.listen(g.captureEl, 'lostpointercapture', this.onLostCapture as EventListener, false);
     this.listen(window, 'scroll', this.onWindowScroll, { capture: true, passive: true });
     this.listen(window, 'resize', this.onWindowScroll, false);
+    // Other pointers pressing or clicking on the lane while something is carried are ignored.
+    for (const type of ['pointerdown', 'click', 'dblclick', 'contextmenu']) this.listen(window, type, this.onOtherPointer, opts);
   }
 
-  /** Keep receiving this pointer's events while it is dragged, even outside the window. */
-  private capture(g: Base): void {
+  /** Keep receiving this pointer's events while it is dragged, even outside the window; the captured element shows the cursor. */
+  private capture(g: Base, cursor: string): void {
+    g.captureEl.style.cursor = cursor;
     try {
       g.captureEl.setPointerCapture(g.pointerId);
     } catch {
@@ -372,15 +505,14 @@ export class LaneGestures {
   }
 
   private startMove(p: Press, ev: PointerEvent): void {
+    if (this.host.locked()) {
+      this.host.refuseLocked();
+      return this.endQuietly();
+    }
     const geo = this.geometry();
     const layout = this.host.layout();
     const pressed = layout.blocks.find((b) => b.id === p.id);
     if (!geo || !pressed) return this.finish();
-    const lock = this.host.locked();
-    if (lock) {
-      this.host.refuse(lock);
-      return this.endQuietly();
-    }
     const order = this.host.order().map((b) => b.id);
     const sel = this.host.selection();
     let ids = sel.ids.includes(p.id) ? order.filter((id) => sel.ids.includes(id)) : [p.id];
@@ -412,43 +544,62 @@ export class LaneGestures {
       gap: null,
     };
     this.g = g;
-    this.capture(g);
+    this.badge = null;
+    this.cloneAt = { el: null, x: NaN };
+    this.capture(g, 'grabbing');
     this.host.setDragUi({ kind: 'move', ids, copy: g.copy, outside: false });
     this.updateMove(g);
   }
 
   private startCard(p: Press, ev: PointerEvent): void {
-    const geo = this.geometry();
-    if (!geo) return this.finish();
-    const lock = this.host.locked();
-    if (lock) {
-      this.host.refuse(lock);
+    if (this.host.locked()) {
+      this.host.refuseLocked();
       return this.endQuietly();
     }
-    const g: CardDrag = { kind: 'card', pointerId: p.pointerId, captureEl: p.captureEl, clientX: ev.clientX, clientY: ev.clientY, ...geo, sceneId: p.id, slotWidth: this.host.sceneWidth(p.id), target: NO_TARGET, open: false, outside: true };
+    const geo = this.geometry();
+    if (!geo) return this.finish();
+    const g: CardDrag = {
+      kind: 'card',
+      pointerId: p.pointerId,
+      captureEl: p.captureEl,
+      clientX: ev.clientX,
+      clientY: ev.clientY,
+      ...geo,
+      sceneId: p.id,
+      slotWidth: this.host.sceneWidth(p.id),
+      target: NO_TARGET,
+      open: false,
+      outside: true,
+      replace: ev.shiftKey,
+    };
     this.g = g;
-    this.capture(g);
-    this.host.setDragUi({ kind: 'card', sceneId: p.id, layerInto: null, outside: true });
-    this.updateCard(g);
+    this.capture(g, 'grabbing');
+    this.host.setDragUi({ kind: 'card', sceneId: p.id, layerInto: null, replace: g.replace, outside: true });
+    this.updateCard(g, true);
   }
 
   private startResize(p: Press, ev: PointerEvent): void {
     const layout = this.host.layout();
     const b = layout.blocks.find((x) => x.id === p.id);
     if (!b || b.totalBars <= 0) return this.endQuietly();
-    const lock = this.host.locked();
-    if (lock) {
-      this.host.refuse(lock);
+    if (this.host.locked()) {
+      this.host.refuseLocked();
       return this.endQuietly();
     }
+    const geo = this.geometry();
+    if (!geo) return this.finish();
+    // The block whose edge is dragged is the one the next actions apply to.
+    if (!this.host.selection().ids.includes(p.id)) this.host.selectOnly(p.id);
     const g: Resize = {
       kind: 'resize',
       pointerId: p.pointerId,
       captureEl: p.captureEl,
       clientX: ev.clientX,
       clientY: ev.clientY,
+      ...geo,
       id: p.id,
       startX: p.startX,
+      scroll0: this.scrollLeft,
       r0: b.repeats,
       r: b.repeats,
       step: edgeStepPx(b.passBars, layout.pxPerBar),
@@ -456,9 +607,9 @@ export class LaneGestures {
       pxPerBar: layout.pxPerBar,
     };
     this.g = g;
-    this.capture(g);
+    this.capture(g, 'col-resize');
     this.host.setDragUi({ kind: 'resize', id: p.id });
-    this.updateResize(g);
+    this.updateResize(g, true);
   }
 
   /* ---------------------------------------------------------------- */
@@ -483,14 +634,17 @@ export class LaneGestures {
     if (g.kind === 'move') {
       const copy = ev.ctrlKey || ev.altKey || ev.metaKey;
       if (copy !== g.copy) this.setCopy(g, copy);
-      this.updateMove(g);
-      this.autoScroll();
     } else if (g.kind === 'card') {
-      this.updateCard(g);
-      this.autoScroll();
-    } else if (g.kind === 'resize') {
-      this.updateResize(g);
+      if (ev.shiftKey !== g.replace) this.setReplace(g, ev.shiftKey);
     }
+    // While the lane auto-scrolls, its frame applies the pointer after scrolling (scroll first, then
+    // write: nothing forces a layout); otherwise the preview follows the pointer at once.
+    if (this.raf) {
+      this.pendingMove = true;
+      return;
+    }
+    this.afterScroll();
+    this.autoScroll();
   };
 
   private onUp = (ev: PointerEvent): void => {
@@ -504,6 +658,7 @@ export class LaneGestures {
       this.updateMove(g);
       this.dropMove(g);
     } else if (g.kind === 'card') {
+      if (ev.shiftKey !== g.replace) this.setReplace(g, ev.shiftKey);
       this.updateCard(g);
       this.dropCard(g);
     } else if (g.kind === 'resize') {
@@ -522,8 +677,16 @@ export class LaneGestures {
     if (this.g && ev.pointerId === this.g.pointerId) this.cancel(false);
   };
 
+  /**
+   * Only the end of our own capture counts. With touch and pen the element
+   * under the finger holds the pointer (implicit capture) until we take it
+   * for the block or card: its lostpointercapture bubbles up here and must
+   * not cancel the drag that is just starting.
+   */
   private onLostCapture = (ev: PointerEvent): void => {
-    if (this.g && ev.pointerId === this.g.pointerId) this.cancel(false);
+    const g = this.g;
+    if (!g || ev.pointerId !== g.pointerId || ev.target !== g.captureEl) return;
+    this.cancel(false);
   };
 
   private onAbort = (): void => {
@@ -534,24 +697,45 @@ export class LaneGestures {
     if (document.visibilityState === 'hidden') this.onAbort();
   };
 
+  /** A press, click or menu from another pointer (a second finger, a pen) on the lane while something is carried: ignored. */
+  private onOtherPointer = (ev: Event): void => {
+    const g = this.g;
+    if (!g || !this.dragging) return;
+    const pid = (ev as PointerEvent).pointerId;
+    if (pid === g.pointerId) return;
+    const t = ev.target;
+    if (!(t instanceof Node) || !this.host.contains(t)) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+  };
+
   private onWindowScroll = (ev: Event): void => {
     const g = this.g;
-    if (!g || (g.kind !== 'move' && g.kind !== 'card')) return;
+    if (!g || (g.kind !== 'move' && g.kind !== 'card' && g.kind !== 'resize')) return;
     // The lane's own scrolling comes through onScroll; this is the page or the window moving the lane.
     if (ev.target === this.host.scroller()) return;
     const geo = this.geometry();
     if (!geo) return;
     Object.assign(g, geo);
-    if (g.kind === 'move') this.updateMove(g);
-    else this.updateCard(g);
+    this.afterScroll();
   };
 
-  /** The lane scrolled (wheel, keyboard or auto-scroll): keep the dragged blocks under the pointer. */
+  /**
+   * The lane scrolled (wheel, keyboard, the follow or auto-scroll): keep the
+   * dragged blocks under the pointer. A scroll this controller made itself
+   * was already applied when it was made.
+   */
   onScroll(scrollLeft: number): void {
+    if (Math.abs(scrollLeft - this.scrollLeft) < 0.5) return;
     this.scrollLeft = scrollLeft;
+    this.afterScroll();
+  }
+
+  private afterScroll(): void {
     const g = this.g;
     if (g?.kind === 'move') this.updateMove(g);
     else if (g?.kind === 'card') this.updateCard(g);
+    else if (g?.kind === 'resize') this.updateResize(g);
   }
 
   private onKey = (ev: KeyboardEvent): void => {
@@ -573,6 +757,15 @@ export class LaneGestures {
         this.updateMove(g);
       }
       if (ev.key === 'Alt') ev.preventDefault();
+      return;
+    }
+    if (g.kind === 'card' && ev.key === 'Shift') {
+      // Replace follows Shift while it is held.
+      const replace = ev.type === 'keydown';
+      if (replace !== g.replace) {
+        this.setReplace(g, replace);
+        this.updateCard(g, true);
+      }
       return;
     }
     // Keys other than the modifiers do nothing while blocks are carried (no stray note or shortcut).
@@ -605,6 +798,11 @@ export class LaneGestures {
     this.host.setDragUi({ kind: 'move', ids: g.ids, copy, outside: g.outside });
   }
 
+  private setReplace(g: CardDrag, replace: boolean): void {
+    g.replace = replace;
+    this.host.setDragUi({ kind: 'card', sceneId: g.sceneId, layerInto: this.layerInto(g), replace, outside: g.outside });
+  }
+
   private updateMove(g: MoveDrag): void {
     const left = this.contentX(g) - g.grab;
     const outside = this.isOutside(g);
@@ -613,8 +811,7 @@ export class LaneGestures {
       g.outside = outside;
       this.host.setDragUi({ kind: 'move', ids: g.ids, copy: g.copy, outside });
     }
-    const clone = this.host.cloneEl();
-    if (clone) clone.style.transform = lifted(left);
+    this.moveClone(g, left);
     const prevGap = g.gap;
     if (!outside) {
       const widths = g.copy ? g.list.map((b) => g.widths.get(b.id) ?? 0) : g.list.filter((b) => !g.moving.has(b.id)).map((b) => g.widths.get(b.id) ?? 0);
@@ -622,6 +819,28 @@ export class LaneGestures {
     }
     if (flipped || g.gap !== prevGap || prevGap === null) this.preview(g);
     else this.label(g);
+  }
+
+  /**
+   * The lifted copy follows the pointer; its label chip stays inside the
+   * visible lane. The copy floats over the lane (not in the scrolled content),
+   * so it is placed in view coordinates: auto-scrolling under a still pointer
+   * writes nothing here.
+   */
+  private moveClone(g: MoveDrag, left: number): void {
+    const clone = this.host.cloneEl();
+    const x = Math.round(left - this.scrollLeft);
+    if (clone && (clone !== this.cloneAt.el || x !== this.cloneAt.x)) {
+      clone.style.transform = lifted(x);
+      this.cloneAt = { el: clone, x };
+    }
+    const badge = this.host.badgeEl();
+    if (!badge) return;
+    const b = badgePlacement(x, g.groupWidth, 0, this.host.viewport());
+    if (this.badge && this.badge.side === b.side && this.badge.shift === b.shift) return;
+    this.badge = b;
+    badge.dataset.side = b.side;
+    badge.style.transform = b.shift ? `translateX(${b.shift}px)` : '';
   }
 
   /** The full-list insertion point a move drop would commit (null: nothing would change). */
@@ -647,9 +866,24 @@ export class LaneGestures {
     if (el.textContent !== text) el.textContent = text;
   }
 
-  private updateCard(g: CardDrag): void {
+  private layerInto(g: CardDrag): Id | null {
+    return g.target.kind === 'layer' ? (this.host.layout().blocks[g.target.index]?.id ?? null) : null;
+  }
+
+  private placeGhost(g: CardDrag): void {
     const ghost = this.host.ghostEl();
-    if (ghost) ghost.style.transform = `translate3d(${Math.round(g.clientX + 14)}px, ${Math.round(g.clientY + 12)}px, 0)`;
+    if (!ghost) return;
+    // Near the window's right or bottom edge the card floats on the other side of the pointer, so its words stay readable.
+    const x = ghostFlips(g.clientX, window.innerWidth) ? `calc(${Math.round(g.clientX - 14)}px - 100%)` : `${Math.round(g.clientX + 14)}px`;
+    const y = g.clientY > window.innerHeight - 90 ? `calc(${Math.round(g.clientY - 12)}px - 100%)` : `${Math.round(g.clientY + 12)}px`;
+    const t = `translate3d(${x}, ${y}, 0)`;
+    if (t === this.ghostAt && ghost.style.transform === t) return;
+    this.ghostAt = t;
+    ghost.style.transform = t;
+  }
+
+  private updateCard(g: CardDrag, force = false): void {
+    this.placeGhost(g);
     const outside = this.isOutside(g) || g.clientY > g.lane.bottom;
     const layout = this.host.layout();
     const order = this.host.order();
@@ -665,21 +899,24 @@ export class LaneGestures {
       if (next.kind === 'insert') this.slotTimer = window.setTimeout(() => this.openSlot(g), SLOT_DELAY_MS);
     }
     if (changed) {
-      const layerInto = next.kind === 'layer' ? (layout.blocks[next.index]?.id ?? null) : null;
-      this.host.setDragUi({ kind: 'card', sceneId: g.sceneId, layerInto, outside });
+      this.host.setDragUi({ kind: 'card', sceneId: g.sceneId, layerInto: this.layerInto(g), replace: g.replace, outside });
       this.preview(g);
     }
+    if (!changed && !force) return;
     const el = this.host.labelEl();
-    if (el) {
-      const name = this.host.sceneName(g.sceneId);
-      const text =
-        next.kind === 'insert'
-          ? `Insert ${name} as block ${next.gap + 1}`
-          : next.kind === 'layer'
-            ? `Layer ${name} into ${order[next.index]?.name ?? 'this block'}`
-            : 'Drop on the song to add it';
-      if (el.textContent !== text) el.textContent = text;
+    const hintEl = this.host.ghostHintEl();
+    const name = this.host.sceneName(g.sceneId);
+    let text = 'Drop on the song to add it';
+    let hint: string | null = null;
+    if (next.kind === 'insert') text = `Insert ${name} as block ${next.gap + 1}`;
+    else if (next.kind === 'layer') {
+      const id = this.layerInto(g);
+      const t = id ? this.host.layerText(id, g.sceneId, g.replace ? 'replace' : 'fill') : null;
+      text = t?.title ?? `Layer ${name} into ${order[next.index]?.name ?? 'this block'}`;
+      hint = t?.hint ?? null;
     }
+    if (el && el.textContent !== text) el.textContent = text;
+    if (hintEl && hintEl.textContent !== (hint ?? '')) hintEl.textContent = hint ?? '';
   }
 
   private openSlot(g: CardDrag): void {
@@ -688,9 +925,9 @@ export class LaneGestures {
     this.preview(g);
   }
 
-  private updateResize(g: Resize): void {
-    const r = repeatsFromEdge(g.r0, g.clientX - g.startX, g.step);
-    if (r !== g.r || !this.host.bubbleEl()?.textContent) {
+  private updateResize(g: Resize, force = false): void {
+    const r = repeatsFromEdge(g.r0, g.clientX - g.startX + (this.scrollLeft - g.scroll0), g.step);
+    if (r !== g.r || force) {
       g.r = r;
       this.preview(g);
     }
@@ -710,21 +947,18 @@ export class LaneGestures {
         x = packPositions(ids, widthOf, { at: gap, width: g.groupWidth });
         extra = g.groupWidth;
       } else x = packPositions(orderAfterMove(g.list, g.ids, fullGap(g.list, g.moving, gap)).map((b) => b.id), widthOf);
-      this.place(x, null, null, layout.contentWidth + extra + END_ROOM, { animate: true, flush: false });
-      const clone = this.host.cloneEl();
-      if (clone) clone.style.transform = lifted(this.contentX(g) - g.grab);
+      this.place(x, null, null, layout.contentWidth + extra + END_ROOM, { animate: true });
+      this.moveClone(g, this.contentX(g) - g.grab);
       this.label(g);
       return;
     }
     if (g.kind === 'card') {
       const t = g.target;
       const slot = this.host.slotEl();
-      const ghost = this.host.ghostEl();
-      if (ghost) ghost.style.transform = `translate3d(${Math.round(g.clientX + 14)}px, ${Math.round(g.clientY + 12)}px, 0)`;
       if (t.kind === 'insert') {
         const width = g.open ? g.slotWidth : 0;
         const x = packPositions(ids, widthOf, { at: t.gap, width });
-        this.place(x, null, null, layout.contentWidth + width + END_ROOM, { animate: true, flush: false });
+        this.place(x, null, null, layout.contentWidth + width + END_ROOM, { animate: true });
         const left = t.gap < layout.blocks.length ? layout.blocks[t.gap].x : layout.contentWidth;
         if (slot) {
           slot.style.transform = translate(left);
@@ -734,7 +968,7 @@ export class LaneGestures {
           else slot.dataset.pending = '';
         }
       } else {
-        this.place(new Map(layout.blocks.map((b) => [b.id, b.x])), null, null, layout.contentWidth + END_ROOM, { animate: true, flush: false });
+        this.place(new Map(layout.blocks.map((b) => [b.id, b.x])), null, null, layout.contentWidth + END_ROOM, { animate: true });
         this.hideSlot();
       }
       return;
@@ -749,7 +983,7 @@ export class LaneGestures {
     const x = packPositions(ids, (id) => w.get(id) ?? 0);
     let total = 0;
     for (const v of w.values()) total += v;
-    this.place(x, w, passes, total + END_ROOM, { animate: true, flush: false });
+    this.place(x, w, passes, total + END_ROOM, { animate: true, dur: RESIZE_SLIDE_MS });
     const bubble = this.host.bubbleEl();
     if (bubble) {
       bubble.textContent = this.host.resizeLabel(g.id, g.r);
@@ -772,7 +1006,7 @@ export class LaneGestures {
 
   private velocity(): number {
     const g = this.g;
-    if (!g || (g.kind !== 'move' && g.kind !== 'card')) return 0;
+    if (!g || (g.kind !== 'move' && g.kind !== 'card' && g.kind !== 'resize')) return 0;
     if (g.clientY < g.lane.top - DROP_MARGIN || g.clientY > g.lane.bottom + DROP_MARGIN) return 0;
     return autoScrollVelocity(g.clientX, g.lane.left, g.lane.right);
   }
@@ -783,17 +1017,33 @@ export class LaneGestures {
     this.raf = requestAnimationFrame(this.frame);
   }
 
+  /**
+   * One auto-scroll step: the new position is computed from what is tracked
+   * (no layout read), written once, and the preview follows in the same
+   * frame; the scroll event that comes after it finds nothing left to do.
+   */
   private frame = (now: number): void => {
     this.raf = 0;
-    const v = this.velocity();
     const scroller = this.host.scroller();
-    if (!v || !scroller) return;
+    if (!scroller || !this.dragging) return;
+    const v = this.velocity();
     const dt = Math.min(50, Math.max(0, now - this.lastFrame));
     this.lastFrame = now;
-    const before = scroller.scrollLeft;
-    scroller.scrollLeft = before + (v * dt) / 1000;
-    this.onScroll(scroller.scrollLeft);
-    this.raf = requestAnimationFrame(this.frame);
+    let moved = false;
+    if (v) {
+      const max = Math.max(0, this.contentPx - this.host.viewport());
+      const next = Math.max(0, Math.min(max, this.scrollLeft + (v * dt) / 1000));
+      if (Math.abs(next - this.scrollLeft) >= 0.01) {
+        scroller.scrollLeft = next;
+        this.scrollLeft = next;
+        moved = true;
+      }
+    }
+    if (moved || this.pendingMove) {
+      this.pendingMove = false;
+      this.afterScroll();
+    }
+    if (v) this.raf = requestAnimationFrame(this.frame);
   };
 
   /* ---------------------------------------------------------------- */
@@ -840,7 +1090,7 @@ export class LaneGestures {
     if (t.kind === 'insert') this.host.commitInsert(g.sceneId, t.gap);
     else if (t.kind === 'layer') {
       const id = layout.blocks[t.index]?.id;
-      if (id) this.host.commitLayer(id, g.sceneId);
+      if (id) this.host.commitLayer(id, g.sceneId, g.replace ? 'replace' : 'fill');
     }
   }
 
@@ -890,6 +1140,7 @@ export class LaneGestures {
   private stopAutoScroll(): void {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
+    this.pendingMove = false;
   }
 
   /** End the gesture: every listener removed, capture released, nothing left half-done. */
@@ -902,6 +1153,7 @@ export class LaneGestures {
     for (const [t, type, fn, opts] of this.listeners) t.removeEventListener(type, fn, opts);
     this.listeners = [];
     if (g) {
+      g.captureEl.style.cursor = '';
       try {
         if (g.captureEl.hasPointerCapture(g.pointerId)) g.captureEl.releasePointerCapture(g.pointerId);
       } catch {
@@ -919,10 +1171,9 @@ export class LaneGestures {
   dispose(): void {
     const wasDragging = this.dragging;
     this.finish();
-    for (const t of this.settleTimers) window.clearTimeout(t);
-    this.settleTimers.clear();
-    for (const el of this.settling) delete el.dataset.settling;
-    this.settling.clear();
+    for (const a of [...this.running]) a.cancel();
+    this.running.clear();
+    this.settle = null;
     if (wasDragging) this.host.setDragUi(null);
   }
 }

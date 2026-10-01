@@ -440,6 +440,24 @@ describe('Song lane', () => {
     await actFrame();
     expect(head().getBoundingClientRect().left + 1).toBeGreaterThan(x0);
 
+    // Blocks before the playhead move (Intro goes after Lift): it glides to its new place (about 150 ms) instead of jumping.
+    const contentLeft = () => document.querySelector<HTMLElement>('[data-testid="song-lane"] > div:nth-child(2) > div')!.getBoundingClientRect().left;
+    const into = head().getBoundingClientRect().left - (contentLeft() + placedX(ids[2]));
+    const shift = blockEl(ids[0]).getBoundingClientRect().width;
+    act(() => blockEl(ids[0]).focus());
+    key(blockEl(ids[0]), 'keydown', { key: 'ArrowRight', altKey: true });
+    key(document.activeElement!, 'keydown', { key: 'ArrowRight', altKey: true });
+    expect(blockIds().indexOf(ids[2])).toBe(1);
+    expect(rt().songBlockId).toBe(ids[2]);
+    await actFrame();
+    const target = () => contentLeft() + placedX(ids[2]) + into;
+    expect(head().getBoundingClientRect().left - target()).toBeGreaterThan(shift * 0.3);
+    await act(async () => {
+      await wait(260);
+    });
+    await actFrame();
+    expect(Math.abs(head().getBoundingClientRect().left - target())).toBeLessThan(25);
+
     // Stop hands playback back to the pads.
     click([...document.querySelectorAll('section[aria-labelledby="song-title"] button')].find((b) => b.textContent === 'Stop')!);
     expect(rt().playing).toBe(false);
@@ -448,7 +466,36 @@ describe('Song lane', () => {
     expect(document.querySelector('[data-current]')).toBeNull();
   });
 
-  it('while a real take records, song edits are refused as the mode box says (no lifted block, no half-done drag)', async () => {
+  it('deleting the block that plays: it sounds to the bar line while the next block says Next, then that block plays (real transport)', async () => {
+    await setup();
+    const ids = blockIds();
+    click(byLabel('Play song from block 2', blockEl(ids[1])));
+    await waitFor(() => rt().playing && rt().mode === 'song' && rt().songBlockId === ids[1] && !!session.transport?.playing, 'block 2 playing');
+    // Delete it early in a bar, so the hand-over is still ahead.
+    await waitFor(() => (session.transport!.getPosition().tick % 384) / 384 < 0.3 && (session.transport!.getPosition().tick % 384) / 384 > 0.02, 'early in a bar');
+    const lane = document.querySelector<HTMLElement>('[data-testid="song-lane"]')!;
+    act(() => blockEl(ids[1]).focus());
+    key(blockEl(ids[1]), 'keydown', { key: 'Delete' });
+    expect(blockIds()).not.toContain(ids[1]);
+    await actFrame();
+    await actFrame();
+    const barEnd = Math.ceil(session.transport!.getPosition().tick / 384) * 384;
+    expect(blockEl(ids[2]).dataset.next).toBeDefined();
+    expect(blockEl(ids[2]).textContent).toContain('Next');
+    expect(lane.querySelector('[data-current]')).toBeNull();
+    expect(lane.textContent).not.toContain('Playing');
+    expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toMatch(/Removed block ends at the bar · next: Lift \(block 2\)/);
+    // The bar line passes: Lift plays.
+    await waitFor(() => session.transport!.getPosition().tick > barEnd + 40, 'the bar line');
+    await actFrame();
+    await actFrame();
+    expect(blockEl(ids[2]).dataset.current).toBeDefined();
+    expect(blockEl(ids[2]).dataset.next).toBeUndefined();
+    expect(blockEl(ids[2]).textContent).toContain('Playing');
+    act(() => session.stop());
+  });
+
+  it('while a real take records, the lane shows it is locked and refuses edits quietly (no lifted block, no half-done drag, no long toast)', async () => {
     await setup();
     const ids = blockIds();
     const id = ids[0];
@@ -459,15 +506,20 @@ describe('Song lane', () => {
     });
     expect(rt().recording).toBe('performance');
     expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toContain('recording a take');
+    const lockLine = () => document.querySelector<HTMLElement>('[data-testid="lane-lock"]');
+    expect(lockLine()!.textContent).toContain('The song is locked while a take records.');
+    act(() => patchRuntime({ notice: null }));
     act(() => blockEl(id).focus());
     key(blockEl(id), 'keydown', { key: '+' });
     expect(repeats()).toBe(before);
-    expect(rt().notice?.tone).toBe('warn');
+    // Refused with the line on the lane (it nudges, the status says it), not the long lock toast.
+    expect(rt().notice).toBeNull();
+    expect(lockLine()!.querySelector('[data-pulse]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="lane-status"]')!.textContent).toBe('The song is locked while a take records.');
     // A drag is refused at once: nothing lifts, nothing moves.
-    act(() => patchRuntime({ notice: null }));
     dragBlock(ids[0], 400, { release: false });
     expect(document.querySelector('[data-testid="lane-clone"]')).toBeNull();
-    expect(rt().notice?.tone).toBe('warn');
+    expect(rt().notice).toBeNull();
     pointer(document.body, 'pointerup', { clientX: 600, clientY: 300 });
     expect(blockIds()).toEqual(ids);
     await act(async () => {

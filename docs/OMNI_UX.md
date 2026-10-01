@@ -66,8 +66,18 @@ Record Notes: Pause stops the recording pass (one undo step) and pauses playback
   across parts of a different instrument kind (drum steps ↔ melodic notes) is refused with an
   explanation. Keyboard alternative: the pad's **Move…** action, then arrow keys and Enter, Esc to
   cancel. One undo step per move/copy.
+  - Feel (same motion as the song lane, `src/ui/motion.ts`): a copy of the pad lifts and follows
+    the pointer exactly, with a **Move** / **Copy** label that switches live with Ctrl/Alt/⌘; its
+    own pad becomes a dashed placeholder. The target previews the result: a landing outline on an
+    empty pad, **Swap** (its clip leans toward the origin) or **Replace** (copy) on an occupied one,
+    **Can't go here** with the reason on a refused one (the reason sits on the lifted pad, never
+    over the target). The drop springs into place in 200 ms and a swapped clip glides into the old
+    pad at the same time; Esc, a refused drop or a release away from the pads glide it home.
+    Reduced motion: no motion, everything lands at once. A second finger is ignored mid-drag.
 - **Scene rows** can be reordered by dragging the scene button (or Alt+↑/↓ on it); the clips of
-  every part move with the row. Song blocks keep pointing at the same scenes.
+  every part move with the row. Song blocks keep pointing at the same scenes. While dragging, the
+  row's label lifts with a faint copy of its pads and the other rows slide apart to open the slot
+  where it will land; it springs in on drop.
 - **Pad actions where the pad is**: the selected clip pad shows a small action bar (Edit steps ·
   Duplicate · Move… · Rename · Delete). Right-click (or the context-menu key / Shift+F10) opens the
   same actions as a menu. The "⋯" menu remains for everything else.
@@ -113,70 +123,108 @@ Advanced only.
 The song is one continuous strip of **blocks** (a scene played a number of passes), edge to edge,
 joined by a thin seam, widths proportional to their length. Code: `src/app/views/arrange/`
 (SongPanel, SongLane, SongBlock, BlockMenu; pure logic in songLayout, songDrag, songModel;
-pointer gestures in laneGestures).
+pointer gestures in laneGestures; motion constants in laneMotion).
 
 **Layout.** Part names in a column on the left (they do not scroll); to their right the lane
 scrolls sideways (never the page): the ruler (bar numbers), then the blocks. A block is a header
 (name — its label, or the scene name; with a label the scene name is shown small — length, ▶ play
-from here, ⋯ actions) over one cell per part (15 px rows). Faint lines mark its passes. The scale
-comes from fixed zoom steps (the largest that fits the lane), so small edits do not resize every
-block; a long song scrolls. Below the lane: the **SCENES** palette (name, bars, parts, **+**).
+from here, ⋯ actions; 32 px buttons where the block has room) over one cell per part. Part rows
+grow with the window's height: 15 px at 768 high, up to 24 px at 1080. Faint lines mark its passes.
+Below the lane: the **SCENES** palette (name, bars, parts, **+**), the gesture hint, and the lane's
+view tools: **Follow** (follow the playhead), zoom **−** / **+** and **Fit song**.
+
+**Scale.** When Arrange opens, the scale is the largest zoom step at which the song fits. After
+that, edits never change it: a longer song scrolls, so nothing shrinks under the pointer. The
+scale changes only with a window resize (fit again), **Fit song**, the zoom buttons or Ctrl/⌘+wheel
+over the lane; the blocks then glide (200 ms) and the spot under the pointer (zoom) or the left
+edge (fit) stays where it is. A plain wheel only ever scrolls.
 
 **Cells.** A filled bar with the clip name = the part plays its scene's clip; striped with a layers
-icon and **from Lift** = it plays another scene's clip there (layered in); coral outline with **Off**
-= switched off in this block; a faint empty outline = the scene has no clip for it (silent). Colour
-is never alone: there is always text or an icon.
+icon and **Lift: Bell Hook** = it plays another scene's clip there (layered in; the clip name gives
+way first when space is short); coral outline with **Off** = switched off in this block; a faint
+empty outline = the scene has no clip for it (silent). Colour is never alone: there is always text
+or an icon. Hovering a cell says what a click does ("Click: switch Drums off in this block").
 
-**Colour.** Amber = the block playing now (outline, **Playing**, its cells glow). Teal = selection,
-focus and drop targets (a block selected, the slot a scene card will open, the block it will be
-layered into). Coral = Off.
+**Colour.** Amber = the block playing now (outline, **Playing**, its cells glow) and the block
+about to take over (dashed amber outline, **Next**). Teal = selection, focus and drop targets (a
+block selected, the slot a scene card will open, the block it will be layered into). Coral = Off
+and the take lock.
 
-**Gestures** (a press becomes a drag after 4 px, so clicks stay clicks):
+**Gestures** (a press becomes a drag after 4 px, so clicks stay clicks; mouse, touch and pen alike):
 - **Select**: click a header (teal); Shift+click a range; Ctrl/⌘+click toggles; a click on the empty
   lane or Esc clears; Ctrl+A selects all. Actions apply to the selection.
 - **Move**: drag a block (header or cells). It lifts and follows the pointer exactly; the others
-  slide aside (170 ms ease-out) to open the slot where it will land; what you see is what the drop
-  commits (one Undo). The target is the slot nearest the dragged block's centre, with 10 px of
-  hysteresis. On release it springs into its slot. Esc, a release above or below the lane, a lost
-  pointer or a window switch put everything back with no edit. Near the lane's ends it scrolls,
-  faster closer to the edge.
+  slide aside (170 ms) to open the slot where it will land; what you see is what the drop commits
+  (one Undo). The target is the slot nearest the dragged block's centre, with 10 px of hysteresis.
+  On release it springs into its slot at once (200 ms). Esc, a release above or below the lane, a
+  cancelled pointer or a window switch put everything back with no edit. Near the lane's ends it
+  scrolls, faster closer to the edge. The label under the block ("Move to position 3") stays inside
+  the visible lane. While something is carried, other pointers (a second finger) are ignored.
 - **Copy**: hold Ctrl, Alt or ⌘ while dragging (or press it mid-drag; release to move again). The
   dragged block shows **+ Copy**; the original stays. Ctrl+D duplicates the selection after itself.
-- **Length**: drag a block's right edge (12 px handle, col-resize cursor, shown on hover, focus,
-  selection and on touch). Whole passes, 1–16; the block widens live, the blocks after it follow, a
-  bubble says "×3 · 12 bars". One Undo per drag. Keyboard: + and −.
-- **Split / join**: hovering a block shows scissors under each pass line; a click splits there. The
-  menu has **Split in half** and **Join with next** (unavailable with its reason when the neighbour
-  plays something else). Neighbours with the same material show **Join** under their seam.
+- **Length**: drag a block's right edge (12 px handle, 20 px on touch; col-resize cursor; shown on
+  hover, focus, selection and on touch; a finger on the seam takes the left block's edge). Whole
+  passes, 1–16; the block is selected, widens live, the blocks after it follow, a bubble says
+  "3 passes · 12 bars". Near the lane's end it scrolls, and the scrolled distance counts. One Undo
+  per drag. Keyboard: + and −.
+- **Split / join**: hovering a block shows scissors (24 px target) under each pass line; a click
+  splits there. The menu has **Split in half** and **Join with next** (unavailable with its reason,
+  said once, when the neighbour plays something else). Neighbours with the same material show
+  **Join** (24 px target) under their seam.
 - **Parts**: click a cell to switch that part off in this block, click again to bring it back; a
-  cell with nothing to switch opens the **part picker**: "<scene>: <clip> (default)", any other scene
-  with a clip for that part ("Lift: Hook"), or **Off in this block**. Right-click a cell, "." on a
-  focused cell, or ▾ on hover (Advanced) opens it too. **Reset all parts** is in the block menu.
-- **Combine**: drag a scene card onto the middle of a block to **layer** it: the block is outlined,
-  the cells that change read *from Lift* and the header says "Layer Lift into Groove". On a boundary
-  a line shows first and, after a short rest, the slot opens: drop to **insert** a new block.
+  toast says it ("Drums off in Groove", Undo) and quick clicks on one cell are one Undo step. The
+  change is heard at once. A cell with nothing to switch opens the **part picker**: "<scene>: <clip>
+  (default)", any other scene with a clip for that part ("Lift: Hook"), or **Off in this block**.
+  Right-click a cell, "." on a focused cell, or ▾ on hover (Advanced, 24 px wide) opens it too.
+  **Reset all parts** is in the block menu.
+- **Combine**: drag a scene card onto the middle of a block to **layer** it: it fills the parts
+  that are silent in that block (parts switched Off stay off). The block is outlined, the cells that
+  change read *Lift: Hook* and the header says "Layer Lift into Groove"; the card says how many parts
+  it fills and what Shift would do. Hold **Shift** to **replace** instead: "Replace Groove's parts
+  with Lift's" (every part Lift has a clip for). A card dropped on a block of its own scene does
+  nothing and says so ("Groove already plays Groove"). On a boundary a line shows first and, after a
+  short rest, the slot opens: drop to **insert** a new block. Near the window's edge the card's label
+  floats on the pointer's other side. The menu has **Layer a scene in…** and **Replace parts with a
+  scene…**.
 - **Clipboard**: Ctrl+C / Ctrl+X / Ctrl+V (paste after the selection, else at the end); Delete or
   Backspace removes the selection (toast with Undo).
 - **Rename**: F2, a double-click on the name, or **Rename…**: Enter saves, Esc cancels, empty shows
   the scene name again.
 - **Ruler**: click a bar (or Enter on the focused ruler, ←/→ to choose) to play the song from there;
-  the bar under the pointer is marked. The playhead follows the transport and keeps itself in view
-  while the song plays, unless you are dragging or scrolled the lane in the last few seconds.
+  the bar under the pointer is marked.
+
+**Following the playhead.** While the song plays, the lane glides a page on when the playhead nears
+its right edge (the playhead then sits a fifth of the way in). It waits 8 s after you scroll or edit,
+never moves while something is carried, and **Follow** turns it off (remembered in this browser,
+`switchboard01.songLane`). When blocks before the playhead move, it glides (150 ms) to its new place.
+
+**Feedback.** Edits get one short toast with Undo that names the block ("Moved Groove to position
+3", "Groove: 3 passes, 12 bars", "Block 3 is now called Drop"); a gesture shows one, replacing the
+one before. The polite status line says the same for screen readers.
 
 **Keyboard** (the blocks are one Tab stop, arrow keys move between them): ←/→, Home/End; Shift
 extends the selection; Alt+←/→ moves the selection one block; ↓ enters the part cells (↑/↓ rows,
 ←/→ the same part in the next block, Enter/Space switch, "." picker, Esc back); Enter, ".", the menu
 key or Shift+F10 open the actions menu, which lists every action (parts with a checkbox each, play
-from here, edit clips in Play, rename, change scene, layer a scene, passes, split, join, duplicate,
-copy, cut, paste, move, remove). Letter keys stay with the instrument. A polite status line says what
-changed ("Moved Groove to position 3", "Groove: 3 passes, 12 bars").
+from here, edit clips in Play, rename, change scene, layer a scene, replace parts, passes, split,
+join, duplicate, copy, cut, paste, move, remove). Letter keys stay with the instrument. A polite
+status line says what changed ("Moved Groove to position 3", "Groove: 3 passes, 12 bars").
 
-**Motion.** Only transform and opacity animate. With *reduce motion* blocks jump to their places;
-everything else is the same.
+**Motion and speed.** Only transform and opacity animate (a zoom also glides widths). Slides are
+Web Animations started from where each block is on screen, so nothing forces a layout; a block
+keeps its own layout (CSS containment) and the part rows of blocks out of view are not rendered;
+the lane scrolls on the compositor (its background is opaque); the lifted copy of carried blocks
+floats over the lane, so auto-scrolling under a still pointer moves nothing else; the lane never
+reads layout while a pointer moves or it auto-scrolls. With *reduce motion* blocks jump to their
+places and the lane jumps to the playhead; everything else is the same.
 
 **Playing and locks.** Edits apply while the song plays or is paused (playback re-plans from the
-block playing now), so there is no "restart" notice. While a performance take records, the song is
-locked: a drag or an edit is refused at once with the reason, and nothing is half applied.
+block playing now), so there is no "restart" notice. Deleting the block that plays lets it sound to
+the next bar line; until then the block after it says **Next** (and the mode box "Removed block ends
+at the bar · next: Lift"), then it plays. While a performance take records, the song is locked: the
+lane says "The song is locked while a take records." in one line under the blocks, shows no grab
+cursor or handles, and an edit or drag is refused quietly (the line nudges) with nothing half
+applied.
 
 **Simple vs Advanced.** Simple hides the "4 × 4" pass detail and the cells' ▾; cells, drag, the
 edge handle, split and join stay.

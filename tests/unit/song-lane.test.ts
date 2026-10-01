@@ -1,9 +1,11 @@
 /**
  * The song lane's pure logic: geometry (edge to edge, proportional, zoom
  * steps), where a dragged group lands (with hysteresis) and where every other
- * block sits meanwhile, edge-drag passes, auto-scroll speed, selection, the
- * paste position, the scene-card target (insert vs layer, stable while the
- * slot opens), and what each part cell shows.
+ * block sits meanwhile, edge-drag passes, auto-scroll speed, zoom anchors and
+ * the kept scale, following the playhead, drag labels kept readable, the
+ * slide easing, the remembered Follow setting, selection, the paste position,
+ * the scene-card target (insert vs layer, stable while the slot opens), what
+ * each part cell shows and says, and the layer preview in both modes.
  */
 import { describe, expect, it } from 'vitest';
 import { createClip, createProject } from '../../src/project/factory';
@@ -18,11 +20,13 @@ import {
   NO_TARGET,
   actionTargets,
   autoScrollVelocity,
+  badgePlacement,
   cardEdge,
   cardTarget,
   currentOthersGap,
   edgeStepPx,
   fullGap,
+  ghostFlips,
   menuTargets,
   nudgeGap,
   packPositions,
@@ -37,8 +41,10 @@ import {
   type CardBlock,
   type CardTarget,
 } from '../../src/app/views/arrange/songDrag';
-import { MIN_BLOCK_WIDTH, ZOOM_STEPS, barToX, blockAtBar, gapX, layoutSong, passDividers, rulerMarks, xToBar } from '../../src/app/views/arrange/songLayout';
-import { blockLabel, blockView, cellLabel, cellToggle, laneBlocks, layerPreview, partChoices } from '../../src/app/views/arrange/songModel';
+import { FOLLOW_LEAD, MIN_BLOCK_WIDTH, ZOOM_STEPS, anchorAt, anchorX, barToX, blockAtBar, followScroll, gapX, layoutSong, passDividers, rulerMarks, scrollToShow, xToBar, zoomStep } from '../../src/app/views/arrange/songLayout';
+import { cubicBezier, easeSlide, easeSpring } from '../../src/app/views/arrange/laneMotion';
+import { LANE_SETTINGS_KEY, readFollow, writeFollow } from '../../src/app/views/arrange/laneSettings';
+import { blockLabel, blockView, cellLabel, cellTip, cellToast, cellToggle, laneBlocks, layerPreview, layerText, partChoices, resizeText } from '../../src/app/views/arrange/songModel';
 
 /* ------------------------------------------------------------------ */
 /* Geometry                                                            */
@@ -214,6 +220,119 @@ describe('edge drag and auto-scroll', () => {
     expect(autoScrollVelocity(1100, 0, 1000)).toBe(AUTOSCROLL_MAX_PX_S);
     expect(autoScrollVelocity(5, 0, 1000)).toBeLessThan(0);
     expect(autoScrollVelocity(-50, 0, 1000)).toBe(-AUTOSCROLL_MAX_PX_S);
+  });
+});
+
+describe('zoom, follow and labels that stay readable', () => {
+  const song = [
+    { id: 'a', bars: 4, repeats: 2 },
+    { id: 'b', bars: 4, repeats: 4 },
+    { id: 'c', bars: 4, repeats: 2 },
+  ];
+
+  it('zoom steps walk the ladder and stop at its ends', () => {
+    expect(zoomStep(16, 1)).toBe(18);
+    expect(zoomStep(16, -1)).toBe(14);
+    expect(zoomStep(ZOOM_STEPS[0], -1)).toBeNull();
+    expect(zoomStep(ZOOM_STEPS[ZOOM_STEPS.length - 1], 1)).toBeNull();
+  });
+
+  it('an edit keeps the scale it was given: a longer song scrolls instead of shrinking', () => {
+    const fit = layoutSong(song, 600);
+    const longer = [...song, { id: 'd', bars: 4, repeats: 8 }];
+    // Fitting again would shrink every block; holding the scale keeps each block's width and place.
+    expect(layoutSong(longer, 600).pxPerBar).toBeLessThan(fit.pxPerBar);
+    const held = layoutSong(longer, 600, { pxPerBar: fit.pxPerBar });
+    for (const b of fit.blocks) expect(held.blocks.find((x) => x.id === b.id)).toMatchObject({ x: b.x, width: b.width });
+    expect(held.contentWidth).toBeGreaterThan(600);
+  });
+
+  it('a zoom keeps its anchor (a block and how far into it) at the same place on screen', () => {
+    const before = layoutSong(song, 2000, { pxPerBar: 20 });
+    const after = layoutSong(song, 2000, { pxPerBar: 40 });
+    // The middle of block b, 300 px into a view scrolled by 100.
+    const x = before.blocks[1].x + before.blocks[1].width / 2;
+    const a = anchorAt(before, x)!;
+    expect(a).toEqual({ id: 'b', f: 0.5 });
+    const nx = anchorX(after, a)!;
+    expect(nx).toBe(after.blocks[1].x + after.blocks[1].width / 2);
+    const left = scrollToShow(nx, x - 100, 700, after.contentWidth + 48);
+    expect(nx - left).toBe(x - 100);
+    // Clamped to the content.
+    expect(scrollToShow(10, 300, 700, 2000)).toBe(0);
+    expect(scrollToShow(1990, 0, 700, 2000)).toBe(1300);
+    // Past the end anchors to the last block; a gone block has no place.
+    expect(anchorAt(before, 5000)!.id).toBe('c');
+    expect(anchorX(after, { id: 'gone', f: 0 })).toBeNull();
+  });
+
+  it('the playhead turns a page only when it nears the edge of the view', () => {
+    // In view: nothing to do.
+    expect(followScroll(300, 0, 800, 3000)).toBeNull();
+    // Near the right edge: the view moves so the playhead is a fifth of the way in.
+    expect(followScroll(700, 0, 800, 3000)).toBe(700 - 800 * FOLLOW_LEAD);
+    // Left of the view (a jump back): back into view.
+    expect(followScroll(100, 900, 800, 3000)).toBe(0);
+    // A song that fits never scrolls.
+    expect(followScroll(700, 0, 800, 800)).toBeNull();
+    // Never past the end.
+    expect(followScroll(2950, 1000, 800, 3000)).toBe(2200);
+  });
+
+  it('the label under a dragged block stays inside the visible lane', () => {
+    // Left half: starts at the block, pushed right if the block starts left of the view.
+    expect(badgePlacement(300, 120, 0, 1000)).toEqual({ side: 'left', shift: 0 });
+    expect(badgePlacement(-60, 120, 0, 1000)).toEqual({ side: 'left', shift: 64 });
+    // Right half: ends at the block's right edge, pulled back if the block runs past the view.
+    expect(badgePlacement(700, 120, 0, 1000)).toEqual({ side: 'right', shift: 0 });
+    expect(badgePlacement(940, 120, 0, 1000)).toEqual({ side: 'right', shift: -64 });
+    // Scrolled: the same in content coordinates.
+    expect(badgePlacement(1940, 120, 1000, 1000)).toEqual({ side: 'right', shift: -64 });
+    // A scene card's label flips to the pointer's left near the window's right edge.
+    expect(ghostFlips(1200, 1366)).toBe(true);
+    expect(ghostFlips(600, 1366)).toBe(false);
+  });
+
+  it('slides retarget from where the block is: the easing matches the CSS curve', () => {
+    expect(easeSlide(0)).toBe(0);
+    expect(easeSlide(1)).toBe(1);
+    // cubic-bezier(0.2, 0.8, 0.25, 1) is well past half way at half the time.
+    expect(easeSlide(0.5)).toBeGreaterThan(0.85);
+    expect(easeSlide(0.5)).toBeLessThan(0.97);
+    // A linear curve is the identity; the spring overshoots before it lands.
+    const linear = cubicBezier(0.25, 0.25, 0.75, 0.75);
+    for (const t of [0.1, 0.3, 0.7]) expect(linear(t)).toBeCloseTo(t, 3);
+    expect(Math.max(...[0.4, 0.5, 0.6, 0.7].map(easeSpring))).toBeGreaterThan(1);
+    for (let t = 0; t <= 1.0001; t += 0.05) expect(easeSlide(t)).toBeGreaterThanOrEqual(easeSlide(Math.max(0, t - 0.05)) - 1e-9);
+  });
+
+  it('remembers Follow playhead (on unless turned off), surviving broken storage', () => {
+    const mem = new Map<string, string>();
+    const g = globalThis as { localStorage?: unknown };
+    const saved = g.localStorage;
+    g.localStorage = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v) };
+    try {
+      expect(readFollow()).toBe(true);
+      writeFollow(false);
+      expect(JSON.parse(mem.get(LANE_SETTINGS_KEY)!)).toEqual({ follow: false });
+      expect(readFollow()).toBe(false);
+      writeFollow(true);
+      expect(readFollow()).toBe(true);
+      mem.set(LANE_SETTINGS_KEY, '{not json');
+      expect(readFollow()).toBe(true);
+      g.localStorage = {
+        getItem: () => {
+          throw new Error('blocked');
+        },
+        setItem: () => {
+          throw new Error('blocked');
+        },
+      };
+      expect(readFollow()).toBe(true);
+      expect(() => writeFollow(false)).not.toThrow();
+    } finally {
+      g.localStorage = saved;
+    }
   });
 });
 
@@ -413,18 +532,50 @@ describe('part cells', () => {
     expect(partChoices(p, b, drums.id).filter((x) => x.checked).map((x) => x.key)).toEqual(['off']);
   });
 
-  it('a layer preview lists exactly the parts layerScene changes', () => {
+  it('a layer preview lists exactly the parts layerScene changes, in either mode, and says so', () => {
+    for (const mode of ['fill', 'replace'] as const) {
+      const p = project();
+      const store = new ProjectStore(p);
+      const b = p.arrangement.blocks[0];
+      const preview = layerPreview(p, b, p.scenes[2].id, mode);
+      // Fill: only the lead is silent in Groove. Replace: the drums too.
+      expect([...preview.changes.keys()].sort()).toEqual(mode === 'fill' ? [p.tracks[4].id] : [p.tracks[0].id, p.tracks[4].id].sort());
+      expect(preview.changes.get(p.tracks[4].id)).toBe('Hook');
+      expect(preview.replaceCount).toBe(2);
+      const r = cmd.layerScene(store, b.id, p.scenes[2].id, mode);
+      expect(r.parts).toBe(preview.changes.size);
+      const after = store.getState().arrangement.blocks[0];
+      expect(Object.keys(after.parts ?? {}).sort()).toEqual([...preview.changes.keys()].sort());
+    }
     const p = project();
-    const store = new ProjectStore(p);
     const b = p.arrangement.blocks[0];
-    const preview = layerPreview(p, b, p.scenes[2].id);
-    expect([...preview.changes.keys()].sort()).toEqual([p.tracks[0].id, p.tracks[4].id].sort());
-    const r = cmd.layerScene(store, b.id, p.scenes[2].id);
-    expect(r.parts).toBe(preview.changes.size);
-    const after = store.getState().arrangement.blocks[0];
-    expect(Object.keys(after.parts ?? {}).sort()).toEqual([...preview.changes.keys()].sort());
-    // Layering the block's own scene changes nothing.
-    expect(layerPreview(p, b, b.sceneId).changes.size).toBe(0);
+    expect(layerText(layerPreview(p, b, p.scenes[2].id), 'Groove')).toEqual({ title: 'Layer Lift into Groove', hint: 'Fills 1 part · Shift replaces 2 parts', changes: true });
+    expect(layerText(layerPreview(p, b, p.scenes[2].id, 'replace'), 'Groove').title).toBe('Replace Groove’s parts with Lift’s');
+    // Intro only has drums, which Groove plays: nothing to fill, Shift would replace them.
+    expect(layerText(layerPreview(p, b, p.scenes[0].id), 'Groove')).toMatchObject({ title: 'Nothing silent to fill in Groove', changes: false });
+    // The block's own scene: a clear no-op, never "Layer Groove into Groove".
+    const same = layerText(layerPreview(p, b, b.sceneId, 'replace'), 'Groove');
+    expect(same.title).toBe('Groove already plays Groove');
+    expect(same.changes).toBe(false);
+    expect(same.title).not.toMatch(/^Layer/);
+  });
+
+  it('cells say what a click does; the toast names the part and the block', () => {
+    const p = project();
+    const [drums, perc, bass] = p.tracks;
+    p.arrangement.blocks[0].parts = { [bass.id]: null };
+    const v = blockView(p, p.arrangement.blocks[0], 0);
+    const cell = (id: Id) => v.cells.find((c) => c.trackId === id)!;
+    expect(cellTip(v, cell(drums.id))).toBe(`Click: switch ${drums.name} off in this block`);
+    expect(cellTip(v, cell(bass.id))).toBe(`Click: switch ${bass.name} back on in this block`);
+    expect(cellTip(v, cell(perc.id))).toBe(`Click: choose what ${perc.name} plays in Groove`);
+    expect(cellToast('Drums', 'Groove', null, null)).toBe('Drums off in Groove');
+    expect(cellToast('Drums', 'Groove', undefined, null)).toBe('Drums back on in Groove');
+    expect(cellToast('Lead', 'Groove', 'x', 'Lift')).toBe('Lead plays Lift in Groove');
+    for (const t of [cellToast('Drums', 'Groove', null, null), cellToast('Drums', 'Groove', undefined, null)]) expect(t).not.toMatch(/next bar/);
+    // The edge bubble speaks in passes.
+    expect(resizeText(4, 3)).toBe('3 passes · 12 bars');
+    expect(resizeText(4, 1, true)).toBe('1 pass · 4 bars (4 × 1)');
   });
 
   it('a block whose scene was deleted is shown as skipped', () => {

@@ -8,43 +8,60 @@
  *   Bass  ││        │▌Rolling          │ Off     │
  *    …    │└────────┴──────────────────┴─────────╢      ← right edge: drag for passes
  *         │            [⊐⊏ Join]                       ← seam of two equal blocks
- *   SCENES  [Intro +] [Groove +] [Lift +] [Break +]    ← drag in: insert, or drop on a block to layer
+ *   SCENES  [Intro +] [Groove +] [Lift +] [Break +]  hints  [Follow] [− +] [Fit song]
  *
  * The lane is one Tab stop; arrow keys move between blocks (roving focus),
  * ↓ enters a block's part cells. Pointer gestures live in LaneGestures, which
  * writes positions straight to the DOM; this component re-renders only when
  * what is shown changes kind (selection, a drag starting or ending, menus).
+ *
+ * The scale (pixels per bar) is chosen when the lane opens (the largest zoom
+ * step at which the song fits) and then stays put while the song is edited:
+ * a longer song scrolls instead of shrinking under the pointer. It changes
+ * only when the window is resized, with Fit song, the zoom buttons or
+ * Ctrl+wheel over the lane, and then glides (keeping the bar under the
+ * pointer, or the middle of the view, where it was).
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Button, Icon, Tooltip, useElementSize, useRafLoop } from '../../../ui/components';
+import { Button, Icon, IconButton, TOOLTIP_DELAY_MS, Tooltip, useElementSize, useRafLoop, useTips } from '../../../ui/components';
 import { sameMaterial } from '../../../project/arrangement';
 import type { Id } from '../../../project/types';
-import { DEFAULT_BLOCK_REPEATS, addBlock as addBlockCmd, joinProblem } from '../../../state/commands';
+import { DEFAULT_BLOCK_REPEATS, joinProblem } from '../../../state/commands';
 import { session, useProject, useUi } from '../../instance';
-import { notify } from '../../runtime';
+import { notify, useRuntime } from '../../runtime';
 import { anchorFromContextEvent, anchorFromElement, isEchoOfKeyboardMenu, isMenuKey, noteKeyboardMenu, MOD_KEY, type MenuAnchor } from '../ClipMenu';
 import { BlockMenu, PartPicker, partsText, type BlockMenuActions, type SceneSummary } from './BlockMenu';
 import { END_ROOM, LaneGestures, type DragUi, type LaneHost } from './laneGestures';
 import { LaneIcon } from './laneIcons';
+import { FOLLOW_SCROLL_MS, PLAYHEAD_GLIDE_MS, ZOOM_MS, easeOut, prefersReducedMotion } from './laneMotion';
+import { readFollow, writeFollow } from './laneSettings';
 import * as act from './songActions';
 import { BlockFace, SongBlock, type BlockHandlers } from './SongBlock';
 import { EMPTY_SELECTION, menuTargets, nudgeGap, pasteGap, pruneSelection, selectAll, selectByClick, selectByKey, type LaneSelection } from './songDrag';
-import { barToX, blockWidth, layoutSong, rulerMarks, xToBar, type SongLayout } from './songLayout';
-import { barsText, cellToggle, layerPreview, type BlockView } from './songModel';
+import { anchorAt, anchorX, barToX, blockWidth, followScroll, layoutSong, rulerMarks, scrollToShow, xToBar, zoomStep, type LaneAnchor, type SongLayout } from './songLayout';
+import { barsText, cellTip, cellToggle, layerPreview, layerText, resizeText, type BlockView, type LayerPreview } from './songModel';
 import { getSongPlan, songTimelineBar, startSong } from './songPlan';
 import styles from './SongPanel.module.css';
 
 /** pendingFocus value meaning "the song is now empty: focus Add all scenes". */
 const EMPTY_FOCUS = '\u0000empty';
-/** After the user scrolls the lane, the playhead stops pulling the view for this long. */
-const FOLLOW_PAUSE_MS = 4000;
+/** After the user scrolls the lane or edits the song, the playhead stops pulling the view for this long. */
+export const FOLLOW_PAUSE_MS = 8000;
+/** Clicks on the same part cell this close together are one undo step. */
+export const CELL_GESTURE_MS = 500;
+/** Ctrl+wheel travel (deltaY units) for one zoom step. */
+const WHEEL_STEP = 60;
+/** A finger this close (px) to a block's left edge is on the seam: it takes the left neighbour's right edge. */
+const SEAM_SLOP_PX = 12;
 
 export interface SongLaneProps {
   views: readonly BlockView[];
   scenes: SceneSummary[];
   /** Block playing now (song mode), by id. */
   currentId: Id | null;
+  /** The block playing now was removed: the block that takes over at the next bar. */
+  nextId?: Id | null;
   /** The song plays or is paused: draw the playhead. */
   songActive: boolean;
   /** The song plays (the playhead keeps itself in view). */
@@ -53,9 +70,20 @@ export interface SongLaneProps {
 }
 
 const cellSelector = (blockId: Id, trackId: Id) => `#song-block-${CSS.escape(blockId)} [data-cell][data-track="${CSS.escape(trackId)}"]`;
+const translate = (x: number) => `translate3d(${x.toFixed(1)}px, 0, 0)`;
 
-export function SongLane({ views, scenes, currentId, songActive, songPlaying, editClips }: SongLaneProps) {
+function samePreview(a: LayerPreview | null, b: LayerPreview | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.sceneName !== b.sceneName || a.mode !== b.mode || a.same !== b.same || a.replaceCount !== b.replaceCount || a.changes.size !== b.changes.size) return false;
+  for (const [k, v] of a.changes) if (b.changes.get(k) !== v) return false;
+  return true;
+}
+
+export function SongLane({ views, scenes, currentId, nextId = null, songActive, songPlaying, editClips }: SongLaneProps) {
   const advanced = useUi((s) => s.uiMode === 'advanced');
+  const locked = useRuntime((s) => s.recording === 'performance');
+  const tips = useTips();
   const helpId = useId();
   const order = useMemo(() => views.map((v) => v.id), [views]);
 
@@ -64,11 +92,19 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
   const contentRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const laneRef = useRef<HTMLDivElement>(null);
+  const paletteRef = useRef<HTMLDivElement>(null);
   const size = useElementSize(scrollerRef);
   const measured = size.width > 0;
   // The room after the last block (for drops at the end) is part of the content: lay out in what is left.
-  const layout: SongLayout = useMemo(() => layoutSong(views.map((v) => ({ id: v.id, bars: v.passBars, repeats: v.repeats })), Math.max(0, size.width - END_ROOM)), [views, size.width]);
+  const avail = Math.max(0, size.width - END_ROOM);
+  const inputs = useMemo(() => views.map((v) => ({ id: v.id, bars: v.passBars, repeats: v.repeats })), [views]);
+  const fit = useMemo(() => layoutSong(inputs, avail).pxPerBar, [inputs, avail]);
+  // The scale in use: fixed once the lane has opened (edits never rescale it), else the one that fits.
+  const [scale, setScale] = useState<number | null>(null);
+  const ppb = scale ?? fit;
+  const layout: SongLayout = useMemo(() => layoutSong(inputs, avail, { pxPerBar: ppb }), [inputs, avail, ppb]);
   const marks = useMemo(() => rulerMarks(layout), [layout]);
+  const total = layout.contentWidth + END_ROOM;
 
   /* ---- state ---- */
   const [selectionState, setSelection] = useState<LaneSelection>(EMPTY_SELECTION);
@@ -83,10 +119,12 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
   const announce = useCallback((text: string | null | undefined) => {
     if (text) setStatus((s) => ({ text, n: s.n + 1 }));
   }, []);
+  const [follow, setFollowState] = useState(readFollow);
+  const [lockPulse, setLockPulse] = useState(0);
 
-  // Latest values for callbacks that must stay stable (memoised blocks, the gesture controller).
-  const live = useRef({ views, order, layout, selection, scenes, activeId: tabId });
-  live.current = { views, order, layout, selection, scenes, activeId: tabId };
+  // Latest values for callbacks that must stay stable (memoised blocks, the gesture controller, the frame loop).
+  const live = useRef({ views, order, layout, selection, scenes, activeId: tabId, viewport: size.width, total, follow, songPlaying, advanced });
+  live.current = { views, order, layout, selection, scenes, activeId: tabId, viewport: size.width, total, follow, songPlaying, advanced };
 
   /* ---- focus ---- */
   const pendingFocus = useRef<string | null>(null);
@@ -99,6 +137,16 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
   // Hiding a carried block can drop focus to the page: that still counts as "focus was in the lane".
   const laneHasFocus = () => !!laneRef.current?.contains(document.activeElement) || document.activeElement === document.body;
 
+  /* ---- following the playhead ---- */
+  const followPausedUntil = useRef(0);
+  const pauseFollow = useCallback(() => {
+    followPausedUntil.current = performance.now() + FOLLOW_PAUSE_MS;
+    followAnim.current = null;
+  }, []);
+  const followAnim = useRef<{ from: number; to: number; t0: number } | null>(null);
+  /** The scroll position this lane last set itself (its scroll event is not the user's). */
+  const ownScroll = useRef<number | null>(null);
+
   /* ---- block elements and the gesture controller ---- */
   const blockEls = useRef(new Map<Id, HTMLElement>());
   const cloneRef = useRef<HTMLDivElement>(null);
@@ -106,6 +154,8 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
   const bubbleRef = useRef<HTMLDivElement>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
   const labelRef = useRef<HTMLSpanElement>(null);
+  const badgeRef = useRef<HTMLSpanElement>(null);
+  const ghostHintRef = useRef<HTMLSpanElement>(null);
 
   const gestures = useRef<LaneGestures | null>(null);
   if (!gestures.current) {
@@ -119,27 +169,38 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
       bubbleEl: () => bubbleRef.current,
       ghostEl: () => ghostRef.current,
       labelEl: () => labelRef.current,
+      badgeEl: () => badgeRef.current,
+      ghostHintEl: () => ghostHintRef.current,
+      contains: (node) => !!laneRef.current?.contains(node) || !!paletteRef.current?.contains(node),
       layout: () => live.current.layout,
+      viewport: () => live.current.viewport,
       order: () => live.current.views.map((v) => ({ id: v.id, layerable: !v.missing, name: v.name })),
       selection: () => live.current.selection,
-      locked: () => session.store.getLock(),
+      locked: () => act.songLocked(),
       sceneWidth: (sceneId) => {
         const s = live.current.scenes.find((x) => x.id === sceneId);
         return blockWidth((s?.bars ?? 1) * DEFAULT_BLOCK_REPEATS, live.current.layout.pxPerBar);
       },
       sceneName: (sceneId) => live.current.scenes.find((x) => x.id === sceneId)?.name ?? 'scene',
+      layerText: (blockId, sceneId, mode) => {
+        const p = session.store.getState();
+        const b = p.arrangement.blocks.find((x) => x.id === blockId);
+        const v = live.current.views.find((x) => x.id === blockId);
+        return b ? layerText(layerPreview(p, b, sceneId, mode), v?.name ?? 'this block') : { title: 'Drop on the song to add it', hint: null };
+      },
       setDragUi: (ui) => {
         setDragUi(ui);
         if (ui) {
           setMenu(null);
           setPicker(null);
+          hideCellTip();
         }
       },
       selectOnly: (id) => {
         setSelection({ ids: [id], anchor: id });
         setActiveId(id);
       },
-      refuse: (message) => notify(message, 'warn'),
+      refuseLocked: () => refuseLocked(),
       commitMove: (ids, gap, copy) => {
         const focus = laneHasFocus();
         if (copy) {
@@ -167,24 +228,99 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
         announce(r.text);
         return r.id;
       },
-      commitLayer: (blockId, sceneId) => {
-        announce(act.layerScene(blockId, sceneId));
+      commitLayer: (blockId, sceneId, mode) => {
+        announce(act.layerScene(blockId, sceneId, mode));
       },
       commitRepeats: (id, repeats) => {
         announce(act.setRepeats([id], () => repeats, act.newGesture('edge')));
       },
       resizeLabel: (id, repeats) => {
         const v = live.current.views.find((x) => x.id === id);
-        return `×${repeats} · ${barsText((v?.passBars ?? 1) * repeats)}`;
+        return resizeText(v?.passBars ?? 1, repeats, live.current.advanced);
       },
     };
     gestures.current = new LaneGestures(host);
   }
   const g = gestures.current;
 
-  // Place blocks after every render (or keep the live preview of a gesture), then restore focus if an edit moved it.
+  /* ---- the take lock: refused quietly, said once on the lane ---- */
+  const refuseLocked = useCallback(() => {
+    setLockPulse((n) => n + 1);
+    announce(act.LOCKED_TEXT);
+  }, [announce]);
+  useEffect(() => act.onSongLocked(refuseLocked), [refuseLocked]);
+
+  /* ---- scale: chosen when the lane opens, kept while editing ---- */
+  const pendingZoom = useRef<{ from: Map<Id, { x: number; w: number }>; anchor: LaneAnchor | null; screenX: number; scroll: number; fit: boolean } | null>(null);
+  const zoomTimer = useRef(0);
+  /**
+   * Change the scale, keeping what is `screenX` px into the view (default: its
+   * middle) where it is on screen. A zoom keeps that spot exactly (the lane gets
+   * room to scroll for it); a fit (`fit`) stays within the song, so a song that
+   * fits shows from its start.
+   */
+  const zoomTo = useCallback(
+    (next: number, screenX: number | null = null, fit = false) => {
+      const L = live.current.layout;
+      if (!L.blocks.length) return;
+      if (next === L.pxPerBar) {
+        setScale(next);
+        return;
+      }
+      const sx = screenX ?? live.current.viewport / 2;
+      const scroll = g.scroll;
+      pendingZoom.current = { from: g.positions(), anchor: anchorAt(L, scroll + sx), screenX: sx, scroll, fit };
+      pauseFollow();
+      setScale(next);
+    },
+    [g, pauseFollow],
+  );
+
+  // Lock the scale once the lane has measured a song; a new song (another project, or an empty lane filled again) fits afresh.
+  const prevOrder = useRef(order);
   useLayoutEffect(() => {
-    g.sync();
+    const before = prevOrder.current;
+    prevOrder.current = order;
+    if (!order.length) {
+      if (scale !== null) setScale(null);
+      return;
+    }
+    if (scale !== null && before.length && !order.some((id) => before.includes(id))) {
+      setScale(null);
+      return;
+    }
+    if (scale === null && measured) setScale(fit);
+  }, [order, scale, measured, fit]);
+
+  // A window resize fits the song again (gliding there, the bar at the left edge staying put).
+  const prevAvail = useRef(avail);
+  useLayoutEffect(() => {
+    const before = prevAvail.current;
+    prevAvail.current = avail;
+    if (!before || before === avail || scale === null || g.dragging) return;
+    if (fit !== scale) zoomTo(fit, 0, true);
+  }, [avail, fit, scale, zoomTo, g]);
+
+  // Place blocks after every render (or keep the live preview of a gesture), finish a zoom, then restore focus if an edit moved it.
+  useLayoutEffect(() => {
+    const z = pendingZoom.current;
+    pendingZoom.current = null;
+    const ax = z?.anchor ? anchorX(layout, z.anchor) : null;
+    const left = !z || ax === null ? 0 : z.fit ? scrollToShow(ax, z.screenX, size.width, total) : Math.max(0, ax - z.screenX);
+    g.sync(!z, z ? left + size.width : 0);
+    const scroller = scrollerRef.current;
+    if (z && scroller) {
+      ownScroll.current = left;
+      scroller.scrollLeft = left;
+      g.onScroll(left);
+      g.animateZoom(new Map([...z.from].map(([id, r]) => [id, { x: r.x - z.scroll + left, w: r.w }])));
+      const lane = laneRef.current;
+      if (lane && !prefersReducedMotion()) {
+        lane.dataset.zooming = '';
+        window.clearTimeout(zoomTimer.current);
+        zoomTimer.current = window.setTimeout(() => delete lane.dataset.zooming, ZOOM_MS);
+      }
+    }
     const id = pendingFocus.current;
     if (id === EMPTY_FOCUS) {
       pendingFocus.current = null;
@@ -193,16 +329,49 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
       const el = blockEls.current.get(id);
       if (el || measured) {
         pendingFocus.current = null;
-        el?.focus({ preventScroll: false });
+        // The lane brings the block into view from where it will be (not where a slide shows it now).
+        el?.focus({ preventScroll: true });
+        revealBlock(id);
       }
     }
   });
+  /** Scroll the lane (at once) so block `id` is in view at its place in the layout. */
+  function revealBlock(id: Id) {
+    const scroller = scrollerRef.current;
+    const lb = live.current.layout.blocks.find((b) => b.id === id);
+    if (!scroller || !lb) return;
+    const view = live.current.viewport;
+    const left = g.scroll;
+    let to: number | null = null;
+    if (lb.x < left) to = Math.max(0, lb.x - 24);
+    else if (lb.x + lb.width > left + view) to = lb.width + 48 > view ? lb.x - 24 : lb.x + lb.width + 24 - view;
+    if (to === null) return;
+    to = Math.max(0, Math.min(Math.max(0, live.current.total - view), to));
+    if (Math.abs(to - left) < 1) return;
+    followAnim.current = null;
+    ownScroll.current = to;
+    scroller.scrollLeft = to;
+    g.onScroll(to);
+    pauseFollow();
+  }
   // Someone else changed the song mid-gesture (undo, another view): drop the gesture, commit nothing.
-  useEffect(() => g.externalChange(), [views, g]);
-  useEffect(() => () => g.dispose(), [g]);
+  // Any edit also pauses following the playhead for a while.
+  const firstViews = useRef(true);
+  useEffect(() => {
+    g.externalChange();
+    if (firstViews.current) firstViews.current = false;
+    else pauseFollow();
+  }, [views, g, pauseFollow]);
+  useEffect(
+    () => () => {
+      g.dispose();
+      window.clearTimeout(zoomTimer.current);
+    },
+    [g],
+  );
 
   /* ---- actions ---- */
-  const viewOf = (id: Id) => live.current.views.find((v) => v.id === id);
+  const viewOf = (id: Id | undefined) => (id ? live.current.views.find((v) => v.id === id) : undefined);
 
   const removeAndFocus = useCallback(
     (ids: Id[]) => {
@@ -277,12 +446,14 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
   }, []);
 
   const setPart = useCallback(
-    (id: Id, trackId: Id, choice: Id | null | undefined) => {
-      announce(act.setPart(id, trackId, choice));
+    (id: Id, trackId: Id, choice: Id | null | undefined, gesture?: string) => {
+      announce(act.setPart(id, trackId, choice, gesture));
     },
     [announce],
   );
 
+  // Quick clicks on the same cell (off, on, off…) are one undo step.
+  const cellGesture = useRef<{ key: string; id: string; at: number } | null>(null);
   const togglePart = useCallback(
     (id: Id, trackId: Id, trigger?: HTMLElement | null) => {
       const v = viewOf(id);
@@ -294,7 +465,12 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
         openPicker(id, trackId, anchorFromElement(el ?? blockEls.current.get(id)), el ?? blockEls.current.get(id) ?? null);
         return;
       }
-      setPart(id, trackId, t.choice);
+      const now = performance.now();
+      const key = `${id}\u0000${trackId}`;
+      const prev = cellGesture.current;
+      const gesture = prev && prev.key === key && now - prev.at < CELL_GESTURE_MS ? prev.id : act.newGesture('cell');
+      cellGesture.current = { key, id: gesture, at: now };
+      setPart(id, trackId, t.choice, gesture);
     },
     // viewOf reads live refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -311,11 +487,14 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
         const v = viewOf(id);
         if (v && v.row >= 0) editClips(v.row);
       },
-      rename: (id) => setRenaming(id),
+      rename: (id) => {
+        if (act.songLocked()) refuseLocked();
+        else setRenaming(id);
+      },
       togglePart: (id, trackId) => togglePart(id, trackId, blockEls.current.get(id)),
       resetParts: (id) => announce(act.resetParts(id)),
       changeScene: (id, sceneId) => announce(act.changeScene(id, sceneId)),
-      layerScene: (id, sceneId) => announce(act.layerScene(id, sceneId)),
+      layerScene: (id, sceneId, mode) => announce(act.layerScene(id, sceneId, mode)),
       lengthen,
       splitHalf: (id) => {
         const v = viewOf(id);
@@ -348,7 +527,7 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
     }),
     // viewOf reads live refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [announce, duplicate, editClips, focusBlock, lengthen, moveBy, paste, removeAndFocus, togglePart],
+    [announce, duplicate, editClips, focusBlock, lengthen, moveBy, paste, refuseLocked, removeAndFocus, togglePart],
   );
 
   /* ---- keyboard ---- */
@@ -373,7 +552,9 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
       }
       if (key === 'F2' && !mod) {
         handled();
-        if (!viewOf(id)?.missing) setRenaming(id);
+        if (viewOf(id)?.missing) return;
+        if (act.songLocked()) refuseLocked();
+        else setRenaming(id);
         return;
       }
       if (e.altKey && !mod && (key === 'ArrowLeft' || key === 'ArrowRight')) {
@@ -436,7 +617,7 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
     },
     // viewOf reads live refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [announce, duplicate, focusBlock, lengthen, menuActions, moveBy, openMenu, paste, removeAndFocus],
+    [announce, duplicate, focusBlock, lengthen, menuActions, moveBy, openMenu, paste, refuseLocked, removeAndFocus],
   );
 
   const onCellKeyDown = useCallback(
@@ -513,8 +694,11 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
         setActiveId(id);
         return;
       }
+      hideCellTip();
       togglePart(id, trackId, e.currentTarget);
     },
+    // hideCellTip only touches refs and state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [g, togglePart],
   );
 
@@ -525,8 +709,20 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
         else if (blockEls.current.get(id)?.isConnected === false) blockEls.current.delete(id);
       },
       onPointerDown: (e, id) => {
+        hideCellTip();
         const el = blockEls.current.get(id);
-        if (el) g.pressBlock(e.nativeEvent, id, el);
+        if (!el) return;
+        // A finger or pen on the seam takes the right edge of the block on its left (that handle
+        // reaches over this block, which is drawn above it), as a pointer that hovers it first would.
+        if (e.pointerType !== 'mouse' && !(e.target as Element).closest(`.${styles.bhead}`)) {
+          const prev = live.current.order[live.current.order.indexOf(id) - 1];
+          const edge = prev ? blockEls.current.get(prev)?.querySelector<HTMLElement>('[data-edge]') : null;
+          if (edge && e.clientX - el.getBoundingClientRect().left < SEAM_SLOP_PX) {
+            g.pressEdge(e.nativeEvent, prev, edge);
+            return;
+          }
+        }
+        g.pressBlock(e.nativeEvent, id, el);
       },
       onEdgePointerDown: (e, id) => g.pressEdge(e.nativeEvent, id, e.currentTarget),
       onClick: onBlockClick,
@@ -559,9 +755,14 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
         if (label !== null) announce(act.renameBlock(id, label));
         focusBlock(id);
       },
-      onStartRename: (id) => setRenaming(id),
+      onStartRename: (id) => {
+        if (act.songLocked()) refuseLocked();
+        else setRenaming(id);
+      },
     }),
-    [announce, focusBlock, g, onBlockClick, onBlockKeyDown, onCellClick, onCellKeyDown, openMenu, openPicker],
+    // hideCellTip only touches refs and state setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [announce, focusBlock, g, onBlockClick, onBlockKeyDown, onCellClick, onCellKeyDown, openMenu, openPicker, refuseLocked],
   );
 
   // Clicking empty lane clears the selection.
@@ -572,50 +773,174 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
     }
   };
 
+  /* ---- what a click on a part cell does (one shared hover bubble) ---- */
+  const [cellTipState, setCellTip] = useState<{ text: string; x: number; y: number } | null>(null);
+  const tipCell = useRef<HTMLElement | null>(null);
+  const tipTimer = useRef(0);
+  function hideCellTip() {
+    window.clearTimeout(tipTimer.current);
+    tipTimer.current = 0;
+    tipCell.current = null;
+    setCellTip((s) => (s ? null : s));
+  }
+  const onTrackPointerOver = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'touch' || g.dragging || e.buttons) return;
+    const cell = (e.target as Element).closest<HTMLElement>('[data-cell]');
+    if (!cell) return;
+    if (cell === tipCell.current) return;
+    hideCellTip();
+    if (!tips.enabled || locked) return;
+    tipCell.current = cell;
+    tipTimer.current = window.setTimeout(() => {
+      tipTimer.current = 0;
+      const v = viewOf(cell.closest<HTMLElement>('[data-block-id]')?.dataset.blockId);
+      const c = v?.cells.find((x) => x.trackId === cell.dataset.track);
+      if (!v || !c || !cell.isConnected || g.dragging || tipCell.current !== cell) return;
+      const r = cell.getBoundingClientRect();
+      setCellTip({ text: cellTip(v, c), x: r.left + r.width / 2, y: r.top });
+    }, TOOLTIP_DELAY_MS);
+  };
+  const onTrackPointerOut = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const to = e.relatedTarget as Node | null;
+    if (to && tipCell.current?.contains(to)) return;
+    if (tipCell.current) hideCellTip();
+  };
+  useEffect(() => () => window.clearTimeout(tipTimer.current), []);
+
   /* ---- scrolling, playhead ---- */
   const [edges, setEdges] = useState({ left: false, right: false });
-  const lastUserScroll = useRef(-Infinity);
-  const ownScroll = useRef<number | null>(null);
+  // From what is tracked (no layout read); not while something is carried (the preview widens the lane).
   const updateEdges = useCallback(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    const left = el.scrollLeft > 2;
-    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
+    if (g.dragging) return;
+    const { viewport, total: width } = live.current;
+    const left = g.scroll > 2;
+    const right = g.scroll + viewport < width - 2;
     setEdges((x) => (x.left === left && x.right === right ? x : { left, right }));
-  }, []);
-  useEffect(updateEdges, [layout, size.width, updateEdges]);
+  }, [g]);
+  useEffect(updateEdges, [layout, size.width, dragUi, updateEdges]);
   const onScroll = () => {
     const el = scrollerRef.current;
     if (!el) return;
-    if (ownScroll.current === null || Math.abs(el.scrollLeft - ownScroll.current) > 1) lastUserScroll.current = performance.now();
+    // The echo of a drag's own auto-scroll: already applied, and reading the position now would force a layout.
+    if (g.scrolling) {
+      pauseFollow();
+      return;
+    }
+    const left = el.scrollLeft;
+    const own = ownScroll.current !== null && Math.abs(left - ownScroll.current) <= 1.5;
     ownScroll.current = null;
-    g.onScroll(el.scrollLeft);
+    if (!own) pauseFollow();
+    if (cellTipState || tipCell.current) hideCellTip();
+    g.onScroll(left);
     updateEdges();
   };
+  /** Scroll the lane to `to` (smoothly unless motion is reduced), as the lane's own scroll: it does not pause following. */
+  const glideRaf = useRef(0);
+  const glideScroll = useCallback(
+    (to: number) => {
+      const scroller = scrollerRef.current;
+      if (!scroller) return;
+      if (prefersReducedMotion()) {
+        followAnim.current = null;
+        ownScroll.current = to;
+        scroller.scrollLeft = to;
+        return;
+      }
+      followAnim.current = { from: g.scroll, to, t0: performance.now() };
+      if (glideRaf.current) return;
+      const step = (now: number) => {
+        glideRaf.current = 0;
+        const fa = followAnim.current;
+        const el = scrollerRef.current;
+        if (!fa || !el) return;
+        if (g.dragging) {
+          followAnim.current = null;
+          return;
+        }
+        const k = Math.min(1, Math.max(0, (now - fa.t0) / FOLLOW_SCROLL_MS));
+        const v = fa.from + (fa.to - fa.from) * easeOut(k);
+        ownScroll.current = v;
+        el.scrollLeft = v;
+        if (k >= 1) {
+          followAnim.current = null;
+          return;
+        }
+        glideRaf.current = requestAnimationFrame(step);
+      };
+      glideRaf.current = requestAnimationFrame(step);
+    },
+    [g],
+  );
+  useEffect(() => () => cancelAnimationFrame(glideRaf.current), []);
+
+  // Ctrl (or ⌘) + wheel over the lane zooms around the pointer; a plain wheel only ever scrolls.
+  const wheelAcc = useRef(0);
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      // Never the page zoom over the lane; no lane zoom while something is carried.
+      e.preventDefault();
+      if (g.dragging) return;
+      wheelAcc.current += e.deltaMode === 1 ? e.deltaY * 20 : e.deltaY;
+      if (Math.abs(wheelAcc.current) < WHEEL_STEP) return;
+      const dir = wheelAcc.current < 0 ? 1 : -1;
+      wheelAcc.current = 0;
+      const next = zoomStep(live.current.layout.pxPerBar, dir);
+      if (next === null) return;
+      zoomTo(next, e.clientX - el.getBoundingClientRect().left);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [g, zoomTo]);
 
   const playheadRef = useRef<HTMLDivElement>(null);
+  const head = useRef<{ layout: SongLayout | null; shown: number | null; glide: { off: number; t0: number } | null }>({ layout: null, shown: null, glide: null });
+  // A song that starts again starts its playhead where it plays (only edits make it glide).
+  useEffect(() => {
+    if (!songActive) head.current = { layout: null, shown: null, glide: null };
+  }, [songActive]);
   useRafLoop((_dt, now) => {
+    const scroller = scrollerRef.current;
     const el = playheadRef.current;
     const t = session.transport;
     if (!el || !t || !getSongPlan()) return;
     const bar = songTimelineBar(t.getPosition().tick);
+    const st = head.current;
     if (bar === null) {
       el.style.opacity = '0';
+      st.shown = null;
       return;
     }
-    const x = barToX(live.current.layout, bar);
-    el.style.opacity = '1';
-    el.style.transform = `translate3d(${x.toFixed(1)}px, 0, 0)`;
-    // Keep the playhead in view while the song plays, unless the user is dragging or just scrolled away.
-    const scroller = scrollerRef.current;
-    if (!songPlaying || !scroller || g.dragging || now - lastUserScroll.current < FOLLOW_PAUSE_MS) return;
-    if (scroller.scrollWidth <= scroller.clientWidth) return;
-    if (x < scroller.scrollLeft + 8 || x > scroller.scrollLeft + scroller.clientWidth - 32) {
-      const to = Math.max(0, x - 48);
-      ownScroll.current = to;
-      scroller.scrollLeft = to;
+    const L = live.current.layout;
+    const target = barToX(L, bar);
+    // Blocks before the playhead moved: it glides to its new place instead of jumping.
+    if (st.layout && st.layout !== L && st.shown !== null && Math.abs(st.shown - target) > 2 && !prefersReducedMotion()) st.glide = { off: st.shown - target, t0: now };
+    st.layout = L;
+    let x = target;
+    if (st.glide) {
+      const k = (now - st.glide.t0) / PLAYHEAD_GLIDE_MS;
+      if (k >= 1) st.glide = null;
+      else x = target + st.glide.off * (1 - easeOut(k));
     }
+    st.shown = x;
+    el.style.opacity = '1';
+    el.style.transform = translate(x);
+    // Keep the playhead in view while the song plays, unless following is off, something is carried or the user scrolled or edited lately.
+    if (!live.current.follow || !live.current.songPlaying || !scroller || g.dragging || followAnim.current || now < followPausedUntil.current) return;
+    const to = followScroll(target, g.scroll, live.current.viewport, live.current.total);
+    if (to !== null) glideScroll(to);
   }, songActive);
+
+  const setFollow = (on: boolean) => {
+    setFollowState(on);
+    writeFollow(on);
+    // Turned on: catch up with the playhead now.
+    if (on) followPausedUntil.current = 0;
+    else followAnim.current = null;
+    announce(on ? 'The lane follows the playhead while the song plays.' : 'The lane stays where you put it while the song plays.');
+  };
 
   /* ---- ruler ---- */
   const [rulerBar, setRulerBar] = useState<number | null>(null);
@@ -641,6 +966,7 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
     const b = live.current.layout.blocks.find((x) => x.totalBars > 0 && bar >= x.startBar && bar < x.startBar + x.totalBars);
     if (!b) return;
     void startSong(b.index, { fromBar: bar });
+    followPausedUntil.current = 0;
     announce(`Playing the song from bar ${bar + 1}.`);
   };
   const totalBars = layout.totalBars;
@@ -658,17 +984,19 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
     setSelection({ ids: [r.id], anchor: r.id });
     setActiveId(r.id);
     pendingReveal.current = r.id;
-    notify(`Added ${s.name} at the end of the song (block ${session.store.getState().arrangement.blocks.length}).`);
+    announce(r.text);
   };
   const addAll = () => {
     let first: Id | null = null;
     const gesture = act.newGesture('add-all');
     for (const s of scenes) {
-      const r = cmdAdd(s.id, gesture);
-      if (r) first ??= r;
+      const r = act.addScene(s.id, undefined, gesture);
+      if (!r) break;
+      first ??= r.id;
     }
+    session.store.endGesture();
     if (!first) return;
-    notify(`Added ${scenes.map((s) => s.name).join(', ')} in order. Drag blocks, their edges or their parts to shape the song.`);
+    notify(`Added ${scenes.map((s) => s.name).join(', ')} in order. Drag blocks, their edges or their parts to shape the song.`, 'info', 'undo');
     focusBlock(first);
   };
   // A block added at the end of a song that scrolls is brought into view (focus stays on the + button).
@@ -680,10 +1008,7 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
     pendingReveal.current = null;
     const lb = layout.blocks.find((b) => b.id === id);
     if (!lb) return;
-    if (lb.x < scroller.scrollLeft || lb.x + lb.width > scroller.scrollLeft + scroller.clientWidth) {
-      ownScroll.current = null;
-      scroller.scrollTo({ left: Math.max(0, lb.x + lb.width + 24 - scroller.clientWidth), behavior: 'smooth' });
-    }
+    if (lb.x < g.scroll || lb.x + lb.width > g.scroll + size.width) glideScroll(scrollToShow(lb.x + lb.width + 24, size.width, size.width, total));
   });
 
   /* ---- render ---- */
@@ -694,8 +1019,8 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
   const layerInfo = useProject((p) => {
     if (!card || !layerTarget) return null;
     const b = p.arrangement.blocks.find((x) => x.id === layerTarget);
-    return b ? layerPreview(p, b, card.sceneId) : null;
-  }, (a, b) => a === b || (!!a && !!b && a.sceneName === b.sceneName && [...a.changes.keys()].join() === [...b.changes.keys()].join()));
+    return b ? layerPreview(p, b, card.sceneId, card.replace ? 'replace' : 'fill') : null;
+  }, samePreview);
   const menuBlock = menu ? views.find((v) => v.id === menu.blockId) : undefined;
   const pickerBlock = picker ? views.find((v) => v.id === picker.blockId) : undefined;
   const hiddenIds = moving && !moving.copy ? new Set(moving.ids) : null;
@@ -711,6 +1036,15 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
     (a, b) => a.length === b.length && a.every((x, i) => x === b[i]),
   );
 
+  const zoomIn = zoomStep(ppb, 1);
+  const zoomOut = zoomStep(ppb, -1);
+  const zoomAnchor = (): number | null => {
+    // The playhead when it is in view, else the middle of the view.
+    const x = head.current.shown;
+    if (songActive && x !== null && x >= g.scroll && x <= g.scroll + size.width) return x - g.scroll;
+    return null;
+  };
+
   return (
     <>
       <div
@@ -721,6 +1055,7 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
         data-copy={moving?.copy || undefined}
         data-outside={(moving?.outside ?? card?.outside) || undefined}
         data-advanced={advanced || undefined}
+        data-locked={locked || undefined}
         style={{ ['--rows' as string]: views[0]?.cells.length || 8 }}
       >
         <div className={styles.names} aria-hidden="true">
@@ -794,7 +1129,14 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
                 </div>
               </div>
             )}
-            <div ref={trackRef} className={styles.track} role={empty ? undefined : 'list'} aria-label={empty ? undefined : `Song: ${views.length} block${views.length === 1 ? '' : 's'} in play order`}>
+            <div
+              ref={trackRef}
+              className={styles.track}
+              role={empty ? undefined : 'list'}
+              aria-label={empty ? undefined : `Song: ${views.length} block${views.length === 1 ? '' : 's'} in play order`}
+              onPointerOver={onTrackPointerOver}
+              onPointerOut={onTrackPointerOut}
+            >
               {empty ? (
                 <div className={styles.empty} data-drop={(card && !card.outside) || undefined}>
                   <Icon name="plus" size={20} />
@@ -802,7 +1144,7 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
                     <strong>Your song is empty.</strong>
                     <span>Add scenes in the order they should play: press + on a scene below, or drag it here.</span>
                   </div>
-                  <Button ref={addAllRef} size="sm" icon="plus" onClick={addAll} tip={`Adds every scene once, in row order, with ${DEFAULT_BLOCK_REPEATS} repeats each.`}>
+                  <Button ref={addAllRef} size="sm" icon="plus" onClick={addAll} tip={`Adds every scene once, in row order, each playing ${DEFAULT_BLOCK_REPEATS} passes.`}>
                     Add all {scenes.length} scenes
                   </Button>
                 </div>
@@ -813,6 +1155,7 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
                     block={v}
                     count={views.length}
                     current={v.id === currentId}
+                    next={v.id === nextId}
                     selected={selection.ids.includes(v.id)}
                     tabbable={v.id === tabId}
                     hidden={!!hiddenIds?.has(v.id)}
@@ -834,25 +1177,6 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
                 )}
               </div>
               <div ref={bubbleRef} className={`${styles.bubble} mono`} aria-hidden="true" data-testid="lane-bubble" />
-              {moving && (
-                <div ref={cloneRef} className={styles.clone} aria-hidden="true" data-testid="lane-clone" data-copy={moving.copy || undefined} data-outside={moving.outside || undefined}>
-                  {moving.ids.map((id, i) => {
-                    const v = views.find((x) => x.id === id);
-                    const lb = layout.blocks.find((b) => b.id === id);
-                    if (!v || !lb) return null;
-                    const left = moving.ids.slice(0, i).reduce((s, x) => s + (layout.blocks.find((b) => b.id === x)?.width ?? 0), 0);
-                    return (
-                      <div key={id} className={styles.cloneItem} style={{ left }}>
-                        <BlockFace block={v} width={lb.width} advanced={advanced} copy={moving.copy} />
-                      </div>
-                    );
-                  })}
-                  <span className={styles.badge} data-copy={moving.copy || undefined}>
-                    <Icon name={moving.copy ? 'copy' : 'drag'} size={11} />
-                    <span ref={labelRef} />
-                  </span>
-                </div>
-              )}
             </div>
             {!empty && (
               <div className={styles.seams}>
@@ -874,8 +1198,10 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
                           focusBlock(id);
                         }}
                       >
-                        <LaneIcon name="join" size={11} />
-                        Join
+                        <span className={styles.joinChip}>
+                          <LaneIcon name="join" size={11} />
+                          Join
+                        </span>
                       </button>
                     </Tooltip>
                   );
@@ -885,9 +1211,39 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
             {!empty && <div ref={playheadRef} className={styles.playhead} aria-hidden="true" data-on={songActive || undefined} data-testid="playhead" />}
           </div>
         </div>
+        {/* The lifted copy of carried blocks floats over the lane (outside the scroller): while the lane
+            scrolls under a still pointer, it does not move at all. */}
+        <div className={styles.carry} aria-hidden="true">
+          {moving && (
+            <div ref={cloneRef} className={styles.clone} data-testid="lane-clone" data-copy={moving.copy || undefined} data-outside={moving.outside || undefined}>
+              {moving.ids.map((id, i) => {
+                const v = views.find((x) => x.id === id);
+                const lb = layout.blocks.find((b) => b.id === id);
+                if (!v || !lb) return null;
+                const left = moving.ids.slice(0, i).reduce((s, x) => s + (layout.blocks.find((b) => b.id === x)?.width ?? 0), 0);
+                return (
+                  <div key={id} className={styles.cloneItem} style={{ left }}>
+                    <BlockFace block={v} width={lb.width} advanced={advanced} copy={moving.copy} />
+                  </div>
+                );
+              })}
+              <span ref={badgeRef} className={styles.badge} data-copy={moving.copy || undefined} data-testid="lane-badge">
+                <Icon name={moving.copy ? 'copy' : 'drag'} size={11} />
+                <span ref={labelRef} />
+              </span>
+            </div>
+          )}
+        </div>
+        {locked && (
+          <div className={styles.lockLine} data-testid="lane-lock">
+            <span key={lockPulse} className={styles.lockText} data-pulse={lockPulse > 0 || undefined}>
+              <Icon name="lock" size={12} /> {act.LOCKED_TEXT}
+            </span>
+          </div>
+        )}
       </div>
 
-      <div className={styles.palette}>
+      <div ref={paletteRef} className={styles.palette}>
         <span className={styles.paletteLabel}>SCENES</span>
         <div className={styles.cards} role="list" aria-label="Scenes you can add to the song">
           {scenes.map((s) => (
@@ -908,7 +1264,10 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
                   {barsText(s.bars)} · {partsText(s.parts)}
                 </span>
               </span>
-              <Tooltip name={`Add ${s.name}`} tip={`Add this scene at the end of the song (${DEFAULT_BLOCK_REPEATS} repeats). Or drag the card: between blocks inserts it, onto a block layers its parts in.`}>
+              <Tooltip
+                name={`Add ${s.name}`}
+                tip={`Add this scene at the end of the song (${DEFAULT_BLOCK_REPEATS} passes). Or drag the card: between blocks inserts it, onto a block fills that block’s silent parts with its clips (hold Shift to replace the parts instead).`}
+              >
                 <button type="button" className={styles.cardAdd} aria-label={`Add ${s.name} to the end of the song`} onClick={() => addAtEnd(s)}>
                   <Icon name="plus" size={14} />
                 </button>
@@ -919,19 +1278,61 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
         <p id={helpId} className={styles.hint}>
           Drag to move · {MOD_KEY.replace('+', '')}+drag copies · drag the right edge for passes · click a part to switch it · Enter for all actions
         </p>
+        <div className={styles.laneTools} role="group" aria-label="Song lane view">
+          <Button
+            size="sm"
+            variant="ghost"
+            pressed={follow}
+            onClick={() => setFollow(!follow)}
+            aria-label="Follow playhead"
+            tip={follow ? 'While the song plays, the lane scrolls to keep the playhead in view.' : 'The lane stays where you put it while the song plays.'}
+            detail="It waits a few seconds after you scroll or edit. Remembered in this browser."
+          >
+            Follow
+          </Button>
+          <IconButton size="sm" icon="minus" label="Zoom out" tip="Smaller blocks: more of the song in view." disabled={empty || zoomOut === null} onClick={() => zoomOut !== null && zoomTo(zoomOut, zoomAnchor())} />
+          <IconButton size="sm" icon="plus" label="Zoom in" tip="Bigger blocks. Ctrl+wheel over the lane zooms too." disabled={empty || zoomIn === null} onClick={() => zoomIn !== null && zoomTo(zoomIn, zoomAnchor())} />
+          <Button size="sm" variant="ghost" disabled={empty || ppb === fit} onClick={() => zoomTo(fit, 0, true)} tip={ppb === fit ? 'The song is at the size that fits the lane.' : 'Show the whole song at the size that fits the lane.'}>
+            Fit song
+          </Button>
+        </div>
       </div>
 
       <div className="visually-hidden" role="status" aria-live="polite" data-testid="lane-status">
         <span key={status.n}>{status.text}</span>
       </div>
+      <span id={`${helpId}-off`} hidden>
+        Click switches this part off in this block.
+      </span>
+      <span id={`${helpId}-on`} hidden>
+        Click switches this part back on in this block.
+      </span>
+      <span id={`${helpId}-pick`} hidden>
+        Click chooses what this part plays in this block.
+      </span>
+
+      {cellTipState &&
+        createPortal(
+          <div
+            className={styles.cellTip}
+            role="presentation"
+            aria-hidden="true"
+            data-testid="cell-tip"
+            style={{ left: Math.round(Math.max(140, Math.min(window.innerWidth - 140, cellTipState.x))), top: Math.round(cellTipState.y) }}
+          >
+            {cellTipState.text}
+          </div>,
+          document.body,
+        )}
 
       {card &&
         createPortal(
-          <div ref={ghostRef} className={styles.ghost} aria-hidden="true" data-testid="lane-ghost" data-drop={!card.outside || undefined} data-layer={!!layerTarget || undefined}>
+          <div ref={ghostRef} className={styles.ghost} aria-hidden="true" data-testid="lane-ghost" data-drop={!card.outside || undefined} data-layer={!!layerTarget || undefined} data-replace={card.replace || undefined}>
             <span className={styles.ghostName}>
               {layerTarget ? <LaneIcon name="layers" size={12} /> : <Icon name="plus" size={12} />} {scenes.find((s) => s.id === card.sceneId)?.name}
             </span>
-            <span ref={labelRef} className={`${styles.ghostMeta}`} />
+            <span ref={labelRef} className={styles.ghostMeta} />
+            <span ref={ghostHintRef} className={styles.ghostHint} />
           </div>,
           document.body,
         )}
@@ -964,8 +1365,3 @@ export function SongLane({ views, scenes, currentId, songActive, songPlaying, ed
   );
 }
 
-/** Add a block for a scene at the end with a shared gesture (one undo step for "Add all"). */
-function cmdAdd(sceneId: Id, gesture: string): Id | null {
-  const r = addBlockCmd(session.store, sceneId, undefined, undefined, gesture);
-  return session.accepted(r) && r.blockId ? r.blockId : null;
-}

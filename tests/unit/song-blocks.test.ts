@@ -195,16 +195,67 @@ describe('arrangement commands', () => {
     expect(block().parts).toEqual({ [drums.id]: null });
     cmd.setBlockPart(store, ids[0], drums.id, undefined);
     expect(block().parts).toBeUndefined();
-    // Layering Lift adds its lead; layering Intro replaces the drums.
+    // Layering Lift fills the silent lead; layering Intro fills nothing (Groove has drums) unless it replaces them.
     expect(cmd.layerScene(store, ids[0], p.scenes[2].id).parts).toBe(1);
-    expect(cmd.layerScene(store, ids[0], p.scenes[0].id).parts).toBe(1);
+    const fill = cmd.layerScene(store, ids[0], p.scenes[0].id);
+    expect(fill.changed).toBe(false);
+    expect(fill.message).toMatch(/Nothing to fill/);
+    expect(cmd.layerScene(store, ids[0], p.scenes[0].id, 'replace').parts).toBe(1);
     expect(block().parts).toEqual({ [lead.id]: p.scenes[2].id, [drums.id]: p.scenes[0].id });
     expect(cmd.layerScene(store, ids[0], p.scenes[3].id).changed).toBe(false);
+    expect(cmd.layerScene(store, ids[0], p.scenes[1].id, 'replace').changed).toBe(false);
     // Changing the block's scene to Lift drops the lead change (it now follows the scene).
     cmd.setBlockScene(store, ids[0], p.scenes[2].id);
     expect(block().parts).toEqual({ [drums.id]: p.scenes[0].id });
     cmd.resetBlockParts(store, ids[0]);
     expect(block().parts).toBeUndefined();
+  });
+
+  it('layering fills only the silent parts by default; replace takes every part the scene has; one undo step each', () => {
+    // Rows: 0 Intro (drums), 1 Groove (drums, bass), 2 Lift (lead) — plus a Lift drums clip and a Groove-only perc part here.
+    const { store, ids, p } = storeWith([{ sceneRow: 1, repeats: 2 }]);
+    const [drums, bass, perc, lead] = p.tracks;
+    store.replace(
+      (() => {
+        const q = structuredClone(store.getState());
+        q.tracks[0].clips[2] = createClip('lift drums', 1);
+        q.tracks[1].clips[2] = createClip('lift bass', 1);
+        q.tracks[2].clips[2] = createClip('lift perc', 1);
+        return q;
+      })(),
+      { resetHistory: true },
+    );
+    const lift = p.scenes[2].id;
+    const block = () => store.getState().arrangement.blocks[0];
+    // Bass switched off on purpose: fill leaves it off.
+    cmd.setBlockPart(store, ids[0], bass.id, null);
+    const undo0 = store.historySize().undo;
+    expect(cmd.layerChanges(store.getState(), block(), lift, 'fill').sort()).toEqual([perc.id, lead.id].sort());
+    const r = cmd.layerScene(store, ids[0], lift);
+    expect(r.parts).toBe(2);
+    expect(block().parts).toEqual({ [bass.id]: null, [perc.id]: lift, [lead.id]: lift });
+    expect(store.historySize().undo).toBe(undo0 + 1);
+    // Now nothing is silent: fill has nothing to do, replace takes drums and bass as well.
+    expect(cmd.layerChanges(store.getState(), block(), lift, 'fill')).toEqual([]);
+    expect(cmd.layerChanges(store.getState(), block(), lift, 'replace').sort()).toEqual([drums.id, bass.id].sort());
+    store.undo();
+    expect(block().parts).toEqual({ [bass.id]: null });
+    // Replace in one step: every part with a Lift clip plays Lift here, Off or not.
+    const r2 = cmd.layerScene(store, ids[0], lift, 'replace');
+    expect(r2.parts).toBe(4);
+    expect(block().parts).toEqual({ [drums.id]: lift, [bass.id]: lift, [perc.id]: lift, [lead.id]: lift });
+    expect(store.historySize().undo).toBe(undo0 + 1);
+    // The block's own scene is never layered into itself.
+    expect(cmd.layerChanges(store.getState(), block(), block().sceneId, 'replace')).toEqual([]);
+    expect(cmd.layerScene(store, ids[0], block().sceneId).message).toMatch(/already plays that scene/);
+  });
+
+  it('a part layered from a scene that has no clip for it counts as silent', () => {
+    const { store, ids, p } = storeWith([{ sceneRow: 3, repeats: 1 }]);
+    const [drums] = p.tracks;
+    // Break (row 3) is empty; drums layered from Lift (no drums clip there) is silent, Intro fills it.
+    cmd.setBlockPart(store, ids[0], drums.id, p.scenes[2].id);
+    expect(cmd.layerChanges(store.getState(), store.getState().arrangement.blocks[0], p.scenes[0].id)).toEqual([drums.id]);
   });
 
   it('names a block; an empty name shows the scene name again', () => {

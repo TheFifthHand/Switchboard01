@@ -17,7 +17,7 @@ import { Icon, Tooltip } from '../../../ui/components';
 import type { Id } from '../../../project/types';
 import { MAX_BLOCK_LABEL } from '../../../project/types';
 import { LaneIcon } from './laneIcons';
-import { barsText, blockLabel, cellLabel, cellOn, cellState, type BlockView, type CellView, type LayerPreview } from './songModel';
+import { barsText, blockLabel, cellLabel, cellOn, cellState, cellToggle, layerText, type BlockView, type CellView, type LayerPreview } from './songModel';
 import styles from './SongPanel.module.css';
 
 export interface BlockHandlers {
@@ -42,6 +42,8 @@ export interface SongBlockProps {
   block: BlockView;
   count: number;
   current: boolean;
+  /** The block playing now was removed: this one takes over at the next bar. */
+  next: boolean;
   selected: boolean;
   tabbable: boolean;
   /** Carried by a move drag: the lifted copy shows it, this one keeps its slot invisibly. */
@@ -57,24 +59,24 @@ export interface SongBlockProps {
   h: BlockHandlers;
 }
 
-function CellContent({ cell, preview }: { cell: CellView; preview: string | null }) {
-  if (preview !== null)
-    return (
-      <>
-        <LaneIcon name="layers" size={10} />
-        <span className={styles.cellText}>from {preview}</span>
-      </>
-    );
+/** A layered part: the layers icon, the scene it comes from and its clip ("Lift: Bell Hook"); the clip name gives way first. */
+function LayerContent({ scene, clip }: { scene: string; clip: string | null }) {
+  return (
+    <>
+      <LaneIcon name="layers" size={10} />
+      <span className={styles.cellFrom}>{clip ? `${scene}:` : `from ${scene}`}</span>
+      {clip && <span className={styles.cellText}>{clip}</span>}
+    </>
+  );
+}
+
+function CellContent({ cell, preview }: { cell: CellView; preview: { scene: string; clip: string } | null }) {
+  if (preview !== null) return <LayerContent scene={preview.scene} clip={preview.clip} />;
   switch (cell.kind) {
     case 'scene':
       return <span className={styles.cellText}>{cell.clipName}</span>;
     case 'layer':
-      return (
-        <>
-          <LaneIcon name="layers" size={10} />
-          <span className={styles.cellText}>from {cell.fromScene}</span>
-        </>
-      );
+      return <LayerContent scene={cell.fromScene ?? 'another scene'} clip={cell.clipName} />;
     case 'off':
       return <span className={styles.cellText}>Off</span>;
     case 'empty':
@@ -125,10 +127,10 @@ function RenameField(props: { block: BlockView; onDone(label: string | null): vo
 }
 
 export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
-  const { block, count, current, selected, tabbable, hidden, resizing, advanced, renaming, menuOpen, layer, helpId, h } = props;
+  const { block, count, current, next, selected, tabbable, hidden, resizing, advanced, renaming, menuOpen, layer, helpId, h } = props;
   const id = block.id;
   const inner = -1;
-  const layerCount = layer ? layer.changes.size : 0;
+  const layerSays = layer ? layerText(layer, block.name) : null;
   return (
     <div
       ref={(el) => h.register(id, el)}
@@ -139,13 +141,14 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
       data-first={block.index === 0 || undefined}
       data-last={block.index === count - 1 || undefined}
       data-current={current || undefined}
+      data-next={(next && !current) || undefined}
       data-selected={selected || undefined}
       data-hidden={hidden || undefined}
       data-resizing={resizing || undefined}
       data-missing={block.missing || undefined}
-      data-layer-target={layer ? (layerCount ? 'on' : 'none') : undefined}
+      data-layer-target={layerSays ? (layerSays.changes ? 'on' : 'none') : undefined}
       tabIndex={tabbable ? 0 : -1}
-      aria-label={blockLabel(block, count, { current, selected })}
+      aria-label={blockLabel(block, count, { current, next, selected })}
       aria-describedby={helpId}
       onKeyDown={(e) => h.onKeyDown(e, id)}
       onPointerDown={(e) => h.onPointerDown(e, id)}
@@ -161,19 +164,25 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
             <span className={styles.name}>{block.name}</span>
           )}
           <span className={styles.meta}>
-            {layer ? (
-              <span className={styles.layerTag}>
+            {layerSays ? (
+              <span className={styles.layerTag} data-none={!layerSays.changes || undefined}>
                 <LaneIcon name="layers" size={10} />
-                {layerCount ? `Layer ${layer.sceneName} into ${block.name}` : `${layer.sceneName} adds nothing new`}
+                {layerSays.title}
               </span>
             ) : block.missing ? (
               <span className={styles.skipped}>Scene missing: skipped</span>
             ) : (
               <>
-                {current && (
+                {current ? (
                   <span className={styles.nowTag}>
                     <Icon name="play" size={8} /> Playing
                   </span>
+                ) : (
+                  next && (
+                    <span className={styles.nextTag}>
+                      <Icon name="chevronRight" size={9} /> Next
+                    </span>
+                  )
                 )}
                 <span className={`${styles.len} mono`}>{barsText(block.totalBars)}</span>
                 {advanced && (
@@ -209,44 +218,49 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
         </div>
       ) : (
         <div className={styles.cells}>
-          {block.cells.map((c) => {
-            const preview = layer?.changes.has(c.trackId) ? layer.sceneName : null;
-            return (
-              <div key={c.trackId} className={styles.cellRow}>
-                <button
-                  type="button"
-                  className={styles.cell}
-                  data-cell=""
-                  data-track={c.trackId}
-                  data-kind={c.kind}
-                  data-preview={preview !== null || undefined}
-                  tabIndex={inner}
-                  aria-pressed={cellOn(c)}
-                  aria-label={cellLabel(block, c)}
-                  onClick={(e) => h.onCellClick(e, id, c.trackId)}
-                  onKeyDown={(e) => h.onCellKeyDown(e, id, c.trackId)}
-                >
-                  <CellContent cell={c} preview={preview} />
-                </button>
-                {advanced && (
+          <div className={styles.rows}>
+            {block.cells.map((c) => {
+              const clip = layer?.changes.get(c.trackId);
+              const preview = layer && clip !== undefined ? { scene: layer.sceneName, clip } : null;
+              const toggle = cellToggle(c);
+              return (
+                <div key={c.trackId} className={styles.cellRow}>
                   <button
                     type="button"
-                    className={styles.pick}
+                    className={styles.cell}
+                    data-cell=""
+                    data-track={c.trackId}
+                    data-kind={c.kind}
+                    data-preview={preview !== null || undefined}
                     tabIndex={inner}
-                    data-no-drag=""
-                    aria-haspopup="menu"
-                    aria-label={`Choose what ${c.partName} plays in ${block.name} (block ${block.index + 1}); now ${cellState(c)}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      h.onPicker(e.currentTarget, id, c.trackId);
-                    }}
+                    aria-pressed={cellOn(c)}
+                    aria-label={cellLabel(block, c)}
+                    aria-describedby={`${helpId}-${toggle === 'picker' ? 'pick' : toggle.choice === null ? 'off' : 'on'}`}
+                    onClick={(e) => h.onCellClick(e, id, c.trackId)}
+                    onKeyDown={(e) => h.onCellKeyDown(e, id, c.trackId)}
                   >
-                    <Icon name="chevronDown" size={9} />
+                    <CellContent cell={c} preview={preview} />
                   </button>
-                )}
-              </div>
-            );
-          })}
+                  {advanced && (
+                    <button
+                      type="button"
+                      className={styles.pick}
+                      tabIndex={inner}
+                      data-no-drag=""
+                      aria-haspopup="menu"
+                      aria-label={`Choose what ${c.partName} plays in ${block.name} (block ${block.index + 1}); now ${cellState(c)}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        h.onPicker(e.currentTarget, id, c.trackId);
+                      }}
+                    >
+                      <Icon name="chevronDown" size={9} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
           {Array.from({ length: block.repeats - 1 }, (_, i) => (
             <div key={i} className={styles.divider} style={{ left: `${((i + 1) / block.repeats) * 100}%` }}>
               <button
@@ -260,7 +274,9 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
                   h.onSplit(id, i + 1);
                 }}
               >
-                <LaneIcon name="scissors" size={11} />
+                <span className={styles.splitChip}>
+                  <LaneIcon name="scissors" size={11} />
+                </span>
               </button>
             </div>
           ))}

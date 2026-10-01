@@ -101,6 +101,34 @@ export function packPositions(order: readonly Id[], widthOf: (id: Id) => number,
 }
 
 /* ------------------------------------------------------------------ */
+/* Labels that follow a drag stay readable                             */
+/* ------------------------------------------------------------------ */
+
+/** Room (px) kept between a drag label and the lane's visible edge. */
+export const LABEL_INSET_PX = 4;
+
+/**
+ * Where the label under a dragged group sits so the lane edge never cuts it:
+ * in the left half of the view it starts at the group's left edge, in the
+ * right half it ends at the group's right edge, and either way it is pushed
+ * back inside the visible part of the lane. `shift` is in px from that edge.
+ */
+export function badgePlacement(left: number, width: number, scrollLeft: number, viewport: number): { side: 'left' | 'right'; shift: number } {
+  const lo = scrollLeft + LABEL_INSET_PX;
+  const hi = scrollLeft + viewport - LABEL_INSET_PX;
+  const centre = left + width / 2;
+  if (centre > scrollLeft + viewport / 2) return { side: 'right', shift: Math.round(Math.min(0, hi - (left + width))) };
+  return { side: 'left', shift: Math.round(Math.max(0, lo - left)) };
+}
+
+/** Width (px) a scene card's floating label may need; nearer the window's right edge than this it flips to the pointer's left. */
+export const GHOST_FLIP_PX = 300;
+
+export function ghostFlips(clientX: number, windowWidth: number): boolean {
+  return clientX > windowWidth - GHOST_FLIP_PX;
+}
+
+/* ------------------------------------------------------------------ */
 /* Edge drag (length in passes)                                        */
 /* ------------------------------------------------------------------ */
 

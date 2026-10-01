@@ -50,6 +50,20 @@ name Omni Song. Interface rules: `docs/OMNI_UX.md`. Later ideas: `docs/ROADMAP.m
 | Reviews | done | correctness review (5 defects: gain clipping, MIDI undo flooding, take lost to a recording lock, loudness not restarted, early stop dropping audio) and hands-on usability/accessibility review (13 problems), all fixed with regression tests |
 | Handoff | done | full test run, screenshots and WAVs recaptured, launcher smoke test of the 2.0 zip, TEST_REPORT and ACCEPTANCE updated |
 
+## Song timeline (after 2.0, on a pull request into `main`)
+
+Asked for: "the movement of song bits so sleek and smooth and so easy to edit and extend and
+combine … perfect and reliable … clicking together." `main` holds the shipped 2.0; this work is
+reviewed as a pull request from the development branch.
+
+| Step | State | Notes |
+|------|-------|-------|
+| Spine | done | block labels and per-part changes (layer another scene's part, or switch a part off, in one block), 16 passes per block, group commands (move, duplicate, paste, remove, split, join, layer, rename), validation |
+| Playback | done | per-part changes play; edits apply live while the song plays or is paused, re-planned from the block playing now; play from a bar; readout follows the song timeline |
+| Song lane | done | edge-to-edge blocks with a row per part; drag with live slot opening and a settle; Ctrl/Alt copy; edge drag for passes; split/join; multi-select; clipboard; scene cards layer or insert; keyboard path for everything; Follow, zoom, Fit song |
+| Pads | done | Loops pads and scene rows lift, preview the result, and settle like the lane (shared `src/ui/motion.ts`) |
+| Reviews | done | hands-on UX review with frame timing (touch drags, re-fit on drop, follow snap-back, slow-PC stutter, layer semantics … fixed) and adversarial correctness review (5 defects reproduced and fixed with regression tests; a seeded fuzz of random live edits guards the rest) |
+
 ## State at handoff
 
 - Release package: `release/omni-song-2.0.0.zip` (production build in `app/`, `Start Omni
@@ -66,7 +80,8 @@ name Omni Song. Interface rules: `docs/OMNI_UX.md`. Later ideas: `docs/ROADMAP.m
 
 ## Next action
 
-None required. For local verification: extract `release/omni-song-2.0.0.zip` on Windows,
+Review and merge the song-timeline pull request. For local verification of 2.0: extract
+`release/omni-song-2.0.0.zip` on Windows,
 double-click `Start Omni Song.bat`, press Jump In, then follow `docs/GUIDE.md`. Possible next
 steps are in `docs/ROADMAP.md` (local music-generator bridge, webcam movement control, WebXR).
 

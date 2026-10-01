@@ -12,11 +12,17 @@
  *
  * Moving things: drag a clip pad onto another pad to move it (onto a clip:
  * the two swap); hold Ctrl or Alt while dropping to copy (onto a clip: it is
- * replaced). A press that moves less than 6 px is a tap and launches. Esc
- * cancels a drag. Drum and melodic parts do not swap clips (the drop is
- * refused and says why). Keyboard: the pad's Move… action, then arrow keys,
- * Enter (Ctrl+Enter copies), Esc. Scene rows reorder by dragging the scene
- * button, or Alt+Up / Alt+Down on it; the clips of every part move with them.
+ * replaced). A press that moves less than 6 px is a tap and launches. The
+ * pad lifts and follows the pointer, its own place stays as a faint
+ * placeholder, and the pad under it says what a drop does (Swap, Replace,
+ * Can't go here); on release the pad settles into place (a swapped clip
+ * glides into the other one's place). Esc, a release away from the pads, a
+ * lost pointer or a window switch put it back. Drum and melodic parts do not
+ * swap clips (the drop is refused and says why). Keyboard: the pad's Move…
+ * action, then arrow keys, Enter (Ctrl+Enter copies), Esc. Scene rows reorder
+ * by dragging the scene button (the row lifts and the others slide apart to
+ * open its slot), or Alt+Up / Alt+Down on it; the clips of every part move
+ * with them. See GridGestures for the pointer rules.
  *
  * The selected pad's actions are in the bar under the grid (Edit steps ·
  * Duplicate · Move… · Rename · Delete); right-click, the menu key, Shift+F10
@@ -25,10 +31,22 @@
  * corner too. On a focused pad: Delete removes the clip (with Undo), Ctrl+C /
  * Ctrl+V copy and paste clips, F2 renames.
  */
-import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { createPortal } from 'react-dom';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
+import { createPortal, flushSync } from 'react-dom';
 import { Button, DRUM_KEYS, Icon, IconButton, Meter, NOTE_KEYS, OCTAVE_KEYS, Pad, Tooltip, type PadState } from '../../ui/components';
 import { TAP_SLOP_PX } from '../../ui/components/Pad';
+import { MOTION, boxOf, flip, offsetBox, prefersReducedMotion, scaledBox, stopMotion, type Box } from '../../ui/motion';
 import { SCENE_ROWS, type Clip, type Id, type Project, type Scene } from '../../project/types';
 import { clipDropProblem } from '../../state/commands';
 import { selectSlot, selectTrack, slotFor } from '../../state/uiStore';
@@ -94,6 +112,14 @@ function padState(clip: Clip | null, slot: number, rt: TrackRuntime | undefined,
   return { state: 'ready' };
 }
 
+/** A clip pad's live look (state word and light), for the pad itself and for its lifted copy while it is dragged. */
+function usePadLook(trackId: Id, slot: number, clip: Clip | null) {
+  const rt = useRuntime((s) => s.tracks[trackId]);
+  const transport = useRuntime((s): Transport => (s.playing ? 'playing' : s.paused ? 'paused' : 'stopped'));
+  const recording = useRuntime((s) => s.recording === 'notes' && s.recordTarget?.trackId === trackId && s.recordTarget.slot === slot);
+  return padState(clip, slot, rt, transport, recording);
+}
+
 /** What a clip pad does when tapped, and how to reach its actions without playing it (its tooltip and description). */
 const PAD_TIP = 'Tap to start this clip, in time with the others; tap it again to stop it.';
 const EMPTY_PAD_TIP = 'Tap to add a clip here: a new one, or paste a copied clip.';
@@ -112,7 +138,7 @@ function isActionsKey(e: KeyboardEvent<HTMLElement>): boolean {
 const STATE_SPOKEN: Record<PadState, string> = { empty: 'Empty', ready: 'Ready', queued: 'Starts next bar', playing: 'Playing', recording: 'Recording', stopping: 'Stopping' };
 
 /* ------------------------------------------------------------------ */
-/* Moving clips: drag and keyboard                                     */
+/* Moving clips: what a drop does                                      */
 /* ------------------------------------------------------------------ */
 
 interface PadRef {
@@ -120,27 +146,876 @@ interface PadRef {
   slot: number;
 }
 
-/** A clip being moved: by pointer (`over` is the pad under it) or by keyboard (the focused pad is the target). */
+/** A clip being moved with the keyboard (Move…): the focused pad is the target. */
 interface MoveState {
   from: PadRef;
   clipName: string;
-  how: 'drag' | 'keys';
   over: PadRef | null;
-  copy: boolean;
 }
 
 const padId = (trackId: Id, slot: number) => `pad-${trackId}-${slot}`;
+const cellOf = (at: PadRef) => document.getElementById(padId(at.trackId, at.slot))?.closest<HTMLElement>('[data-pad-cell]') ?? null;
+const keyOf = (trackId: Id, slot: number) => `${trackId}:${slot}`;
 
-function padAt(x: number, y: number): PadRef | null {
-  const el = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-pad-cell]');
-  if (!el) return null;
-  return { trackId: el.dataset.track!, slot: Number(el.dataset.slot) };
+/** Focus an element at the start of the next frame (focusing at once would force a second layout inside the drop's frame). */
+function focusSoon(id: string | null, selector?: string): void {
+  requestAnimationFrame(() => {
+    const el = id ? document.getElementById(id) : selector ? document.querySelector<HTMLElement>(selector) : null;
+    el?.focus({ preventScroll: true });
+  });
+}
+const copyHeld = (e: { ctrlKey: boolean; altKey: boolean; metaKey: boolean }) => e.ctrlKey || e.altKey || e.metaKey;
+
+function clipAt(p: Project, at: PadRef): Clip | null {
+  return p.tracks.find((t) => t.id === at.trackId)?.clips[at.slot] ?? null;
 }
 
-/** 'self' | 'ok' | why it cannot go there. */
-function dropVerdict(move: MoveState, to: PadRef): 'self' | 'ok' | 'no' {
-  if (to.trackId === move.from.trackId && to.slot === move.from.slot) return 'self';
-  return clipDropProblem(session.store.getState(), move.from.trackId, to.trackId) ? 'no' : 'ok';
+/**
+ * What dropping the carried clip on a pad does: `land` (an empty pad), `swap`
+ * (a clip, moving), `replace` (a clip, copying), `no` (refused: drum and
+ * melodic parts), `home` (its own pad: nothing).
+ */
+type DropKind = 'land' | 'swap' | 'replace' | 'no' | 'home';
+
+function dropKind(p: Project, from: PadRef, to: PadRef, copy: boolean): DropKind {
+  if (to.trackId === from.trackId && to.slot === from.slot) return 'home';
+  if (from.trackId !== to.trackId && clipDropProblem(p, from.trackId, to.trackId)) return 'no';
+  if (clipAt(p, to)) return copy ? 'replace' : 'swap';
+  return 'land';
+}
+
+/** The words on the pad under a carried clip (the pad's light and outline say the same in colour). */
+const DROP_CHIP: Partial<Record<DropKind, string>> = { swap: 'Swap', replace: 'Replace', no: 'Can’t go here' };
+
+/** Why a clip cannot go to a part of the other kind, short enough for the lifted pad's label (the notice on drop says it in full). */
+function refusalShort(p: Project, fromTrackId: Id): string {
+  return p.tracks.find((t) => t.id === fromTrackId)?.instrument.kind === 'drums' ? 'Drum clips go to drum parts' : 'Melodic clips go to melodic parts';
+}
+
+/**
+ * The small label on the lifted pad: Move or Copy (its icon turns to ⇄ over a
+ * clip it would swap with), why not, or that letting go here cancels. What
+ * happens to the pad underneath is said on that pad (DROP_CHIP).
+ */
+function liftLabel(kind: DropKind | null, copy: boolean, refusal: string): string {
+  if (kind === null) return 'Release to cancel';
+  if (kind === 'no') return refusal;
+  return copy ? 'Copy' : 'Move';
+}
+
+/** The lifted pad is drawn this much larger than the pad. */
+const LIFT_SCALE = 1.04;
+/** How far (px) a clip that would be swapped leans toward the carried clip's own pad. */
+const SWAP_LEAN_PX = 12;
+/** Room (px) the lifted pad's label needs above it; nearer the window's top it goes below the pad. */
+const LABEL_ROOM_PX = 32;
+/** A carried scene row picks another slot only once it is this much (px) nearer to it. */
+const ROW_HYSTERESIS_PX = 10;
+/** How far above or below the pads (px) a scene row still lands; further away a release cancels. */
+const ROW_DROP_MARGIN = 40;
+
+/** The new order of `n` rows after moving row `from` to `to` (old indices, in their new places). */
+function rowOrder(n: number, from: number, to: number): number[] {
+  const order = Array.from({ length: n }, (_, i) => i);
+  const [r] = order.splice(from, 1);
+  order.splice(to, 0, r);
+  return order;
+}
+
+/* ------------------------------------------------------------------ */
+/* Pointer gestures: carrying a clip pad or a scene row                */
+/* ------------------------------------------------------------------ */
+
+/** What the drag layer draws while something is carried (rendered once when a drag starts). */
+type DragUi =
+  | { kind: 'pad'; from: PadRef; clipName: string; width: number; height: number; grabX: number; grabY: number }
+  | {
+      kind: 'row';
+      row: number;
+      width: number;
+      height: number;
+      pads: { left: number; width: number; name: string | null; bars: string | null }[];
+      scene: { left: number; width: number; name: string; count: number };
+    };
+
+interface GridHost {
+  grid(): HTMLElement | null;
+  /** The lifted copy (pad or row) and the text of its label. */
+  liftEl(): HTMLElement | null;
+  labelEl(): HTMLElement | null;
+  /** The word for the pad under the carried clip ("Swap", "Replace", "Can't go here"), drawn above the lifted pad. */
+  chipEl(): HTMLElement | null;
+  /** A keyboard move (Move…) is in progress: pointers do not start drags. */
+  keyMoveActive(): boolean;
+  closeMenu(): void;
+}
+
+interface CellGeo {
+  el: HTMLElement;
+  trackId: Id;
+  slot: number;
+  box: Box;
+}
+
+interface RowGeo {
+  /** The row's pad cells, then its scene cell. */
+  els: HTMLElement[];
+  boxes: Box[];
+  top: number;
+  height: number;
+}
+
+interface Base {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  x: number;
+  y: number;
+}
+
+interface PadPress extends Base {
+  kind: 'padPress';
+  from: PadRef;
+}
+
+interface RowPress extends Base {
+  kind: 'rowPress';
+  row: number;
+}
+
+interface PadDrag extends Base {
+  kind: 'pad';
+  from: PadRef;
+  clipId: Id;
+  cells: CellGeo[];
+  source: CellGeo;
+  /** Half the gap between pads: the pads' hit areas meet in the middle of it. */
+  half: number;
+  /** Pointer position inside the pad when it was picked up. */
+  grabX: number;
+  grabY: number;
+  copy: boolean;
+  refusal: string;
+  /** The window's width (for which side of the lifted pad its label sits) and the label's current place. */
+  viewW: number;
+  side: string;
+  target: CellGeo | null;
+  /** What a drop on `target` does. */
+  drop: DropKind | null;
+  lean: { x: number; y: number } | null;
+}
+
+interface RowDrag extends Base {
+  kind: 'row';
+  row: number;
+  rows: RowGeo[];
+  /** Left edge of the row (its first pad). */
+  left: number;
+  grabY: number;
+  /** Where it would land (null: away from the pads, a release cancels). */
+  slot: number | null;
+  /** Each row's current preview offset (px). */
+  offsets: number[];
+  scenes: readonly Scene[];
+}
+
+/** After Esc or an outside change: the press stays ours until the pointer comes up, so its click does nothing. */
+interface Ended extends Base {
+  kind: 'ended';
+}
+
+type Gesture = PadPress | RowPress | PadDrag | RowDrag | Ended;
+type Listener = [EventTarget, string, EventListener, AddEventListenerOptions | boolean];
+
+/**
+ * Pointer gestures of the Loops grid: carrying a clip pad to another pad, and
+ * a scene row to another row. Modelled on the song lane's gestures:
+ * - What moves is written straight to the DOM (the lifted copy's `translate`,
+ *   the pads' drop attributes, the rows' preview transforms). React renders
+ *   only when a drag starts and when it ends (the drag layer), never per move.
+ * - Geometry is read once when a drag starts (and again after a scroll or a
+ *   resize); pointer moves never read layout.
+ * - Every gesture ends through `finish`, which removes every listener it added
+ *   and releases pointer capture: on drop, Escape, a release away from the
+ *   pads, pointercancel, lost capture of the grid (not a child's: on touch the
+ *   pressed pad holds an implicit capture that is handed over), window blur, a
+ *   hidden tab, the dragged clip changing underneath, or the grid unmounting.
+ * - While something is carried, other pointers and keys (except Ctrl / Alt /
+ *   ⌘, which switch copy on and off) are ignored.
+ * - Drops settle with a FLIP (src/ui/motion.ts): the real pads are where the
+ *   edit put them and only their picture glides there; with reduce motion
+ *   they are simply there.
+ */
+class GridGestures {
+  private g: Gesture | null = null;
+  private listeners: Listener[] = [];
+  private suppressClick = false;
+  private unwatch: (() => void) | null = null;
+  private ui: DragUi | null = null;
+  private uiListeners = new Set<() => void>();
+
+  constructor(private host: GridHost) {}
+
+  /* The drag layer's state (useSyncExternalStore). */
+  subscribe = (fn: () => void): (() => void) => {
+    this.uiListeners.add(fn);
+    return () => this.uiListeners.delete(fn);
+  };
+  getUi = (): DragUi | null => this.ui;
+
+  /** Show or remove the lifted copy. Rendered at once (flushSync) so it appears in the same frame as the drag. */
+  private setUi(ui: DragUi | null, sync = true): void {
+    if (this.ui === ui) return;
+    this.ui = ui;
+    const notify = () => {
+      for (const fn of this.uiListeners) fn();
+    };
+    if (sync) flushSync(notify);
+    else notify();
+  }
+
+  /** Something is being carried (not just pressed). */
+  get dragging(): boolean {
+    return this.g?.kind === 'pad' || this.g?.kind === 'row';
+  }
+
+  /** The click that follows a scene-row drag (or a cancelled one) is not a click. */
+  consumeClick = (): boolean => this.suppressClick;
+
+  /* ---------------------------------------------------------------- */
+  /* Starting                                                         */
+  /* ---------------------------------------------------------------- */
+
+  /** Pointer down on a clip pad: a tap (the pad launches itself), or a drag once it travels TAP_SLOP_PX. */
+  pressPad(e: PointerEvent, from: PadRef): void {
+    if (!this.canStart(e)) return;
+    if (!clipAt(session.store.getState(), from)) return;
+    this.begin({ kind: 'padPress', pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY, from });
+  }
+
+  /** Pointer down on a scene button: a click (launch), or a row drag once it travels. */
+  pressRow(e: PointerEvent, row: number): void {
+    if (!this.canStart(e)) return;
+    this.begin({ kind: 'rowPress', pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY, row });
+  }
+
+  private canStart(e: PointerEvent): boolean {
+    if (e.button !== 0 || !e.isPrimary || this.host.keyMoveActive()) return false;
+    if (this.g) {
+      // Another pointer while one is pressed or carrying: ignored.
+      if (e.pointerId !== this.g.pointerId) return false;
+      // The same pointer pressing again: its release never reached us. Put things back first.
+      this.cancel(false);
+    }
+    this.suppressClick = false;
+    return true;
+  }
+
+  private begin(g: PadPress | RowPress): void {
+    this.g = g;
+    const capture = { capture: true };
+    this.listen(window, 'pointermove', this.onMove as EventListener, capture);
+    this.listen(window, 'pointerup', this.onUp as EventListener, capture);
+    this.listen(window, 'pointercancel', this.onCancel as EventListener, capture);
+    this.listen(window, 'pointerdown', this.onOtherDown as EventListener, capture);
+    this.listen(window, 'keydown', this.onKey as EventListener, capture);
+    this.listen(window, 'keyup', this.onKey as EventListener, capture);
+    this.listen(window, 'contextmenu', this.onContextMenu, capture);
+    this.listen(window, 'blur', this.onAbort, false);
+    this.listen(document, 'visibilitychange', this.onVisibility, false);
+    this.listen(window, 'scroll', this.onScroll, { capture: true, passive: true });
+    this.listen(window, 'resize', this.onScroll, false);
+    const grid = this.host.grid();
+    if (grid) this.listen(grid, 'lostpointercapture', this.onLostCapture as EventListener, false);
+  }
+
+  private listen(target: EventTarget, type: string, fn: EventListener, opts: AddEventListenerOptions | boolean): void {
+    target.addEventListener(type, fn, opts);
+    this.listeners.push([target, type, fn, opts]);
+  }
+
+  /** Keep this pointer's events while it carries something, even outside the window (the pressed pad's own capture moves to the grid). */
+  private capture(pointerId: number): void {
+    try {
+      this.host.grid()?.setPointerCapture(pointerId);
+    } catch {
+      /* not an active pointer (a synthetic event) */
+    }
+  }
+
+  private readCells(grid: HTMLElement): { cells: CellGeo[]; half: number } {
+    const els = [...grid.querySelectorAll<HTMLElement>('[data-pad-cell]')];
+    // A pad still settling from the last drop is measured where it belongs.
+    for (const el of els) stopMotion(el);
+    const cells = els.map((el) => ({ el, trackId: el.dataset.track!, slot: Number(el.dataset.slot), box: boxOf(el) }));
+    let half = 4;
+    const a = cells[0];
+    const b = a && cells.find((c) => c.slot === a.slot && c.box.left > a.box.left);
+    if (a && b) half = Math.max(0, (b.box.left - (a.box.left + a.box.width)) / 2);
+    return { cells, half };
+  }
+
+  private readRows(grid: HTMLElement, offsets: readonly number[] = []): RowGeo[] {
+    const rows: RowGeo[] = [];
+    for (let r = 0; r < SCENE_ROWS; r++) {
+      const els = [...grid.querySelectorAll<HTMLElement>(`[data-pad-cell][data-slot="${r}"], [data-scene-row="${r}"]`)];
+      for (const el of els) stopMotion(el);
+      // Rows being previewed are measured where they belong (their offset taken off).
+      const boxes = els.map((el) => offsetBox(boxOf(el), 0, -(offsets[r] ?? 0)));
+      const top = Math.min(...boxes.map((b) => b.top));
+      const bottom = Math.max(...boxes.map((b) => b.top + b.height));
+      rows.push({ els, boxes, top, height: bottom - top });
+    }
+    return rows;
+  }
+
+  private startPad(p: PadPress): void {
+    const grid = this.host.grid();
+    const project = session.store.getState();
+    const clip = clipAt(project, p.from);
+    if (!grid || !clip) return this.finish();
+    const { cells, half } = this.readCells(grid);
+    const source = cells.find((c) => c.trackId === p.from.trackId && c.slot === p.from.slot);
+    if (!source) return this.finish();
+    const g: PadDrag = {
+      ...p,
+      kind: 'pad',
+      clipId: clip.id,
+      cells,
+      source,
+      half,
+      grabX: p.startX - source.box.left,
+      grabY: p.startY - source.box.top,
+      copy: false,
+      refusal: refusalShort(project, p.from.trackId),
+      viewW: document.documentElement.clientWidth,
+      side: '',
+      target: null,
+      drop: null,
+      lean: null,
+    };
+    this.g = g;
+    this.host.closeMenu();
+    this.capture(g.pointerId);
+    // The pads are marked once: the clip's own pad becomes a placeholder, the others say whether it can go there.
+    for (const c of cells) {
+      c.el.dataset.drop = c === source ? 'source' : c.trackId !== p.from.trackId && clipDropProblem(project, p.from.trackId, c.trackId) ? 'no' : 'ok';
+    }
+    grid.dataset.dragging = 'pad';
+    this.watch();
+    this.setUi({ kind: 'pad', from: p.from, clipName: clip.name, width: source.box.width, height: source.box.height, grabX: g.grabX, grabY: g.grabY });
+    this.updatePad(g, true);
+  }
+
+  private startRow(p: RowPress): void {
+    const grid = this.host.grid();
+    const project = session.store.getState();
+    if (!grid || !project.scenes[p.row]) return this.finish();
+    const rows = this.readRows(grid);
+    const home = rows[p.row];
+    if (!home?.els.length) return this.finish();
+    const left = Math.min(...home.boxes.map((b) => b.left));
+    const right = Math.max(...home.boxes.map((b) => b.left + b.width));
+    const g: RowDrag = { ...p, kind: 'row', rows, left, grabY: p.startY - home.top, slot: p.row, offsets: rows.map(() => 0), scenes: project.scenes };
+    this.g = g;
+    this.host.closeMenu();
+    this.capture(g.pointerId);
+    for (const el of home.els) el.dataset.rowDrag = 'source';
+    grid.dataset.dragging = 'row';
+    this.watch();
+    const sceneBox = home.boxes[home.boxes.length - 1];
+    const count = project.tracks.filter((t) => !!t.clips[p.row]).length;
+    this.setUi({
+      kind: 'row',
+      row: p.row,
+      width: right - left,
+      height: home.height,
+      pads: project.tracks.map((t, i) => {
+        const c = t.clips[p.row];
+        const b = home.boxes[i] ?? home.boxes[0];
+        return { left: b.left - left, width: b.width, name: c?.name ?? null, bars: c ? barsLabel(c.bars) : null };
+      }),
+      scene: { left: sceneBox.left - left, width: sceneBox.width, name: project.scenes[p.row].name, count },
+    });
+    this.updateRow(g, true);
+  }
+
+  /** The project changed under a drag (undo from elsewhere, a take, another view): if what is carried changed, put it back. */
+  private watch(): void {
+    this.unwatch?.();
+    this.unwatch = session.store.subscribe(() => {
+      const g = this.g;
+      const p = session.store.getState();
+      if (g?.kind === 'pad') {
+        if (clipAt(p, g.from)?.id !== g.clipId) this.cancel(true);
+        else this.updatePad(g, true);
+      } else if (g?.kind === 'row' && p.scenes !== g.scenes) {
+        this.cancel(true);
+      }
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Events                                                           */
+  /* ---------------------------------------------------------------- */
+
+  private onMove = (ev: PointerEvent): void => {
+    const g = this.g;
+    if (!g || ev.pointerId !== g.pointerId) return;
+    g.x = ev.clientX;
+    g.y = ev.clientY;
+    if (g.kind === 'ended') return;
+    if (g.kind === 'padPress' || g.kind === 'rowPress') {
+      if (Math.hypot(g.x - g.startX, g.y - g.startY) < TAP_SLOP_PX) return;
+      ev.preventDefault();
+      if (g.kind === 'padPress') {
+        this.startPad(g);
+        const d = this.g as Gesture | null;
+        if (d?.kind === 'pad' && copyHeld(ev)) this.setCopy(d, true);
+      } else this.startRow(g);
+      return;
+    }
+    ev.preventDefault();
+    if (g.kind === 'pad') {
+      if (copyHeld(ev) !== g.copy) this.setCopy(g, copyHeld(ev));
+      else this.updatePad(g);
+    } else this.updateRow(g);
+  };
+
+  private onUp = (ev: PointerEvent): void => {
+    const g = this.g;
+    if (!g || ev.pointerId !== g.pointerId) return;
+    g.x = ev.clientX;
+    g.y = ev.clientY;
+    if (g.kind === 'pad') {
+      if (copyHeld(ev) !== g.copy) this.setCopy(g, copyHeld(ev));
+      else this.updatePad(g);
+      this.dropPad(g);
+    } else if (g.kind === 'row') {
+      this.updateRow(g);
+      this.dropRow(g);
+    } else {
+      // A press that never travelled is a tap or a click (the pad and the scene button do the rest).
+      if (g.kind === 'ended') this.blockClick();
+      this.finish();
+    }
+  };
+
+  private onCancel = (ev: PointerEvent): void => {
+    if (this.g && ev.pointerId === this.g.pointerId) this.cancel(false);
+  };
+
+  /** Only the grid's own capture counts: the lostpointercapture of a pad (handing its capture to the grid) bubbles here too. */
+  private onLostCapture = (ev: PointerEvent): void => {
+    if (ev.target !== ev.currentTarget || !this.g || ev.pointerId !== this.g.pointerId) return;
+    if (this.dragging) this.cancel(false);
+  };
+
+  /** Another finger or pen while something is carried: nothing under it reacts. */
+  private onOtherDown = (ev: PointerEvent): void => {
+    if (!this.dragging || ev.pointerId === this.g!.pointerId) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+  };
+
+  private onContextMenu = (ev: Event): void => {
+    if (!this.dragging) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+  };
+
+  private onAbort = (): void => {
+    if (this.g) this.cancel(false);
+  };
+
+  private onVisibility = (): void => {
+    if (document.visibilityState === 'hidden') this.onAbort();
+  };
+
+  /** The page or a panel scrolled, or the window resized: measure again (the lifted copy stays under the pointer). */
+  private onScroll = (): void => {
+    const g = this.g;
+    const grid = this.host.grid();
+    if (!grid || !g) return;
+    if (g.kind === 'pad') {
+      g.viewW = document.documentElement.clientWidth;
+      const { cells, half } = this.readCells(grid);
+      const byKey = new Map(cells.map((c) => [keyOf(c.trackId, c.slot), c]));
+      // Same elements, new boxes (the drag keeps its references).
+      for (const c of g.cells) c.box = byKey.get(keyOf(c.trackId, c.slot))?.box ?? c.box;
+      g.half = half;
+      this.updatePad(g, true);
+    } else if (g.kind === 'row') {
+      const rows = this.readRows(grid, g.offsets);
+      g.rows.forEach((r, i) => Object.assign(r, { boxes: rows[i].boxes, top: rows[i].top, height: rows[i].height }));
+      g.left = Math.min(...g.rows[g.row].boxes.map((b) => b.left));
+      this.updateRow(g, true);
+    }
+  };
+
+  private onKey = (ev: globalThis.KeyboardEvent): void => {
+    const g = this.g;
+    if (!g || (g.kind !== 'pad' && g.kind !== 'row')) return;
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      if (ev.type === 'keydown') this.cancel(true);
+      return;
+    }
+    if (g.kind === 'pad' && (ev.key === 'Control' || ev.key === 'Alt' || ev.key === 'Meta')) {
+      // Copy follows the modifier while it is held, also without moving the pointer.
+      const copy = ev.type === 'keydown' ? true : copyHeld(ev);
+      if (copy !== g.copy) this.setCopy(g, copy);
+      if (ev.key === 'Alt') ev.preventDefault();
+      return;
+    }
+    // Other keys do nothing while something is carried (no stray note or shortcut).
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+  };
+
+  /* ---------------------------------------------------------------- */
+  /* Live preview                                                     */
+  /* ---------------------------------------------------------------- */
+
+  private hit(g: PadDrag): CellGeo | null {
+    const { x, y, half } = g;
+    for (const c of g.cells) {
+      const b = c.box;
+      if (x >= b.left - half && x < b.left + b.width + half && y >= b.top - half && y < b.top + b.height + half) return c;
+    }
+    return null;
+  }
+
+  private setCopy(g: PadDrag, copy: boolean): void {
+    g.copy = copy;
+    const grid = this.host.grid();
+    const lift = this.host.liftEl();
+    for (const el of [grid, lift]) {
+      if (!el) continue;
+      if (copy) el.dataset.copy = '';
+      else delete el.dataset.copy;
+    }
+    this.updatePad(g, true);
+  }
+
+  /** Follow the pointer; when the pad under it (or what a drop there does) changes, say so on both pads. */
+  private updatePad(g: PadDrag, force = false): void {
+    const lift = this.host.liftEl();
+    const left = g.x - g.grabX;
+    const top = g.y - g.grabY;
+    if (lift) {
+      lift.style.translate = `${left}px ${top}px`;
+      // The label keeps inside the window: on the right half it hangs from the pad's right edge, near the top it goes below.
+      const side = `${left + g.source.box.width / 2 > g.viewW / 2 ? 'end' : 'start'} ${top < LABEL_ROOM_PX ? 'below' : 'above'}`;
+      if (side !== g.side) {
+        g.side = side;
+        lift.dataset.side = side;
+      }
+    }
+    const target = this.hit(g);
+    // Copy and project changes come with `force`: otherwise only a new pad under the pointer changes anything.
+    if (!force && target === g.target) return;
+    const kind = target ? dropKind(session.store.getState(), g.from, { trackId: target.trackId, slot: target.slot }, g.copy) : null;
+    this.clearTarget(g);
+    g.target = target;
+    g.drop = kind;
+    const chip = this.host.chipEl();
+    const word = target && kind ? DROP_CHIP[kind] : undefined;
+    if (chip) {
+      if (word && target && kind) {
+        // On the target's lower edge, above the lifted pad (which covers the target itself).
+        chip.textContent = word;
+        chip.dataset.kind = kind;
+        chip.style.translate = `${target.box.left + target.box.width / 2}px ${target.box.top + target.box.height}px`;
+        chip.dataset.on = '';
+      } else delete chip.dataset.on;
+    }
+    if (target && kind && kind !== 'home') {
+      const el = target.el;
+      el.dataset.over = '';
+      el.dataset.target = kind;
+      if (kind === 'swap' && !prefersReducedMotion()) {
+        // The clip that would be swapped leans toward the carried clip's pad.
+        const s = g.source.box;
+        const t = target.box;
+        const dx = s.left + s.width / 2 - (t.left + t.width / 2);
+        const dy = s.top + s.height / 2 - (t.top + t.height / 2);
+        const len = Math.hypot(dx, dy) || 1;
+        g.lean = { x: (dx / len) * SWAP_LEAN_PX, y: (dy / len) * SWAP_LEAN_PX };
+        el.style.setProperty('--lean-x', `${g.lean.x.toFixed(1)}px`);
+        el.style.setProperty('--lean-y', `${g.lean.y.toFixed(1)}px`);
+      }
+    }
+    const grid = this.host.grid();
+    if (grid) {
+      if (kind === 'no') grid.dataset.refused = '';
+      else delete grid.dataset.refused;
+    }
+    if (lift) lift.dataset.kind = kind ?? 'none';
+    const label = this.host.labelEl();
+    const text = liftLabel(kind, g.copy, g.refusal);
+    if (label && label.textContent !== text) label.textContent = text;
+  }
+
+  private clearTarget(g: PadDrag): void {
+    const el = g.target?.el;
+    g.lean = null;
+    if (!el) return;
+    delete el.dataset.over;
+    delete el.dataset.target;
+    el.style.removeProperty('--lean-x');
+    el.style.removeProperty('--lean-y');
+  }
+
+  /** Follow the pointer up and down; when the slot changes, the other rows slide apart to open it. */
+  private updateRow(g: RowDrag, force = false): void {
+    const lift = this.host.liftEl();
+    const top = g.y - g.grabY;
+    if (lift) lift.style.translate = `${g.left}px ${top}px`;
+    const first = g.rows[0];
+    const last = g.rows[g.rows.length - 1];
+    let slot: number | null;
+    if (g.y < first.top - ROW_DROP_MARGIN || g.y > last.top + last.height + ROW_DROP_MARGIN) slot = null;
+    else {
+      // The slot nearest the carried row's centre (rows are matched by height: the pointer may wander sideways).
+      const centre = top + g.rows[g.row].height / 2;
+      const dist = (i: number) => Math.abs(centre - (g.rows[i].top + g.rows[i].height / 2));
+      let best = 0;
+      for (let i = 1; i < g.rows.length; i++) if (dist(i) < dist(best)) best = i;
+      if (g.slot !== null && best !== g.slot && dist(g.slot) - dist(best) < ROW_HYSTERESIS_PX) best = g.slot;
+      slot = best;
+    }
+    if (force || slot !== g.slot) {
+      g.slot = slot;
+      this.previewRows(g);
+    }
+    if (lift) lift.dataset.kind = slot === null ? 'none' : 'move';
+    const label = this.host.labelEl();
+    const text = slot === null ? 'Release to cancel' : slot === g.row ? 'Back in place' : `Move to row ${slot + 1}`;
+    if (label && label.textContent !== text) label.textContent = text;
+  }
+
+  /** Each row slides to where it would be after the drop; the carried row's faint placeholder is the open slot. */
+  private previewRows(g: RowDrag): void {
+    const order = rowOrder(g.rows.length, g.row, g.slot ?? g.row);
+    order.forEach((r, pos) => {
+      const dy = g.rows[pos].top - g.rows[r].top;
+      if (dy === g.offsets[r]) return;
+      g.offsets[r] = dy;
+      for (const el of g.rows[r].els) el.style.transform = dy ? `translate3d(0, ${dy}px, 0)` : '';
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Drops                                                            */
+  /* ---------------------------------------------------------------- */
+
+  /** Where the lifted pad is drawn now (its scale grows around the point it was picked up by). */
+  private liftBox(g: PadDrag): Box {
+    return scaledBox({ left: g.x - g.grabX, top: g.y - g.grabY, width: g.source.box.width, height: g.source.box.height }, LIFT_SCALE, g.grabX, g.grabY);
+  }
+
+  private dropPad(g: PadDrag): void {
+    const { target, drop: kind } = g;
+    const lift = this.liftBox(g);
+    const lean = target && kind === 'swap' && g.lean ? offsetBox(target.box, g.lean.x, g.lean.y) : null;
+    const to = target && kind && kind !== 'home' ? { trackId: target.trackId, slot: target.slot } : null;
+    this.endDrag(g, false);
+    let ok = false;
+    flushSync(() => {
+      this.setUi(null, false);
+      // A refused drop still asks: the notice says why (one rule, one message).
+      if (to) ok = session.moveClip(g.from, to, g.copy);
+    });
+    if (ok && target) {
+      // The carried clip springs from where it was let go into its pad; a swapped clip glides into the other place.
+      flip(target.el, lift, { last: target.box, zIndex: 3 });
+      if (lean) flip(g.source.el, lean, { last: g.source.box, easing: MOTION.ease, zIndex: 2 });
+      focusSoon(padId(target.trackId, target.slot));
+    } else {
+      flip(g.source.el, lift, { last: g.source.box, zIndex: 3 });
+    }
+  }
+
+  private dropRow(g: RowDrag): void {
+    const from = g.row;
+    const to = g.slot;
+    const firsts = this.rowFirsts(g);
+    this.endDrag(g, false);
+    let ok = false;
+    flushSync(() => {
+      this.setUi(null, false);
+      if (to !== null && to !== from) ok = session.moveScene(from, to);
+    });
+    this.settleRows(g, firsts, ok && to !== null ? rowOrder(g.rows.length, from, to) : null);
+    this.blockClick();
+    if (ok && to !== null) focusSoon(null, `[data-scene-row="${to}"] button[data-scene]`);
+  }
+
+  /** Where each row's elements are drawn now: the carried row at the lifted copy, the others at their preview. */
+  private rowFirsts(g: RowDrag): Map<HTMLElement, Box> {
+    const lifted = g.y - g.grabY - g.rows[g.row].top;
+    const firsts = new Map<HTMLElement, Box>();
+    g.rows.forEach((row, r) => row.els.forEach((el, i) => firsts.set(el, offsetBox(row.boxes[i], 0, r === g.row ? lifted : g.offsets[r]))));
+    return firsts;
+  }
+
+  /** Rows glide from `firsts` to their places in `order` (null: back where they were). */
+  private settleRows(g: RowDrag, firsts: Map<HTMLElement, Box>, order: number[] | null): void {
+    const final = order ?? g.rows.map((_, i) => i);
+    final.forEach((r, pos) => {
+      const row = g.rows[r];
+      const dy = g.rows[pos].top - row.top;
+      row.els.forEach((el, i) => {
+        const first = firsts.get(el);
+        if (!first) return;
+        const carried = r === g.row;
+        flip(el, first, { last: offsetBox(row.boxes[i], 0, dy), easing: carried ? MOTION.spring : MOTION.ease, duration: carried ? MOTION.settleMs : MOTION.slideMs, zIndex: carried ? 3 : undefined });
+      });
+    });
+  }
+
+  /** Esc, a lost pointer, blur, an outside change: put everything back, commit nothing. */
+  cancel(waitForUp: boolean): void {
+    const g = this.g;
+    if (!g) return;
+    if (g.kind === 'pad') {
+      const lift = this.liftBox(g);
+      this.endDrag(g, waitForUp);
+      this.setUi(null);
+      flip(g.source.el, lift, { last: g.source.box, zIndex: 3 });
+    } else if (g.kind === 'row') {
+      const firsts = this.rowFirsts(g);
+      this.endDrag(g, waitForUp);
+      this.setUi(null);
+      this.settleRows(g, firsts, null);
+      this.blockClick();
+    } else if (waitForUp) {
+      this.g = { kind: 'ended', pointerId: g.pointerId, startX: g.startX, startY: g.startY, x: g.x, y: g.y };
+    } else {
+      this.finish();
+    }
+  }
+
+  /**
+   * Take every drag mark off the pads and rows at once and end the gesture,
+   * or keep it until the pointer comes up (`waitForUp`). Nothing transitions
+   * back: the settle animation takes over from here. (A row's slide
+   * transition belongs to the dragging grid, so it goes in the same style
+   * change as the row's offset; the swap lean is switched off for one frame.)
+   */
+  private endDrag(g: PadDrag | RowDrag, waitForUp: boolean): void {
+    const grid = this.host.grid();
+    if (grid) {
+      delete grid.dataset.dragging;
+      delete grid.dataset.copy;
+      delete grid.dataset.refused;
+    }
+    if (g.kind === 'pad') {
+      const leaning = g.lean ? g.target?.el.querySelector<HTMLElement>('button[data-state]') : null;
+      if (leaning) {
+        leaning.style.transition = 'none';
+        requestAnimationFrame(() => {
+          leaning.style.transition = '';
+        });
+      }
+      this.clearTarget(g);
+      for (const c of g.cells) delete c.el.dataset.drop;
+    } else {
+      for (const row of g.rows) {
+        for (const el of row.els) {
+          el.style.transform = '';
+          delete el.dataset.rowDrag;
+        }
+      }
+    }
+    this.unwatch?.();
+    this.unwatch = null;
+    if (waitForUp) {
+      this.releaseCapture(g.pointerId);
+      this.g = { kind: 'ended', pointerId: g.pointerId, startX: g.startX, startY: g.startY, x: g.x, y: g.y };
+    } else this.finish();
+  }
+
+  private blockClick(): void {
+    this.suppressClick = true;
+    window.setTimeout(() => {
+      this.suppressClick = false;
+    }, 0);
+  }
+
+  private releaseCapture(pointerId: number): void {
+    const grid = this.host.grid();
+    try {
+      if (grid?.hasPointerCapture(pointerId)) grid.releasePointerCapture(pointerId);
+    } catch {
+      /* element already gone */
+    }
+  }
+
+  /** End the gesture: every listener removed, capture released. */
+  private finish(): void {
+    const g = this.g;
+    this.g = null;
+    for (const [t, type, fn, opts] of this.listeners) t.removeEventListener(type, fn, opts);
+    this.listeners = [];
+    this.unwatch?.();
+    this.unwatch = null;
+    if (g) this.releaseCapture(g.pointerId);
+  }
+
+  /** The grid unmounts (view switch): drop any gesture at once, commit nothing. */
+  dispose(): void {
+    const g = this.g;
+    if (g?.kind === 'pad' || g?.kind === 'row') this.endDrag(g, false);
+    else this.finish();
+    this.ui = null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Moves by keyboard, with the same settle                              */
+/* ------------------------------------------------------------------ */
+
+/** Move or copy a clip (keyboard Move…, or a click while choosing): the clip glides from its pad to the new one. */
+function moveClipWithMotion(from: PadRef, to: PadRef, copy: boolean, before?: () => void): boolean {
+  const a = cellOf(from);
+  const b = cellOf(to);
+  const firstA = a ? boxOf(a) : null;
+  const firstB = b ? boxOf(b) : null;
+  const swap = !copy && !!clipAt(session.store.getState(), to);
+  let ok = false;
+  flushSync(() => {
+    before?.();
+    ok = session.moveClip(from, to, copy);
+  });
+  if (ok && a && b && firstA && firstB) {
+    flip(b, firstA, { zIndex: 3 });
+    if (swap) flip(a, firstB, { easing: MOTION.ease, zIndex: 2 });
+  }
+  return ok;
+}
+
+/** Move a scene row (Alt+Up / Alt+Down): the row springs into its new place and the other one glides out of the way. */
+function moveSceneWithMotion(from: number, to: number): boolean {
+  const rowEls = (r: number) => [...document.querySelectorAll<HTMLElement>(`[data-pad-cell][data-slot="${r}"], [data-scene-row="${r}"]`)];
+  const lo = Math.min(from, to);
+  const hi = Math.max(from, to);
+  const els: [HTMLElement, boolean][] = [];
+  for (let r = lo; r <= hi; r++) for (const el of rowEls(r)) els.push([el, r === from]);
+  const firsts = new Map(els.map(([el]) => (stopMotion(el), [el, boxOf(el)] as const)));
+  let ok = false;
+  flushSync(() => {
+    ok = session.moveScene(from, to);
+  });
+  if (ok) {
+    for (const [el, carried] of els) {
+      const first = firsts.get(el);
+      if (first) flip(el, first, { easing: carried ? MOTION.spring : MOTION.ease, duration: carried ? MOTION.settleMs : MOTION.slideMs, zIndex: carried ? 3 : undefined });
+    }
+  }
+  return ok;
 }
 
 /* ------------------------------------------------------------------ */
@@ -171,30 +1046,32 @@ function onContextMenuOpen(e: ReactMouseEvent<HTMLElement>, open: (anchor: MenuA
 
 interface ClipPadProps {
   col: ColumnSummary;
+  /** Column index (for the keyboard move's swap lean). */
+  index: number;
   slot: number;
   sceneName: string;
   dimmed: boolean;
   onMenu: OpenMenu;
   menuOpen: boolean;
+  /** A keyboard move in progress (pointer drags mark the pads directly, see GridGestures). */
   move: MoveState | null;
+  /** Column index of the keyboard move's source. */
+  moveCol: number;
   onPointerDownPad(e: ReactPointerEvent<HTMLElement>, from: PadRef): void;
   onDropHere(to: PadRef, copy: boolean): void;
 }
 
 const ClipPad = memo(function ClipPad(props: ClipPadProps) {
-  const { col, slot, sceneName, dimmed, onMenu, menuOpen, move, onPointerDownPad, onDropHere } = props;
+  const { col, index, slot, sceneName, dimmed, onMenu, menuOpen, move, moveCol, onPointerDownPad, onDropHere } = props;
   const trackId = col.id;
   const clip = col.clips[slot];
-  const rt = useRuntime((s) => s.tracks[trackId]);
-  const transport = useRuntime((s): Transport => (s.playing ? 'playing' : s.paused ? 'paused' : 'stopped'));
-  const recording = useRuntime((s) => s.recording === 'notes' && s.recordTarget?.trackId === trackId && s.recordTarget.slot === slot);
   const selected = useUi((s) => s.selectedTrackId === trackId && slotFor(s, trackId) === slot);
-  const { state, caption, paused } = padState(clip, slot, rt, transport, recording);
+  const { state, caption, paused } = usePadLook(trackId, slot, clip);
   const id = padId(trackId, slot);
   const onPress = () => {
     if (move) {
       // Choosing where a clip goes (keyboard Move… then a click): drop it here.
-      onDropHere({ trackId, slot }, move.copy);
+      onDropHere({ trackId, slot }, false);
       return;
     }
     selectTrack(trackId);
@@ -211,15 +1088,29 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
     selectSlot(trackId, slot);
     onMenu({ kind: 'clip', trackId, slot, anchor, returnFocus, ignore });
   };
+  // Keyboard move: the source is a placeholder, the others say whether the clip can go there, the focused one what a drop does.
   let drop: 'source' | 'ok' | 'no' | undefined;
+  let target: DropKind | undefined;
+  let lean: CSSProperties | undefined;
   if (move) {
-    const v = dropVerdict(move, { trackId, slot });
-    drop = v === 'self' ? 'source' : v;
+    const p = session.store.getState();
+    const kind = dropKind(p, move.from, { trackId, slot }, false);
+    drop = kind === 'home' ? 'source' : kind === 'no' ? 'no' : 'ok';
+    if (move.over && move.over.trackId === trackId && move.over.slot === slot && kind !== 'home') {
+      target = kind;
+      if (kind === 'swap') {
+        const dx = moveCol - index;
+        const dy = move.from.slot - slot;
+        const len = Math.hypot(dx, dy) || 1;
+        lean = { '--lean-x': `${((dx / len) * SWAP_LEAN_PX).toFixed(1)}px`, '--lean-y': `${((dy / len) * SWAP_LEAN_PX).toFixed(1)}px` } as CSSProperties;
+      }
+    }
   }
-  const over = !!move?.over && move.over.trackId === trackId && move.over.slot === slot;
   const stateWord = caption ?? STATE_SPOKEN[state];
   const what = clip ? `clip ${clip.name}` : 'empty slot';
   const label = clip ? `${col.name}, ${sceneName}: ${clip.name}, ${barsLabel(clip.bars)}. ${stateWord}.${selected ? ' Selected.' : ''}` : `${col.name}, ${sceneName}: empty. Add clip.${selected ? ' Selected.' : ''}`;
+  const moveSpoken =
+    drop === 'source' ? 'Moving this clip.' : drop === 'no' ? 'It cannot go here.' : target === 'swap' ? 'Press Enter to swap the two clips.' : 'Press Enter to drop it here.';
   return (
     <div
       className={styles.cell}
@@ -227,10 +1118,15 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
       data-track={trackId}
       data-slot={slot}
       data-drop={drop}
-      data-over={over || undefined}
-      data-copy={over && move?.copy ? true : undefined}
+      data-over={target ? true : undefined}
+      data-target={target}
+      data-chip={target ? DROP_CHIP[target] : undefined}
       data-dim={dimmed || undefined}
-      onPointerDown={(e) => clip && onPointerDownPad(e, { trackId, slot })}
+      style={lean}
+      onPointerDown={(e) => {
+        // The pad itself, not its '⋯' key.
+        if (clip && !(e.target as Element).closest('[data-no-drag]')) onPointerDownPad(e, { trackId, slot });
+      }}
       onContextMenu={(e) => onContextMenuOpen(e, (a) => open(a, document.getElementById(id)))}
     >
       {/* Always wrapped (an empty pad has a tip too), so the pad never remounts and keeps focus when a clip lands on it. */}
@@ -248,20 +1144,16 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
           cornerKey={selected && !move}
           shortcuts={clip ? CLIP_PAD_SHORTCUTS : PAD_SHORTCUTS}
           onPress={onPress}
-          ariaLabel={move && drop ? `${label} ${drop === 'source' ? 'Moving this clip.' : drop === 'ok' ? 'Press Enter to drop it here.' : 'It cannot go here.'}` : label}
+          ariaLabel={move && drop ? `${label} ${moveSpoken}` : label}
           id={id}
         />
       </Tooltip>
-      {drop === 'no' && over && (
-        <span className={styles.dropNote} aria-hidden="true">
-          Can’t go here
-        </span>
-      )}
       {selected && !move && (
         <Tooltip name={clip ? 'Clip options' : 'New clip or paste'} tip={clip ? 'Rename, length, duplicate, move, copy, paste, clear or delete this clip.' : 'Make a new clip here, or paste a copied one.'} detail={`Right-click any pad for the same menu (or Shift+F10, or . on a focused pad). Keys on a pad: Delete, ${MOD_KEY}C, ${MOD_KEY}V, F2.`}>
           <button
             type="button"
             className={styles.more}
+            data-no-drag=""
             aria-label={`Options for ${what} (${col.name}, ${sceneName})`}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
@@ -274,6 +1166,113 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
     </div>
   );
 });
+
+/** Two arrows, for the lifted pad's label when a drop would swap. */
+function SwapIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 5.5 H12.5 M10 3 L12.5 5.5 L10 8" />
+      <path d="M13 10.5 H3.5 M6 8 L3.5 10.5 L6 13" />
+    </svg>
+  );
+}
+
+/** A circle with a bar: the drop is refused. */
+function RefusedIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" aria-hidden="true">
+      <circle cx={8} cy={8} r={5.6} />
+      <path d="M4.1 11.9 L11.9 4.1" />
+    </svg>
+  );
+}
+
+/** The lifted pad's label: one icon per meaning, chosen by the lift's data-kind / data-copy (written by GridGestures). */
+function LiftLabel({ labelRef }: { labelRef: (el: HTMLSpanElement | null) => void }) {
+  return (
+    <span className={styles.liftLabel}>
+      <span className={styles.liftIcon} data-for="move">
+        <Icon name="drag" size={12} />
+      </span>
+      <span className={styles.liftIcon} data-for="copy">
+        <Icon name="copy" size={12} />
+      </span>
+      <span className={styles.liftIcon} data-for="swap">
+        <SwapIcon />
+      </span>
+      <span className={styles.liftIcon} data-for="no">
+        <RefusedIcon />
+      </span>
+      <span className={styles.liftIcon} data-for="none">
+        <Icon name="close" size={12} />
+      </span>
+      {/* Its words are written by the gesture (never re-rendered by React). */}
+      <span ref={labelRef} className={styles.liftText} />
+    </span>
+  );
+}
+
+/** A real copy of the carried pad (live name, length and state light) that follows the pointer. */
+function LiftedPad({ ui, liftRef, labelRef }: { ui: Extract<DragUi, { kind: 'pad' }>; liftRef: (el: HTMLDivElement | null) => void; labelRef: (el: HTMLSpanElement | null) => void }) {
+  const clip = useProject((p) => clipAt(p, ui.from));
+  const { state, caption, paused } = usePadLook(ui.from.trackId, ui.from.slot, clip);
+  if (!clip) return null;
+  return createPortal(
+    <div
+      ref={liftRef}
+      className={styles.lift}
+      data-testid="pad-lift"
+      aria-hidden="true"
+      inert
+      style={{ width: ui.width, height: ui.height, transformOrigin: `${ui.grabX}px ${ui.grabY}px` }}
+    >
+      <Pad state={state} label={clip.name} sublabel={barsLabel(clip.bars)} caption={caption} captionIcon={paused ? 'pause' : undefined} labelSize="lg" activateOn="release" onPress={() => {}} />
+      <LiftLabel labelRef={labelRef} />
+    </div>,
+    document.body,
+  );
+}
+
+/** The carried scene row: its scene label, lifted, and a faint copy of its pads. */
+function LiftedRow({ ui, liftRef, labelRef }: { ui: Extract<DragUi, { kind: 'row' }>; liftRef: (el: HTMLDivElement | null) => void; labelRef: (el: HTMLSpanElement | null) => void }) {
+  return createPortal(
+    <div ref={liftRef} className={styles.rowLift} data-testid="row-lift" aria-hidden="true" inert style={{ width: ui.width, height: ui.height }}>
+      {ui.pads.map((p, i) => (
+        <div key={i} className={styles.rowLiftPad} data-empty={p.name === null || undefined} style={{ left: p.left, width: p.width }}>
+          {p.name !== null && (
+            <>
+              <span className={styles.rowLiftName}>{p.name}</span>
+              <span className={styles.rowLiftBars}>{p.bars}</span>
+            </>
+          )}
+        </div>
+      ))}
+      <div className={styles.rowLiftScene} style={{ left: ui.scene.left, width: ui.scene.width }}>
+        <span className={styles.sceneIcon}>
+          <Icon name="play" size={12} />
+        </span>
+        <span className={styles.sceneName}>{ui.scene.name}</span>
+        <span className={`${styles.sceneCount} mono`}>{ui.scene.count}/8</span>
+        <LiftLabel labelRef={labelRef} />
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** Draws whatever is being carried (its own little store, so the grid does not re-render when a drag starts or ends). */
+function DragLayer(props: { gestures: GridGestures; liftRef: (el: HTMLDivElement | null) => void; labelRef: (el: HTMLSpanElement | null) => void; chipRef: (el: HTMLDivElement | null) => void }) {
+  const { gestures, liftRef, labelRef, chipRef } = props;
+  const ui = useSyncExternalStore(gestures.subscribe, gestures.getUi);
+  if (!ui) return null;
+  if (ui.kind === 'row') return <LiftedRow ui={ui} liftRef={liftRef} labelRef={labelRef} />;
+  return (
+    <>
+      <LiftedPad ui={ui} liftRef={liftRef} labelRef={labelRef} />
+      {createPortal(<div ref={chipRef} className={styles.targetChip} data-testid="pad-target-word" aria-hidden="true" />, document.body)}
+    </>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Column headers                                                      */
@@ -445,22 +1444,16 @@ function TrackHeader(props: { col: ColumnSummary; index: number; anySolo: boolea
 /* Scenes                                                              */
 /* ------------------------------------------------------------------ */
 
-interface SceneDrag {
-  from: number;
-  over: number | null;
-}
-
 function SceneButton(props: {
   row: number;
   scene: Scene;
   columns: ColumnSummary[];
   onMenu: OpenMenu;
   menuOpen: boolean;
-  drag: SceneDrag | null;
   onPointerDownScene(e: ReactPointerEvent<HTMLButtonElement>, row: number): void;
   consumeClick(): boolean;
 }) {
-  const { row, scene, columns, onMenu, menuOpen, drag, onPointerDownScene, consumeClick } = props;
+  const { row, scene, columns, onMenu, menuOpen, onPointerDownScene, consumeClick } = props;
   const btnRef = useRef<HTMLButtonElement>(null);
   const cellRef = useRef<HTMLDivElement>(null);
   const lit = useRuntime((s) => {
@@ -490,13 +1483,11 @@ function SceneButton(props: {
       e.preventDefault();
       const to = row + (e.key === 'ArrowUp' ? -1 : 1);
       if (to < 0 || to >= SCENE_ROWS) return;
-      if (session.moveScene(row, to)) requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-scene-row="${to}"] button[data-scene]`)?.focus());
+      if (moveSceneWithMotion(row, to)) document.querySelector<HTMLElement>(`[data-scene-row="${to}"] button[data-scene]`)?.focus();
     }
   };
-  const dragging = drag?.from === row;
-  const over = drag !== null && drag.over === row && drag.from !== row;
   return (
-    <div ref={cellRef} className={styles.sceneCell} data-scene-row={row} data-drag={dragging || undefined} data-over={over || undefined} onContextMenu={(e) => onContextMenuOpen(e, (a) => open(a, btnRef.current))}>
+    <div ref={cellRef} className={styles.sceneCell} data-scene-row={row} onContextMenu={(e) => onContextMenuOpen(e, (a) => open(a, btnRef.current))}>
       <Tooltip
         tip={`Play the ${scene.name} scene: ${count} part${count === 1 ? '' : 's'} with clips in this row start, the others stop.`}
         detail="Scenes switch on the next bar. Drag the scene (or Alt+Up / Alt+Down) to reorder the rows; the clips move with it. Right-click or F2 to rename."
@@ -542,8 +1533,9 @@ function SceneButton(props: {
 /* Selected pad actions                                                */
 /* ------------------------------------------------------------------ */
 
-function PadActions(props: { move: MoveState | null; onMove(from: PadRef): void; onCancelMove(): void; onRename(at: PadRef): void }) {
-  const { move, onMove, onCancelMove, onRename } = props;
+function PadActions(props: { move: MoveState | null; gestures: GridGestures; onMove(from: PadRef): void; onCancelMove(): void; onRename(at: PadRef): void }) {
+  const { move, gestures, onMove, onCancelMove, onRename } = props;
+  const drag = useSyncExternalStore(gestures.subscribe, gestures.getUi);
   const trackId = useUi((s) => s.selectedTrackId);
   const slot = useUi((s) => slotFor(s, s.selectedTrackId));
   const info = useProject(
@@ -554,16 +1546,16 @@ function PadActions(props: { move: MoveState | null; onMove(from: PadRef): void;
     },
     (a, b) => a === b || (!!a && !!b && a.part === b.part && a.scene === b.scene && a.name === b.name && a.bars === b.bars && a.full === b.full),
   );
-  if (move) {
+  if (move || drag?.kind === 'pad') {
     return (
       <div className={styles.actions} role="region" aria-label="Moving a clip" data-moving="">
         <p className={styles.actionsText} aria-live="polite">
           <Icon name="drag" size={14} />
-          {move.how === 'keys'
+          {move
             ? `Moving “${move.clipName}”: arrow keys choose a pad, Enter moves it there (${MOD_KEY}Enter copies), Esc cancels.`
-            : `Drop “${move.clipName}” on a pad to ${move.copy ? 'copy' : 'move'} it (hold ${MOD_KEY.replace('+', '')} or Alt to copy). Esc cancels.`}
+            : `Drop “${drag!.kind === 'pad' ? drag!.clipName : ''}” on a pad to move it; hold ${MOD_KEY.replace('+', '')} or Alt to copy. Esc cancels.`}
         </p>
-        {move.how === 'keys' && (
+        {move && (
           <Button size="sm" variant="secondary" icon="close" onClick={onCancelMove}>
             Cancel
           </Button>
@@ -623,14 +1615,16 @@ export function LoopsGrid() {
   const scenes = useProject((p) => p.scenes);
   const anySolo = columns.some((c) => c.solo);
   const gridRef = useRef<HTMLDivElement>(null);
+  const liftRef = useRef<HTMLDivElement | null>(null);
+  const labelRef = useRef<HTMLSpanElement | null>(null);
+  const chipRef = useRef<HTMLDivElement | null>(null);
   const [menu, setMenu] = useState<(MenuRequest & { seq: number }) | null>(null);
+  const menuRef = useRef(menu);
+  menuRef.current = menu;
   const [soundFor, setSoundFor] = useState<Id | null>(null);
   const [move, setMove] = useState<MoveState | null>(null);
   const moveRef = useRef<MoveState | null>(null);
   moveRef.current = move;
-  const [sceneDrag, setSceneDrag] = useState<SceneDrag | null>(null);
-  const ghostRef = useRef<HTMLDivElement>(null);
-  const suppressSceneClick = useRef(false);
   const seq = useRef(0);
   const openMenu = useCallback<OpenMenu>((req) => {
     seq.current += 1;
@@ -638,29 +1632,53 @@ export function LoopsGrid() {
   }, []);
   const closeMenu = useCallback(() => setMenu(null), []);
 
-  const clipName = (at: PadRef) => session.store.getState().tracks.find((t) => t.id === at.trackId)?.clips[at.slot]?.name ?? '';
+  const [gestures] = useState(
+    () =>
+      new GridGestures({
+        grid: () => gridRef.current,
+        liftEl: () => liftRef.current,
+        labelEl: () => labelRef.current,
+        chipEl: () => chipRef.current,
+        keyMoveActive: () => !!moveRef.current,
+        closeMenu: () => {
+          if (menuRef.current) setMenu(null);
+        },
+      }),
+  );
+  useEffect(() => () => gestures.dispose(), [gestures]);
+  const setLift = useCallback((el: HTMLDivElement | null) => {
+    liftRef.current = el;
+  }, []);
+  const setLabel = useCallback((el: HTMLSpanElement | null) => {
+    labelRef.current = el;
+  }, []);
+  const setChip = useCallback((el: HTMLDivElement | null) => {
+    chipRef.current = el;
+  }, []);
 
-  /**
-   * Drop the clip being moved (`from`, else the keyboard move's source) onto
-   * `to`: move, or copy. One undo step; a refused drop says why.
-   */
-  const dropOn = useCallback((to: PadRef, copy: boolean, from?: PadRef) => {
-    const src = from ?? moveRef.current?.from;
-    setMove(null);
-    if (!src) return;
+  const clipName = (at: PadRef) => clipAt(session.store.getState(), at)?.name ?? '';
+
+  /** Drop the keyboard move's clip on `to`: move, or copy. One undo step; a refused drop says why. */
+  const dropOn = useCallback((to: PadRef, copy: boolean) => {
+    const src = moveRef.current?.from;
+    if (!src) {
+      setMove(null);
+      return;
+    }
     if (to.trackId === src.trackId && to.slot === src.slot) {
+      setMove(null);
       document.getElementById(padId(to.trackId, to.slot))?.focus();
       return;
     }
-    session.moveClip(src, to, copy);
-    requestAnimationFrame(() => document.getElementById(padId(to.trackId, to.slot))?.focus());
+    moveClipWithMotion(src, to, copy, () => setMove(null));
+    document.getElementById(padId(to.trackId, to.slot))?.focus();
   }, []);
 
   const startKeyMove = useCallback((from: PadRef) => {
     setMenu(null);
     selectTrack(from.trackId);
     selectSlot(from.trackId, from.slot);
-    setMove({ from, clipName: clipName(from), how: 'keys', over: from, copy: false });
+    setMove({ from, clipName: clipName(from), over: from });
     requestAnimationFrame(() => document.getElementById(padId(from.trackId, from.slot))?.focus());
   }, []);
 
@@ -670,132 +1688,12 @@ export function LoopsGrid() {
     if (m) document.getElementById(padId(m.from.trackId, m.from.slot))?.focus();
   }, []);
 
-  /** Pointer drag of a clip pad: a drag starts after TAP_SLOP_PX (a shorter press is a tap that launches). */
-  const onPointerDownPad = useCallback(
-    (e: ReactPointerEvent<HTMLElement>, from: PadRef) => {
-      if (e.button !== 0 || !e.isPrimary || moveRef.current) return;
-      const startX = e.clientX;
-      const startY = e.clientY;
-      const pointerId = e.pointerId;
-      let dragging = false;
-      const ghost = (x: number, y: number) => {
-        const g = ghostRef.current;
-        if (g) g.style.transform = `translate(${Math.round(x + 14)}px, ${Math.round(y + 10)}px)`;
-      };
-      const onMove = (ev: PointerEvent) => {
-        if (ev.pointerId !== pointerId) return;
-        if (!dragging) {
-          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < TAP_SLOP_PX) return;
-          dragging = true;
-          setMenu(null);
-          selectTrack(from.trackId);
-          selectSlot(from.trackId, from.slot);
-        }
-        const over = padAt(ev.clientX, ev.clientY);
-        const copy = ev.ctrlKey || ev.altKey || ev.metaKey;
-        setMove((m) => {
-          const next: MoveState = { from, clipName: m?.clipName ?? clipName(from), how: 'drag', over, copy };
-          return m && m.how === 'drag' && m.copy === copy && m.over?.trackId === over?.trackId && m.over?.slot === over?.slot ? m : next;
-        });
-        ghost(ev.clientX, ev.clientY);
-      };
-      const end = (drop: boolean, ev?: PointerEvent) => {
-        window.removeEventListener('pointermove', onMove, true);
-        window.removeEventListener('pointerup', onUp, true);
-        window.removeEventListener('pointercancel', onCancel, true);
-        window.removeEventListener('keydown', onKey, true);
-        if (!dragging) return;
-        const to = drop && ev ? padAt(ev.clientX, ev.clientY) : null;
-        if (to && ev) dropOn(to, ev.ctrlKey || ev.altKey || ev.metaKey, from);
-        else setMove(null);
-      };
-      const onUp = (ev: PointerEvent) => ev.pointerId === pointerId && end(true, ev);
-      const onCancel = (ev: PointerEvent) => ev.pointerId === pointerId && end(false);
-      const onKey = (ev: globalThis.KeyboardEvent) => {
-        if (!dragging) return;
-        if (ev.key === 'Escape') {
-          ev.preventDefault();
-          ev.stopPropagation();
-          // Cancelled: the pad's pointerup that follows is no tap either (it moved).
-          dragging = false;
-          setMove(null);
-          window.removeEventListener('pointermove', onMove, true);
-          window.removeEventListener('keydown', onKey, true);
-        } else if (ev.key === 'Control' || ev.key === 'Alt' || ev.key === 'Meta') {
-          setMove((m) => (m ? { ...m, copy: true } : m));
-        }
-      };
-      window.addEventListener('pointermove', onMove, true);
-      window.addEventListener('pointerup', onUp, true);
-      window.addEventListener('pointercancel', onCancel, true);
-      window.addEventListener('keydown', onKey, true);
-    },
-    [dropOn],
-  );
-
-  /** Scene rows: drag the scene button onto another row to reorder (a shorter press launches it). */
-  const onPointerDownScene = useCallback((e: ReactPointerEvent<HTMLButtonElement>, row: number) => {
-    if (e.button !== 0 || !e.isPrimary) return;
-    const startY = e.clientY;
-    const startX = e.clientX;
-    const pointerId = e.pointerId;
-    let dragging = false;
-    let over: number | null = null;
-    const target = e.currentTarget;
-    const rowAt = (x: number, y: number): number | null => {
-      const el = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-scene-row]');
-      return el ? Number(el.dataset.sceneRow) : null;
-    };
-    const onMove = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return;
-      if (!dragging) {
-        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < TAP_SLOP_PX) return;
-        dragging = true;
-        try {
-          target.setPointerCapture(pointerId);
-        } catch {
-          /* synthetic pointer */
-        }
-      }
-      // Rows are matched by height only, so the pointer may wander sideways.
-      const cell = document.querySelector<HTMLElement>(`[data-scene-row="0"]`);
-      const x = cell ? cell.getBoundingClientRect().left + 4 : ev.clientX;
-      over = rowAt(x, ev.clientY);
-      setSceneDrag({ from: row, over });
-    };
-    const end = (drop: boolean) => {
-      window.removeEventListener('pointermove', onMove, true);
-      window.removeEventListener('pointerup', onUp, true);
-      window.removeEventListener('pointercancel', onCancel, true);
-      window.removeEventListener('keydown', onKey, true);
-      if (!dragging) return;
-      suppressSceneClick.current = true;
-      setTimeout(() => (suppressSceneClick.current = false), 0);
-      setSceneDrag(null);
-      if (drop && over !== null && over !== row) {
-        const to = over;
-        if (session.moveScene(row, to)) requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-scene-row="${to}"] button[data-scene]`)?.focus());
-      }
-    };
-    const onUp = (ev: PointerEvent) => ev.pointerId === pointerId && end(true);
-    const onCancel = (ev: PointerEvent) => ev.pointerId === pointerId && end(false);
-    const onKey = (ev: globalThis.KeyboardEvent) => {
-      if (!dragging || ev.key !== 'Escape') return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      over = null;
-      end(false);
-    };
-    window.addEventListener('pointermove', onMove, true);
-    window.addEventListener('pointerup', onUp, true);
-    window.addEventListener('pointercancel', onCancel, true);
-    window.addEventListener('keydown', onKey, true);
-  }, []);
-  const consumeSceneClick = useCallback(() => suppressSceneClick.current, []);
+  const onPointerDownPad = useCallback((e: ReactPointerEvent<HTMLElement>, from: PadRef) => gestures.pressPad(e.nativeEvent, from), [gestures]);
+  const onPointerDownScene = useCallback((e: ReactPointerEvent<HTMLButtonElement>, row: number) => gestures.pressRow(e.nativeEvent, row), [gestures]);
 
   // A keyboard move ends when the clip it moves goes away (undo, another part's edit) or focus leaves the grid for good.
   useEffect(() => {
-    if (!move || move.how !== 'keys') return;
+    if (!move) return;
     const onDown = (e: PointerEvent) => {
       const t = e.target as Element | null;
       if (t && (gridRef.current?.contains(t) || t.closest('[data-move-bar]'))) return;
@@ -811,8 +1709,7 @@ export function LoopsGrid() {
   /** Keys while choosing where a clip goes: Enter / Space drop it (Ctrl copies), Esc cancels. */
   const onGridKeyCapture = useCallback(
     (e: KeyboardEvent<HTMLDivElement>) => {
-      const m = moveRef.current;
-      if (!m || m.how !== 'keys') return;
+      if (!moveRef.current) return;
       const el = e.target as HTMLElement;
       const at = /^pad-(t\d+)-(\d)$/.exec(el.id);
       if (e.key === 'Escape') {
@@ -837,7 +1734,7 @@ export function LoopsGrid() {
       const trackId = m[1];
       const row = Number(m[2]);
       const mod = e.ctrlKey || e.metaKey;
-      const moving = moveRef.current?.how === 'keys';
+      const moving = !!moveRef.current;
       const select = () => {
         selectTrack(trackId);
         selectSlot(trackId, row);
@@ -898,6 +1795,8 @@ export function LoopsGrid() {
     [openMenu],
   );
 
+  const moveCol = move ? columns.findIndex((c) => c.id === move.from.trackId) : -1;
+
   return (
     <div className={styles.wrap}>
       <div
@@ -907,7 +1806,7 @@ export function LoopsGrid() {
         onKeyDownCapture={onGridKeyCapture}
         role="group"
         aria-label="Clip pads: eight parts by four scenes"
-        data-moving={move ? move.how : undefined}
+        data-moving={move ? 'keys' : undefined}
       >
         {columns.map((c, i) => (
           <TrackHeader key={c.id} col={c} index={i} anySolo={anySolo} onMenu={openMenu} menuOpen={menu?.kind === 'track' && menu.trackId === c.id} />
@@ -923,16 +1822,18 @@ export function LoopsGrid() {
         </div>
         {scenes.slice(0, SCENE_ROWS).map((scene, row) => (
           <div key={scene.id} className={styles.row}>
-            {columns.map((c) => (
+            {columns.map((c, i) => (
               <ClipPad
                 key={c.id}
                 col={c}
+                index={i}
                 slot={row}
                 sceneName={scene.name}
                 dimmed={c.mute || (anySolo && !c.solo)}
                 onMenu={openMenu}
                 menuOpen={menu?.kind === 'clip' && menu.trackId === c.id && menu.slot === row}
                 move={move}
+                moveCol={moveCol}
                 onPointerDownPad={onPointerDownPad}
                 onDropHere={dropOn}
               />
@@ -943,27 +1844,17 @@ export function LoopsGrid() {
               columns={columns}
               onMenu={openMenu}
               menuOpen={menu?.kind === 'scene' && menu.row === row}
-              drag={sceneDrag}
               onPointerDownScene={onPointerDownScene}
-              consumeClick={consumeSceneClick}
+              consumeClick={gestures.consumeClick}
             />
           </div>
         ))}
       </div>
       <div data-move-bar="">
-        <PadActions move={move} onMove={startKeyMove} onCancelMove={cancelMove} onRename={rename} />
+        <PadActions move={move} gestures={gestures} onMove={startKeyMove} onCancelMove={cancelMove} onRename={rename} />
       </div>
 
-      {move?.how === 'drag' &&
-        createPortal(
-          <div ref={ghostRef} className={styles.ghost} data-copy={move.copy || undefined} aria-hidden="true">
-            <Icon name={move.copy ? 'copy' : 'drag'} size={14} />
-            <span>
-              {move.copy ? 'Copy' : 'Move'} “{move.clipName}”
-            </span>
-          </div>,
-          document.body,
-        )}
+      <DragLayer gestures={gestures} liftRef={setLift} labelRef={setLabel} chipRef={setChip} />
       {menu?.kind === 'clip' && (
         <ClipMenu
           key={menu.seq}

@@ -8,7 +8,8 @@
  */
 import { useState } from 'react';
 import type { Id, Project } from '../../../project/types';
-import { joinProblem } from '../../../state/commands';
+import { joinProblemDetail, type LayerMode } from '../../../state/commands';
+import { shallowEqual } from '../../../state/store';
 import { useProject } from '../../instance';
 import { MOD_KEY, MenuHeader, MenuItem, MenuSeparator, Popover, type MenuAnchor } from '../ClipMenu';
 import { barsText, cellOn, cellState, lengthDetail, partChoices, type BlockView } from './songModel';
@@ -33,7 +34,7 @@ export interface BlockMenuActions {
   togglePart(id: Id, trackId: Id): void;
   resetParts(id: Id): void;
   changeScene(id: Id, sceneId: Id): void;
-  layerScene(id: Id, sceneId: Id): void;
+  layerScene(id: Id, sceneId: Id, mode: LayerMode): void;
   lengthen(ids: Id[], delta: 1 | -1): void;
   splitHalf(id: Id): void;
   join(id: Id): void;
@@ -45,7 +46,7 @@ export interface BlockMenuActions {
   remove(ids: Id[]): void;
 }
 
-type View = 'main' | 'parts' | 'scene' | 'layer';
+type View = 'main' | 'parts' | 'scene' | 'layer' | 'replace';
 
 export function BlockMenu(props: {
   block: BlockView;
@@ -62,7 +63,7 @@ export function BlockMenu(props: {
 }) {
   const { block, count, targets, canPaste, scenes, anchor, returnFocus, onClose, actions } = props;
   const [view, setView] = useState<View>(props.initialView ?? 'main');
-  const join = useProject((p) => joinProblem(p, block.id));
+  const join = useProject((p) => joinProblemDetail(p, block.id), (a, b) => a === b || (!!a && !!b && shallowEqual(a, b)));
   const many = targets.length > 1;
   const what = many ? `${targets.length} blocks` : 'block';
   const first = useProject((p) => p.arrangement.blocks.findIndex((b) => targets.includes(b.id)));
@@ -106,15 +107,22 @@ export function BlockMenu(props: {
     );
   }
 
-  if (view === 'scene' || view === 'layer') {
-    const layer = view === 'layer';
+  if (view === 'scene' || view === 'layer' || view === 'replace') {
+    const layer = view !== 'scene';
+    const title = view === 'layer' ? `Layer a scene into ${block.name}` : view === 'replace' ? `Replace parts of ${block.name}` : `Scene for ${block.name}`;
+    const label =
+      view === 'layer'
+        ? 'Parts that are silent in this block play that scene’s clips'
+        : view === 'replace'
+          ? 'Every part with a clip in that scene plays it here'
+          : 'Scene this block plays';
     return (
-      <Popover anchor={anchor} label={layer ? `Layer a scene into ${block.name}` : `Scene for ${block.name}`} onClose={onClose} returnFocus={returnFocus}>
+      <Popover anchor={anchor} label={title} onClose={onClose} returnFocus={returnFocus}>
         {header}
         {back}
         <MenuSeparator />
         <div className={styles.menuLabel} role="presentation">
-          {layer ? 'Each part with a clip in that scene plays it here' : 'Scene this block plays'}
+          {label}
         </div>
         {scenes.map((s) => (
           <MenuItem
@@ -125,7 +133,7 @@ export function BlockMenu(props: {
             hint={`${barsText(s.bars)} · ${partsText(s.parts)}`}
             disabled={layer && s.id === block.sceneId}
             disabledReason="Its own scene"
-            onSelect={act(() => (layer ? actions.layerScene(block.id, s.id) : s.id !== block.sceneId && actions.changeScene(block.id, s.id)))}
+            onSelect={act(() => (layer ? actions.layerScene(block.id, s.id, view === 'replace' ? 'replace' : 'fill') : s.id !== block.sceneId && actions.changeScene(block.id, s.id)))}
           >
             {s.name}
           </MenuItem>
@@ -156,8 +164,11 @@ export function BlockMenu(props: {
       <MenuItem icon="plus" disabled={block.missing} disabledReason="Scene missing" onSelect={() => setView('layer')}>
         Layer a scene in…
       </MenuItem>
+      <MenuItem icon="copy" disabled={block.missing} disabledReason="Scene missing" onSelect={() => setView('replace')}>
+        Replace parts with a scene…
+      </MenuItem>
       <MenuSeparator />
-      <MenuItem icon="plus" hint="+" keyShortcut="+" disabled={block.repeats >= 16 || block.missing} disabledReason={block.missing ? 'Scene missing' : '16 passes'} onSelect={() => actions.lengthen(targets, 1)}>
+      <MenuItem icon="plus" hint="+" keyShortcut="+" disabled={block.repeats >= 16 || block.missing} disabledReason={block.missing ? 'Scene missing' : '16 passes, the most'} onSelect={() => actions.lengthen(targets, 1)}>
         One more pass
       </MenuItem>
       <MenuItem icon="minus" hint="−" keyShortcut="-" disabled={block.repeats <= 1} disabledReason="1 pass" onSelect={() => actions.lengthen(targets, -1)}>
@@ -166,10 +177,10 @@ export function BlockMenu(props: {
       <MenuItem icon="duplicate" disabled={block.repeats < 2} disabledReason="Plays once" onSelect={act(() => actions.splitHalf(block.id))}>
         Split in half
       </MenuItem>
-      <MenuItem icon="link" disabled={join !== null} disabledReason={join ?? undefined} onSelect={act(() => actions.join(block.id))}>
+      <MenuItem icon="link" disabled={join !== null} disabledReason={join?.short} onSelect={act(() => actions.join(block.id))}>
         Join with next
       </MenuItem>
-      {join !== null && <JoinReason text={join} />}
+      {join !== null && <JoinReason text={join.text} />}
       <MenuSeparator />
       <MenuItem icon="duplicate" hint={`${MOD_KEY}D`} keyShortcut="Control+D" onSelect={act(() => actions.duplicate(targets))}>
         Duplicate {what}

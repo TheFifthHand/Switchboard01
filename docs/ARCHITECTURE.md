@@ -143,25 +143,63 @@ Rules:
   the pass first.
 - `RealtimeTransport` emits `arpNote` when the audio clock reaches an arpeggiator note that was not
   cancelled; Record Notes records those (at their real grid tick and gate) on arp parts.
-- After a stall, Resume restarts what was playing: the song from its block (found by id), a replay
-  from its start, otherwise the live pads.
+- After a stall, Resume restarts what was playing: the song from its block (found by id; the
+  transport finds the block where the music stopped before the stop clears the song, and a block
+  deleted while it played counts as the block taking over from it), a replay from its start,
+  otherwise the live pads.
 - Song playback is what the Arrange lane shows. `start()` lays out every block's part choices as
   'song' transitions (a layered part plays the other scene's slot, an off part stops at the block
   start); `playSong(i, {fromBar})` starts at that lane bar, the block containing it in phase.
 - Edits while a song plays or is paused (undo/redo included): when `songSignature()` changes, the
-  session calls `transport.replanSong()` → `Sequencer.replanSong(now + 10 ms)`, which lays the rest
-  out again anchored on the block playing now, by id. It keeps its start and takes its new length
-  (a length already passed ends it at the next bar line); parts whose clip in it changed switch at
-  the next bar line, in phase with its start; a deleted block plays to its planned end, then the
-  first block that followed it and still exists, from its new position; everything after follows
-  the project. A block whose start has not sounded yet starts as edited. Song transitions from the
-  switch point on are replaced in `pending` and in `history` (a rewind cannot bring stale ones back),
-  then the transport invalidates. Song transitions sort before a pad launch at the same tick (the
-  pad wins), and notes sounding across a switch are cut when the switch is applied, so an edit undone
-  before it leaves them alone. Scene reorders are followed first by `relocateSongRows`.
+  session calls `transport.replanSong()` → `Sequencer.replanSong(now + 10 ms)`. The **edit point**
+  is the playhead at that time (the pause point while paused), rounded up to a whole tick; nothing
+  before it changes. The anchor is the plan block under the playhead. It **has started** when its
+  start lies before the playhead's floor (the start, pause or resume point; right after Resume the
+  playhead waits there) or its time has passed. The rules, in order:
+  1. Anchor not started yet (right after Play, or paused/resumed on its first tick): it starts as
+     edited; deleted, the first block that followed it and still exists starts in its place.
+  2. The anchor (found by id) still covers the playhead at its new length: it keeps its start;
+     parts whose clip in it changed (its scene, a part switched off or on, a layered part, the clip
+     in that slot) switch **at the edit point**, in phase with the block start. A part switched off
+     stops there (its sounding notes are cut); one switched on joins mid-loop, and its notes that
+     would have started before the edit point are not played late.
+  3. Otherwise, where the playhead lies on the edited lane: the new order laid out from the
+     anchor's start or, deleted, from the start of the nearest block before it still in the song
+     (with none, from the anchor's start beginning with the block that followed it). If the block
+     there plays the same clip on every part as what sounds now (a split while a later pass plays,
+     a join while the second block plays, undoing either, a deleted block whose neighbour plays the
+     same), playback continues in that block: no switch, every clip keeps its loop phase, the lane
+     playhead does not move.
+  4. Otherwise the anchor (shortened below the playhead, or deleted) sounds on to the **next bar
+     line**: shortened, with its changed parts switched at the edit point; deleted, as it was. There
+     the block after it takes over (for a deleted block: the first block that followed it and still
+     exists, at its place in the new order), or the song ends.
+  Everything after the anchor follows the project (order, scenes, parts, repeats, lengths, the end);
+  the end never lies behind the playhead (nor before the next bar line once the anchor has started).
+  Song transitions from the edit point on are replaced in `pending` and in `history` (a rewind
+  cannot bring stale ones back), then the transport invalidates. An Undo is an edit like any other:
+  the part switches back at its edit point, in phase (undone in the same moment, the switch never
+  happens). A note an edit already cut stays cut (its voice's release is scheduled), so a held chord
+  comes back with its next start. Song transitions sort before a pad launch at the same tick (the
+  pad wins); pad launches stay on the next bar line. Scene reorders are followed first by
+  `relocateSongRows`. In song mode the session leaves a clip that left its part (deleted, or dragged
+  to another part) to the replan: its slot is empty, so the part is silent at once, and the replan
+  makes that a switch (Undo switches it back on); no live stop is queued and the slot is not
+  relocated to "stopped".
+- An 'end' is always handed out where the driver gets it: never before the resume point or before
+  the floor of a rewind, so the transport stops even if the end came to lie behind music already
+  handed out.
 - `Sequencer.songPlan()` (absolute ticks; blocks before the playing one laid out in the current
-  order) feeds `views/arrange/songPlan.ts`; `songTimelineBar(tick)` maps the playhead onto the lane
-  for the lane playhead and the transport readout.
+  order; a deleted block has index -1 while it sounds on to the next bar line) feeds
+  `views/arrange/songPlan.ts`. `songLaneTick(plan, lane, tick)` (pure, in the sequencer module) and
+  `songTimelineBar(tick)` map the playhead onto the lane for the lane playhead and the transport
+  readout: the lane start of the plan block playing plus the distance into it, never past that
+  block's lane length (a block shortened below the playhead: the playhead waits at its end); while a
+  deleted block sounds on, the playhead waits where the block taking over starts (the end of the
+  block before it), or at the end of the song. Between edits it only moves forward.
+  `Sequencer.songBlockAt(tick)` is the block the lane shows there (the block taking over while a
+  deleted one sounds on); the session's runtime `songBlock`/`songBlockId` follow it after every
+  edit, since a block continued after a split or join gets no 'block' event.
 - `renderOffline()` (src/render/offline.ts) drives the same Sequencer + AudioEngine on an
   `OfflineAudioContext`, in chunks via `suspend()` for progress and cancellation. At the end of the
   music it calls `transportStopped()` like the live transport (sampler one-shots end, take

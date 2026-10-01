@@ -197,8 +197,13 @@ export interface TransportEventMap {
   arpNote: NoteEvent;
   /** The audio context changed state (e.g. suspended / interrupted while playing). */
   state: { state: string; playing: boolean };
-  /** Playback stopped because the scheduler fell behind; offer Resume. */
-  stalled: { reason: 'throttled' | 'suspended'; lateBy: number; tick: number };
+  /**
+   * Playback stopped because the scheduler fell behind; offer Resume.
+   * `songBlockId`: in song mode, the block where the music stopped (the block
+   * taking over when the playing one had just been deleted), found before the
+   * stop cleared the song; else null.
+   */
+  stalled: { reason: 'throttled' | 'suspended'; lateBy: number; tick: number; songBlockId: Id | null };
 }
 
 export type TransportEventName = keyof TransportEventMap;
@@ -673,9 +678,11 @@ export class RealtimeTransport {
   private stall(now: number): void {
     const lateBy = now - this.horizon;
     const tick = this.sequencer.getPosition(now).tick;
+    // The music ran out at the horizon (nothing was scheduled after it): the song block playing there.
+    const songBlockId = this.sequencer.songBlockAt(this.sequencer.getPosition(Math.min(now, this.horizon)).tick)?.blockId ?? null;
     const reason = this.ctx.state === 'running' ? 'throttled' : 'suspended';
     this.stopAt(now);
-    this.emit('stalled', { reason, lateBy, tick });
+    this.emit('stalled', { reason, lateBy, tick, songBlockId });
   }
 
   private readonly onStateChange = (): void => {

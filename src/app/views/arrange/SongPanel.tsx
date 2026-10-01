@@ -9,8 +9,8 @@
  * live while the song plays or is paused: playback re-plans from the block
  * playing now (see Sequencer.replanSong), so the lane is always what plays.
  */
-import { useMemo, useRef } from 'react';
-import { Button, Led, NumberField, Tooltip } from '../../../ui/components';
+import { useMemo, useRef, useState } from 'react';
+import { Button, Led, NumberField, Tooltip, useRafLoop } from '../../../ui/components';
 import { TICKS_PER_BAR, type Id, type Project } from '../../../project/types';
 import { clampBpm, ticksToSeconds } from '../../../time/clock';
 import { sceneBars, songLengthTicks } from '../../../time/sequencer';
@@ -24,7 +24,7 @@ import { barsLabel } from '../../labels';
 import type { SceneSummary } from './BlockMenu';
 import { SongLane } from './SongLane';
 import { laneBlocks, viewKey, type BlockView } from './songModel';
-import { startSong } from './songPlan';
+import { getSongPlan, startSong, useSongPlan } from './songPlan';
 import styles from './SongPanel.module.css';
 
 /* ------------------------------------------------------------------ */
@@ -65,6 +65,48 @@ function useBlockViews(): readonly BlockView[] {
   return useProject(select);
 }
 
+/**
+ * A block removed from the lane while it plays sounds on to the next bar
+ * line, then the block after it takes over. While that is so, this says
+ * which block was removed and which one takes over (null when nothing
+ * follows), from the song as it plays: the plan keeps the removed block until
+ * it hands over, and the transport says whether the playhead is still in it.
+ * Without a transport position, a runtime block that is no longer on the lane
+ * counts as that removed block.
+ */
+function useHandover(views: readonly BlockView[], songOn: boolean, playingId: Id | null): { removed: Id; next: BlockView | null } | null {
+  const plan = useSongPlan();
+  const ids = useMemo(() => new Set(views.map((v) => v.id)), [views]);
+  const idsRef = useRef(ids);
+  idsRef.current = ids;
+  const [sounding, setSounding] = useState<Id | null>(null);
+  const soundingRef = useRef<Id | null>(null);
+  const watch = songOn && !!plan && plan.some((b) => !ids.has(b.blockId));
+  useRafLoop(() => {
+    const t = session.transport;
+    const p = getSongPlan();
+    let found: Id | null = null;
+    if (t && p) {
+      const tick = t.getPosition().tick;
+      const e = p.find((b) => tick < b.endTick);
+      if (e && !idsRef.current.has(e.blockId)) found = e.blockId;
+    }
+    if (found !== soundingRef.current) {
+      soundingRef.current = found;
+      setSounding(found);
+    }
+  }, watch);
+  const removed = (watch ? sounding : null) ?? (songOn && playingId && !ids.has(playingId) ? playingId : null);
+  if (!removed || !plan) return null;
+  const i = plan.findIndex((b) => b.blockId === removed);
+  const byId = new Map(views.map((v) => [v.id, v]));
+  for (const b of i >= 0 ? plan.slice(i + 1) : []) {
+    const v = byId.get(b.blockId);
+    if (v) return { removed, next: v };
+  }
+  return { removed, next: null };
+}
+
 /** Show a scene row's clips in the Play view (Loops), with the row's first clip (or first pad, when it has none) selected. */
 export function editSceneClips(row: number): void {
   const p = session.store.getState();
@@ -93,8 +135,8 @@ export function editSceneClips(row: number): void {
 /* Header                                                              */
 /* ------------------------------------------------------------------ */
 
-function ModeIndicator(props: { current: BlockView | null; blockCount: number }) {
-  const { current, blockCount } = props;
+function ModeIndicator(props: { current: BlockView | null; next: BlockView | null; removed: boolean; blockCount: number }) {
+  const { current, next, removed, blockCount } = props;
   const mode = useRuntime((s) => s.mode);
   const playing = useRuntime((s) => s.playing);
   const paused = useRuntime((s) => s.paused);
@@ -111,7 +153,13 @@ function ModeIndicator(props: { current: BlockView | null; blockCount: number })
     caption = 'The song and your takes cannot be edited until you stop recording. Play song or Replay ends the take first.';
   } else if ((playing || paused) && mode === 'song') {
     follows = 'Arrangement';
-    where = current ? `${paused ? 'Paused in block' : 'Block'} ${current.index + 1} of ${blockCount} · ${current.name}` : '';
+    where = current
+      ? `${paused ? 'Paused in block' : 'Block'} ${current.index + 1} of ${blockCount} · ${current.name}`
+      : removed
+        ? next
+          ? `Removed block ends at the bar · next: ${next.name} (block ${next.index + 1})`
+          : 'Removed block ends at the bar · then the song ends'
+        : '';
     caption = 'Edits play right away: move, lengthen or change blocks while the song plays. Pads still work: a tapped clip joins at the next bar until the next block starts.';
   } else if (playing && mode === 'replay') {
     follows = 'Performance';
@@ -186,8 +234,14 @@ export function SongPanel() {
   const songPlaying = playing && mode === 'song';
 
   // What is playing now, by block id (stable across edits made while the song plays).
-  const currentId = songOn ? (songBlockId ?? (songBlock !== null ? (views[songBlock]?.id ?? null) : null)) : null;
-  const current = currentId ? (views.find((v) => v.id === currentId) ?? null) : null;
+  const playingId = songOn ? (songBlockId ?? (songBlock !== null ? (views[songBlock]?.id ?? null) : null)) : null;
+  // The block playing now was removed: it plays to the next bar, then the block after it takes over.
+  // Until then nothing on the lane says Playing; the block taking over says Next.
+  const handover = useHandover(views, songOn, playingId);
+  const removed = !!handover;
+  const next = handover?.next ?? null;
+  const current = !handover && playingId ? (views.find((v) => v.id === playingId) ?? null) : null;
+  const currentId = current?.id ?? null;
   const empty = views.length === 0;
 
   return (
@@ -197,7 +251,7 @@ export function SongPanel() {
           <h2 id="song-title" className={styles.title}>
             Song
           </h2>
-          <ModeIndicator current={current} blockCount={views.length} />
+          <ModeIndicator current={current} next={next} removed={removed} blockCount={views.length} />
         </div>
         <div className={styles.headRight}>
           <SongTotals />
@@ -230,7 +284,7 @@ export function SongPanel() {
         </div>
       </header>
 
-      <SongLane views={views} scenes={scenes} currentId={currentId} songActive={songOn} songPlaying={songPlaying} editClips={editSceneClips} />
+      <SongLane views={views} scenes={scenes} currentId={currentId} nextId={next?.id ?? null} songActive={songOn} songPlaying={songPlaying} editClips={editSceneClips} />
     </section>
   );
 }

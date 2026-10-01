@@ -278,71 +278,319 @@
   box-shadow: var(--shadow-pressed);
 }
 
-/* Moving a clip (drag or keyboard): the source is marked, valid pads are outlined, the pad under it is lit. */
+/*
+ * Moving a clip (drag or keyboard Move…). The marks are written by the
+ * gesture (drag) or by React (keyboard): data-drop on every pad says what it
+ * is (source / ok / no); the pad under the carried clip gets data-target
+ * (land / swap / replace / no) and a word in data-chip. Dimming goes on the
+ * pad inside, so the outlines and words stay crisp.
+ */
 .cell[data-drop] {
   opacity: 1;
 }
-.cell[data-drop]::after {
+/* Always there, with a fixed border: marking the pads when a drag starts only repaints them (no boxes to create or lay out). */
+.cell::after {
   content: '';
   position: absolute;
   inset: -3px;
+  border: 2px dashed transparent;
   border-radius: 12px;
   pointer-events: none;
 }
-.cell[data-drop='source'] {
-  opacity: 0.55;
+/* The clip's own pad while it is carried: a faint placeholder (copying: the original stays). */
+.cell[data-drop='source'] button[data-state] {
+  opacity: 0.28;
 }
 .cell[data-drop='source']::after {
-  border: 2px dashed var(--teal);
+  border-color: var(--teal);
+}
+.grid[data-copy] .cell[data-drop='source'] button[data-state] {
+  opacity: 0.85;
 }
 .cell[data-drop='ok']::after {
-  border: 2px dashed color-mix(in srgb, var(--teal) 45%, transparent);
+  border-color: color-mix(in srgb, var(--teal) 45%, transparent);
 }
-.cell[data-drop='ok'][data-over]::after {
-  border: 3px solid var(--teal);
-  box-shadow: 0 0 0 3px var(--teal-wash);
-}
-.cell[data-drop='no'] {
+.cell[data-drop='no'] button[data-state] {
   opacity: 0.4;
 }
-.cell[data-drop='no'][data-over]::after {
-  border: 3px solid var(--coral);
+/* The pad under the carried clip: where it lands (outline and wash), what it swaps with or replaces, or a refusal. */
+.cell[data-target]::after {
+  border-color: transparent;
+  box-shadow:
+    inset 0 0 0 3px var(--teal),
+    0 0 0 3px var(--teal-wash);
 }
-.dropNote {
+.cell[data-target='land']::after {
+  background: var(--teal-wash);
+}
+.cell[data-target='no']::after {
+  box-shadow: inset 0 0 0 3px var(--coral);
+  background: repeating-linear-gradient(135deg, var(--coral-wash) 0 6px, transparent 6px 12px);
+}
+/* A swap: the other clip leans toward the carried clip's pad (it is where that clip goes). */
+.cell[data-target='swap'] button[data-state] {
+  transform: translate(var(--lean-x, 0), var(--lean-y, 0));
+}
+/* Keyboard move: the word sits on the focused pad's lower edge. (While dragging, .targetChip draws it above the lifted pad.) */
+.cell[data-chip]::before {
+  content: attr(data-chip);
   position: absolute;
   left: 50%;
-  bottom: 6px;
-  transform: translateX(-50%);
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: var(--coral);
+  bottom: -10px;
+  z-index: 2;
+  translate: -50% 0;
+  padding: 2px 8px;
+  border-radius: 9px;
+  background: var(--teal-ink);
   color: #fff;
   font-size: var(--fs-xs);
   font-weight: 650;
+  line-height: 15px;
   white-space: nowrap;
+  box-shadow: var(--shadow-raised);
   pointer-events: none;
 }
-.ghost {
+.cell[data-target='no'][data-chip]::before {
+  background: var(--coral);
+  color: #fff;
+}
+/* While something is carried: the '⋯' keys step aside and the cursor says what a drop does. */
+.grid[data-dragging] .more {
+  visibility: hidden;
+}
+.grid[data-dragging] {
+  cursor: grabbing;
+}
+/* (The grid holds the pointer while something is carried, so its cursor is the one shown.) */
+.grid[data-refused] {
+  cursor: not-allowed;
+}
+/* The lifted pad: a real copy of the pad that follows the pointer (its translate is written by the gesture). */
+.lift {
   position: fixed;
   left: 0;
   top: 0;
   z-index: 60;
+  border-radius: 10px;
+  box-shadow:
+    var(--shadow-float),
+    0 0 0 2px var(--teal);
+  pointer-events: none;
+  translate: -9999px 0;
+  scale: 1.04;
+  will-change: translate;
+  transition:
+    scale 120ms var(--ease),
+    box-shadow 120ms var(--ease);
+}
+@starting-style {
+  .lift {
+    scale: 1;
+  }
+}
+.lift[data-kind='no'] {
+  box-shadow:
+    var(--shadow-float),
+    0 0 0 2px var(--coral);
+}
+.lift[data-kind='none'] {
+  opacity: 0.75;
+}
+/* The label above the lifted pad (above the lifted row's scene): Move / Copy / Swap / why not. */
+.liftLabel {
+  position: absolute;
+  left: 4px;
+  bottom: calc(100% + 5px);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--teal);
-  border-radius: var(--r-md);
-  background: var(--shell-hi);
-  box-shadow: var(--shadow-float);
-  color: var(--ink);
+  gap: 5px;
+  max-width: max(100%, 220px);
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: 11px;
+  background: var(--ink);
+  color: var(--ink-inverse);
   font-size: var(--fs-sm);
-  font-weight: 600;
-  pointer-events: none;
-  transform: translate(-9999px, 0);
+  font-weight: 650;
+  white-space: nowrap;
+  box-shadow: var(--shadow-raised);
 }
-.ghost[data-copy] {
-  border-color: var(--amber);
+/* Kept inside the window (GridGestures sets data-side from where the pad is). */
+.lift[data-side~='end'] .liftLabel {
+  left: auto;
+  right: 4px;
+}
+.lift[data-side~='below'] .liftLabel {
+  top: calc(100% + 5px);
+  bottom: auto;
+}
+.liftText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lift[data-copy] .liftLabel {
+  background: var(--teal-ink);
+}
+.lift[data-kind='no'] .liftLabel {
+  background: var(--coral);
+  color: #fff;
+}
+.lift[data-kind='none'] .liftLabel {
+  background: var(--ink-3);
+}
+/* One icon per meaning. */
+.liftIcon {
+  display: none;
+  flex: none;
+}
+.lift:not([data-copy]) .liftIcon[data-for='move'],
+.lift[data-copy] .liftIcon[data-for='copy'],
+.rowLift .liftIcon[data-for='move'] {
+  display: inline-flex;
+}
+.lift[data-kind='swap'] .liftIcon,
+.lift[data-kind='no'] .liftIcon,
+.lift[data-kind='none'] .liftIcon,
+.rowLift[data-kind='none'] .liftIcon {
+  display: none;
+}
+.lift[data-kind='swap'] .liftIcon[data-for='swap'],
+.lift[data-kind='no'] .liftIcon[data-for='no'],
+.lift[data-kind='none'] .liftIcon[data-for='none'],
+.rowLift[data-kind='none'] .liftIcon[data-for='none'] {
+  display: inline-flex;
+}
+
+/* The word for the pad under the carried clip, on that pad's lower edge, above the lifted pad. */
+.targetChip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 61;
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: var(--teal-ink);
+  color: #fff;
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  line-height: 16px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-raised), 0 0 0 2px var(--shell-hi);
+  pointer-events: none;
+  /* Mostly below the target's edge: clear of the lifted pad, over the gap. */
+  transform: translate(-50%, -30%);
+  visibility: hidden;
+}
+.targetChip[data-on] {
+  visibility: visible;
+}
+.targetChip[data-kind='no'] {
+  background: var(--coral);
+}
+
+/* The lifted scene row: its scene, raised, and a faint copy of its pads (translate written by the gesture). */
+.rowLift {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 60;
+  pointer-events: none;
+  translate: -9999px 0;
+  will-change: translate;
+}
+.rowLift[data-kind='none'] {
+  opacity: 0.6;
+}
+.rowLiftPad {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 7px 8px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fbfbfb, #e7eaec);
+  box-shadow: 0 0 0 1px rgba(20, 24, 28, 0.12), var(--shadow-float);
+  opacity: 0.6;
+  overflow: hidden;
+}
+.rowLiftPad[data-empty] {
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(20, 24, 28, 0.14);
+  opacity: 0.5;
+}
+.rowLiftName {
+  overflow: hidden;
+  font-size: var(--pad-label-size, var(--fs-lg));
+  font-weight: 600;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rowLiftBars {
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  line-height: 15px;
+}
+.rowLiftScene {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 2px solid var(--teal);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, var(--shell-hi), var(--shell));
+  box-shadow: var(--shadow-float);
+}
+.rowLiftScene .liftLabel {
+  left: auto;
+  right: 0;
+}
+
+/* A scene row being carried: its own cells are the faint open slot; every row slides to where the drop puts it. */
+.grid[data-dragging='row'] .cell,
+.grid[data-dragging='row'] .sceneCell {
+  transition:
+    transform 170ms cubic-bezier(0.2, 0.8, 0.25, 1),
+    opacity var(--t-fast) var(--ease);
+}
+.cell[data-row-drag] button[data-state],
+.sceneCell[data-row-drag] > * {
+  opacity: 0;
+}
+.cell[data-row-drag]::after {
+  border-color: var(--teal);
+  background: var(--teal-wash);
+}
+.sceneCell::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 2px dashed transparent;
+  border-radius: 11px;
+  pointer-events: none;
+}
+.sceneCell[data-row-drag]::after {
+  border-color: var(--teal);
+  background: var(--teal-wash);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lift,
+  .grid[data-dragging='row'] .cell,
+  .grid[data-dragging='row'] .sceneCell {
+    transition: none;
+  }
+  /* No lean: the word "Swap" says it. */
+  .cell[data-target='swap'] button[data-state] {
+    transform: none;
+  }
 }
 
 /* ---------- Scenes ---------- */
@@ -385,17 +633,6 @@
   min-width: 0;
   min-height: 0;
   border-radius: var(--r-md);
-}
-.sceneCell[data-drag] {
-  opacity: 0.55;
-}
-.sceneCell[data-over]::after {
-  content: '';
-  position: absolute;
-  inset: -3px;
-  border: 3px solid var(--teal);
-  border-radius: 11px;
-  pointer-events: none;
 }
 .sceneMore {
   position: absolute;
@@ -536,7 +773,9 @@
   }
 }
 @media (max-width: 1179px) {
-  .grid {
+  .grid,
+  .lift,
+  .rowLift {
     --pad-label-size: var(--fs-md);
   }
 }

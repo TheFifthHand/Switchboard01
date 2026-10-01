@@ -24,6 +24,7 @@ import { ArrangeView } from '../../src/app/views/arrange/ArrangeView';
 import { clearBlockClipboard } from '../../src/app/views/arrange/songActions';
 import { getStarter } from '../../src/content/starters';
 import type { Id } from '../../src/project/types';
+import * as cmd from '../../src/state/commands';
 import { setUiMode, setView } from '../../src/state/uiStore';
 import { actFrame, cleanup, fire, key, mount, pointer, wait } from './ui-harness';
 
@@ -307,7 +308,7 @@ describe('length, split and join', () => {
     pointer(document.body, 'pointermove', { clientX: start.clientX + 6, clientY: start.clientY });
     pointer(document.body, 'pointermove', { clientX: start.clientX + 3 * pass + 4, clientY: start.clientY });
     const bubble = document.querySelector<HTMLElement>('[data-testid="lane-bubble"]')!;
-    expect(bubble.textContent).toBe('×5 · 20 bars');
+    expect(bubble.textContent).toBe('5 passes · 20 bars');
     expect(bubble.hasAttribute('data-on')).toBe(true);
     expect(lane().dataset.dragging).toBe('resize');
     // The block widened and the next one rippled by the same amount; nothing committed yet.
@@ -363,7 +364,10 @@ describe('length, split and join', () => {
     act(() => blockEl(id).focus());
     key(blockEl(id), 'keydown', { key: 'Enter' });
     expect(menuItem('Join with next').getAttribute('aria-disabled')).toBe('true');
-    expect(document.querySelector('[role="menu"]')!.textContent).toContain('Only neighbours that play the same scene');
+    // The reason is said once (in full under the item; the item itself carries a short hint).
+    const menuText = document.querySelector('[role="menu"]')!.textContent!;
+    expect(menuText.split('Only neighbours that play the same scene').length - 1).toBe(1);
+    expect(menuItem('Join with next').textContent).toContain('Not the same');
     key(document.activeElement!, 'keydown', { key: 'Escape' });
   });
 });
@@ -389,7 +393,9 @@ describe('parts', () => {
     const liftClip = project().tracks.find((t) => t.id === lead)!.clips[project().scenes.findIndex((s) => s.name === 'Lift')]!.name;
     click(menuItem(`Lift: ${liftClip}`));
     expect(parts()).toEqual({ [lead]: sceneId('Lift') });
-    expect(cellEl(groove, lead).textContent).toContain('from Lift');
+    // A layered part says where it comes from and what it plays.
+    expect(cellEl(groove, lead).textContent).toBe(`Lift:${liftClip}`);
+    expect(cellEl(groove, lead).querySelector('svg')).not.toBeNull();
     expect(cellEl(groove, lead).getAttribute('aria-label')).toBe(`Lead in Groove (block 2): plays “${liftClip}” from Lift`);
     // The block's length follows the longest clip it plays.
     expect(blockEl(groove).getAttribute('aria-label')).toContain('1 part changed');
@@ -422,31 +428,61 @@ describe('parts', () => {
     expect(blocks().find((b) => b.id === ids[0])!.parts).toBeUndefined();
   });
 
-  it('a scene card dropped onto a block layers it in (with a preview); between blocks it inserts a new block', async () => {
+  it('a scene card dropped onto a block fills its silent parts (with a preview); between blocks it inserts a new block', async () => {
     await setup();
     const ids = blockIds();
     const groove = ids[1];
+    // The parts Groove leaves silent that Lift has a clip for: what layering fills.
+    const p0 = project();
+    const liftRow = p0.scenes.findIndex((s) => s.name === 'Lift');
+    const grooveRow = p0.scenes.findIndex((s) => s.name === 'Groove');
+    const silent = p0.tracks.filter((t) => t.clips[liftRow] && !t.clips[grooveRow]).map((t) => t.id);
+    const both = p0.tracks.filter((t) => t.clips[liftRow]).map((t) => t.id);
+    expect(silent.length).toBeGreaterThan(0);
+    expect(both.length).toBeGreaterThan(silent.length);
     const card = byLabel<HTMLElement>('Scene Lift');
     const r = blockEl(groove).getBoundingClientRect();
     const cr = card.getBoundingClientRect();
     pointer(card, 'pointerdown', { clientX: cr.left + 20, clientY: cr.top + 10 });
     pointer(document.body, 'pointermove', { clientX: cr.left + 30, clientY: cr.top + 5 });
     pointer(document.body, 'pointermove', { clientX: r.left + r.width / 2, clientY: r.top + 60 });
-    // Layer preview: the block is outlined, says what will happen, and the parts that change say where from.
+    // Layer preview: the block is outlined, says what will happen, and the parts that change say where from and what.
     expect(blockEl(groove).dataset.layerTarget).toBe('on');
     expect(blockEl(groove).textContent).toContain('Layer Lift into Groove');
-    const previews = [...blockEl(groove).querySelectorAll<HTMLElement>('[data-cell][data-preview]')];
-    expect(previews.length).toBe(7);
-    expect(previews.every((c) => c.textContent!.includes('from Lift'))).toBe(true);
-    expect(document.querySelector('[data-testid="lane-ghost"]')!.textContent).toContain('Layer Lift into Groove');
+    let previews = [...blockEl(groove).querySelectorAll<HTMLElement>('[data-cell][data-preview]')];
+    expect(previews.map((c) => c.dataset.track).sort()).toEqual([...silent].sort());
+    expect(previews.every((c) => c.textContent!.startsWith('Lift:'))).toBe(true);
+    const ghost = () => document.querySelector('[data-testid="lane-ghost"]')!.textContent!;
+    expect(ghost()).toContain('Layer Lift into Groove');
+    expect(ghost()).toContain(`Shift replaces ${both.length} parts`);
     expect(document.querySelector('[data-testid="lane-slot"]')!.hasAttribute('data-on')).toBe(false);
+    // Holding Shift turns it into Replace: every part Lift has, said in the preview.
+    key(window, 'keydown', { key: 'Shift', shiftKey: true });
+    expect(ghost()).toContain('Replace Groove’s parts with Lift’s');
+    expect(blockEl(groove).textContent).toContain('Replace Groove’s parts with Lift’s');
+    previews = [...blockEl(groove).querySelectorAll<HTMLElement>('[data-cell][data-preview]')];
+    expect(previews.length).toBe(both.length);
+    key(window, 'keyup', { key: 'Shift' });
+    expect(ghost()).toContain('Layer Lift into Groove');
     const before = undoCount();
     pointer(document.body, 'pointerup', { clientX: r.left + r.width / 2, clientY: r.top + 60 });
     const parts = blocks()[1].parts!;
+    expect(Object.keys(parts).sort()).toEqual([...silent].sort());
     expect(Object.values(parts).every((v) => v === sceneId('Lift'))).toBe(true);
-    expect(Object.keys(parts).length).toBe(7);
     expect(undoCount()).toBe(before + 1);
     expect(runtimeStore.getState().notice?.text).toContain('Layered Lift into Groove');
+    expect(runtimeStore.getState().notice?.action).toBe('undo');
+    // Shift held while dropping replaces (one more undo step).
+    act(() => session.undo());
+    await settle();
+    pointer(card, 'pointerdown', { clientX: cr.left + 20, clientY: cr.top + 10 });
+    pointer(document.body, 'pointermove', { clientX: cr.left + 30, clientY: cr.top + 5, shiftKey: true });
+    pointer(document.body, 'pointermove', { clientX: r.left + r.width / 2, clientY: r.top + 60, shiftKey: true });
+    pointer(document.body, 'pointerup', { clientX: r.left + r.width / 2, clientY: r.top + 60, shiftKey: true });
+    expect(Object.keys(blocks()[1].parts!).sort()).toEqual([...both].sort());
+    expect(runtimeStore.getState().notice?.text).toContain('Replaced');
+    act(() => session.undo());
+    await settle();
 
     // Between blocks 3 and 4: the slot opens there and the drop inserts a block.
     const card2 = byLabel<HTMLElement>('Scene Break');
@@ -696,3 +732,447 @@ describe('real input (the browser own pointer events and pointer capture)', () =
   });
 });
 
+
+/* ------------------------------------------------------------------ */
+/* The fix round: scale, follow, lock, second pointer, feedback        */
+/* ------------------------------------------------------------------ */
+
+const scroller = () => lane().children[1] as HTMLElement;
+/** Web Animations started by the lane (not CSS transitions such as a box-shadow fading). */
+const scriptAnimations = (el: Element) => el.getAnimations().filter((a) => !(a instanceof CSSTransition) && !(a instanceof CSSAnimation));
+const widthOf = (id: Id) => parseFloat(blockEl(id).style.width);
+const notice = () => runtimeStore.getState().notice;
+const laneButton = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Song lane view"] button')].find((b) => (b.getAttribute('aria-label') ?? b.textContent) === name)!;
+
+describe('the scale stays put while editing', () => {
+  it('a drop that makes the song longer keeps every block its size; the dropped block stays under the pointer and the lane scrolls instead', async () => {
+    await setup();
+    const ids = blockIds();
+    const w0 = ids.map(widthOf);
+    const fitsBefore = scroller().scrollWidth <= scroller().clientWidth + 1;
+    // Drag the last block's right edge out to 12 passes: the song gets far longer than the lane.
+    const last = ids[5];
+    const edge = blockEl(last).querySelector<HTMLElement>('[data-edge]')!;
+    const r = edge.getBoundingClientRect();
+    const pass = widthOf(last) / blocks()[5].repeats;
+    const start = { clientX: r.left + r.width / 2, clientY: r.top + 20 };
+    const end = { clientX: start.clientX + 10 * pass + 4, clientY: start.clientY };
+    pointer(edge, 'pointerdown', start);
+    pointer(document.body, 'pointermove', { clientX: start.clientX + 6, clientY: start.clientY });
+    pointer(document.body, 'pointermove', end);
+    const leftDuring = blockEl(last).getBoundingClientRect().left;
+    pointer(document.body, 'pointerup', end);
+    await settle();
+    expect(blocks()[5].repeats).toBe(12);
+    // No re-fit: the other blocks kept their widths, the edited block its left edge, and its right edge is where the pointer let go.
+    expect(ids.slice(0, 5).map(widthOf)).toEqual(w0.slice(0, 5));
+    expect(blockEl(last).getBoundingClientRect().left).toBeCloseTo(leftDuring, 0);
+    expect(Math.abs(blockEl(last).getBoundingClientRect().right - (end.clientX - r.width / 2))).toBeLessThan(pass / 2 + 2);
+    expect(fitsBefore).toBe(true);
+    expect(scroller().scrollWidth).toBeGreaterThan(scroller().clientWidth);
+    // A Ctrl+drag copy that lengthens the song: same.
+    const xs = blockIds().map(placedX);
+    const at = startDrag(ids[1], xs[3] - xs[1] + 10, { ctrlKey: true });
+    pointer(document.body, 'pointerup', { ...at, ctrlKey: true });
+    await settle();
+    expect(blocks().length).toBe(7);
+    expect(ids.slice(0, 5).map(widthOf)).toEqual(w0.slice(0, 5));
+    const copy = blocks()[3].id;
+    const cr = blockEl(copy).getBoundingClientRect();
+    expect(at.clientX).toBeGreaterThanOrEqual(cr.left);
+    expect(at.clientX).toBeLessThanOrEqual(cr.right);
+  });
+
+  it('Fit song, the zoom buttons and Ctrl+wheel change the scale (gliding, the bar under the pointer stays put); a plain wheel never does', async () => {
+    await setup();
+    const ids = blockIds();
+    const fit = laneButton('Fit song');
+    expect(fit.disabled).toBe(true);
+    const w1 = widthOf(ids[1]);
+    // Zoom in: wider blocks; Fit song comes back.
+    click(laneButton('Zoom in'));
+    await actFrame();
+    expect(widthOf(ids[1])).toBeGreaterThan(w1);
+    expect(fit.disabled).toBe(false);
+    // The glide: a Web Animation of the block's width and place, about 200 ms.
+    const anim = scriptAnimations(blockEl(ids[1]))[0];
+    expect(anim).toBeDefined();
+    expect(Number(anim.effect!.getComputedTiming().duration)).toBeGreaterThanOrEqual(180);
+    expect(Number(anim.effect!.getComputedTiming().duration)).toBeLessThanOrEqual(220);
+    await settle(260);
+    click(fit);
+    await settle(260);
+    expect(widthOf(ids[1])).toBe(w1);
+    expect(fit.disabled).toBe(true);
+    // Ctrl+wheel over a block zooms around the pointer: that spot stays where it is on screen.
+    const b = blockEl(ids[2]).getBoundingClientRect();
+    const px = b.left + b.width * 0.5;
+    const fracBefore = (px - b.left) / b.width;
+    const wheel = (init: WheelEventInit) => fire(scroller(), new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: px, clientY: b.top + 30, ...init }));
+    const ev = wheel({ deltaY: -120, ctrlKey: true });
+    expect(ev.defaultPrevented).toBe(true);
+    await settle(260);
+    const b2 = blockEl(ids[2]).getBoundingClientRect();
+    expect(b2.width).toBeGreaterThan(b.width);
+    expect(Math.abs(b2.left + b2.width * fracBefore - px)).toBeLessThan(2);
+    // A plain wheel only scrolls: the scale stays.
+    const w = widthOf(ids[2]);
+    const plain = wheel({ deltaY: 300 });
+    expect(plain.defaultPrevented).toBe(false);
+    await settle(100);
+    expect(widthOf(ids[2])).toBe(w);
+  });
+
+  it('a window resize fits the song again; an edit never does', async () => {
+    const m = await setup();
+    const ids = blockIds();
+    const w = widthOf(ids[1]);
+    // An edit: one pass fewer on Groove keeps the scale.
+    act(() => blockEl(ids[1]).focus());
+    key(blockEl(ids[1]), 'keydown', { key: '-' });
+    await settle();
+    expect(widthOf(ids[1])).toBeCloseTo((w * 3) / 4, 0);
+    // The lane gets wider (a window resize): the scale is chosen again for it (Fit song has nothing left to do).
+    const host = m.container.firstElementChild as HTMLElement;
+    host.style.width = '1800px';
+    await settle(400);
+    expect(widthOf(ids[1])).toBeGreaterThan((w * 3) / 4);
+    expect(laneButton('Fit song').disabled).toBe(true);
+    expect(scroller().scrollWidth).toBeLessThanOrEqual(scroller().clientWidth + 1);
+    // And back: the blocks glide to the scale that fits the narrower lane (the shorter song now fits a step larger than before).
+    const wide = widthOf(ids[1]);
+    host.style.width = '1320px';
+    await settle(400);
+    expect(widthOf(ids[1])).toBeLessThan(wide);
+    expect(widthOf(ids[1])).toBeGreaterThanOrEqual((w * 3) / 4);
+    expect(laneButton('Fit song').disabled).toBe(true);
+  });
+});
+
+describe('the lane never scrolls into empty room', () => {
+  it('room kept for a view never grows the lane: after something scrolls it past the song (a block in flight), the next placement brings it back', async () => {
+    await setup();
+    const ids = blockIds();
+    const sc = scroller();
+    const content = sc.firstElementChild as HTMLElement;
+    expect(sc.scrollWidth).toBeLessThanOrEqual(sc.clientWidth + 1);
+    // A block drawn far right for a moment (as a block springing in from where it was let go) makes room to scroll into…
+    const last = blockEl(ids[5]);
+    const resting = last.style.transform;
+    last.style.transform = 'translate3d(2400px, 0, 0)';
+    act(() => {
+      sc.scrollLeft = 600;
+      sc.dispatchEvent(new Event('scroll'));
+    });
+    expect(sc.scrollLeft).toBeGreaterThan(0);
+    last.style.transform = resting;
+    // …and the next placement (any render: here a selection) must not keep that room.
+    click(blockEl(ids[1]));
+    await settle();
+    expect(parseFloat(/max\(100%, (\d+)px\)/.exec(content.style.width)![1])).toBeLessThanOrEqual(sc.clientWidth);
+    expect(sc.scrollLeft).toBe(0);
+    // A drop released far right of the lane lands at the end without scrolling the lane; Undo puts it back.
+    act(() => blockEl(ids[0]).focus());
+    const r = blockEl(ids[0]).getBoundingClientRect();
+    pointer(blockEl(ids[0]), 'pointerdown', { clientX: r.left + 20, clientY: r.top + 12 });
+    for (let i = 1; i <= 10; i++) pointer(document.body, 'pointermove', { clientX: r.left + 20 + i * 140, clientY: r.top + 12 });
+    pointer(document.body, 'pointerup', { clientX: sc.getBoundingClientRect().right + 300, clientY: r.top + 12 });
+    expect(blockIds()[5]).toBe(ids[0]);
+    await settle();
+    expect(sc.scrollLeft).toBe(0);
+    act(() => session.undo());
+    await settle();
+    expect(blockIds()).toEqual(ids);
+    expect(sc.scrollLeft).toBe(0);
+    expect(sc.scrollWidth).toBeLessThanOrEqual(sc.clientWidth + 1);
+  });
+});
+
+describe('following the playhead', () => {
+  it('Follow playhead is on by default and remembered; the lane glides to the playhead, and waits after a scroll', async () => {
+    localStorage.removeItem('switchboard01.songLane');
+    // A song longer than the lane.
+    act(() => {
+      for (let i = 0; i < 8; i++) cmdAddBlock(project().scenes[i % 4].id);
+    });
+    await setup(700);
+    const follow = laneButton('Follow playhead');
+    expect(follow.getAttribute('aria-pressed')).toBe('true');
+    const sc = scroller();
+    expect(sc.scrollWidth).toBeGreaterThan(sc.clientWidth * 2);
+    // Play from a block far to the right (real transport): the lane glides there over several frames.
+    const ids = blockIds();
+    await act(async () => {
+      click(byLabel('Play song from block 9', blockEl(ids[8])));
+      await wait(50);
+    });
+    const start = performance.now();
+    while (!(runtimeStore.getState().playing && runtimeStore.getState().mode === 'song') && performance.now() - start < 8000) await settle(30);
+    const seen: number[] = [];
+    for (let i = 0; i < 40 && sc.scrollLeft < placedX(ids[8]) - sc.clientWidth; i++) {
+      await actFrame();
+      seen.push(sc.scrollLeft);
+    }
+    await settle(500);
+    const x8 = placedX(ids[8]);
+    expect(sc.scrollLeft).toBeGreaterThan(x8 - sc.clientWidth);
+    expect(sc.scrollLeft).toBeLessThanOrEqual(x8 + 10);
+    // Smooth: it passed through positions in between, not one jump.
+    expect(new Set(seen.map((v) => Math.round(v / 40))).size).toBeGreaterThan(2);
+    // The user scrolls away: the lane stays there (the song keeps playing).
+    act(() => {
+      sc.scrollLeft = 0;
+      sc.dispatchEvent(new Event('scroll'));
+    });
+    await settle(1200);
+    expect(sc.scrollLeft).toBe(0);
+    // Turned off: remembered.
+    click(follow);
+    expect(follow.getAttribute('aria-pressed')).toBe('false');
+    expect(JSON.parse(localStorage.getItem('switchboard01.songLane')!)).toEqual({ follow: false });
+    click(follow);
+    expect(JSON.parse(localStorage.getItem('switchboard01.songLane')!)).toEqual({ follow: true });
+    act(() => session.stop());
+  });
+});
+
+describe('locked while a take records', () => {
+  it('the lane says so in one line, shows no handles, and refuses edits quietly (no long toast)', async () => {
+    await setup();
+    const ids = blockIds();
+    const drums = trackId('Drums');
+    act(() => session.store.setLock('Recording a performance: the long message.', () => false));
+    act(() => patchRuntime({ recording: 'performance', notice: null }));
+    await actFrame();
+    try {
+      expect(lane().hasAttribute('data-locked')).toBe(true);
+      const line = document.querySelector<HTMLElement>('[data-testid="lane-lock"]')!;
+      expect(line.textContent).toContain('The song is locked while a take records.');
+      expect(getComputedStyle(blockEl(ids[0])).cursor).toBe('default');
+      expect(getComputedStyle(blockEl(ids[0]).querySelector('[data-edge]')!).display).toBe('none');
+      // + on a block, a cell click, a drag, Delete: nothing changes, no toast, the line nudges and the status says why.
+      act(() => blockEl(ids[0]).focus());
+      key(blockEl(ids[0]), 'keydown', { key: '+' });
+      click(cellEl(ids[1], drums));
+      key(blockEl(ids[0]), 'keydown', { key: 'Delete' });
+      startDrag(ids[0], 300);
+      expect(clone()).toBeNull();
+      pointer(document.body, 'pointerup', { clientX: 900, clientY: 300 });
+      expect(blocks().map((b) => [b.id, b.repeats, b.parts])).toEqual(getStarter('house')!.build().arrangement.blocks.map((b, i) => [ids[i], b.repeats, b.parts]));
+      expect(notice()).toBeNull();
+      expect(document.querySelector('[data-testid="lane-lock"] [data-pulse]')).not.toBeNull();
+      expect(status()).toBe('The song is locked while a take records.');
+    } finally {
+      act(() => session.store.setLock(null));
+      act(() => patchRuntime({ recording: 'off' }));
+    }
+    await actFrame();
+    expect(lane().hasAttribute('data-locked')).toBe(false);
+    key(blockEl(ids[0]), 'keydown', { key: '+' });
+    expect(blocks()[0].repeats).toBe(3);
+  });
+});
+
+describe('one pointer at a time', () => {
+  it('a second pointer pressing or clicking a part cell while a block is carried changes nothing and does not end the drag', async () => {
+    await setup();
+    const ids = blockIds();
+    const drums = trackId('Drums');
+    const xs = ids.map(placedX);
+    const at = startDrag(ids[0], xs[3] - xs[0] + 10);
+    const cell = cellEl(ids[5], drums);
+    const down = pointer(cell, 'pointerdown', { pointerId: 2, pointerType: 'touch', isPrimary: false, clientX: 1000, clientY: 400 });
+    expect(down.defaultPrevented).toBe(true);
+    const c = new PointerEvent('click', { bubbles: true, cancelable: true, pointerId: 2, pointerType: 'touch' });
+    fire(cell, c);
+    expect(blocks().every((b) => !b.parts)).toBe(true);
+    expect(lane().dataset.dragging).toBe('move');
+    expect(clone()).not.toBeNull();
+    pointer(document.body, 'pointerup', at);
+    expect(blockIds().indexOf(ids[0])).toBe(3);
+    expect(blocks().every((b) => !b.parts)).toBe(true);
+    // With nothing carried, the same click switches the part.
+    await settle();
+    click(cellEl(ids[5], drums));
+    expect(blocks()[5].parts).toEqual({ [drums]: null });
+  });
+});
+
+describe('feedback', () => {
+  it('a cell click says what it did with Undo; quick clicks on the same cell are one undo step; hovering says what a click does', async () => {
+    await setup();
+    const ids = blockIds();
+    const drums = trackId('Drums');
+    const before = undoCount();
+    click(cellEl(ids[1], drums));
+    expect(notice()?.text).toBe('Drums off in Groove');
+    expect(notice()?.action).toBe('undo');
+    expect(notice()?.text).not.toMatch(/next bar/);
+    click(cellEl(ids[1], drums));
+    expect(notice()?.text).toBe('Drums back on in Groove');
+    click(cellEl(ids[1], drums));
+    expect(blocks()[1].parts).toEqual({ [drums]: null });
+    expect(undoCount()).toBe(before + 1);
+    act(() => session.undo());
+    expect(blocks()[1].parts).toBeUndefined();
+    // After a pause, a click is its own step.
+    await settle(600);
+    click(cellEl(ids[1], drums));
+    await settle(600);
+    click(cellEl(ids[1], drums));
+    expect(undoCount()).toBe(before + 2);
+    // The hover bubble and the description say what a click does.
+    expect(document.getElementById(cellEl(ids[1], drums).getAttribute('aria-describedby')!)!.textContent).toContain('switches this part off');
+    pointer(cellEl(ids[2], drums), 'pointerover', { pointerType: 'mouse', buttons: 0 });
+    await settle(450);
+    expect(document.querySelector('[data-testid="cell-tip"]')!.textContent).toBe('Click: switch Drums off in this block');
+    pointer(cellEl(ids[2], drums), 'pointerdown', { pointerType: 'mouse' });
+    expect(document.querySelector('[data-testid="cell-tip"]')).toBeNull();
+  });
+
+  it('moves, lengths and renames name the block in a short Undo toast (one per gesture); the edge selects its block', async () => {
+    await setup();
+    const ids = blockIds();
+    act(() => blockEl(ids[0]).focus());
+    key(blockEl(ids[0]), 'keydown', { key: 'ArrowRight', altKey: true });
+    expect(notice()).toMatchObject({ text: 'Moved Intro to position 2', action: 'undo' });
+    key(blockEl(ids[0]), 'keydown', { key: '+' });
+    expect(notice()).toMatchObject({ text: 'Intro: 3 passes, 12 bars', action: 'undo' });
+    key(blockEl(ids[0]), 'keydown', { key: 'F2' });
+    const input = blockEl(ids[0]).querySelector<HTMLInputElement>('input')!;
+    typeInto(input, 'Opening');
+    key(input, 'keydown', { key: 'Enter' });
+    expect(notice()).toMatchObject({ text: 'Block 2 is now called Opening', action: 'undo' });
+    // An edge drag: one toast for the whole drag, and the block is selected.
+    click(blockEl(ids[3]));
+    const edge = blockEl(ids[2]).querySelector<HTMLElement>('[data-edge]')!;
+    const r = edge.getBoundingClientRect();
+    pointer(edge, 'pointerdown', { clientX: r.left + 6, clientY: r.top + 20 });
+    for (let i = 1; i <= 6; i++) pointer(document.body, 'pointermove', { clientX: r.left + 6 + i * 30, clientY: r.top + 20 });
+    expect(selected()).toEqual([ids[2]]);
+    act(() => patchRuntime({ notice: null }));
+    pointer(document.body, 'pointerup', { clientX: r.left + 6 + 180, clientY: r.top + 20 });
+    expect(notice()?.text).toMatch(/^Lift: \d+ passes, \d+ bars$/);
+  });
+
+  it('a dropped block settles in about 200 ms from where it was let go, starting at once', async () => {
+    await setup();
+    const ids = blockIds();
+    const xs = ids.map(placedX);
+    const at = startDrag(ids[0], xs[3] - xs[0] + 10);
+    const dropLeft = clone()!.getBoundingClientRect().left;
+    pointer(document.body, 'pointerup', at);
+    const el = blockEl(ids[0]);
+    const anim = scriptAnimations(el)[0];
+    expect(anim).toBeDefined();
+    const timing = anim.effect!.getComputedTiming();
+    expect(Number(timing.duration)).toBeGreaterThanOrEqual(180);
+    expect(Number(timing.duration)).toBeLessThanOrEqual(220);
+    expect(Number(timing.delay ?? 0)).toBe(0);
+    // It starts where the block was let go.
+    const first = (anim.effect as KeyframeEffect).getKeyframes()[0].transform as string;
+    const content = lane().querySelector<HTMLElement>('[class*="content"]')!.getBoundingClientRect().left;
+    expect(Math.abs(Number(/translate3d\((-?[\d.]+)px/.exec(first)![1]) + content - dropLeft)).toBeLessThan(3);
+    await settle(260);
+    expect(scriptAnimations(el).length).toBe(0);
+    expect(el.hasAttribute('data-settling')).toBe(false);
+  });
+
+  it('labels under a dragged block and next to a scene card stay inside the lane and the window', async () => {
+    await setup(900);
+    const ids = blockIds();
+    const sc = scroller().getBoundingClientRect();
+    // Carry the first block (a copy, so the label is long) to the lane's right edge.
+    const r = blockEl(ids[0]).getBoundingClientRect();
+    pointer(blockEl(ids[0]), 'pointerdown', { clientX: r.left + 20, clientY: r.top + 12 });
+    pointer(document.body, 'pointermove', { clientX: r.left + 30, clientY: r.top + 12, ctrlKey: true });
+    pointer(document.body, 'pointermove', { clientX: sc.right - 70, clientY: r.top + 12, ctrlKey: true });
+    const badge = document.querySelector<HTMLElement>('[data-testid="lane-badge"]')!;
+    expect(badge.textContent).toMatch(/\+ Copy to position \d+/);
+    const b = badge.getBoundingClientRect();
+    expect(b.right).toBeLessThanOrEqual(sc.right);
+    expect(b.left).toBeGreaterThanOrEqual(sc.left);
+    key(window, 'keydown', { key: 'Escape' });
+    pointer(document.body, 'pointerup', { clientX: sc.right - 70, clientY: r.top + 12 });
+    // A scene card near the window's right edge: its label floats on the pointer's left.
+    await settle();
+    const card = byLabel<HTMLElement>('Scene Lift').getBoundingClientRect();
+    const lastBlock = blockEl(blockIds()[5]).getBoundingClientRect();
+    pointer(byLabel<HTMLElement>('Scene Lift'), 'pointerdown', { clientX: card.left + 20, clientY: card.top + 10 });
+    pointer(document.body, 'pointermove', { clientX: card.left + 30, clientY: card.top + 5 });
+    pointer(document.body, 'pointermove', { clientX: window.innerWidth - 20, clientY: lastBlock.top + 60 });
+    await actFrame();
+    const ghost = document.querySelector<HTMLElement>('[data-testid="lane-ghost"]')!.getBoundingClientRect();
+    expect(ghost.right).toBeLessThanOrEqual(window.innerWidth);
+    expect(ghost.left).toBeGreaterThanOrEqual(0);
+    key(window, 'keydown', { key: 'Escape' });
+    pointer(document.body, 'pointerup', { clientX: 10, clientY: 10 });
+  });
+
+  it('dropping a scene card on a block of the same scene says so and changes nothing', async () => {
+    await setup();
+    const ids = blockIds();
+    const groove = ids[1];
+    const card = byLabel<HTMLElement>('Scene Groove');
+    const r = blockEl(groove).getBoundingClientRect();
+    const cr = card.getBoundingClientRect();
+    pointer(card, 'pointerdown', { clientX: cr.left + 20, clientY: cr.top + 10 });
+    pointer(document.body, 'pointermove', { clientX: cr.left + 30, clientY: cr.top + 5 });
+    pointer(document.body, 'pointermove', { clientX: r.left + r.width / 2, clientY: r.top + 60 });
+    expect(document.querySelector('[data-testid="lane-ghost"]')!.textContent).toContain('Groove already plays Groove');
+    expect(blockEl(groove).textContent).not.toContain('Layer Groove into Groove');
+    expect(blockEl(groove).dataset.layerTarget).toBe('none');
+    const before = undoCount();
+    pointer(document.body, 'pointerup', { clientX: r.left + r.width / 2, clientY: r.top + 60, shiftKey: true });
+    expect(undoCount()).toBe(before);
+    expect(blocks()[1].parts).toBeUndefined();
+    expect(blockIds()).toEqual(ids);
+  });
+
+  it('when the block playing now is removed, the next one says it takes over; nothing says Playing', async () => {
+    await setup();
+    const ids = blockIds();
+    act(() => patchRuntime({ playing: true, mode: 'song', songBlock: 2, songBlockId: ids[2] }));
+    await actFrame();
+    expect(blockEl(ids[2]).dataset.current).toBeDefined();
+    act(() => blockEl(ids[2]).focus());
+    key(blockEl(ids[2]), 'keydown', { key: 'Delete' });
+    await actFrame();
+    expect(document.querySelector('[data-current]')).toBeNull();
+    expect(lane().textContent).not.toContain('Playing');
+    expect(blockEl(ids[3]).dataset.next).toBeDefined();
+    expect(blockEl(ids[3]).textContent).toContain('Next');
+    expect(blockEl(ids[3]).getAttribute('aria-label')).toContain('plays next');
+    expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toContain(`next: ${project().scenes.find((s) => s.id === blocks()[2].sceneId)!.name} (block 3)`);
+    // The hand-over: the runtime moves on to that block.
+    act(() => patchRuntime({ songBlock: 2, songBlockId: ids[3] }));
+    await actFrame();
+    expect(blockEl(ids[3]).dataset.current).toBeDefined();
+    expect(blockEl(ids[3]).dataset.next).toBeUndefined();
+  });
+
+  it('dragging a block edge near the lane end scrolls the lane, and the scrolled distance counts', async () => {
+    await setup(700);
+    const ids = blockIds();
+    const sc = scroller();
+    const right = sc.getBoundingClientRect().right;
+    const id = ids[1];
+    const edge = blockEl(id).querySelector<HTMLElement>('[data-edge]')!;
+    const r = edge.getBoundingClientRect();
+    const r0 = blocks()[1].repeats;
+    pointer(edge, 'pointerdown', { clientX: r.left + 6, clientY: r.top + 20 });
+    pointer(document.body, 'pointermove', { clientX: r.left + 12, clientY: r.top + 20 });
+    pointer(document.body, 'pointermove', { clientX: right - 4, clientY: r.top + 20 });
+    const travel = right - 4 - (r.left + 6);
+    const pass = widthOf(id) / r0;
+    await settle(700);
+    expect(sc.scrollLeft).toBeGreaterThan(100);
+    pointer(document.body, 'pointerup', { clientX: right - 4, clientY: r.top + 20 });
+    expect(blocks()[1].repeats).toBeGreaterThan(Math.min(16, r0 + Math.round(travel / pass)));
+  });
+});
+
+function cmdAddBlock(sceneId: Id) {
+  const r = cmd.addBlock(session.store, sceneId, undefined, 4);
+  expect(r.changed).toBe(true);
+}

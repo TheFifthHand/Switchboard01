@@ -7,12 +7,13 @@
  * the pass dividers map bars through the same per-block geometry, so bar
  * numbers always line up with block edges even when a short block is widened.
  *
- * The scale (pixels per bar) comes from a fixed ladder of zoom steps: the
- * largest step at which the whole song fits the lane. Because the steps are
- * coarse, most edits (one more pass, a block moved, split or joined) keep the
- * scale, so blocks do not change size under the pointer. A song that does
- * not fit even at the smallest step scrolls, at the step where its shortest
- * block is about the minimum width (within SCROLL_MAX_PX_PER_BAR).
+ * The scale (pixels per bar) comes from a fixed ladder of zoom steps. The
+ * lane fits the song (the largest step at which it fits) when it opens, when
+ * the window is resized and on Fit song; edits keep the scale it has (a
+ * longer song scrolls), so blocks never change size under the pointer. A song
+ * that does not fit even at the smallest step scrolls, at the step where its
+ * shortest block is about the minimum width (within SCROLL_MAX_PX_PER_BAR).
+ * Zooming keeps an anchor (a block and how far into it) where it is on screen.
  */
 
 export interface LaneBlockInput {
@@ -186,6 +187,65 @@ export function rulerMarks(layout: SongLayout, minSpacing = 56): RulerMark[] {
     }
   });
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Zoom: the scale stays put while the song is edited                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The next zoom step from `pxPerBar` (dir 1 = zoom in, -1 = zoom out), or
+ * null at the end of the ladder.
+ */
+export function zoomStep(pxPerBar: number, dir: 1 | -1): number | null {
+  if (dir > 0) return ZOOM_STEPS.find((s) => s > pxPerBar + 1e-6) ?? null;
+  for (let i = ZOOM_STEPS.length - 1; i >= 0; i--) if (ZOOM_STEPS[i] < pxPerBar - 1e-6) return ZOOM_STEPS[i];
+  return null;
+}
+
+/** A place on the lane that a zoom keeps still: a block and how far into it (0..1; past its end beyond 1). */
+export interface LaneAnchor {
+  id: string;
+  f: number;
+}
+
+/** The anchor at lane position `x` (null on an empty lane). */
+export function anchorAt(layout: SongLayout, x: number): LaneAnchor | null {
+  const b = layout.blocks;
+  if (!b.length) return null;
+  const hit = b.find((lb) => x < lb.x + lb.width) ?? b[b.length - 1];
+  return { id: hit.id, f: (x - hit.x) / Math.max(1, hit.width) };
+}
+
+/** Where an anchor is on a (re-scaled) layout, or null when its block is gone. */
+export function anchorX(layout: SongLayout, a: LaneAnchor): number | null {
+  const lb = layout.blocks.find((b) => b.id === a.id);
+  return lb ? lb.x + a.f * lb.width : null;
+}
+
+/** The scroll position that puts lane position `x` at `screenX` in a viewport of `viewport` px (clamped to the content). */
+export function scrollToShow(x: number, screenX: number, viewport: number, contentWidth: number): number {
+  return Math.max(0, Math.min(Math.max(0, contentWidth - viewport), x - screenX));
+}
+
+/* ------------------------------------------------------------------ */
+/* Following the playhead                                              */
+/* ------------------------------------------------------------------ */
+
+/** Share of the viewport left of the playhead after the lane turns a page. */
+export const FOLLOW_LEAD = 0.2;
+
+/**
+ * Where the lane should scroll so the playhead at lane position `x` stays in
+ * view, or null when it is comfortably in view already: it turns a page when
+ * the playhead nears the right edge (or is left of the view), putting it
+ * FOLLOW_LEAD of the way in.
+ */
+export function followScroll(x: number, scrollLeft: number, viewport: number, contentWidth: number): number | null {
+  if (viewport <= 0 || contentWidth <= viewport) return null;
+  if (x >= scrollLeft + 4 && x <= scrollLeft + viewport * 0.85) return null;
+  const to = scrollToShow(x, viewport * FOLLOW_LEAD, viewport, contentWidth);
+  return Math.abs(to - scrollLeft) < 1 ? null : to;
 }
 
 /** Lane position of insertion gap `gap` (0 = before the first block, n = after the last). */

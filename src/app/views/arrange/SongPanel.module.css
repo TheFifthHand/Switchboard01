@@ -163,16 +163,15 @@
   /* Geometry shared by the part names, the blocks and the overlays. */
   --ruler-h: 18px;
   --head-h: 40px;
-  --row-h: 15px;
+  /* Part rows grow with the window's height: 15 px at 768 high, up to 24 px at 1080 and above. */
+  --row-h: clamp(15px, calc(15px + (100vh - 768px) * 0.0289), 24px);
   --row-gap: 2px;
   --rows: 8;
   --cells-pad: 4px;
   --track-h: calc(var(--head-h) + 2 * var(--cells-pad) + var(--rows) * var(--row-h) + (var(--rows) - 1) * var(--row-gap) + 2px);
   --names-w: 84px;
-  /* Motion: blocks slide aside (ease-out) and settle into a slot (a little spring). */
-  --lane-slide: 170ms;
+  /* Motion: blocks slide aside and settle into a slot with Web Animations (laneMotion.ts); these are for the rest. */
   --lane-ease: cubic-bezier(0.2, 0.8, 0.25, 1);
-  --lane-spring: cubic-bezier(0.3, 1.32, 0.5, 1);
   --clip: #d2d7db;
   --clip-2: #c3c9ce;
   --seam: #b7bdc2;
@@ -233,6 +232,10 @@
   overflow-y: hidden;
   padding-bottom: 2px;
   scrollbar-width: thin;
+  /* The lane's own background, opaque and scrolling with the blocks: the browser can then scroll the
+     lane on the compositor (no repaint per scrolled frame) and still keep crisp text. */
+  background: linear-gradient(180deg, var(--sunk), var(--surface-lo) 40%);
+  background-attachment: local;
 }
 .scroller::-webkit-scrollbar {
   height: 8px;
@@ -368,8 +371,9 @@
   -webkit-user-select: none;
   touch-action: pan-y;
   outline: none;
-  transition: transform var(--lane-slide) var(--lane-ease);
   will-change: transform;
+  /* What happens inside a block (a cell switched, a name typed) never lays out the rest of the lane. */
+  contain: layout style;
   /* Narrow blocks drop the pass detail from the header (container query below). */
   container-type: inline-size;
 }
@@ -385,9 +389,6 @@
 }
 .block:hover {
   background: linear-gradient(180deg, #faf8f4, var(--shell-hi) 60%);
-}
-.track[data-instant] .block {
-  transition: none !important;
 }
 /* Selected (teal) and playing (amber) frames sit inside the block so neighbours never move. */
 .block::before,
@@ -419,10 +420,13 @@
 }
 .block[data-settling] {
   z-index: 5;
-  transition:
-    transform 300ms var(--lane-spring),
-    box-shadow 220ms var(--lane-ease);
   box-shadow: var(--shadow-float);
+}
+/* The block playing now was removed: this one takes over at the next bar. */
+.block[data-next]::before {
+  box-shadow: inset 0 0 0 2px var(--amber-glow);
+  border: 2px dashed var(--amber);
+  border-right-width: 2px;
 }
 .block[data-missing] {
   background: repeating-linear-gradient(135deg, var(--surface-hi) 0 6px, var(--surface) 6px 12px);
@@ -433,16 +437,13 @@
 .block[data-layer-target='none']::after {
   box-shadow: inset 0 0 0 2px var(--line-strong);
 }
-.lane[data-dragging='move'] .block,
+/* While something is carried the pointer is captured: the captured element shows the cursor
+   (laneGestures sets it), so no rule here restyles every block. */
 .lane[data-dragging='move'] .scroller {
   cursor: grabbing;
 }
-.lane[data-dragging='resize'] .block,
 .lane[data-dragging='resize'] .scroller {
   cursor: col-resize;
-}
-.lane[data-dragging='resize'] .block {
-  transition-duration: 90ms;
 }
 
 /* Block header */
@@ -520,6 +521,14 @@
   font-weight: 650;
   color: var(--amber-ink);
 }
+.nextTag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  font-weight: 650;
+  color: var(--amber-ink);
+}
 .layerTag {
   display: inline-flex;
   align-items: center;
@@ -530,6 +539,9 @@
   color: var(--teal-ink);
   text-overflow: ellipsis;
 }
+.layerTag[data-none] {
+  color: var(--ink-2);
+}
 .skipped {
   color: var(--coral-ink);
   font-weight: 600;
@@ -539,7 +551,7 @@
   flex: none;
   place-items: center;
   width: 26px;
-  height: 28px;
+  height: 30px;
   padding: 0;
   margin: 0;
   border: 1px solid transparent;
@@ -566,6 +578,13 @@
   opacity: 0.4;
   cursor: default;
 }
+/* Where the block is wide enough, its play and actions buttons get a full 32 px target. */
+@container (min-width: 150px) {
+  .hbtn {
+    width: 32px;
+    height: 32px;
+  }
+}
 .renameInput {
   width: 100%;
   min-width: 0;
@@ -586,8 +605,23 @@
   display: flex;
   flex: 1;
   flex-direction: column;
+  min-height: 0;
+}
+/* The rows of a block scrolled out of view are not styled, laid out or painted until they come near it
+   (the pass lines, scissors and edge handle live outside this box, so nothing is clipped). */
+.rows {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   gap: var(--row-gap);
-  padding: var(--cells-pad) 3px var(--cells-pad) 3px;
+  min-height: 0;
+  padding: var(--cells-pad) 3px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 100px auto 120px;
+}
+.face .cells {
+  gap: var(--row-gap);
+  padding: var(--cells-pad) 3px;
 }
 /* Faint lines between passes (also right while an edge drag changes the number of passes). */
 .cells::after {
@@ -630,7 +664,7 @@
   border-radius: 3px;
   background: transparent;
   color: var(--ink);
-  font-size: 10.5px;
+  font-size: clamp(10.5px, calc(var(--row-h) * 0.52), 12.5px);
   line-height: 1;
   text-align: left;
   white-space: nowrap;
@@ -644,6 +678,18 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* A layered part: "Lift:" stays readable, the clip name gives way first. */
+.cellFrom {
+  flex: 0 1 auto;
+  min-width: 2.5em;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cellFrom + .cellText {
+  flex: 1 1 0;
+  font-weight: 500;
 }
 .cell[data-kind='scene'] {
   background: var(--clip);
@@ -695,7 +741,7 @@ button.cell[data-kind='empty']:hover {
   right: 0;
   display: grid;
   place-items: center;
-  width: 16px;
+  width: 24px;
   height: 100%;
   padding: 0;
   margin: 0;
@@ -739,34 +785,49 @@ button.cell[data-kind='empty']:hover {
 }
 .split {
   position: absolute;
-  /* Touching the block's bottom edge, so moving onto it keeps the block hovered. */
+  /* Touching the block's bottom edge, so moving onto it keeps the block hovered; a 24 px target around the chip. */
   top: calc(100% - 1px);
-  left: -9px;
+  left: -12px;
   display: grid;
-  place-items: center;
-  width: 18px;
-  height: 16px;
+  place-items: start center;
+  width: 24px;
+  height: 24px;
   padding: 0;
   margin: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--shell-hi);
+  border: 0;
+  background: transparent;
   color: var(--ink-2);
-  box-shadow: var(--shadow-raised);
   opacity: 0;
   pointer-events: auto;
   cursor: pointer;
   transition: opacity var(--t-fast) var(--ease);
+}
+.splitChip {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 17px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--shell-hi);
+  box-shadow: var(--shadow-raised);
 }
 .block:hover .split,
 .block:focus-within .split,
 .split:focus-visible {
   opacity: 1;
 }
-.split:hover {
+.split:hover .splitChip,
+.split:focus-visible .splitChip {
   border-color: var(--teal);
   background: var(--teal);
   color: #fff;
+}
+.split:focus-visible {
+  outline: none;
+}
+.split:focus-visible .splitChip {
+  box-shadow: 0 0 0 2px var(--shell-hi), 0 0 0 4px var(--teal);
 }
 
 /* Right-edge handle: drag for passes. Its grip sits on the seam, over the next block. */
@@ -830,30 +891,40 @@ button.cell[data-kind='empty']:hover {
 
 .seams {
   position: relative;
-  height: 22px;
+  height: 26px;
   pointer-events: none;
 }
+/* A 24 px target around the small Join chip on the seam. */
 .join {
   position: absolute;
-  top: 4px;
+  top: 1px;
   pointer-events: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  height: 15px;
-  padding: 0 6px 0 4px;
+  display: grid;
+  place-items: center;
+  min-width: 48px;
+  height: 24px;
+  padding: 0 2px;
   margin: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--shell-hi);
+  border: 0;
+  background: transparent;
   color: var(--ink-2);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1;
   transform: translateX(-50%);
   cursor: pointer;
 }
-.join:hover {
+.joinChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 17px;
+  padding: 0 7px 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--shell-hi);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+}
+.join:hover .joinChip {
   border-color: var(--teal);
   color: var(--teal-ink);
 }
@@ -863,13 +934,24 @@ button.cell[data-kind='empty']:hover {
 
 /* ---------- gesture feedback ---------- */
 
+/* Where the lifted copy floats: over the lane's visible part (not in the scrolled content), from a
+   little above the blocks (room for the lift) to the bottom of the seam strip (room for its label). */
+.carry {
+  position: absolute;
+  top: calc(4px + var(--ruler-h) - 6px);
+  left: var(--names-w);
+  right: 6px;
+  height: calc(var(--track-h) + 6px + 26px);
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 6;
+}
 /* The lifted copy of the dragged blocks (follows the pointer horizontally). */
 .clone {
   position: absolute;
-  top: 0;
+  top: 6px;
   left: 0;
-  height: 100%;
-  z-index: 6;
+  height: var(--track-h);
   pointer-events: none;
   will-change: transform;
   transform-origin: 50% 60%;
@@ -917,6 +999,11 @@ button.cell[data-kind='empty']:hover {
 }
 .badge[data-copy] {
   background: var(--teal-ink);
+}
+/* In the right half of the view the label ends at the dragged block's right edge (it is kept inside the lane either way). */
+.badge[data-side='right'] {
+  left: auto;
+  right: 0;
 }
 
 
@@ -1024,6 +1111,17 @@ button.cell[data-kind='empty']:hover {
   color: var(--teal-ink);
   font-weight: 600;
 }
+.ghostHint {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.ghostHint:empty {
+  display: none;
+}
+.ghost[data-replace][data-layer] {
+  border-color: var(--teal-ink);
+  box-shadow: var(--shadow-float), inset 0 0 0 1px var(--teal);
+}
 
 /* ---------- playhead ---------- */
 
@@ -1060,6 +1158,72 @@ button.cell[data-kind='empty']:hover {
 }
 .lane[data-dragging] .ruler {
   opacity: 0.45;
+}
+/* While the scale glides, the ruler and the seams (drawn at the new scale) wait for the blocks. */
+.lane[data-zooming] .ruler,
+.lane[data-zooming] .seams {
+  opacity: 0;
+}
+
+/* ---------- locked while a take records ---------- */
+
+.lane[data-locked] .block,
+.lane[data-locked] .cell,
+.lane[data-locked] .scroller {
+  cursor: default;
+}
+.lane[data-locked] .edge,
+.lane[data-locked] .split,
+.lane[data-locked] .pick,
+.lane[data-locked] .join {
+  display: none;
+}
+.lockLine {
+  position: absolute;
+  left: var(--names-w);
+  right: 6px;
+  bottom: 3px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 8;
+}
+.lockText {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 10px;
+  border: 1px solid var(--coral);
+  border-radius: 10px;
+  background: var(--shell-hi);
+  color: var(--coral-ink);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow-raised);
+}
+/* A refused edit: the line nudges once (a new key restarts it). */
+.lockText[data-pulse] {
+  animation: lockNudge 360ms var(--lane-ease);
+}
+@keyframes lockNudge {
+  0% {
+    transform: translateX(0);
+    background: var(--coral-wash);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  50% {
+    transform: translateX(4px);
+  }
+  75% {
+    transform: translateX(-2px);
+  }
+  100% {
+    transform: translateX(0);
+  }
 }
 
 /* ---------- empty ---------- */
@@ -1192,6 +1356,34 @@ button.cell[data-kind='empty']:hover {
   color: var(--ink-3);
   text-align: right;
 }
+.lane[data-locked] ~ .palette .card {
+  cursor: default;
+}
+
+/* Follow playhead, zoom and Fit song: how the lane is viewed (not the song). */
+.laneTools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+/* What a click on a part cell does (one bubble for the whole lane, shown on hover). */
+.cellTip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 264px;
+  padding: 5px 9px 6px;
+  border-radius: var(--r-md);
+  background: #2b2f34;
+  color: var(--ink-inverse);
+  box-shadow: 0 6px 20px rgba(20, 24, 28, 0.22), 0 1px 3px rgba(20, 24, 28, 0.2);
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 6px));
+}
 
 .menuLabel {
   padding: 4px 10px 2px 30px;
@@ -1216,6 +1408,9 @@ button.cell[data-kind='empty']:hover {
   .split,
   .edge::after {
     transition: none !important;
+  }
+  .lockText[data-pulse] {
+    animation: none;
   }
 }
 

@@ -8,198 +8,11 @@
  * cancel-and-regenerate on every change).
  */
 import { describe, expect, it } from 'vitest';
-import type { ClipBars, Id, Project } from '../../src/project/types';
+import type { ClipBars } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
-import { ProjectStore } from '../../src/state/projectStore';
-import type { SeqEvent, StartOptions } from '../../src/time/contracts';
-import { Sequencer, songBlocks, type NoteCut, type NoteEvent } from '../../src/time/sequencer';
-import { makeClip, makeProject, notesOf, ofKind, setClip } from './sequencer-fixtures';
-
-const BAR = 384;
-const LOOKAHEAD = 0.12;
-const TICKER = 0.025;
-const MARGIN = 0.01;
-const START = 0.05;
-
-/** Bars of the clips in each scene row. */
-const ROW_BARS = [2, 2, 1, 1];
-/** Every bar-note clip plays one note on each of its bar lines; the pitch says its row and which of its bars it is. */
-const pitchOf = (row: number, k: number) => 30 + row * 20 + k;
-
-function barClip(row: number) {
-  const bars = ROW_BARS[row] as ClipBars;
-  return makeClip(bars, Array.from({ length: bars }, (_, k) => [k * BAR, pitchOf(row, k), 48] as [number, number, number]), `bars${row}`);
-}
-
-/** One chord held through the whole clip. */
-function heldClip(row: number) {
-  const bars = ROW_BARS[row] as ClipBars;
-  return makeClip(bars, [[0, pitchOf(row, 0), bars * BAR]], `held${row}`);
-}
-
-/**
- * t1 and t2 play bar-note clips in every row; t4 holds a chord in rows 0, 1
- * and 3. Song: b0 row 0 x1 [0, 768), b1 row 1 x2 [768, 2304), b2 row 2 x2
- * [2304, 3072), b3 row 3 x1 [3072, 3456).
- */
-function fixture(): Project {
-  let p = makeProject(120);
-  ROW_BARS.forEach((_, row) => {
-    p = setClip(p, 't1', row, barClip(row));
-    p = setClip(p, 't2', row, barClip(row));
-    if (row !== 2) p = setClip(p, 't4', row, heldClip(row));
-  });
-  p.arrangement = {
-    tailSeconds: 1,
-    blocks: [
-      { id: 'b0', sceneId: p.scenes[0].id, repeats: 1 },
-      { id: 'b1', sceneId: p.scenes[1].id, repeats: 2 },
-      { id: 'b2', sceneId: p.scenes[2].id, repeats: 2 },
-      { id: 'b3', sceneId: p.scenes[3].id, repeats: 1 },
-    ],
-  };
-  return p;
-}
-
-/** Notes of a bar-note part playing `row` over [from, to), its loop starting at `loop`. */
-function plays(row: number, from: number, to: number, loop = from): [number, number][] {
-  const out: [number, number][] = [];
-  for (let t = from; t < to; t += BAR) out.push([t, pitchOf(row, ((t - loop) / BAR) % ROW_BARS[row])]);
-  return out;
-}
-
-/** The unedited song on a bar-note part. */
-const UNEDITED = [...plays(0, 0, 768), ...plays(1, 768, 2304), ...plays(2, 2304, 3072), ...plays(3, 3072, 3456)];
-
-/** Drives a Sequencer the way RealtimeTransport and the session do. */
-class Rig {
-  readonly store: ProjectStore;
-  readonly seq: Sequencer;
-  now = 0;
-  /** Everything handed out and not cancelled since: what the engine and the UI received. */
-  out: SeqEvent[] = [];
-  cuts: NoteCut[] = [];
-  /** Voices released by a pause (note → tick). */
-  private readonly released = new Map<NoteEvent, number>();
-
-  constructor(p: Project = fixture()) {
-    this.store = new ProjectStore(p);
-    this.seq = new Sequencer({ getProject: () => this.store.getState() });
-  }
-
-  get project(): Project {
-    return this.store.getState();
-  }
-
-  private pump(): void {
-    this.out.push(...this.seq.process(this.now + LOOKAHEAD));
-    this.cuts.push(...this.seq.takeCuts());
-  }
-
-  /** What the transport does after a change: cancel what was scheduled from `time`, regenerate. */
-  cancelFrom(time: number): void {
-    this.out = this.out.filter((e) => e.time < time);
-    this.seq.invalidate(time);
-    this.pump();
-  }
-
-  play(opts: StartOptions = { mode: { kind: 'song', fromBlock: 0 } }): this {
-    this.seq.start(this.now + START, opts);
-    this.pump();
-    return this;
-  }
-
-  /** Let the audio clock run until the playhead reaches `tick`. */
-  to(tick: number): this {
-    const end = this.seq.timeAt(tick);
-    while (this.now < end - 1e-9) {
-      this.now = Math.min(end, this.now + TICKER);
-      this.pump();
-    }
-    return this;
-  }
-
-  /** Play to the end of the song. */
-  finish(): this {
-    for (let guard = 0; !this.seq.ended && guard < 10_000; guard++) {
-      this.now += TICKER;
-      this.pump();
-    }
-    expect(this.seq.ended).toBe(true);
-    return this;
-  }
-
-  /** Edit the project as the session does: the song follows (replan), edited clips regenerate. */
-  edit(fn: (s: ProjectStore) => unknown): boolean {
-    const before = this.project;
-    fn(this.store);
-    const at = this.now + MARGIN;
-    const replanned = this.seq.replanSong(at);
-    if (this.seq.playing && (replanned || this.project.tracks !== before.tracks)) this.cancelFrom(at);
-    return replanned;
-  }
-
-  /** Tap a pad, as RealtimeTransport.launchClip does. */
-  tap(trackId: Id, slot: number): this {
-    const res = this.seq.launchClip(trackId, slot, this.now);
-    if (res.atTick < this.seq.generatedTick) this.cancelFrom(Math.max(res.atTime, this.now));
-    this.cuts.push(...this.seq.takeCuts());
-    return this;
-  }
-
-  pause(): this {
-    expect(this.seq.pause(this.now)).toBe(true);
-    const tick = this.seq.getPosition(this.now).tick;
-    // The transport cancels what has not started and releases what sounds.
-    this.out = this.out.filter((e) => e.time <= this.now);
-    for (const n of notesOf(this.out)) if (n.time + n.duration > this.now) this.released.set(n, tick);
-    return this;
-  }
-
-  resume(): this {
-    expect(this.seq.resume(this.now + START)).toBe(true);
-    this.pump();
-    return this;
-  }
-
-  /** [tick, pitch] of every note a part played, in order. */
-  notes(trackId: Id): [number, number][] {
-    return notesOf(this.out, trackId)
-      .map((n) => [n.tick, n.pitch] as [number, number])
-      .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  }
-
-  /** Tick where a note stopped sounding (after cuts and pauses). */
-  endOf(n: NoteEvent): number {
-    let end = n.tick + n.durationTicks;
-    for (const c of this.cuts) if (c.note === n) end = Math.min(end, c.tick);
-    const r = this.released.get(n);
-    return r === undefined ? end : Math.min(end, r);
-  }
-
-  /** [tick, pitch, end tick] of a held-chord part. */
-  held(trackId: Id): [number, number, number][] {
-    return notesOf(this.out, trackId)
-      .sort((a, b) => a.tick - b.tick)
-      .map((n) => [n.tick, n.pitch, this.endOf(n)]);
-  }
-
-  blocks(): [number, number, Id][] {
-    return ofKind(this.out, 'block').map((b) => [b.tick, b.blockIndex, b.blockId]);
-  }
-
-  launches(trackId: Id): [number, number | null][] {
-    return ofKind(this.out, 'launch')
-      .filter((l) => l.trackId === trackId)
-      .map((l) => [l.tick, l.slot]);
-  }
-
-  ends(): number[] {
-    return ofKind(this.out, 'end').map((e) => e.tick);
-  }
-}
-
-const sceneId = (r: Rig, row: number) => r.project.scenes[row].id;
+import { songBlocks } from '../../src/time/sequencer';
+import { notesOf, ofKind } from './sequencer-fixtures';
+import { BAR, MARGIN, Rig, UNEDITED, fixture, mulberry32, pitchOf, plays, sceneId } from './song-live-rig';
 
 describe('per-part changes in song blocks', () => {
   it('a layered part plays the other scene’s clip, an off part is silent, each from the block start exactly', () => {
@@ -301,52 +114,58 @@ describe('editing the song while it plays', () => {
     expect(b.ends()).toEqual([3072]);
   });
 
-  it('a deleted playing block plays to its planned end, then the first block that followed it and still exists', () => {
+  it('a deleted playing block sounds on to the next bar line, then the first block that followed it and still exists takes over', () => {
     const a = new Rig().play().to(1000);
     a.edit((s) => cmd.removeBlocks(s, ['b1']));
-    expect(a.seq.songPlan()!.map((b) => [b.index, b.blockId])).toEqual([[0, 'b0'], [-1, 'b1'], [1, 'b2'], [2, 'b3']]);
+    // b1 sounds on to bar line 1152; b2 starts there (lane: b0 b2 b3).
+    expect(a.plan()).toEqual([['b0', 0, 0, 768], ['b1', -1, 768, 1152], ['b2', 1, 1152, 1920], ['b3', 2, 1920, 2304]]);
     a.finish();
-    expect(a.notes('t1')).toEqual(UNEDITED);
-    expect(a.blocks()).toEqual([[0, 0, 'b0'], [768, 1, 'b1'], [2304, 1, 'b2'], [3072, 2, 'b3']]);
-    expect(a.ends()).toEqual([3456]);
+    expect(a.notes('t1')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 1152), ...plays(2, 1152, 1920), ...plays(3, 1920, 2304)]);
+    expect(a.blocks()).toEqual([[0, 0, 'b0'], [768, 1, 'b1'], [1152, 1, 'b2'], [1920, 2, 'b3']]);
+    // Its held chord ends at the hand-over (row 2 has no chord).
+    expect(a.held('t4')).toEqual([[0, 30, 768], [768, 50, 1152], [1920, 90, 2304]]);
+    expect(a.ends()).toEqual([2304]);
 
     const b = new Rig().play().to(1000);
     b.edit((s) => cmd.removeBlocks(s, ['b1', 'b2']));
     b.finish();
-    expect(b.notes('t1')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 2304), ...plays(3, 2304, 2688)]);
-    expect(b.ends()).toEqual([2688]);
+    expect(b.notes('t1')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 1152), ...plays(3, 1152, 1536)]);
+    expect(b.ends()).toEqual([1536]);
 
-    // Its old successor moved to the end: the song goes on from there, so b3 (now before it) does not play.
+    // Its old successor moved to the end before the hand-over: the song goes on from there, so b3 (now before it) does not play.
     const c = new Rig().play().to(1000);
     c.edit((s) => cmd.removeBlocks(s, ['b1']));
     c.to(1100);
     c.edit((s) => cmd.moveBlocks(s, ['b2'], 3));
     c.finish();
-    expect(c.notes('t1')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 2304), ...plays(2, 2304, 3072)]);
-    expect(c.ends()).toEqual([3072]);
+    expect(c.notes('t1')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 1152), ...plays(2, 1152, 1920)]);
+    expect(c.ends()).toEqual([1920]);
   });
 
-  it('with every block removed, the playing block finishes and the song ends there, once', () => {
+  it('with every block removed, the playing block sounds on to the next bar line and the song ends there, once', () => {
     const r = new Rig().play().to(1000);
     r.edit((s) => cmd.removeBlocks(s, ['b0', 'b1', 'b2', 'b3']));
     r.finish();
-    expect(r.notes('t1')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 2304)]);
-    expect(r.ends()).toEqual([2304]);
+    expect(r.notes('t1')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 1152)]);
+    expect(r.ends()).toEqual([1152]);
   });
 
-  it('changing the playing block’s scene switches every part at the next bar line, in phase with the block', () => {
+  it('changing the playing block’s scene switches every part at once (the edit point), in phase with the block', () => {
     const r = new Rig().play().to(1000);
     r.edit((s) => cmd.setBlockScene(s, 'b1', sceneId(r, 3)));
+    // At 120 BPM the edit point (10 ms ahead) is 2 ticks on.
+    const at = r.editTicks[0];
+    expect(at).toBe(1002);
     r.finish();
-    // Row 3 is one bar: the block is now 2 bars (768–1536) and b2 follows at 1536.
+    // Row 3 is one bar: the block is now 2 bars (768–1536) and b2 follows at 1536. Its next bar note (1152) is row 3's.
     expect(r.notes('t1')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 1152), ...plays(3, 1152, 1536, 768), ...plays(2, 1536, 2304), ...plays(3, 2304, 2688)]);
-    expect(r.launches('t1')).toEqual([[0, 0], [768, 1], [1152, 3], [1536, 2], [2304, 3]]);
-    // The chord sounding since 768 ends at the switch; row 3's chord starts there.
-    expect(r.held('t4')).toEqual([[0, 30, 768], [768, 50, 1152], [1152, 90, 1536], [2304, 90, 2688]]);
+    expect(r.launches('t1')).toEqual([[0, 0], [768, 1], [at, 3], [1536, 2], [2304, 3]]);
+    // The chord sounding since 768 ends at the edit point; row 3's chord (from the block start) is not played late: it comes with its next loop.
+    expect(r.held('t4')).toEqual([[0, 30, 768], [768, 50, at], [1152, 90, 1536], [2304, 90, 2688]]);
     expect(r.ends()).toEqual([2688]);
   });
 
-  it('changing one part switches only that part at the next bar line, in phase with the block', () => {
+  it('changing one part switches only that part at once, in phase with the block', () => {
     const r = new Rig().play().to(1000);
     r.edit((s) => cmd.setBlockPart(s, 'b1', 't2', null));
     r.edit((s) => cmd.setBlockPart(s, 'b1', 't1', sceneId(r, 0)));
@@ -354,8 +173,9 @@ describe('editing the song while it plays', () => {
     // t1 picks up row 0's clip in its second bar (the block started a bar before).
     expect(r.notes('t1')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 1152), ...plays(0, 1152, 2304, 768), ...plays(2, 2304, 3072), ...plays(3, 3072, 3456)]);
     expect(r.notes('t1')[3]).toEqual([1152, pitchOf(0, 1)]);
+    expect(r.launches('t1')).toEqual([[0, 0], [768, 1], [1002, 0], [2304, 2], [3072, 3]]);
     expect(r.notes('t2')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 1152), ...plays(2, 2304, 3072), ...plays(3, 3072, 3456)]);
-    expect(r.launches('t2')).toEqual([[0, 0], [768, 1], [1152, null], [2304, 2], [3072, 3]]);
+    expect(r.launches('t2')).toEqual([[0, 0], [768, 1], [1002, null], [2304, 2], [3072, 3]]);
     expect(r.held('t4')).toEqual([[0, 30, 768], [768, 50, 1536], [1536, 50, 2304], [3072, 90, 3456]]);
   });
 
@@ -374,17 +194,22 @@ describe('editing the song while it plays', () => {
     r.now += 3;
     expect(r.edit((s) => cmd.moveBlocks(s, ['b3'], 2))).toBe(true);
     expect(r.edit((s) => cmd.setBlockRepeats(s, 'b1', 3))).toBe(true);
-    // A part changed while paused switches at the next bar line after the pause point.
+    // A part changed while paused switches at the pause point: on Resume it is already silent.
     expect(r.edit((s) => cmd.setBlockPart(s, 'b1', 't2', null))).toBe(true);
+    const at = r.editTicks[2];
+    expect(at - 1300).toBeLessThanOrEqual(1);
     r.now += 1;
     r.resume().finish();
     expect(r.notes('t1')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 3072), ...plays(3, 3072, 3456), ...plays(2, 3456, 4224)]);
     expect(r.notes('t2')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 1536), ...plays(3, 3072, 3456), ...plays(2, 3456, 4224)]);
+    expect(r.launches('t2')).toEqual([[0, 0], [768, 1], [at, null], [3072, 3], [3456, 2]]);
     expect(r.blocks().map(([t, i, id]) => [t, i, id])).toEqual([[0, 0, 'b0'], [768, 1, 'b1'], [3072, 2, 'b3'], [3456, 3, 'b2']]);
     expect(r.ends()).toEqual([4224]);
   });
 
-  it('undo before the change takes effect leaves the song exactly as it was; undo after it switches back at the next bar', () => {
+  it('undo switches back at once, in phase; undone in the same moment, nothing changes', () => {
+    // A part switched off at 1000 and back on at 1100: its chord is cut at the first edit point and, back
+    // on, it does not replay the chord that started at 768 (the next pass brings it).
     const a = new Rig().play().to(1000);
     a.edit((s) => cmd.setBlockPart(s, 'b1', 't4', null));
     a.to(1100);
@@ -394,11 +219,11 @@ describe('editing the song while it plays', () => {
     a.to(1250);
     a.edit((s) => s.undo());
     a.finish();
+    expect(a.editTicks.slice(0, 2)).toEqual([1002, 1102]);
     expect(a.notes('t1')).toEqual(UNEDITED);
     expect(a.notes('t2')).toEqual(UNEDITED);
-    // The chord was never cut by the switch that did not happen.
-    expect(a.held('t4')).toEqual([[0, 30, 768], [768, 50, 1536], [1536, 50, 2304], [3072, 90, 3456]]);
-    expect(a.launches('t4')).toEqual([[0, 0], [768, 1], [2304, null], [3072, 3]]);
+    expect(a.held('t4')).toEqual([[0, 30, 768], [768, 50, 1002], [1536, 50, 2304], [3072, 90, 3456]]);
+    expect(a.launches('t4')).toEqual([[0, 0], [768, 1], [1002, null], [1102, 1], [2304, null], [3072, 3]]);
     expect(a.ends()).toEqual([3456]);
 
     const b = new Rig().play().to(1000);
@@ -406,9 +231,19 @@ describe('editing the song while it plays', () => {
     b.to(1300);
     b.edit((s) => s.undo());
     b.finish();
-    // Row 3 from 1152, then row 1 again from 1536, in phase with the block (and the block is 4 bars again).
+    // Row 3 from 1002, then row 1 again from 1302, in phase with the block (and the block is 4 bars again).
     expect(b.notes('t1')).toEqual([...plays(0, 0, 768), ...plays(1, 768, 1152), ...plays(3, 1152, 1536, 768), ...plays(1, 1536, 2304, 768), ...plays(2, 2304, 3072), ...plays(3, 3072, 3456)]);
+    expect(b.launches('t1')).toEqual([[0, 0], [768, 1], [1002, 3], [1302, 1], [2304, 2], [3072, 3]]);
+    expect(b.held('t4')).toEqual([[0, 30, 768], [768, 50, 1002], [1152, 90, 1302], [1536, 50, 2304], [3072, 90, 3456]]);
     expect(b.ends()).toEqual([3456]);
+
+    // Switched off and undone before the audio clock moved on: the switch never happens.
+    const c = new Rig().play().to(1000);
+    c.edit((s) => cmd.setBlockPart(s, 'b1', 't2', null));
+    c.edit((s) => s.undo());
+    c.finish();
+    expect(c.notes('t2')).toEqual(UNEDITED);
+    expect(c.launches('t2')).toEqual([[0, 0], [768, 1], [2304, 2], [3072, 3]]);
   });
 
   it('an edit playback does not depend on leaves the plan alone; one to a block already played changes only history', () => {
@@ -491,19 +326,8 @@ describe('editing the song while it plays', () => {
 /* Random edit sequences                                               */
 /* ------------------------------------------------------------------ */
 
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 describe('random edits while the song plays', () => {
-  it('keep the invariants: launches on bar lines, one clip per part at a time, no doubled notes, the end once, the plan equal to the lane', () => {
+  it('keep the invariants: launches on bar lines (or where an edit took effect), one clip per part at a time, no doubled notes, the end once, the plan equal to the lane', () => {
     for (let seed = 1; seed <= 40; seed++) {
       const rnd = mulberry32(seed);
       const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)];
@@ -550,8 +374,9 @@ describe('random edits while the song plays', () => {
           const pos = r.seq.getPosition(r.now).tick;
           for (const b of live) {
             const l = lane.find((x) => x.blockId === b.blockId)!;
-            // The block playing keeps its own end; every other one has its lane length.
-            if (!(b.startTick <= pos && pos < b.endTick)) expect(b.endTick - b.startTick, `seed ${seed}`).toBe(l.endTick - l.startTick);
+            // The block playing keeps its own end (a block shortened below the playhead sounds on to the next
+            // bar line, and keeps that length once played); every block still to come has its lane length.
+            if (b.startTick > pos) expect(b.endTick - b.startTick, `seed ${seed}`).toBe(l.endTick - l.startTick);
           }
           for (let i = 1; i < plan.length; i++) expect(plan[i].startTick).toBe(plan[i - 1].endTick);
         }
@@ -565,7 +390,8 @@ describe('random edits while the song plays', () => {
       expect(ends[0] % BAR, where).toBe(0);
       const plan = r.seq.songPlan()!;
       expect(ends[0], where).toBe(plan.at(-1)?.endTick ?? ends[0]);
-      for (const l of ofKind(r.out, 'launch')) expect(l.tick % BAR, where).toBe(0);
+      // Pads and block starts switch on bar lines; an edit to the playing block switches where it took effect.
+      for (const l of ofKind(r.out, 'launch')) if (l.tick % BAR) expect(r.editTicks, `${where}: launch at ${l.tick}`).toContain(l.tick);
       const blocks = ofKind(r.out, 'block');
       for (let i = 0; i < blocks.length; i++) {
         expect(blocks[i].tick % BAR, where).toBe(0);

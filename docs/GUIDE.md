@@ -54,33 +54,41 @@ Your work saves automatically in this browser; the top right shows **Saved**.
 Open **Arrange** (top left). The **Song** lane plays scenes one after another, left to right. Each
 **block** is one scene played a number of times (its **passes**); the wider the block, the longer it
 plays. Under each block's name is one row per part: a filled bar means that part plays there, **Off**
-(in coral) means it is switched off in that block, and **from Lift** means it plays another scene's
-clip there. Press **Play song**, or ▶ on a block to start from it; the block playing now is outlined
-in amber and says **Playing**. You can change the song while it plays: every edit is heard right away.
+(in coral) means it is switched off in that block, and **Lift: Hook** (striped, with a layers icon)
+means it plays another scene's clip there. Press **Play song**, or ▶ on a block to start from it;
+the block playing now is outlined in amber and says **Playing**, and the lane scrolls along with it
+(turn **Follow** off, under the lane, to keep it still). You can change the song while it plays:
+every edit is heard right away.
 
-1. **Move a block.** Drag a block by its name (or anywhere on it) left or right. The other blocks
-   slide aside to show where it will land; let go and it clicks into place. Hold **Ctrl** (Alt, or ⌘
-   on a Mac) while dragging to drop a **copy** instead. Esc, or letting go away from the lane,
-   puts everything back.
+1. **Move a block.** Drag a block by its name (or anywhere on it) left or right, with the mouse, a
+   finger or a pen. The other blocks slide aside to show where it will land; let go and it clicks
+   into place. Hold **Ctrl** (Alt, or ⌘ on a Mac) while dragging to drop a **copy** instead. Esc,
+   or letting go away from the lane, puts everything back.
 2. **Make it longer or shorter.** Drag a block's right edge: it grows or shrinks one pass at a time,
-   and a bubble shows the passes and bars. The blocks after it follow.
+   and a bubble shows the passes and bars ("3 passes · 12 bars"). The blocks after it follow; near
+   the end of the lane it scrolls on for you. The blocks keep their size while you edit (a longer
+   song scrolls); **Fit song**, **−** and **+** under the lane, or Ctrl+wheel over it, change the
+   zoom.
 3. **Split and join.** Point at a block: a pair of scissors appears under each line between its
    passes; click one to cut the block there. Two neighbours that play the same thing show **Join**
    under their seam.
 4. **Switch a part in one block.** Click a part's bar in a block to switch it off there (it says
-   **Off**); click again to bring it back. The rest of the song is not affected.
-5. **Combine scenes.** Drag a scene card from **SCENES** onto the middle of a block: its parts read
-   *from Lift* before you let go, and dropping layers that scene's parts into the block. Drop the
-   card between two blocks (a line, then a gap, opens there) to add it as a new block; **+** on a
-   card adds it at the end.
+   **Off**, and a message says "Drums off in Groove" with **Undo**); click again to bring it back.
+   The rest of the song is not affected.
+5. **Combine scenes.** Drag a scene card from **SCENES** onto the middle of a block: the parts that
+   are silent in that block take the card's clips (they read *Lift: Hook* before you let go). Hold
+   **Shift** while you let go to replace the block's parts with the card's instead. Drop the card
+   between two blocks (a line, then a gap, opens there) to add it as a new block; **+** on a card
+   adds it at the end.
 6. **Select several.** Click a block to select it (teal), Shift+click for a range, Ctrl+click to add
    or remove one. Dragging, **Ctrl+D** (duplicate), **Ctrl+C** / **Ctrl+X** / **Ctrl+V** (copy, cut,
    paste after the selection) and **Delete** work on all selected blocks at once.
 
-Everything is one Undo away (Ctrl+Z). Each block's **⋯** button (or right-click, or Enter on a focused
-block) lists every action: the parts in the block, play from here, edit its clips, rename, change or
-layer a scene, split, join, copy, move and remove. Click the bar numbers above the blocks to play from
-that bar.
+Everything is one Undo away (Ctrl+Z); each edit's message has an **Undo** button too. Each block's
+**⋯** button (or right-click, or Enter on a focused block) lists every action: the parts in the
+block, play from here, edit its clips, rename, change, layer or replace with a scene, split, join,
+copy, move and remove. Click the bar numbers above the blocks to play from that bar. While you record
+a performance the song is locked; the lane says so until you stop.
 
 Without a mouse: Tab to the lane, then ←/→ choose a block (Shift extends the selection), Alt+←/→
 moves it, + and − change its passes, ↓ enters its parts (Enter switches one, "." chooses what it
