@@ -1,7 +1,8 @@
-# TEST REPORT — SWITCHBOARD / 01
+# TEST REPORT — Omni Song 2.0
 
-_Final report for the handoff build (Milestone 5). The full requirement-by-requirement checklist is
-in [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)._
+_Formerly SWITCHBOARD / 01. Test results and evidence for the 2.0 build. Every requirement of the
+original brief, and the 2.0 additions, is listed with its evidence in
+[`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)._
 
 ## How to reproduce
 
@@ -12,28 +13,34 @@ npm test                              # unit (Node)
 npm run test:browser                  # real Chromium, incl. offline renders through the real engine
 npm run build && npm run test:e2e     # Playwright against the production build
 node scripts/evidence.mjs             # screenshots + WAV examples (needs `npm run serve` running)
+npm run package                       # build, then release/omni-song-<version>.zip
 ```
 
 ## Results
 
-Run in the cloud container (Linux, 4 CPUs, Chromium 141 via Playwright 1.56.1, Node 22), on the
-handoff commit:
+Run in the cloud container (Linux, 4 CPUs, Chromium 141 via Playwright 1.56.1, Node 22) on the
+2.0 handoff commit:
 
 | Suite | Files | Tests | Result |
 |-------|-------|-------|--------|
 | Typecheck (`tsc --noEmit`, app + tests) | — | — | clean |
-| Unit (`tests/unit`, Node) | 27 | 661 | all pass |
-| Browser (`tests/browser`, real Chromium) | 37 | 586 | all pass, none skipped |
-| End-to-end (`e2e`, production build) | 7 | 23 | all pass |
+| Unit (`tests/unit`, Node) | 40 | 909 | all pass |
+| Browser (`tests/browser`, real Chromium) | 65 | 925 | all pass, none skipped |
+| End-to-end (`e2e`, production build) | 8 | 25 | all pass |
+
+Two timing-sensitive tests (`omni-input-audio` early stop, `variation` "stays fast") each failed
+once while the machine was saturated by parallel runs and pass on their own and in the full runs
+above; they compare against wall-clock time, which the audio clock can lag under heavy load.
 
 ## What kinds of evidence exist
 
 | Kind | What it is | Where |
 |------|------------|-------|
-| Automated signal checks | Offline renders through the **real** engine (the same code path as WAV export), measured numerically: onsets, spectra, RMS, peaks, tails | `tests/browser/realEngine.test.ts`, `starters.test.ts`, `presets.test.ts`, `effects.test.ts`, `fx-*.test.ts`, `reverb.test.ts`, `engine*.test.ts`, `drumKit.test.ts`, `synths.test.ts`, `sampler.test.ts`, `offline.test.ts` |
-| Logic checks | Sequencer timing, swing, tempo, launch quantization, arrangement, replay, graph validation, undo/redo and undo groups, validation, persistence, bundles, WAV encoding, import limits, DSP, launcher and package | `tests/unit/*.test.ts` |
-| Browser interaction checks | Components and the whole app in real Chromium (pointer, keyboard, layout at target widths); Playwright driving the production build: fresh profiles, downloads, storage failures, offline, stalls, 3-minute runs, keyboard-only use, axe-core audits | `tests/browser/*` (UI), `e2e/*.spec.ts` |
-| Launcher smoke test | The release zip extracted to a path with spaces, served by `launcher/serve.ps1` (PowerShell 7) and `launcher/serve.mjs`; loopback binding, traversal refusal, reuse of a running copy, Jump In playing from the package | `evidence/launcher-smoke.txt` |
+| Automated signal checks | Offline renders through the **real** engine (the same code path as WAV export), measured numerically: onsets, spectra, RMS, peaks, tails, loudness (LUFS), stereo correlation | `tests/browser/realEngine`, `starters`, `presets`, `effects`, `fx-*`, `reverb`, `engine*`, `drumKit`, `synths`, `sampler`, `offline`, `omni-fx-*`, `omni-mastering-*`, `omni-sounds-*` |
+| Logic checks | Sequencer timing, swing, tempo, launch quantization, pause/resume, arrangement, replay, graph validation, undo/redo, undo groups and entry ids, validation, schema v1→v2 migration, persistence, bundles (incl. old `.sb01.zip`), WAV encoding, import limits, loudness maths, MIDI, sample edits, launcher, package | `tests/unit/*.test.ts` |
+| Browser interaction checks | Components and the whole app in real Chromium (pointer, keyboard, layout at 1024–1920 px and 960×540); Playwright driving the production build: fresh profiles, downloads, storage failures, offline, stalls, 3-minute runs, keyboard-only use, axe-core audits, MIDI with a fake MIDIAccess, audio input from a generated stream | `tests/browser/*`, `e2e/*.spec.ts` |
+| Independent reviews | Before handoff, five area audits of every brief requirement (45 gaps, all fixed), then a correctness review (5 defects, reproduced, fixed with regression tests) and a hands-on usability/accessibility review of the real app (13 problems, fixed) | `docs/ACCEPTANCE.md`, git history |
+| Launcher smoke test | The 2.0 release zip extracted to a path with spaces, served by `launcher/serve.ps1` (PowerShell 7) as `Start Omni Song.bat` does; loopback binding, traversal refusal, reuse of a running copy, Jump In playing from the package | `evidence/launcher-smoke.txt` |
 | Listening review | **None.** The cloud environment has no speakers. Nothing here claims musical quality or low physical latency from sample values. | — |
 | Local hardware checks | Still to be done on the user's Windows PC (see the end). | — |
 
@@ -60,16 +67,26 @@ handoff commit:
 | 17 | Screenshots at target sizes incl. Play, Steps, cable panel | ✅ | `docs/screenshots/` — see below |
 | — | Definition of done (§12): launch, play a starter, change sounds, Variation, a working cable connection, record, export, reopen the editable project | ✅ | `e2e/journey.spec.ts` + `e2e/complete.spec.ts` (sound change, Variation + undo, audible cable edit, reload → Continue → still editable) |
 
-## Milestone 5 audit
+## Omni Song 2.0 additions
 
-Before handoff, five auditors checked every requirement of the brief against the code. An
-independent reviewer then tried to refute each finding. 45 gaps survived and all were fixed, each fix
-again reviewed independently, with tests. Among them: an edited "look around" preview showed
-"Saved" without being stored; the offline/update state was never shown; a key held while changing
-part could keep sounding; LFO Off did not stop modulation; sampler One-shot was cut at the note end;
-takes left out undo steps and notes already held at their start; Restore Connection in the rack
-removed added effects; the launchers could silently change address (and so hide saved projects).
-Details per requirement: `docs/ACCEPTANCE.md`.
+| Feature | Status | Evidence |
+|---|---|---|
+| Pause / Resume (holds bar, beat and every clip's phase; no backlog), Stop to bar 1, Space / Shift+Space after any click | ✅ | unit `sequencer` (incl. resume exactness); browser `omni-play-pause`, `omni-fix-space-keys`; e2e `a11y` |
+| Simple / Advanced modes; the strip fits 1024–1920 px; Export and Stop labelled at 1366 | ✅ | browser `wp1-transport`, `omni-play-layout` |
+| Labelled Mute / Solo, dimmed "Muted" columns, part play/stop, M key | ✅ | browser `omni-play-loops`, `omni-fix-play-pads`; e2e `omni`, `notes` |
+| Drag clips (move, swap, Ctrl copy), drag scene rows, keyboard Move…, pad action bar and menu | ✅ | unit `commands` (moveClip, copyClipTo, moveScene); browser `omni-play-loops` |
+| 67 synth presets in categories, 15 drum kits; FM, unison, pitch sweep, drift, vibrato; starters unchanged (≤ 0.05 dB) | ✅ | browser `presets`, `omni-sounds-engines`, `omni-sounds-kits`, `starters`; unit `omni-sounds-catalog` |
+| Sound browser with categories, search, preview | ✅ | browser `omni-sounds-ui`, `parts` |
+| Seven insert effects (EQ, Compressor, Gate, Auto Pan, Stereo Width, Flanger, Tape) measured on the real engine | ✅ | browser `omni-fx-inserts`, `omni-fx-engine` |
+| Mastering chain; neutral = bit-identical; presets do what they say; −1 dBFS never exceeded (Loudness +15 on hot material) | ✅ | browser `omni-mastering-chain` |
+| EBU R128 loudness (momentary, short-term, integrated, true peak) within 0.1 LU of reference sequences; spectrum | ✅ | unit `omni-fx-loudness`; browser `omni-mastering-chain` |
+| Mix view: faders, meters, Mute / Solo / Pan, mastering presets, loudness target + Match, listening-only A/B | ✅ | browser `omni-mix-view`, `omni-mix-session` (A/B ≥ 4 dB on the real output, project untouched), `omni-fix-mix-layout`; unit `omni-mix-mastering` |
+| Simple Shape (big knobs, instrument card, effect cards whose knob always changes the sound, grouped Add effect); Advanced rack with drag reorder | ✅ | browser `omni-shape-simple`, `omni-shape-advanced`, `omni-fix-shape-cards`, `shape` |
+| MIDI keyboards (velocity, sustain, pitch bend, mod wheel, learn, GM drum map; no stuck notes) | ✅ | browser `omni-input-midi` (fake MIDIAccess, real session); unit `omni-fix-midi-*` |
+| Record audio (count-in, bars on the audio clock, latency compensation, one undo step) and recording edits (Normalize, Reverse, Crop, Fades, Gain) | ✅ | browser `omni-input-audio` (beats within one sample), `omni-input-ui`, `omni-fix-audio-take`; unit `omni-input-edits`, `omni-fix-gain-clip` |
+| Rename to Omni Song with old projects, settings and `.sb01.zip` files still working | ✅ | unit `omni-rename-*`, `bundle`, `validate` (v1 → v2); browser `library`; e2e `omni` |
+| "Try this" hints that follow real actions, never cover controls; updated quick guide | ✅ | browser `omni-hints-*`, `omni-fix-play-hints`, `guide`; e2e `omni` |
+| Undo toasts tied to their own step; "Undid / Redid" feedback | ✅ | browser `omni-fix-undo-toast`; unit `omni-fix-history-ids` |
 
 ## Audio measurements (automated, not listening)
 
@@ -108,7 +125,7 @@ render bit-identically (cable undo test).
 
 | Size | Files |
 |------|-------|
-| 1366 × 768 | `01-welcome`, `02-play-loops`, `03-play-queued`, `04-play-drums`, `04-play-notes`, `04-play-steps`, `05-shape-cables`, `06-arrange`, `07-play-cables-drawer` (cable panel open), `08-shape-cable-panel`, `09-shape-sampler`, `13-sound-browser`, `14-project-library` |
+| 1366 × 768 | `01-welcome`, `02-play-loops`, `03-play-queued`, `04-play-drums`, `04-play-notes`, `04-play-steps`, `05-shape-cables`, `06-arrange`, `07-play-cables-drawer`, `08-shape-cable-panel`, `09-shape-sampler`, `13-sound-browser`, `14-project-library`, `16-shape-simple`, `17-mix`, `18-mix-mastering-warm` |
 | 1920 × 1080 | `10-play`, `11-steps`, `12-shape`, `15-shape-cable-panel` |
 | 200 % zoom (960 × 540 CSS px at 2×) | `20-welcome-zoom200`, `21-play-zoom200` |
 
@@ -121,26 +138,32 @@ render bit-identically (cable undo test).
 | `ambient-groove-4bars.wav` | stereo, 44.1 kHz, 16-bit PCM | 14.84 s | −6.2 dBFS | −21.3 dBFS |
 | `drum-and-bass-groove-4bars.wav` | stereo, 44.1 kHz, 16-bit PCM | 7.02 s | −4.3 dBFS | −20.6 dBFS |
 
-Each is 4 bars of a starter scene plus a 1.5 s tail. They are short, synthesized material only: no
-user recordings are kept in the repository.
+Each is 4 bars of a starter scene plus a 1.5 s tail, identical in level to the 1.0 renders (neutral
+mastering changes nothing). Short, synthesized material only: no user recordings are kept here.
 
 ## Known limits
 
-- A performance started while a latched arpeggio is already running replays that pattern from its
-  first step at the take's start, so its first notes can come in a different order than live (notes
-  and rhythm match).
-- Sampler tempo sync changes speed and pitch together (labelled in the UI); there is no pitch-
-  preserving time-stretch in this version.
-- On a window blur, live sampler one-shots are cut (notes are released on blur, as the brief asks);
-  a replay or export of a take plays them through.
+- No listening review (see above).
+- Recorded audio takes are at most 4 bars (clips are 1–4 bars).
+- MIDI pitch bend is heard live but not recorded into performance takes.
+- A performance started while a latched arpeggio already runs replays that pattern from its first
+  step (same notes and rhythm; the first notes can come in a different order).
+- Sampler tempo sync changes speed and pitch together (labelled); no pitch-preserving stretch.
+- Input monitoring goes through its own limiter, not through the mastering chain.
+- On a window blur, live sampler one-shots are cut (held notes are released on blur); a replay or
+  export of a take plays them through.
 
 ## Remaining local hardware checks (cannot be done in the cloud)
 
-- Listen through real speakers or headphones: starter balance, sound quality, click-free transitions.
-- Physical latency of keyboard and pad playing on the user's Windows audio device.
-- The Windows launcher: double-click `Start SWITCHBOARD.bat` (PowerShell 5.1 on Windows 10/11), from
-  a folder whose path has spaces; double-click again (it should reuse the running copy); run it while
+- Listen through real speakers or headphones: starter balance, the new sounds, effects and
+  mastering presets, click-free transitions.
+- Physical latency of keyboard, pad and MIDI playing, and the recording offset, on the user's audio
+  device and MIDI keyboard.
+- A real microphone / audio interface (tests used a generated stream).
+- The Windows launcher: double-click `Start Omni Song.bat` (PowerShell 5.1 on Windows 10/11) from a
+  folder whose path has spaces; double-click again (it should reuse the running copy); run it while
   another program holds port 4173 (it should explain, then use 4174). Here the same `serve.ps1` ran
   under PowerShell 7 on Linux (`evidence/launcher-smoke.txt`).
-- Chrome and Edge on Windows (tests ran in Chromium 141 on Linux).
+- Chrome and Edge on Windows (tests ran in Chromium 141 on Linux), including the Web MIDI
+  permission prompt.
 - Real background-tab throttling on the user's machine (the stall path is tested by simulation).

@@ -1,14 +1,16 @@
-# Acceptance checklist — SWITCHBOARD / 01
+# Acceptance checklist — Omni Song 2.0
 
-Every requirement of `PRODUCT_BRIEF.md`, section by section, with where it lives and how it is
-checked. Status: ✅ met and checked · ⚠️ met with a stated limit · ❌ not met.
+_Formerly SWITCHBOARD / 01._ Every requirement of `PRODUCT_BRIEF.md`, section by section, with where
+it lives and how it is checked, followed by the Omni Song 2.0 additions. Status: ✅ met and checked · ⚠️ met with a stated limit · ❌ not met.
 Evidence kinds: **unit** (Node logic tests), **browser** (Vitest in real Chromium, incl. offline
 audio renders through the real engine), **e2e** (Playwright against the production build),
 **code** (verified by reading the code in the final audit; no dedicated test).
 
 The Milestone 5 audit (five area auditors, each finding re-checked by an independent reviewer)
 confirmed 45 gaps. All were fixed, each fix reviewed independently with tests; rows touched by those
-fixes are marked *(M5)*. What remains is listed under "Limits" at the end.
+fixes are marked *(M5)*. For 2.0, a correctness review (5 defects) and a hands-on usability and
+accessibility review of the real app (13 problems) were also fixed, each with regression tests.
+What remains is listed under "Limits" at the end.
 
 ## §1 The first minute
 
@@ -34,7 +36,7 @@ fixes are marked *(M5)*. What remains is listed under "Limits" at the end.
 | Console look: warm shell, cool surfaces, graphite text, restrained depth; silicone pads with light pools | ✅ | `theme.css`, screenshots in `docs/screenshots/` |
 | Amber / teal / coral with fixed meanings, always paired with text or icon | ✅ | `theme.css` header; pads/buttons carry text states |
 | Knobs: drawn position, label, value | ✅ | `Knob.tsx`; browser `knob` |
-| Transport: Play/Stop, tempo, swing, record status, master volume, always reachable Mute All | ✅ | `TransportBar.tsx`; *(M5)* stays on screen when the narrow layout scrolls (e2e `a11y`, 200 % zoom); fits every width 1024–1920 px (browser `wp1-transport`) |
+| Transport: Play/Stop, tempo, swing, record status, master volume, always reachable Mute All | ✅ | `TransportBar.tsx`; *(M5)* stays on screen when the narrow layout scrolls (e2e `a11y`, 200 % zoom); fits every width 1024–1920 px (browser `wp1-transport`); 2.0 adds Pause, with Export and Stop labelled at 1366 px (browser `omni-play-layout`) |
 | Fits 1366×768 without hiding transport; reviewed at 1920×1080 and 200 % zoom; reflows below 1024 px | ✅ | screenshots `02-…-1366`, `10-…-1920`, `21-play-zoom200` |
 | DOM/CSS/SVG; meters and waveforms show real audio/transport state | ✅ | `Meter.tsx` reads AnalyserNodes; playheads follow the transport |
 | Knob: vertical drag + pointer capture, Shift fine, double-click default, arrows with name/range/unit, numeric entry, no accidental wheel changes, smoothed in the engine | ✅ | `Knob.tsx`; browser `knob`; engine `PARAM_SMOOTHING`; *(M5)* each knob's tip names its gestures and its default |
@@ -76,7 +78,7 @@ fixes are marked *(M5)*. What remains is listed under "Limits" at the end.
 | Requirement | Status | Evidence |
 |---|---|---|
 | Eight starters at the specified tempos, compatible keys, four useful scenes, balanced levels | ✅ | unit + browser `starters` (every scene rendered and measured); TEST_REPORT levels table |
-| ≥ 4 drum kits, ≥ 16 synth presets, descriptive names; blank project | ✅ | 5 kits, 18 presets (`catalog.ts`); `blank.ts` |
+| ≥ 4 drum kits, ≥ 16 synth presets, descriptive names; blank project | ✅ | 2.0: 15 kits, 67 presets in eight categories (`catalog.ts`; unit `omni-sounds-catalog`); `blank.ts` |
 | Core assets generated in the repository; no runtime downloads; provenance | ✅ | `builtinSamples.ts`, `ASSETS.md`; e2e `resilience` (offline) |
 
 ## §6 Cables and effects
@@ -127,9 +129,36 @@ fixes are marked *(M5)*. What remains is listed under "Limits" at the end.
 | Requirement | Status | Evidence |
 |---|---|---|
 | Clean-clone commands documented | ✅ | `README.md`, `CLAUDE.md` |
-| Production build + downloadable source/build package | ✅ | `release/switchboard01-1.0.0.zip` (`npm run package`: builds first; app + Windows launcher + START HERE + `source/`); unit `wp5-package` |
-| Windows launch route + START HERE; loopback only; serves only the build folder | ⚠️ | `launcher/`; unit `wp5-launcher`; the packaged launchers ran under PowerShell 7 and Node on Linux (`evidence/launcher-smoke.txt`: 127.0.0.1 only, traversal refused, a second start reuses the running copy, Jump In plays); not run on Windows here |
+| Production build + downloadable source/build package | ✅ | `release/omni-song-2.0.0.zip` (`npm run package`: builds first; app + Windows launcher + START HERE + `source/`); unit `wp5-package`, `omni-rename-package` |
+| Windows launch route + START HERE; loopback only; serves only the build folder | ⚠️ | `launcher/`, `Start Omni Song.bat`; unit `wp5-launcher`; the packaged launchers ran under PowerShell 7 and Node on Linux (`evidence/launcher-smoke.txt`: 127.0.0.1 only, traversal refused, a second start reuses the running copy, Jump In plays); not run on Windows here |
 | No claim that a cloud localhost address is reachable | ✅ | README / START HERE |
+
+## Omni Song 2.0 additions
+
+Asked for after 1.0: an easier interface, Pause, many more instruments and effects, mastering,
+MIDI keyboards and recording from a microphone or instrument, and the new name. Nothing from the
+brief was removed; the self-contained rules still hold (no AI feature, account, telemetry, paid
+service or runtime download).
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Pause that holds bar, beat and every clip's phase; Play continues in time; Stop returns to bar 1; Space = Play/Pause and Shift+Space = Stop, also after clicking a button | ✅ | `sequencer.ts`, `transport.ts`, `TransportBar.tsx`; unit `sequencer`; browser `omni-play-pause`, `omni-fix-space-keys`; e2e `a11y` |
+| Simple mode by default, Advanced on request, without changing the music | ✅ | `uiStore`; browser `wp1-transport`, `omni-play-layout`, `omni-shape-simple` |
+| Clear Mute / Solo (labelled, ≥ 32 px, dimmed "Muted" columns), part play/stop, M key | ✅ | `LoopsGrid.tsx`, `PartPanel.tsx`; browser `omni-play-loops`, `omni-fix-play-pads`; e2e `omni` |
+| Move things around: drag clips (move, swap, Ctrl copy), drag scene rows, keyboard Move…, pad actions without launching | ✅ | `commands/clips.ts`; unit `commands`; browser `omni-play-loops`, `omni-fix-play-pads` |
+| Many instruments, chosen in one obvious place: sound browser with categories, search, Preview, Current | ✅ | `SoundBrowser.tsx`; browser `omni-sounds-ui`, `parts` |
+| New synthesis (FM, unison, pitch sweep, noise colour, drift, vibrato, sub shape); 1.0 starters unchanged in level | ✅ | `src/audio/instruments/*`; browser `omni-sounds-engines`, `omni-sounds-kits`, `presets`, `starters` |
+| Seven new effects: EQ, Compressor, Gate, Auto Pan, Stereo Width, Flanger, Tape; grouped by purpose in Add effect | ✅ | `src/audio/modules/*`, worklets; browser `omni-fx-inserts`, `omni-fx-engine`, `omni-shape-simple` |
+| Mastering: low cut, three-band EQ, air, glue, punch, warmth, width, mono bass, loudness; eight presets; output still through the −1 dBFS limiter; neutral = bit-identical | ✅ | `modules/mastering.ts`, `content/mastering.ts`; browser `omni-mastering-chain` (Loudness +15 on hot material never exceeds −1 dBFS) |
+| Loudness meters (EBU R128 momentary, short-term, integrated, true peak), loudness targets, Match target, spectrum, listening-only Compare A/B | ✅ | `loudness` worklet, `MasteringPanel.tsx`, `Spectrum.tsx`; unit `omni-fx-loudness` (within 0.1 LU of reference); browser `omni-mix-session` (A/B ≥ 4 dB on the real output, project untouched), `omni-mix-view` |
+| Mix view: one strip per part (fader, meter, Mute, Solo, Pan; sends in Advanced), master strip with Mute All | ✅ | `src/app/views/mix/*`; browser `omni-mix-view`, `omni-fix-mix-layout` |
+| Schema v2 with mastering; v1 projects migrate on open and import | ✅ | `migrate.ts`, `validate.ts`; unit `validate`, `bundle` |
+| MIDI keyboards: notes with velocity, sustain, pitch bend, mod wheel, learn for big knobs / volumes / tempo, GM drum map, no hanging notes on unplug | ⚠️ | `src/app/midi.ts`; browser `omni-input-midi` (fake MIDIAccess, real session); unit `omni-fix-midi-*`; no physical MIDI device here |
+| Record audio from a microphone or interface: count-in, 1/2/4 bars on the audio clock, latency offset, one undo step; edits Normalize, Reverse, Crop, Fades, Gain (what plays = what is stored) | ⚠️ | `src/app/audioInput.ts`, `sampleVersions.ts`; browser `omni-input-audio`, `omni-input-ui`, `omni-fix-audio-take`; unit `omni-input-edits`, `omni-fix-gain-clip`; tested with a generated stream, not a real microphone |
+| Rename to Omni Song; 1.0 projects, settings and `.sb01.zip` files keep working | ✅ | unit `omni-rename-*`, `bundle`; browser `library`; e2e `omni` |
+| Help that gets out of the way: updated quick guide and "Try this" hints that follow real actions and never cover controls | ✅ | `src/app/views/hints/*`, `Guide.tsx`; browser `omni-hints-*`, `omni-fix-play-hints`, `guide`; e2e `omni` |
+| Undo toasts tied to their own step; "Undid / Redid" feedback | ✅ | `projectStore.ts`; browser `omni-fix-undo-toast`; unit `omni-fix-history-ids` |
+| Later, not in 2.0 (by agreement): a bridge to a local music generator (YuE2), webcam body tracking, VR/AR headsets | — | `docs/ROADMAP.md` |
 
 ## Limits (not hidden)
 
@@ -139,3 +168,6 @@ fixes are marked *(M5)*. What remains is listed under "Limits" at the end.
 - A performance started while a latched arpeggio already runs replays that pattern from its first
   step (same notes and rhythm; the first notes can come in a different order).
 - Sampler tempo sync changes speed and pitch together (labelled); no pitch-preserving stretch.
+- Recorded audio takes are at most 4 bars; MIDI pitch bend is heard live but not recorded into
+  performance takes; input monitoring has its own limiter and does not pass through mastering.
+- MIDI keyboards and microphones were tested with simulated devices only.
