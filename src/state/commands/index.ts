@@ -10,3 +10,4 @@ export * from './patch';
 export * from './arrangement';
 export * from './performances';
 export * from './samples';
+export * from './mastering';
