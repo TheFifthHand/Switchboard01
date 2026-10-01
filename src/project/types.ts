@@ -8,7 +8,7 @@
  */
 
 export const PROJECT_SCHEMA = 'switchboard01.project' as const;
-export const PROJECT_VERSION = 1 as const;
+export const PROJECT_VERSION = 2 as const;
 
 export type Id = string;
 
@@ -209,6 +209,13 @@ export type ModuleType =
   | 'chorus'
   | 'phaser'
   | 'crusher'
+  | 'eq'
+  | 'compressor'
+  | 'gate'
+  | 'autopan'
+  | 'widener'
+  | 'flanger'
+  | 'tape'
   | 'lfo'
   | 'master';
 
@@ -380,4 +387,20 @@ export interface Project {
   /** Project-level seed for deterministic generation. */
   seed: number;
   settings: ProjectSettings;
+  /** Mastering chain on the master bus (schema v2). Neutral settings leave the sound unchanged. */
+  mastering: Mastering;
+}
+
+/**
+ * Mastering on the master bus, after the master volume and before the
+ * protected output limiter (ceiling −1 dBFS): low cut, three-band EQ, glue
+ * compressor, saturation, stereo width with mono bass, and a loudness drive
+ * into the limiter. Values follow MASTERING_PARAMS in params.ts.
+ */
+export interface Mastering {
+  /** Off = the chain is bypassed (crossfaded). */
+  enabled: boolean;
+  params: ParamValues;
+  /** Preset the values came from, if unchanged since ("clean", "warm" …). */
+  presetId?: string;
 }

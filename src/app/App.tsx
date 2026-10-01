@@ -19,6 +19,7 @@ import { Guide } from './views/Guide';
 import { uiStore } from '../state/uiStore';
 import { ShapeView } from './views/shape/ShapeView';
 import { ArrangeView } from './views/arrange/ArrangeView';
+import { MixView } from './views/mix/MixView';
 import { downloadBlob } from './download';
 import styles from './App.module.css';
 
@@ -74,6 +75,8 @@ function Workspace() {
       return <ShapeView />;
     case 'arrange':
       return <ArrangeView />;
+    case 'mix':
+      return <MixView />;
     case 'play':
     default:
       return <PlayView />;

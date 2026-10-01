@@ -155,7 +155,7 @@ describe('Shape view', () => {
 
     // The channel's reverb send belongs to Space by default.
     const rack = panel(m.container, 'Effects');
-    const send = slider(rack, 'Reverb Send');
+    const send = slider(rack, 'Reverb Amount');
     expect(send.getAttribute('aria-readonly')).toBe('true');
     expect(send.getAttribute('aria-valuetext')).toContain('set by Space');
   });

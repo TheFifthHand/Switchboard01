@@ -118,6 +118,24 @@ export interface MeterFrame {
   /** Gain reduction applied by the output limiter in dB (>= 0). */
   limiterReductionDb: number;
   tracks: TrackMeter[];
+  /**
+   * Loudness of the final output (ITU-R BS.1770 / EBU R128, K-weighted, in
+   * LUFS; -Infinity when silent). Filled by engines that measure it.
+   */
+  loudness?: LoudnessReading;
+  /** Gain reduction of the mastering Glue compressor in dB (>= 0). */
+  glueReductionDb?: number;
+}
+
+export interface LoudnessReading {
+  /** 400 ms window. */
+  momentary: number;
+  /** 3 s window. */
+  shortTerm: number;
+  /** Gated average since the last resetLoudness() (or since playback started). */
+  integrated: number;
+  /** Highest true peak since the last reset, in dBTP (4× oversampled). */
+  truePeakDb: number;
 }
 
 export interface EngineStats {
@@ -196,6 +214,18 @@ export interface AudioEngineApi {
   /** The final output node (after limiter). Connected to ctx.destination by the engine. */
   readonly output: AudioNode;
   readMeters(out: MeterFrame): void;
+  /**
+   * Spectrum of the final output: fills `out` with dB values (about -120..0)
+   * for log-spaced bands from 20 Hz to 20 kHz (out.length bands). Optional.
+   */
+  readSpectrum?(out: Float32Array): void;
+  /** Restart the integrated loudness and true-peak measurement. Optional. */
+  resetLoudness?(): void;
+  /**
+   * Live pitch bend for a part's playing and future notes, in cents
+   * (MIDI pitch wheel). Optional; 0 = centred.
+   */
+  setPitchBend?(trackId: Id, cents: number, time: number): void;
   getStats(): EngineStats;
   dispose(): void;
 }

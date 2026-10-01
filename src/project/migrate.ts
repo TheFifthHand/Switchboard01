@@ -10,6 +10,7 @@
  * unexpected shapes; validation (validate.ts) runs afterwards and does the
  * strict checking.
  */
+import { neutralMasteringParams } from './params';
 import { PROJECT_SCHEMA, PROJECT_VERSION } from './types';
 
 export interface MigrationStep {
@@ -21,12 +22,21 @@ export interface MigrationStep {
 }
 
 /**
- * Ordered migration steps. Version 1 is the first released schema, so there
- * are no steps yet. When version 2 is introduced, add
- * `{ from: 1, description: '...', migrate: (d) => ... }` here and bump
+ * Ordered migration steps, one per version. To add version N+1, append
+ * `{ from: N, description: '...', migrate: (d) => ... }` and bump
  * PROJECT_VERSION in types.ts.
  */
-export const MIGRATIONS: readonly MigrationStep[] = [];
+export const MIGRATIONS: readonly MigrationStep[] = [
+  {
+    from: 1,
+    description: 'Add the mastering chain (neutral, so the project sounds exactly as before).',
+    migrate: (d) => {
+      if (!isPlainObject(d)) return d;
+      if (!isPlainObject(d.mastering)) d.mastering = { enabled: true, params: neutralMasteringParams(), presetId: 'clean' };
+      return d;
+    },
+  },
+];
 
 export type MigrateResult = { ok: true; data: any; migrated: boolean } | { ok: false; error: string };
 

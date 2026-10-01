@@ -12,7 +12,7 @@
  * The UI never touches audio nodes; it calls session methods and reads
  * stores (project, ui, runtime).
  */
-import type { MeterFrame } from '../audio/contracts';
+import type { AudioEngineApi, MeterFrame } from '../audio/contracts';
 import { AudioEngine } from '../audio/engine';
 import { engineLatencyFrames } from '../audio/worklets/limiter';
 import { SampleBank } from '../audio/instruments/sampleBank';
@@ -56,7 +56,7 @@ import { notify, patchRuntime, runtimeStore, setTrackRuntime, type PlayMode } fr
  * plays exactly the pitch given (no Musical Assist, no arpeggiator) and is
  * never recorded into clips or performance takes.
  */
-export type NoteSource = 'keyboard' | 'computer' | 'pad' | 'preview';
+export type NoteSource = 'keyboard' | 'computer' | 'pad' | 'midi' | 'preview';
 
 export interface BootInfo {
   /** The project that was reopened from storage, if any. */
@@ -1392,6 +1392,20 @@ export class Session {
     if (!this.engine) return false;
     this.engine.readMeters(out);
     return true;
+  }
+
+  /** Output spectrum in dB per log-spaced band (see AudioEngineApi.readSpectrum); false when unavailable. */
+  readSpectrum(out: Float32Array): boolean {
+    const engine: AudioEngineApi | null = this.engine;
+    if (!engine?.readSpectrum) return false;
+    engine.readSpectrum(out);
+    return true;
+  }
+
+  /** Restart the integrated loudness / true-peak measurement shown in the Mix view. */
+  resetLoudness(): void {
+    const engine: AudioEngineApi | null = this.engine;
+    engine?.resetLoudness?.();
   }
 
   stats() {

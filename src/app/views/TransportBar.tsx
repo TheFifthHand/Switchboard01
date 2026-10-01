@@ -14,6 +14,7 @@ const VIEW_OPTIONS = [
   { value: 'play', label: 'Play' },
   { value: 'shape', label: 'Shape' },
   { value: 'arrange', label: 'Arrange' },
+  { value: 'mix', label: 'Mix' },
 ] as const;
 
 const meterFrame: MeterFrame = { masterPeakL: 0, masterPeakR: 0, masterRms: 0, limiterReductionDb: 0, tracks: [] };

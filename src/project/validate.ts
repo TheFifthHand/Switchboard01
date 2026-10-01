@@ -21,6 +21,7 @@ import {
   DRUM_VOICE_PARAM_SPECS,
   INSTRUMENT_PARAMS,
   MASTER_VOLUME_SPEC,
+  MASTERING_PARAMS,
   MODULE_PARAMS,
   SWING_SPEC,
   clampParam,
@@ -56,6 +57,7 @@ import {
   type Note,
   type ParamValues,
   type Patch,
+  type Mastering,
   type PatchModule,
   type Performance,
   type PerformanceEvent,
@@ -977,6 +979,21 @@ export function validatePerformance(raw: unknown, project: Pick<Project, 'sample
 /* Project                                                             */
 /* ------------------------------------------------------------------ */
 
+const MASTERING_PRESET_ID = /^[a-z0-9-]{1,32}$/;
+
+function validateMastering(raw: unknown, issues: Issues): Mastering {
+  if (!isObj(raw)) {
+    issues.warn('Reset missing mastering settings to neutral.');
+    return { enabled: true, params: validateParams(undefined, MASTERING_PARAMS, issues), presetId: 'clean' };
+  }
+  const out: Mastering = { enabled: bool(raw.enabled, true, issues, 'mastering on/off'), params: validateParams(raw.params, MASTERING_PARAMS, issues) };
+  if (raw.presetId !== undefined) {
+    if (typeof raw.presetId === 'string' && MASTERING_PRESET_ID.test(raw.presetId)) out.presetId = raw.presetId;
+    else issues.warn('Removed an invalid mastering preset reference.');
+  }
+  return out;
+}
+
 function validateSettings(raw: unknown, issues: Issues): ProjectSettings {
   const d: ProjectSettings = { metronome: false, countIn: false, recordQuantize: '1/16' };
   if (!isObj(raw)) {
@@ -1084,6 +1101,7 @@ function validateProjectInner(input: unknown, issues: Issues): Project | null {
     samples,
     seed,
     settings: validateSettings(raw.settings, issues),
+    mastering: validateMastering(raw.mastering, issues),
   };
   if (raw.starterId !== undefined) {
     if (typeof raw.starterId === 'string' && raw.starterId.length <= 64) project.starterId = raw.starterId;

@@ -23,13 +23,14 @@ import {
   type ModuleType,
   type Note,
   type Patch,
+  type Mastering,
   type PatchModule,
   type Project,
   type Scene,
   type Track,
   type TrackRole,
 } from './types';
-import { INSTRUMENT_PARAMS, MODULE_PARAMS, defaultParams } from './params';
+import { INSTRUMENT_PARAMS, MODULE_PARAMS, defaultParams, neutralMasteringParams } from './params';
 
 /* ------------------------------------------------------------------ */
 /* Ids                                                                 */
@@ -290,7 +291,13 @@ export function createProject(opts: { name?: string; bpm?: number; roles?: reado
     samples: [],
     seed: Math.floor(Math.random() * 2 ** 31),
     settings: { metronome: false, countIn: false, recordQuantize: '1/16' },
+    mastering: defaultMastering(),
   };
+}
+
+/** Mastering for a new project: on, with neutral settings (sounds exactly like no mastering). */
+export function defaultMastering(): Mastering {
+  return { enabled: true, params: neutralMasteringParams(), presetId: 'clean' };
 }
 
 export const ALL_MACROS = MACRO_IDS;

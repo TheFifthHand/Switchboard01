@@ -3,6 +3,7 @@ import { conn, createClip, createProject } from '../../src/project/factory';
 import { hasCycle, validateConnection } from '../../src/project/graph';
 import { mulberry32 } from '../../src/project/rng';
 import { MIGRATIONS, NEWER_VERSION_MESSAGE, migrateProject, runMigrations } from '../../src/project/migrate';
+import { neutralMasteringParams } from '../../src/project/params';
 import { PROJECT_SCHEMA, PROJECT_VERSION, type Performance, type Project } from '../../src/project/types';
 import { VALIDATION_LIMITS, sanitizeClip, validatePerformance, validateProject } from '../../src/project/validate';
 
@@ -341,6 +342,37 @@ describe('migration', () => {
     const r = migrateProject(p);
     expect(r).toEqual({ ok: true, data: p, migrated: false });
     expect(MIGRATIONS.every((m) => m.from < PROJECT_VERSION)).toBe(true);
+  });
+
+  it('upgrades a version-1 project: neutral mastering is added and everything else is kept', () => {
+    const v2 = json(createProject({ now: 0 }));
+    const v1 = json(v2);
+    v1.version = 1;
+    delete v1.mastering;
+    const r = validateProject(v1);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.project.version).toBe(PROJECT_VERSION);
+    expect(r.project.mastering.enabled).toBe(true);
+    expect(r.project.mastering.params).toEqual(neutralMasteringParams());
+    // Nothing else changes.
+    const { mastering: _a, ...rest } = r.project;
+    const { mastering: _b, ...expected } = v2;
+    expect(rest).toEqual(expected);
+  });
+
+  it('repairs damaged mastering settings to neutral values with a warning', () => {
+    const p = json(createProject({ now: 0 }));
+    p.mastering = { enabled: 'yes', params: { loudness: 999, width: Number.NaN, nonsense: 3 }, presetId: '../../evil' };
+    const r = validateProject(p);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.project.mastering.enabled).toBe(true);
+    expect(r.project.mastering.params.loudness).toBe(15);
+    expect(r.project.mastering.params.width).toBe(1);
+    expect(r.project.mastering.params).not.toHaveProperty('nonsense');
+    expect(r.project.mastering.presetId).toBeUndefined();
+    expect(r.warnings.length).toBeGreaterThan(0);
   });
 
   it('runs ordered steps on a copy', () => {

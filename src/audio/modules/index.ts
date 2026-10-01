@@ -14,6 +14,7 @@ import { ReverbModule } from './reverb';
 import { ChorusModule } from './chorus';
 import { PhaserModule } from './phaser';
 import { CrusherModule } from './crusher';
+import { pendingEffect } from './pending';
 
 export const MODULE_CONSTRUCTORS: Readonly<Record<ModuleType, ModuleConstructor>> = {
   instrument: InstrumentModule,
@@ -25,6 +26,14 @@ export const MODULE_CONSTRUCTORS: Readonly<Record<ModuleType, ModuleConstructor>
   chorus: ChorusModule,
   phaser: PhaserModule,
   crusher: CrusherModule,
+  // TEMPORARY until the wave-1 studio-engine work implements them (see pending.ts).
+  eq: pendingEffect('eq'),
+  compressor: pendingEffect('compressor'),
+  gate: pendingEffect('gate'),
+  autopan: pendingEffect('autopan'),
+  widener: pendingEffect('widener'),
+  flanger: pendingEffect('flanger'),
+  tape: pendingEffect('tape'),
   lfo: LfoModule,
   master: MasterModule,
 };

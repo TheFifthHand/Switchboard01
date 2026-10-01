@@ -8,7 +8,9 @@ import { cloneClip } from '../project/clone';
 import { DRUM_VOICES, SCENE_ROWS, type Clip, type Id } from '../project/types';
 import { createStore, type Store } from './store';
 
-export type View = 'play' | 'shape' | 'arrange';
+export type View = 'play' | 'shape' | 'arrange' | 'mix';
+/** Simple shows the essentials (pads, big knobs, mute/solo, record, export); Advanced shows every control. */
+export type UiMode = 'simple' | 'advanced';
 export type PadMode = 'loops' | 'drums' | 'notes' | 'steps';
 
 export interface UiState {
@@ -34,14 +36,17 @@ export interface UiState {
   recordArmed: boolean;
   /** Module selected in the effects rack / cable panel. */
   selectedModuleId: Id | null;
+  /** Simple (default) or Advanced: how much of the instrument is shown. Remembered. */
+  uiMode: UiMode;
 }
 
 export const UI_STORAGE_KEY = 'switchboard01.ui';
 export const OCTAVE_RANGE = { min: 1, max: 7 } as const;
 
-const VIEWS: readonly View[] = ['play', 'shape', 'arrange'];
+const VIEWS: readonly View[] = ['play', 'shape', 'arrange', 'mix'];
+const UI_MODES: readonly UiMode[] = ['simple', 'advanced'];
 const PAD_MODES: readonly PadMode[] = ['loops', 'drums', 'notes', 'steps'];
-const PERSISTED = ['selectedTrackId', 'view', 'padMode', 'keyboardOctave', 'notesOctave', 'tipsEnabled', 'guideDone'] as const;
+const PERSISTED = ['selectedTrackId', 'view', 'padMode', 'keyboardOctave', 'notesOctave', 'tipsEnabled', 'guideDone', 'uiMode'] as const;
 type Persisted = Pick<UiState, (typeof PERSISTED)[number]>;
 
 export function defaultUiState(): UiState {
@@ -60,6 +65,7 @@ export function defaultUiState(): UiState {
     clipboard: null,
     recordArmed: false,
     selectedModuleId: null,
+    uiMode: 'simple',
   };
 }
 
@@ -100,6 +106,7 @@ function readPersisted(storage: KeyValueStorage | null): Partial<Persisted> {
     if (o.notesOctave !== undefined) out.notesOctave = clampOctave(o.notesOctave, d.notesOctave);
     if (typeof o.tipsEnabled === 'boolean') out.tipsEnabled = o.tipsEnabled;
     if (typeof o.guideDone === 'boolean') out.guideDone = o.guideDone;
+    if (UI_MODES.includes(o.uiMode as UiMode)) out.uiMode = o.uiMode as UiMode;
     return out;
   } catch {
     return {};
@@ -202,6 +209,9 @@ export function setRecordArmed(armed: boolean, store: UiStore = uiStore): void {
 }
 export function selectModule(moduleId: Id | null, store: UiStore = uiStore): void {
   set(store, { selectedModuleId: moduleId });
+}
+export function setUiMode(mode: UiMode, store: UiStore = uiStore): void {
+  if (UI_MODES.includes(mode)) set(store, { uiMode: mode });
 }
 
 /** Per-part lookups with defaults. */
