@@ -53,6 +53,11 @@ export interface HistoryEntry {
   gesture?: string;
   patches: ImmerPatch[];
   inverse: ImmerPatch[];
+  /**
+   * The state before this step, kept only while its gesture is still open, so
+   * a gesture that ends where it started leaves no step behind.
+   */
+  base?: Project;
 }
 
 export interface HistoryInfo {
@@ -100,6 +105,44 @@ function strictlyInside(inner: PatchPath, outer: PatchPath): boolean {
 function unstableRoot(p: ImmerPatch): PatchPath {
   const last = p.path[p.path.length - 1];
   return p.op !== 'replace' || last === 'length' ? p.path.slice(0, -1) : p.path;
+}
+
+function valueAt(root: unknown, path: PatchPath): unknown {
+  let v = root;
+  for (const k of path) {
+    if (v === null || typeof v !== 'object') return undefined;
+    v = (v as Record<string | number, unknown>)[k as string | number];
+  }
+  return v;
+}
+
+/** Structural equality for project data (plain objects and arrays). */
+function sameData(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    const bb = b as unknown[];
+    return a.length === bb.length && a.every((x, i) => sameData(x, bb[i]));
+  }
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  const ka = Object.keys(ra);
+  return ka.length === Object.keys(rb).length && ka.every((k) => Object.prototype.hasOwnProperty.call(rb, k) && sameData(ra[k], rb[k]));
+}
+
+/**
+ * Whether `state` equals `base` everywhere `entry` changed anything: the step
+ * has no net effect (a part switched off and on again, a knob dragged back).
+ * A change inside an array is checked on the whole array, so an item removed
+ * and a different one added at the same index still counts as a change.
+ */
+function netUnchanged(entry: HistoryEntry, base: Project, state: Project): boolean {
+  return entry.patches.every((p) => {
+    const parent = p.path.slice(0, -1);
+    const at = p.path.length > 1 && (Array.isArray(valueAt(state, parent)) || Array.isArray(valueAt(base, parent))) ? parent : p.path;
+    return sameData(valueAt(state, at), valueAt(base, at));
+  });
 }
 
 function entryTouches(entry: HistoryEntry, roots: readonly PatchPath[]): boolean {
@@ -170,17 +213,26 @@ export class ProjectStore implements ReadableStore<Project> {
     } else {
       const top = this.undoStack[this.undoStack.length - 1];
       const inGroup = !!this.group && !!top && this.group.entry === top;
+      let undone = false;
       if (inGroup || (opts.gesture !== undefined && top && top.gesture === opts.gesture && this.openGesture === opts.gesture)) {
         top.patches.push(...patches);
         // Inverses run newest-first.
         top.inverse = [...inverse, ...top.inverse];
+        // A gesture back where it started leaves no undo step (its next edit starts a new one).
+        if (!inGroup && top.base && netUnchanged(top, top.base, next)) {
+          this.undoStack.pop();
+          undone = true;
+        }
       } else {
+        if (top) delete top.base;
         const entry: HistoryEntry = { id: nextEntryId(), label: this.group?.label ?? label, gesture: opts.gesture, patches, inverse };
+        if (opts.gesture !== undefined && !this.group) entry.base = base;
         this.undoStack.push(entry);
         if (this.group) this.group.entry = entry;
         if (this.undoStack.length > this.limit) this.undoStack.splice(0, this.undoStack.length - this.limit);
       }
-      this.openGesture = opts.gesture ?? null;
+      // After a gesture cancelled itself out, its next edit starts a fresh step.
+      this.openGesture = undone ? null : (opts.gesture ?? null);
       this.redoStack = [];
     }
     this.commit(next);
@@ -190,6 +242,8 @@ export class ProjectStore implements ReadableStore<Project> {
   /** Close the current gesture so the next edit with the same id starts a new undo step. */
   endGesture(): void {
     this.openGesture = null;
+    const top = this.undoStack[this.undoStack.length - 1];
+    if (top) delete top.base;
   }
 
   /**

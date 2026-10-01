@@ -45,7 +45,7 @@ import { decodeAudioFile, checkAudioFile } from '../persistence/audioImport';
 import { exportBundle, importBundle, bundleFileName } from '../persistence/bundle';
 import * as db from '../persistence/db';
 import * as library from '../persistence/library';
-import type { LaunchResult } from '../time/contracts';
+import type { LaunchResult, SongLoop } from '../time/contracts';
 import { makeSnapshot, projectFromSnapshot } from '../time/snapshot';
 import { Sequencer, songSignature, type NoteEvent } from '../time/sequencer';
 import { RealtimeTransport } from '../time/transport';
@@ -778,6 +778,15 @@ export class Session {
    * Play the arrangement from a block, or from bar `opts.fromBar` (0-based, on
    * the song timeline as the Arrange lane draws it).
    */
+  /**
+   * Loop part of the song (blocks `fromBlockId`..`toBlockId`, inclusive, in
+   * song order), or play it through again (null). Applies while the song
+   * plays or is paused.
+   */
+  setSongLoop(range: SongLoop | null): void {
+    patchRuntime({ songLoop: range });
+  }
+
   async playSong(fromBlock = 0, opts: { fromBar?: number } = {}): Promise<void> {
     if (!(await this.startAudio())) return;
     this.finishTake('stop');

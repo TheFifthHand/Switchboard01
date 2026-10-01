@@ -348,3 +348,33 @@ describe('UI store', () => {
     expect(ui.getState().clipboard!.notes[0].pitch).toBe(60);
   });
 });
+
+describe('a gesture that ends where it started', () => {
+  it('leaves no undo step (a part switched off and on again, a value dragged back)', async () => {
+    const { ProjectStore } = await import('../../src/state/projectStore');
+    const { createProject } = await import('../../src/project/factory');
+    const s = new ProjectStore(createProject({ now: 0 }));
+    const before = s.getState().bpm;
+    s.apply('song:Tempo', (d) => void (d.bpm = before + 5), { gesture: 'g1' });
+    s.apply('song:Tempo', (d) => void (d.bpm = before + 9), { gesture: 'g1' });
+    expect(s.canUndo()).toBe(true);
+    s.apply('song:Tempo', (d) => void (d.bpm = before), { gesture: 'g1' });
+    expect(s.canUndo()).toBe(false);
+    // The same gesture moving on starts a fresh step, with the right starting point.
+    s.apply('song:Tempo', (d) => void (d.bpm = before + 2), { gesture: 'g1' });
+    expect(s.canUndo()).toBe(true);
+    s.undo();
+    expect(s.getState().bpm).toBe(before);
+  });
+
+  it('still counts an item removed and a different one added at the same place', async () => {
+    const { ProjectStore } = await import('../../src/state/projectStore');
+    const { createProject } = await import('../../src/project/factory');
+    const s = new ProjectStore(createProject({ now: 0 }));
+    s.apply('scene:Rename', (d) => void (d.scenes[0].name = 'A'));
+    s.apply('scene:Order', (d) => void d.scenes.splice(0, 1), { gesture: 'g2' });
+    s.apply('scene:Order', (d) => void d.scenes.splice(0, 0, { id: 'other', name: 'A' }), { gesture: 'g2' });
+    expect(s.getState().scenes[0].id).toBe('other');
+    expect(s.undoLabel()).toBe('Order');
+  });
+});

@@ -56,6 +56,16 @@ export type SeqEvent =
   | { kind: 'block'; tick: number; time: number; blockIndex: number; blockId: Id; sceneRow: number }
   | { kind: 'end'; tick: number; time: number };
 
+/**
+ * A looped part of the song: the blocks from `fromBlockId` to `toBlockId`
+ * (inclusive, in the song's current order) play again and again until the
+ * loop is cleared. Runtime only (not saved with the project).
+ */
+export interface SongLoop {
+  fromBlockId: Id;
+  toBlockId: Id;
+}
+
 export type PlayMode =
   | { kind: 'live' }
   /** Play the arrangement from a block index. */

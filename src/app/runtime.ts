@@ -9,6 +9,7 @@
  */
 import { createStore, useStore, shallowEqual } from '../state/store';
 import type { Id } from '../project/types';
+import type { SongLoop } from '../time/contracts';
 
 export type AudioStatus = 'off' | 'starting' | 'running' | 'suspended' | 'error';
 
@@ -36,6 +37,8 @@ export interface RuntimeState {
   songBlock: number | null;
   /** Id of the song block playing now (stable across edits made while the song plays). */
   songBlockId: Id | null;
+  /** The looped part of the song (Arrange), or null: the song plays through. */
+  songLoop: SongLoop | null;
   tracks: Record<Id, TrackRuntime>;
   recording: RecordingState;
   /** Clip that Record Notes writes into. */
@@ -80,6 +83,7 @@ export const runtimeStore = createStore<RuntimeState>({
   replayId: null,
   songBlock: null,
   songBlockId: null,
+  songLoop: null,
   tracks: {},
   recording: 'off',
   recordTarget: null,
