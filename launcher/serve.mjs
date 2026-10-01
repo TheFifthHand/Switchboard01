@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// SWITCHBOARD / 01 — tiny local web server.
+// Omni Song — tiny local web server.
 // Serves ONE directory (the built app) on the loopback interface only (127.0.0.1).
 // Usage: node serve.mjs [directory] [--port 4173] [--strict-port] [--no-open]
 // Stop with Ctrl+C (or close the window).
 //
 // The browser keeps projects (and the offline copy) per address, and the port
-// is part of the address. So the launcher stays on one port: when SWITCHBOARD
-// already answers there it opens that copy and exits; when another program
+// is part of the address. So the launcher stays on one port: when Omni Song
+// (or SWITCHBOARD / 01, its name before 2.0) already answers there it opens that
+// copy and exits; when another program
 // holds the port it explains what that means for saved projects, then uses the
 // next free port (or stops, with --strict-port).
 import { createServer, get } from 'node:http';
@@ -24,8 +25,10 @@ const openBrowser = !args.includes('--no-open');
 const HOST = '127.0.0.1';
 /** Ports tried after the preferred one when another program holds it. */
 const FALLBACK_PORTS = 19;
-/** Only a SWITCHBOARD page has this (index.html's title). */
-const MARKER = '<title>SWITCHBOARD / 01</title>';
+/** Only an Omni Song page has this (index.html's title). */
+const MARKER = '<title>Omni Song</title>';
+/** The same app before version 2.0, when it was called SWITCHBOARD / 01. Same address, same projects. */
+const OLD_MARKER = '<title>SWITCHBOARD / 01</title>';
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   console.error('--port needs a whole number from 1 to 65535.');
@@ -115,34 +118,43 @@ function listen(p) {
   });
 }
 
+/** Which copy of the app a page is: 'current', 'older' (SWITCHBOARD / 01) or null (something else). */
+function appIn(body) {
+  if (body.includes(MARKER)) return 'current';
+  if (body.includes(OLD_MARKER)) return 'older';
+  return null;
+}
+
 /**
- * True when a SWITCHBOARD page answers on port p (another launcher window, or any server of the app).
+ * Whether Omni Song (or its older self, SWITCHBOARD / 01) answers on port p: another
+ * launcher window, or any server of the app. Resolves 'current', 'older' or null.
  * The Windows launcher answers one connection at a time and gives an idle browser
  * connection up to 3 s, so wait longer than that for the page.
  */
-function isSwitchboardAt(p) {
+function appAt(p) {
   return new Promise((done) => {
     const req = get({ host: HOST, port: p, path: '/', agent: false, timeout: 6000 }, (res) => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', (chunk) => {
         body += chunk;
-        if (body.includes(MARKER)) {
-          done(true);
+        const found = appIn(body);
+        if (found) {
+          done(found);
           req.destroy();
         } else if (body.length > 256 * 1024) {
-          done(false);
+          done(null);
           req.destroy();
         }
       });
-      res.on('end', () => done(body.includes(MARKER)));
-      res.on('error', () => done(false));
+      res.on('end', () => done(appIn(body)));
+      res.on('error', () => done(null));
     });
     req.on('timeout', () => {
-      done(false);
+      done(null);
       req.destroy();
     });
-    req.on('error', () => done(false));
+    req.on('error', () => done(null));
   });
 }
 
@@ -165,12 +177,12 @@ function openInBrowser(url) {
 function explainBusy(p) {
   const usual = addressOf(p);
   console.log('');
-  console.log(`Port ${p} is used by another program, so SWITCHBOARD cannot open at its usual address ${usual}`);
+  console.log(`Port ${p} is used by another program, so Omni Song cannot open at its usual address ${usual}`);
   console.log('Your browser keeps projects separately for each address. Projects saved at');
   console.log(`${usual} will not appear in My projects at another address (they are not deleted),`);
   console.log('and projects saved at another address stay with that address.');
   console.log(`To use the usual address: close the program that uses port ${p} (or restart the computer),`);
-  console.log('then start SWITCHBOARD again. To move a project between addresses, use');
+  console.log('then start Omni Song again. To move a project between addresses, use');
   console.log('"Export this project" and "Import project file..." in the Project library.');
   console.log('');
 }
@@ -181,14 +193,22 @@ async function main() {
     const server = await listen(p);
     if (server) {
       const url = addressOf(p);
-      console.log(`SWITCHBOARD / 01 is running at ${url}${p !== port ? ` (not the usual ${addressOf(port)})` : ''}`);
+      console.log(`Omni Song is running at ${url}${p !== port ? ` (not the usual ${addressOf(port)})` : ''}`);
       console.log(`Serving ${root} on loopback only. Press Ctrl+C to stop.`);
       openInBrowser(url);
       return;
     }
-    if (await isSwitchboardAt(p)) {
+    const running = await appAt(p);
+    if (running) {
       const url = addressOf(p);
-      console.log(`SWITCHBOARD / 01 is already running at ${url}${p !== port ? ` (not the usual ${addressOf(port)})` : ''}`);
+      const where = `${url}${p !== port ? ` (not the usual ${addressOf(port)})` : ''}`;
+      if (running === 'older') {
+        console.log(`An older version of this app (SWITCHBOARD / 01) is already running at ${where}`);
+        console.log('To use Omni Song instead, close the window that runs the older version, then start Omni Song again.');
+        console.log('Both keep projects at the same address, so nothing is lost either way.');
+      } else {
+        console.log(`Omni Song is already running at ${where}`);
+      }
       console.log(openBrowser ? 'Opening it in your browser; the window or program that started it keeps it running.' : `Open ${url} in your browser.`);
       console.log('To start a different copy (for example a newer version), stop the other one first.');
       openInBrowser(url);
@@ -197,14 +217,14 @@ async function main() {
     if (p === port) {
       explainBusy(p);
       if (strictPort) {
-        console.error(`Stopped: --strict-port keeps SWITCHBOARD on port ${p}.`);
+        console.error(`Stopped: --strict-port keeps Omni Song on port ${p}.`);
         process.exitCode = 1;
         return;
       }
       console.log('Trying the next free port...');
     }
   }
-  console.error(`No free port between ${port} and ${last}. Close other copies of SWITCHBOARD and try again.`);
+  console.error(`No free port between ${port} and ${last}. Close other copies of Omni Song and try again.`);
   process.exitCode = 1;
 }
 

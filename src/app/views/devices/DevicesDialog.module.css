@@ -1,0 +1,248 @@
+/* MIDI & audio dialog: two sections, plain rows that wrap on narrow windows. */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.section + .section {
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.headIcon {
+  flex: none;
+  color: var(--ink-3);
+}
+
+.title {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  line-height: 1.3;
+  border-radius: var(--r-sm);
+  scroll-margin-top: 8px;
+}
+
+.title:focus {
+  outline: none;
+}
+
+.title:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.subTitle {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-md);
+  font-weight: 650;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.status {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.status[data-tone='ok'] {
+  color: var(--teal-ink);
+}
+
+.status[data-tone='error'] {
+  color: var(--coral-ink);
+}
+
+.status[data-tone='wait'] {
+  color: var(--teal-ink);
+  font-weight: 600;
+}
+
+.fine {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+/* In a row, the text takes the room left beside the controls (and wraps under them when narrow). */
+.row > .status,
+.row > .fine {
+  flex: 1 1 220px;
+}
+
+/* ---------- MIDI inputs ---------- */
+
+.inputs,
+.mappings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.input,
+.mapping {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-height: 40px;
+  padding: 4px 8px 4px 10px;
+  border-radius: var(--r-md);
+  background: var(--surface-hi);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  min-width: 0;
+}
+
+.inputName {
+  flex: 1 1 140px;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.plays {
+  flex: none;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+}
+
+.route {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Activity: amber = signal; the sentence above the list says what it means. */
+.lamp {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--sunk);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.25);
+}
+
+.lamp[data-on] {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber-glow);
+}
+
+.learn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.mappingText {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- audio input ---------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 16px;
+  min-width: 0;
+}
+
+.device {
+  min-width: 0;
+}
+
+.channels {
+  justify-self: start;
+}
+
+.meterRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.meterLabel {
+  flex: none;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+}
+
+.meter {
+  flex: 1 1 auto;
+  min-width: 60px;
+}
+
+.meterOff {
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+}
+
+.warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--coral-ink);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.warnIcon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--coral);
+}
+
+@media (max-width: 620px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -29,6 +29,7 @@ import { MACRO_CAPTION, macroDetail, useMacroRows } from './MacroColumn';
 import { ParamKnob } from './ParamKnob';
 import { controllerName, moduleName } from './paramState';
 import { FlowLine, LockNotice, PathWarning, focusLater, onAudiblePath, useEditLock, usePartEffects } from './shared';
+import { RecordAudio } from '../sampler/RecordAudio';
 import styles from './SimpleShape.module.css';
 
 export const ADD_EFFECT_ID = 'shape-add-effect';
@@ -99,6 +100,12 @@ function InstrumentCard(props: { trackId: Id }) {
         Change instrument
       </Button>
       <SoundBrowser open={open} trackId={trackId} onClose={() => setOpen(false)} />
+      {info.kind === 'sampler' && (
+        // Record your voice or an instrument straight into this part (same control as in Advanced).
+        <div className={styles.instRecord}>
+          <RecordAudio trackId={trackId} />
+        </div>
+      )}
     </section>
   );
 }

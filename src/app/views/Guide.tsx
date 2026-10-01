@@ -1,6 +1,7 @@
 /**
  * Quick guide: an optional, skippable three-step coach mark that points at
- * (1) Play/Stop in the transport, (2) the pads and (3) the sound controls.
+ * (1) Play / Pause in the transport, (2) the pads with their Mute and Solo
+ * keys and (3) Change instrument with the big sound knobs.
  *
  * - Non-modal: a teal ring marks the control (it ignores the pointer) and only
  *   the small callout takes pointer events, so playing never stops for it.
@@ -12,7 +13,8 @@
  * - Finishing or skipping is remembered (uiStore guideDone); the Library can
  *   replay it.
  * - Anchors are found by role/name (the Space-key Play button, #pad-surface,
- *   the "<part> macros" group). A control scrolled off screen (200 % zoom) is
+ *   the "<part> macros" group, joined by the Change instrument button above it
+ *   when that is on screen). A control scrolled off screen (200 % zoom) is
  *   scrolled into view when its step starts. If one is not on screen (another
  *   view), the callout says where it lives and offers to show the Play view.
  */
@@ -56,6 +58,8 @@ interface StepDef {
   title: string;
   body(ctx: StepContext): string;
   find(): HTMLElement | null;
+  /** A second control the step also points at (ring and placement cover both), when it is on screen. */
+  extend?(): HTMLElement | null;
   /** Where the control is when it is not on screen although the Play view is showing. */
   missingHint: string;
   /** Preferred sides, in order. */
@@ -83,11 +87,17 @@ const ZONES: readonly { selector: string; weight: number }[] = [
 ];
 
 const PAD_TEXT: Record<PadMode, string> = {
-  loops: 'Each column is a part, each row a variation. Lit pads are playing — tap another and it joins on the next bar. The buttons on the right launch a whole row.',
-  drums: 'Tap a pad to play that drum sound. The tabs above switch the pads between loops, drums, notes and steps.',
-  notes: "Tap a pad to play a note of the selected part, laid out in the project's key. The tabs above switch between loops, drums, notes and steps.",
-  steps: 'Click a numbered step to add or remove a note in the selected clip. The tabs above switch between loops, drums, notes and steps.',
+  loops: 'Each column is a part. Tap a pad to switch that part to another loop; it joins on the next bar. Mute at the top of a column silences that part, Solo plays it on its own.',
+  drums: 'Tap a pad to play that drum sound. The tabs above switch between Loops, Drums, Notes and Steps; Loops has Mute and Solo for every part.',
+  notes: "Tap a pad to play a note of the selected part, in the project's key. The tabs above switch modes; Loops has Mute and Solo for every part.",
+  steps: 'Click a numbered step to add or remove a note in the selected clip. The tabs above switch modes; Loops has Mute and Solo for every part.',
 };
+
+/** The selected part's Change instrument button in the Play view's part panel. */
+function findChangeInstrument(): HTMLElement | null {
+  const panel = document.querySelector('section[aria-labelledby="part-title"]') ?? document;
+  return panel.querySelector<HTMLElement>('button[aria-label^="Change instrument"]');
+}
 
 function findPlayButton(): HTMLElement | null {
   const transport = document.querySelector('header[aria-label="Transport"]') ?? document;
@@ -118,7 +128,7 @@ export const GUIDE_STEPS: readonly StepDef[] = [
   },
   {
     id: 'pads',
-    title: 'The pads',
+    title: 'Pads, Mute and Solo',
     body: ({ padMode }) => PAD_TEXT[padMode] ?? PAD_TEXT.loops,
     find: () => document.getElementById('pad-surface'),
     missingHint: 'The pads fill the middle of the Play view.',
@@ -128,11 +138,12 @@ export const GUIDE_STEPS: readonly StepDef[] = [
   },
   {
     id: 'sound',
-    title: 'Sound controls',
+    title: 'Change the sound',
     body: ({ partName }) =>
-      `These six knobs shape ${partName ? `${partName}, the selected part` : 'the selected part'}. Turn Tone for a brighter or darker sound and Space for more room around it. Tap another part's name or pads to shape that part.`,
+      `Change instrument picks a new sound for ${partName ? `${partName}, the selected part` : 'the selected part'}. The big knobs shape it: Tone for brighter or darker, Space for more room.`,
     find: () => document.querySelector<HTMLElement>('[role="group"][aria-label$=" macros"]'),
-    missingHint: 'Select a part (tap its name above the pads) to show its sound controls.',
+    extend: findChangeInstrument,
+    missingHint: 'Select a part (tap its name above the pads) to show Change instrument and its knobs.',
     sides: ['bottom', 'left', 'top', 'right', 'over'],
     align: 'start',
     layout: 'card',
@@ -235,11 +246,19 @@ function viewportSize(): { w: number; h: number } {
   return { w: document.documentElement.clientWidth || window.innerWidth, h: document.documentElement.clientHeight || window.innerHeight };
 }
 
-/** Area of on-screen controls (outside the guide and the anchor) a rect would cover, plus weighted no-go zones. */
-function coverCost(anchor: HTMLElement, guide: HTMLElement | null): (r: { left: number; top: number; right: number; bottom: number }) => number {
+/** Both rects together (the smallest rect holding them). */
+function unionRect(a: DOMRect, b: DOMRect | null): DOMRect {
+  if (!b) return a;
+  const left = Math.min(a.left, b.left);
+  const top = Math.min(a.top, b.top);
+  return new DOMRect(left, top, Math.max(a.right, b.right) - left, Math.max(a.bottom, b.bottom) - top);
+}
+
+/** Area of on-screen controls (outside the guide and the anchors) a rect would cover, plus weighted no-go zones. */
+function coverCost(anchors: readonly HTMLElement[], guide: HTMLElement | null): (r: { left: number; top: number; right: number; bottom: number }) => number {
   const rects: { r: DOMRect; weight: number }[] = [];
   for (const el of document.querySelectorAll<HTMLElement>(INTERACTIVE)) {
-    if (anchor.contains(el) || guide?.contains(el) || el.closest('[inert]')) continue;
+    if (anchors.some((a) => a.contains(el)) || guide?.contains(el) || el.closest('[inert]')) continue;
     const r = el.getBoundingClientRect();
     if (r.width > 0 && r.height > 0) rects.push({ r, weight: 1 });
   }
@@ -330,13 +349,15 @@ function GuideCoach({ onClose }: { onClose(): void }) {
       const size = { w: el.offsetWidth, h: el.offsetHeight };
       const s = GUIDE_STEPS[step];
       const anchor = s.find();
-      const r = visibleRect(anchor, vw, vh);
+      const extra = anchor ? (s.extend?.() ?? null) : null;
+      const own = visibleRect(anchor, vw, vh);
+      const r = own ? unionRect(own, visibleRect(extra, vw, vh)) : null;
       const inputs = [step, vw, vh, size.w, size.h, r ? [r.left, r.top, r.width, r.height].map(Math.round).join(',') : '-'].join('|');
       if (!force && inputs === lastInputs.current) return;
       lastInputs.current = inputs;
       let next: Layout;
       if (anchor && r) {
-        const p = placeCallout(r, size, s.sides, s.align, { w: vw, h: vh }, { cost: coverCost(anchor, el), arrowInset: s.layout === 'strip' ? 16 : 22 });
+        const p = placeCallout(r, size, s.sides, s.align, { w: vw, h: vh }, { cost: coverCost(extra ? [anchor, extra] : [anchor], el), arrowInset: s.layout === 'strip' ? 16 : 22 });
         const left = Math.max(2, r.left - RING_PAD);
         const top = Math.max(2, r.top - RING_PAD);
         const ring = { left, top, width: Math.min(vw - 2, r.right + RING_PAD) - left, height: Math.min(vh - 2, r.bottom + RING_PAD) - top };

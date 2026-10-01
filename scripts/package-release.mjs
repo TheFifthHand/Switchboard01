@@ -1,6 +1,6 @@
-// Builds the downloadable package: release/switchboard01-<version>.zip
+// Builds the downloadable package: release/omni-song-<version>.zip
 //
-//   Start SWITCHBOARD.bat      Windows launcher (PowerShell, loopback only)
+//   Start Omni Song.bat        Windows launcher (PowerShell, loopback only)
 //   START HERE.txt             plain-language guide
 //   app/                       the production build (dist/, without source maps)
 //   launcher/serve.ps1         PowerShell static server used by the .bat
@@ -85,7 +85,7 @@ function walk(dir) {
 }
 walk(dist);
 
-add('Start SWITCHBOARD.bat', join(root, 'launcher', 'Start SWITCHBOARD.bat'));
+add('Start Omni Song.bat', join(root, 'launcher', 'Start Omni Song.bat'));
 add('START HERE.txt', join(root, 'launcher', 'START-HERE.txt'));
 add('launcher/serve.ps1', join(root, 'launcher', 'serve.ps1'));
 add('launcher/serve.mjs', join(root, 'launcher', 'serve.mjs'));
@@ -107,7 +107,7 @@ for (const path of repositoryFiles()) {
 
 const zip = zipSync(files, { level: 9 });
 mkdirSync(join(root, 'release'), { recursive: true });
-const out = join(root, 'release', `switchboard01-${pkg.version}.zip`);
+const out = join(root, 'release', `omni-song-${pkg.version}.zip`);
 writeFileSync(out, zip);
 console.log(`Wrote ${relative(root, out)} (${(zip.length / 1024 / 1024).toFixed(2)} MB, ${Object.keys(files).length} files)`);
 console.log(`source/: ${sourceCount} files (${leftOut} left out: release zips, evidence audio, screenshots, large media).`);

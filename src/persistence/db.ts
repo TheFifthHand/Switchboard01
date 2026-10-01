@@ -94,7 +94,7 @@ export function toStorageError(e: unknown, context = 'Storage'): StorageError {
     return new StorageError('quota', 'Browser storage is full.', { cause: e });
   }
   if (name === 'VersionError' || /blocked/i.test(msg)) {
-    return new StorageError('blocked', 'Another SWITCHBOARD tab is using the storage.', { cause: e });
+    return new StorageError('blocked', 'Another Omni Song tab is using the storage.', { cause: e });
   }
   if (name === 'NotFoundError') return new StorageError('not-found', `${context}: not found.`, { cause: e });
   if (name === 'SecurityError' || name === 'InvalidStateError' || name === 'UnknownError' || /indexeddb/i.test(msg)) {
@@ -127,7 +127,7 @@ function open(): Promise<IDBPDatabase<SwitchboardDB>> {
         // An older connection in another tab refuses to close.
         if (!settled) {
           settled = true;
-          reject(new StorageError('blocked', 'Another SWITCHBOARD tab is using the storage. Close other tabs and try again.'));
+          reject(new StorageError('blocked', 'Another Omni Song tab is using the storage. Close other tabs and try again.'));
         }
       },
       blocking() {

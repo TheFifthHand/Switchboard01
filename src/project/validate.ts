@@ -1008,7 +1008,7 @@ function validateSettings(raw: unknown, issues: Issues): ProjectSettings {
 
 function validateProjectInner(input: unknown, issues: Issues): Project | null {
   if (!isObj(input)) {
-    issues.error('This file does not contain a SWITCHBOARD project.');
+    issues.error('This file does not contain an Omni Song project.');
     return null;
   }
   const migrated = migrateProject(input);
@@ -1018,7 +1018,7 @@ function validateProjectInner(input: unknown, issues: Issues): Project | null {
   }
   const raw: unknown = migrated.data;
   if (!isObj(raw) || raw.schema !== PROJECT_SCHEMA) {
-    issues.error('This file is not a SWITCHBOARD project.');
+    issues.error('This file is not an Omni Song project.');
     return null;
   }
   if (!isId(raw.id)) {

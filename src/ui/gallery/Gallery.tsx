@@ -251,7 +251,7 @@ function GalleryPage({ tips, setTips }: { tips: boolean; setTips(v: boolean): vo
         {/* ---------- Title ---------- */}
         <header className={styles.titlebar}>
           <div className={styles.brand}>
-            <span className={styles.wordmark}>SWITCHBOARD</span>
+            <span className={styles.wordmark}>OMNI SONG</span>
             <span className={styles.slash}>/ 01</span>
             <span className={styles.subtitle}>Component gallery</span>
           </div>

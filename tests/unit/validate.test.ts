@@ -334,7 +334,7 @@ describe('migration', () => {
     p.version = PROJECT_VERSION + 1;
     const r = validateProject(p);
     expect(r).toEqual({ ok: false, errors: [NEWER_VERSION_MESSAGE] });
-    expect(NEWER_VERSION_MESSAGE).toBe('This project was made with a newer version of SWITCHBOARD.');
+    expect(NEWER_VERSION_MESSAGE).toBe('This project was made with a newer version of Omni Song.');
   });
 
   it('passes current projects through without copying', () => {

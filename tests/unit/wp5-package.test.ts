@@ -37,30 +37,30 @@ function runPackage() {
   return spawnSync(process.execPath, [join(clone, 'scripts', 'package-release.mjs')], { cwd: base, env, encoding: 'utf8' });
 }
 
-const zipPath = () => join(clone, 'release', 'switchboard01-9.9.9.zip');
+const zipPath = () => join(clone, 'release', 'omni-song-9.9.9.zip');
 
 beforeAll(() => {
   if (!hasGit) return;
   base = mkdtempSync(join(tmpdir(), 'sb package '));
   clone = join(base, 'Jo Ann', 'switchboard 01');
   mkdirSync(clone, { recursive: true });
-  put('package.json', JSON.stringify({ name: 'switchboard01', version: '9.9.9', type: 'module' }));
+  put('package.json', JSON.stringify({ name: 'omni-song', version: '9.9.9', type: 'module' }));
   put('.gitignore', `${readFileSync(join(REPO, '.gitignore'), 'utf8')}\nnode_modules\n`);
   mkdirSync(join(clone, 'scripts'));
   copyFileSync(join(REPO, 'scripts', 'package-release.mjs'), join(clone, 'scripts', 'package-release.mjs'));
-  for (const f of ['Start SWITCHBOARD.bat', 'START-HERE.txt', 'serve.ps1', 'serve.mjs']) put(`launcher/${f}`, readFileSync(join(REPO, 'launcher', f)));
+  for (const f of ['Start Omni Song.bat', 'START-HERE.txt', 'serve.ps1', 'serve.mjs']) put(`launcher/${f}`, readFileSync(join(REPO, 'launcher', f)));
   // The script's one dependency (fflate), from this checkout.
   symlinkSync(join(REPO, 'node_modules'), join(clone, 'node_modules'), 'junction');
   put('ASSETS.md', '# Assets\n');
-  put('index.html', '<!doctype html><title>SWITCHBOARD / 01</title>');
+  put('index.html', '<!doctype html><title>Omni Song</title>');
   put('src/main.ts', 'export {};\n');
   put('public/icons/favicon.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>');
   put('docs/notes.md', '# Notes\n');
   put('docs/screenshots/play.png', new Uint8Array(64));
   put('evidence/wav/groove.wav', new Uint8Array(64));
-  put('release/switchboard01-0.0.1.zip', new Uint8Array(64));
+  put('release/omni-song-0.0.1.zip', new Uint8Array(64));
   put('tools/huge.bin', new Uint8Array(3 * 1024 * 1024));
-  put('dist/index.html', '<!doctype html><title>SWITCHBOARD / 01</title>');
+  put('dist/index.html', '<!doctype html><title>Omni Song</title>');
   put('dist/assets/app.js', 'console.log(1);\n');
   put('dist/assets/app.js.map', '{}');
   execFileSync('git', ['init', '-q'], { cwd: clone, env });
@@ -87,12 +87,12 @@ describe.skipIf(!hasGit)('Release package', () => {
     const names = Object.keys(entries);
 
     // Ready to run on Windows.
-    for (const n of ['Start SWITCHBOARD.bat', 'START HERE.txt', 'launcher/serve.ps1', 'launcher/serve.mjs', 'ASSETS.md', 'app/index.html', 'app/assets/app.js']) expect(names).toContain(n);
-    expect(new TextDecoder().decode(entries['Start SWITCHBOARD.bat'])).toBe(readFileSync(join(REPO, 'launcher', 'Start SWITCHBOARD.bat'), 'utf8'));
+    for (const n of ['Start Omni Song.bat', 'START HERE.txt', 'launcher/serve.ps1', 'launcher/serve.mjs', 'ASSETS.md', 'app/index.html', 'app/assets/app.js']) expect(names).toContain(n);
+    expect(new TextDecoder().decode(entries['Start Omni Song.bat'])).toBe(readFileSync(join(REPO, 'launcher', 'Start Omni Song.bat'), 'utf8'));
     expect(names).not.toContain('app/assets/app.js.map');
 
     // The source, including a new file that is not committed yet.
-    for (const n of ['source/package.json', 'source/index.html', 'source/src/main.ts', 'source/src/fresh.ts', 'source/public/icons/favicon.svg', 'source/docs/notes.md', 'source/scripts/package-release.mjs', 'source/launcher/Start SWITCHBOARD.bat', 'source/.gitignore']) {
+    for (const n of ['source/package.json', 'source/index.html', 'source/src/main.ts', 'source/src/fresh.ts', 'source/public/icons/favicon.svg', 'source/docs/notes.md', 'source/scripts/package-release.mjs', 'source/launcher/Start Omni Song.bat', 'source/.gitignore']) {
       expect(names).toContain(n);
     }
     // Not the build, dependencies, earlier releases, evidence audio, screenshots or large binaries.

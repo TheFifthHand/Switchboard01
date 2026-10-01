@@ -1,7 +1,8 @@
 /**
- * Quick guide coach marks in real Chromium: three steps anchored to Play,
- * the pads and the macros; Next / Skip guide / Escape; completion remembered;
- * never blocks the instrument (only the callout takes the pointer).
+ * Quick guide coach marks in real Chromium: three steps anchored to Play /
+ * Pause, the pads (with Mute and Solo) and Change instrument with the big
+ * knobs; Next / Skip guide / Escape; completion remembered; never blocks the
+ * instrument (only the callout takes the pointer).
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -11,6 +12,7 @@ import { App } from '../../src/app/App';
 import { session } from '../../src/app/instance';
 import { patchRuntime } from '../../src/app/runtime';
 import { Guide, placeCallout } from '../../src/app/views/Guide';
+import { HINTS_STORAGE_KEY, INITIAL_HINTS, hintsStore } from '../../src/app/views/hints/hintsState';
 import { createProject } from '../../src/project/factory';
 import { UI_STORAGE_KEY, selectTrack, setGuideDone, setView, uiStore } from '../../src/state/uiStore';
 import { cleanup, key, mount, wait } from './ui-harness';
@@ -32,6 +34,9 @@ beforeEach(async () => {
 
 afterEach(() => {
   cleanup();
+  // Jump In also starts the "Try this" hints; other test files share this browser's localStorage.
+  localStorage.removeItem(HINTS_STORAGE_KEY);
+  act(() => hintsStore.setState(INITIAL_HINTS));
 });
 
 /** A stand-in for the instrument: transport Play button, the pad surface and a macro group. */
@@ -121,8 +126,10 @@ describe('Quick guide', () => {
     await click(button('Next'));
     await settle();
     expect(callout().dataset.guideStep).toBe('pads');
+    expect(callout().getAttribute('aria-label')).toBe('Quick guide, step 2 of 3: Pads, Mute and Solo');
     expect(callout().textContent).toContain('2 of 3');
     expect(callout().textContent).toContain('Each column is a part');
+    expect(callout().textContent).toContain('Mute at the top of a column silences that part, Solo plays it on its own.');
     const pads = document.getElementById('pad-surface')!.getBoundingClientRect();
     expect(overlaps(callout().getBoundingClientRect(), pads)).toBe(false);
     expect(callout().dataset.layout).toBe('card');
@@ -131,8 +138,10 @@ describe('Quick guide', () => {
     await click(button('Next'));
     await settle();
     expect(callout().dataset.guideStep).toBe('sound');
+    expect(callout().getAttribute('aria-label')).toBe('Quick guide, step 3 of 3: Change the sound');
     expect(callout().textContent).toContain('3 of 3');
-    expect(callout().textContent).toContain('Bass, the selected part');
+    expect(callout().textContent).toContain('Change instrument picks a new sound for Bass, the selected part.');
+    expect(callout().textContent).toContain('The big knobs shape it');
     expect(overlaps(callout().getBoundingClientRect(), document.getElementById('macros')!.getBoundingClientRect())).toBe(false);
     // The last step finishes instead of offering a skip.
     expect(button('Skip guide')).toBeNull();
@@ -142,6 +151,42 @@ describe('Quick guide', () => {
     expect(closes).toBe(1);
     expect(uiStore.getState().guideDone).toBe(true);
     expect(JSON.parse(localStorage.getItem(UI_STORAGE_KEY)!).guideDone).toBe(true);
+  });
+
+  it('the last step points at Change instrument and the big knobs together', async () => {
+    // The part panel as the Play view shows it: the instrument card's button above the macros.
+    const stage = h(
+      'div',
+      { style: { position: 'fixed', inset: '0', width: '1366px', height: '768px', background: '#ddd' } },
+      h('header', { 'aria-label': 'Transport', style: { position: 'absolute', left: '0', top: '0', right: '0', height: '58px' } },
+        h('button', { type: 'button', 'aria-keyshortcuts': 'Space', style: { position: 'absolute', left: '268px', top: '8px', width: '85px', height: '40px' } }, 'Play'),
+      ),
+      h('div', { id: 'pad-surface', style: { position: 'absolute', left: '27px', top: '125px', width: '988px', height: '520px' } }),
+      h('section', { 'aria-labelledby': 'part-title', style: { position: 'absolute', left: '1041px', top: '70px', width: '311px', height: '590px' } },
+        h('h2', { id: 'part-title', style: { margin: '0' } }, 'Bass'),
+        h('button', { type: 'button', id: 'change', 'aria-label': 'Change instrument (now Bass synth: Rubber Pluck)', style: { position: 'absolute', left: '22px', top: '222px', width: '266px', height: '40px' } }, 'Change instrument'),
+        h('div', { role: 'group', 'aria-label': 'Bass macros', id: 'macros', style: { position: 'absolute', left: '14px', top: '280px', width: '282px', height: '236px' } }),
+      ),
+    );
+    mount(h('div', null, stage, h(Guide, { open: true, onClose: () => void (closes += 1) })));
+    await settle();
+    await click(button('Next'));
+    await click(button('Next'));
+    await settle();
+    expect(callout().dataset.guideStep).toBe('sound');
+    const ring = document.querySelector<HTMLElement>('[data-guide-ring="sound"]')!.getBoundingClientRect();
+    const change = document.getElementById('change')!.getBoundingClientRect();
+    const macros = document.getElementById('macros')!.getBoundingClientRect();
+    // One ring around both.
+    expect(ring.top).toBeLessThanOrEqual(change.top);
+    expect(ring.bottom).toBeGreaterThanOrEqual(macros.bottom);
+    expect(ring.left).toBeLessThanOrEqual(Math.min(change.left, macros.left));
+    expect(ring.right).toBeGreaterThanOrEqual(Math.max(change.right, macros.right));
+    // The callout covers neither, nor the transport.
+    const c = callout().getBoundingClientRect();
+    expect(overlaps(c, change)).toBe(false);
+    expect(overlaps(c, macros)).toBe(false);
+    expect(overlaps(c, document.querySelector('header[aria-label="Transport"]')!.getBoundingClientRect())).toBe(false);
   });
 
   it('Skip guide ends it at any step and is remembered', async () => {
@@ -292,6 +337,9 @@ describe('Quick guide', () => {
       const first = mount(h(App, { boot }));
       await pressJumpIn();
       expect(callout().dataset.guideStep).toBe('play');
+      // Jump In also starts the "Try this" hints; they wait until the guide is closed.
+      expect(hintsStore.getState().started).toBe(true);
+      expect(document.querySelector('[data-hint]')).toBeNull();
       // It points at the real transport Play button.
       const play = document.querySelector('header[aria-label="Transport"] button[aria-keyshortcuts="Space"]')!.getBoundingClientRect();
       const ring = document.querySelector<HTMLElement>('[data-guide-ring="play"]')!.getBoundingClientRect();
@@ -300,6 +348,7 @@ describe('Quick guide', () => {
       await click(button('Skip guide'));
       expect(document.querySelector('[data-guide-step]')).toBeNull();
       expect(uiStore.getState().guideDone).toBe(true);
+      expect(document.querySelector('[data-hint]')).not.toBeNull();
       first.unmount();
 
       mount(h(App, { boot }));

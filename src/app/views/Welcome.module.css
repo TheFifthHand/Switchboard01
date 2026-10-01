@@ -34,17 +34,40 @@
 
 .brand {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
+}
+/* Three small pads, one lit: the same motif as the app icon. */
+.mark {
+  display: grid;
+  grid-template-columns: repeat(3, 9px);
+  gap: 3px;
+}
+.mark > span {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--surface-hi);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.mark > span:nth-child(2) {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber-glow);
 }
 .name {
-  font-size: 22px;
+  margin: 0;
+  font-size: 24px;
   font-weight: 750;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
 }
-.num {
-  font-size: 15px;
-  color: var(--ink-3);
+.renamed {
+  margin: -4px 0 6px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: var(--teal-wash);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
 }
 .tagline {
   margin: 2px 0 10px;

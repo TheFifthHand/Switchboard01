@@ -386,3 +386,11 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Sampler parts: Record audio sits under the card, across its full width. */
+.instRecord {
+  flex: 1 1 100%;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+}

@@ -158,4 +158,4 @@ export function newProjectId(): Id {
 
 /** Short explanation for the library screen. */
 export const LIBRARY_STORAGE_NOTE =
-  'Projects are kept in this browser as working storage. Export a project file (.sb01.zip) as your portable backup — clearing browser data removes stored projects.';
+  'Projects are kept in this browser as working storage. Export a project file (.omnisong.zip) as your portable backup — clearing browser data removes stored projects.';

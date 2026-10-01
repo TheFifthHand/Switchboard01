@@ -1,7 +1,9 @@
-# SWITCHBOARD / 01 — project instructions
+# Omni Song — project instructions
 
-Browser-based electronic music console (TypeScript, React 19, Vite 8, Web Audio). Full brief:
-`PRODUCT_BRIEF.md`. Architecture and contracts: `docs/ARCHITECTURE.md`. Progress: `BUILD_STATUS.md`.
+Browser-based electronic music app **Omni Song** (version 2.0 of what was SWITCHBOARD / 01;
+TypeScript, React 19, Vite 8, Web Audio). Full brief: `PRODUCT_BRIEF.md`. Interface rulebook:
+`docs/OMNI_UX.md`. Architecture and contracts: `docs/ARCHITECTURE.md`. Progress: `BUILD_STATUS.md`.
+Plans (not promises): `docs/ROADMAP.md`.
 
 ## Commands
 
@@ -14,7 +16,7 @@ npm run build          # typecheck + production build into dist/
 npm run serve          # serve dist/ on http://127.0.0.1:4173 (loopback only)
 npm run test:browser   # Vitest in real headless Chromium (audio rendering tests)
 npm run test:e2e       # Playwright (Chromium) against dist/ — run `npm run build` first
-npm run package        # build, then the release zip (app + launcher + START HERE + source/)
+npm run package        # build, then release/omni-song-<version>.zip (app + launcher + START HERE + source/)
 ```
 
 Cloud container: Chromium 141 lives in /opt/pw-browsers and matches the pinned `@playwright/test`
@@ -37,6 +39,12 @@ Cloud container: Chromium 141 lives in /opt/pw-browsers and matches the pinned `
 - Patch validation rejects incompatible, duplicate and cyclic connections without touching the
   working graph. Patch editing is locked while a performance is being recorded.
 - Project data is JSON with stable ids and a schema version; validate and migrate on import.
+- The product name users see is **Omni Song**. Identifiers existing data depends on keep the first
+  name: IndexedDB `switchboard01`, localStorage `switchboard01.*`, schema id `switchboard01.project`,
+  the `window.__switchboard` test hook, and the PWA's identity (start_url/scope, no manifest id).
+  New project files are `.omnisong.zip`; `.sb01.zip` files must keep importing.
+- "Try this" hints (`src/app/views/hints/`) detect steps from real state; when a hinted control
+  changes, update its step text and detection together.
 - Keep architecture layers separate (see docs/ARCHITECTURE.md). Pure layers stay DOM/audio-free.
 - Musical Assist starts on. Imported recordings keep their pitch unless the user changes it.
   Sampler tempo sync changes speed and pitch together — say so in the UI.

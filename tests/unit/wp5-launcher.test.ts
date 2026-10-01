@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 const SERVE = fileURLToPath(new URL('../../launcher/serve.mjs', import.meta.url));
-const TITLE = '<title>SWITCHBOARD / 01</title>';
+const TITLE = '<title>Omni Song</title>';
 
 let dir = '';
 let appDir = '';
@@ -117,7 +117,7 @@ describe('Node launcher (npm run serve)', () => {
     expect(page.body).toContain(TITLE);
   });
 
-  it('a second start opens the SWITCHBOARD already running there instead of moving to a new address', async () => {
+  it('a second start opens the Omni Song already running there instead of moving to a new address', async () => {
     const port = await freePorts(2);
     const first = launch(['--port', String(port), '--no-open']);
     await waitFor(first, /running at/);
@@ -129,7 +129,7 @@ describe('Node launcher (npm run serve)', () => {
     expect((await fetchText(port)).body).toContain(TITLE);
   });
 
-  it('recognises a running SWITCHBOARD that answers slowly (a launcher window busy with another connection)', async () => {
+  it('recognises a running Omni Song that answers slowly (a launcher window busy with another connection)', async () => {
     const port = await freePorts(2);
     // The Windows launcher serves one connection at a time and waits up to 3 s on an idle one.
     const busy = createServer((_req, res) => setTimeout(() => res.end(`<!doctype html><html><head>${TITLE}</head></html>`), 3500));
@@ -167,7 +167,7 @@ describe('Node launcher (npm run serve)', () => {
     const run = launch(['--port', String(port), '--strict-port', '--no-open']);
     expect(await run.exited).toBe(1);
     expect(run.out()).toContain('will not appear in My projects');
-    expect(run.err()).toContain(`--strict-port keeps SWITCHBOARD on port ${port}`);
+    expect(run.err()).toContain(`--strict-port keeps Omni Song on port ${port}`);
     expect(await isFree(port + 1)).toBe(true);
   });
 });

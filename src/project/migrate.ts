@@ -40,7 +40,7 @@ export const MIGRATIONS: readonly MigrationStep[] = [
 
 export type MigrateResult = { ok: true; data: any; migrated: boolean } | { ok: false; error: string };
 
-export const NEWER_VERSION_MESSAGE = 'This project was made with a newer version of SWITCHBOARD.';
+export const NEWER_VERSION_MESSAGE = 'This project was made with a newer version of Omni Song.';
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -52,8 +52,8 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  */
 export function runMigrations(raw: any, steps: readonly MigrationStep[], target: number, schema: string = PROJECT_SCHEMA): MigrateResult {
   try {
-    if (!isPlainObject(raw)) return { ok: false, error: 'This file does not contain a SWITCHBOARD project.' };
-    if (raw.schema !== schema) return { ok: false, error: 'This file is not a SWITCHBOARD project (unknown format).' };
+    if (!isPlainObject(raw)) return { ok: false, error: 'This file does not contain an Omni Song project.' };
+    if (raw.schema !== schema) return { ok: false, error: 'This file is not an Omni Song project (unknown format).' };
     const version = raw.version;
     if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
       return { ok: false, error: 'This project has no valid version number, so it cannot be opened safely.' };
@@ -65,7 +65,7 @@ export function runMigrations(raw: any, steps: readonly MigrationStep[], target:
     let data: any = structuredClone(raw);
     for (let v = version; v < target; v++) {
       const step = steps.find((s) => s.from === v);
-      if (!step) return { ok: false, error: `This project uses an old format (version ${v}) that this version of SWITCHBOARD cannot upgrade.` };
+      if (!step) return { ok: false, error: `This project uses an old format (version ${v}) that this version of Omni Song cannot upgrade.` };
       const next = step.migrate(data);
       if (!isPlainObject(next)) return { ok: false, error: `Upgrading this project from version ${v} failed.` };
       data = next;

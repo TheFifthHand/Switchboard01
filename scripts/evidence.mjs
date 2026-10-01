@@ -1,4 +1,4 @@
-// Captures evidence from the running production build:
+// Captures evidence from the running production build of Omni Song:
 //   docs/screenshots/*.png  — the real instrument at 1366x768, 1920x1080 and 200 % zoom
 //   evidence/wav/*.wav       — short WAV renders (same engine as export)
 // Usage: node scripts/evidence.mjs [baseUrl]   (default http://127.0.0.1:4173/)
@@ -26,9 +26,17 @@ async function jumpIn(page) {
   await page.getByRole('button', { name: 'Jump In' }).click();
   await page.waitForFunction(() => window.__switchboard?.runtime.getState().playing === true);
   await page.waitForTimeout(2500);
-  // Skip the optional guide if it appears.
+  // Skip the optional guide if it appears. (The "Try this" hint that follows stays: it is part of the app.)
   const skip = page.getByRole('button', { name: /Skip/ });
   if (await skip.isVisible().catch(() => false)) await skip.click();
+  await page.waitForTimeout(300);
+}
+
+/** Shape opens in Simple mode; its "Show every setting" switches to Advanced (cables, every knob). */
+async function showEverySetting(page) {
+  const more = page.getByRole('button', { name: 'Show every setting' });
+  if (await more.isVisible().catch(() => false)) await more.click();
+  await page.waitForTimeout(400);
 }
 
 async function shot(page, name) {
@@ -62,7 +70,17 @@ async function tab(page, name) {
     await shot(page, `04-play-${mode.toLowerCase()}-1366`);
   }
   await tab(page, 'Loops');
+  // The Mix view (Simple): a channel strip per part, the master and mastering; then a mastering preset.
+  await tab(page, 'Mix');
+  await shot(page, '17-mix-1366');
+  await page.getByRole('button', { name: 'Warm', exact: true }).click().catch(() => {});
+  await page.waitForTimeout(600);
+  await shot(page, '18-mix-mastering-warm-1366');
+  // The Simple Shape view: the six macros, the instrument card and the effects as cards.
   await tab(page, 'Shape');
+  await shot(page, '16-shape-simple-1366');
+  // From here on Advanced (remembered): every setting, the cable dock and the Play view's cables drawer.
+  await showEverySetting(page);
   await shot(page, '05-shape-cables-1366');
   await tab(page, 'Arrange');
   await shot(page, '06-arrange-1366');
@@ -82,7 +100,7 @@ async function tab(page, name) {
   await shot(page, '09-shape-sampler-1366');
   await tab(page, 'Play');
   // The sound browser and the project library.
-  await page.getByRole('button', { name: /^Sound: .*Change sound$/ }).click();
+  await page.getByRole('button', { name: /^Change instrument/ }).click();
   await page.waitForTimeout(400);
   await shot(page, '13-sound-browser-1366');
   await page.keyboard.press('Escape');
@@ -103,6 +121,7 @@ async function tab(page, name) {
   await shot(page, '11-steps-1920');
   await tab(page, 'Shape');
   await shot(page, '12-shape-1920');
+  await showEverySetting(page);
   await page.getByRole('button', { name: 'Show cables' }).click();
   await page.waitForTimeout(400);
   await shot(page, '15-shape-cable-panel-1920');
@@ -130,6 +149,7 @@ async function tab(page, name) {
   ];
   for (const ex of examples) {
     const b64 = await page.evaluate(async ({ starter, row, bars }) => {
+      // The test hook keeps its first name: scripts and tests depend on it.
       const sb = window.__switchboard;
       await sb.session.newFromStarter(starter);
       const blob = await sb.session.renderWav({ source: { kind: 'scene', row, bars }, sampleRate: 44100, bitDepth: 16, tailSeconds: 1.5 });

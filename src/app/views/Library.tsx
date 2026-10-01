@@ -10,8 +10,10 @@
  *   with Open, Rename, Duplicate and Delete (to Recently deleted, where it can
  *   be restored or deleted forever). The open project cannot be deleted while
  *   it is open; the dialog offers to open another one first.
- * - Import / export of the portable project file (.sb01.zip) and a short
- *   explanation of browser storage versus project files.
+ * - Import / export of the portable project file (.omnisong.zip; files from
+ *   SWITCHBOARD / 01, .sb01.zip, still import) and a short explanation of
+ *   browser storage versus project files.
+ * - "Show the quick guide again" and "Show hints again".
  *
  * Storage failures (full, unavailable, blocked by another tab, missing
  * project) are shown as plain-language notices; the dialog never crashes on
@@ -23,7 +25,7 @@ import { BLANK_STARTER, STARTERS, getStarter, type StarterDef } from '../../cont
 import * as library from '../../persistence/library';
 import type { ProjectSummary, TrashSummary } from '../../persistence/library';
 import { StorageError } from '../../persistence/db';
-import { BUNDLE_EXTENSION } from '../../persistence/bundle';
+import { BUNDLE_ACCEPT, BUNDLE_EXTENSION, LEGACY_BUNDLE_EXTENSIONS } from '../../persistence/bundle';
 import { renameProject as renameProjectCmd } from '../../state/commands';
 import { session, useAutosave, useProject } from '../instance';
 import { notify, runtimeStore, useRuntime } from '../runtime';
@@ -41,6 +43,8 @@ export interface LibraryProps {
   onLoaded(how: 'starter' | 'open' | 'import'): void;
   /** Replay the three-step quick guide. */
   onShowGuide(): void;
+  /** Start the "Try this" hints again from the first one (the button shows when this is given). */
+  onShowHints?(): void;
 }
 
 const TAB_OPTIONS = [
@@ -76,7 +80,7 @@ export function storageMessage(e: unknown, action: string): string {
       case 'unavailable':
         return `${action} failed: browser storage is not available in this window (private browsing or blocked by settings). You can still play and export a project file.`;
       case 'blocked':
-        return `${action} failed: another SWITCHBOARD tab is using the storage. Close the other tabs and try again.`;
+        return `${action} failed: another Omni Song tab is using the storage. Close the other tabs and try again.`;
       case 'not-found':
         return `${e.message} The list has been refreshed.`;
       default:
@@ -133,7 +137,7 @@ export function Library(props: LibraryProps) {
   return <LibraryDialog {...props} />;
 }
 
-function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide }: LibraryProps) {
+function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide, onShowHints }: LibraryProps) {
   const [tab, setTab] = useState<LibraryTab>(initialTab);
   const currentId = useProject((p) => p.id);
   const currentName = useProject((p) => p.name);
@@ -416,8 +420,16 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
             <span>{library.LIBRARY_STORAGE_NOTE}</span>
           </p>
           <div className={styles.footerActions}>
-            <input ref={fileRef} type="file" accept={`${BUNDLE_EXTENSION},.zip,application/zip`} hidden onChange={onImportFile} aria-hidden="true" tabIndex={-1} data-testid="library-import-input" />
-            <Button size="sm" icon="upload" onClick={() => fileRef.current?.click()} disabled={busy !== null} tip="Open a .sb01.zip project file saved from SWITCHBOARD. It is added to My projects; nothing is replaced." aria-busy={busy === 'import' || undefined}>
+            <input ref={fileRef} type="file" accept={BUNDLE_ACCEPT} hidden onChange={onImportFile} aria-hidden="true" tabIndex={-1} data-testid="library-import-input" />
+            <Button
+              size="sm"
+              icon="upload"
+              onClick={() => fileRef.current?.click()}
+              disabled={busy !== null}
+              tip={`Open a ${BUNDLE_EXTENSION} project file saved from Omni Song. It is added to My projects; nothing is replaced.`}
+              detail={`Project files from SWITCHBOARD / 01, the app's name before 2.0 (${LEGACY_BUNDLE_EXTENSIONS.join(', ')}), open the same way.`}
+              aria-busy={busy === 'import' || undefined}
+            >
               {busy === 'import' ? 'Importing…' : 'Import project file…'}
             </Button>
             <Button size="sm" icon="download" onClick={() => void exportCurrent()} disabled={busy !== null} tip={`Save ${quote(currentName)} with its recordings as one file: your portable backup.`} aria-busy={busy === 'export' || undefined}>
@@ -435,9 +447,14 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
               {projectCount === 1 ? '1 project' : `${projectCount} projects`} in this browser
             </span>
           )}
-          <Button size="sm" variant="ghost" icon="sparkle" className={styles.guideButton} onClick={onShowGuide} tip="Three quick pointers: Play, the pads and the sound controls.">
+          <Button size="sm" variant="ghost" icon="sparkle" className={styles.guideButton} onClick={onShowGuide} tip="Three quick pointers: Play and Pause, the pads with Mute, and Change instrument with the big knobs.">
             Show the quick guide again
           </Button>
+          {onShowHints && (
+            <Button size="sm" variant="ghost" icon="info" className={styles.hintsButton} onClick={onShowHints} tip="Small “Try this” suggestions, one at a time, from the first one. They turn Tips on.">
+              Show hints again
+            </Button>
+          )}
         </div>
 
         {(message || listError) && (

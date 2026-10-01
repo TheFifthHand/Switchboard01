@@ -5,15 +5,21 @@
  *   RECORDING  picker (built-in + imported) · Audition · waveform with Start/End
  *              trim handles · fade in / fade out · start/length/end readouts
  *   PLAYBACK   One-shot / Loop · root note · gain, pitch, fine, attack, release, cutoff
+ *   EDIT       Normalize · Reverse · Crop to region · Fade in / out · Gain, each a
+ *              new version of the recording (one undo step)
  *   TEMPO      Tempo Sync (speed and pitch together) · Original BPM · bars helper
- *   IMPORT     import a WAV or MP3 from this device
+ *   YOUR OWN   Record audio from a microphone or instrument in time with the music
+ *              (count-in, 1/2/4 bars, a clip that plays it from the downbeat), or
+ *              import a WAV or MP3 from this device
  *
  * A part that is not a sampler yet (or has no recording) shows the import
  * drop zone and the recording picker; either one turns it into a sampler.
  *
  * Every control edits the real project: parameters through
  * session.setInstrumentParam (recordable, one undo step per gesture), the
- * recording through cmd.assignSample, imports through session.importSample.
+ * recording through cmd.assignSample, imports through session.importSample,
+ * recorded takes through the audio input (app/audioInput.ts) and edits through
+ * sampleVersions.ts.
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button, Icon, NumberField, SegmentedControl, Select, Switch, noteName, type SelectOption } from '../../../ui/components';
@@ -26,7 +32,9 @@ import { session, useProject } from '../../instance';
 import { INSTRUMENT_LABEL, soundName } from '../../labels';
 import { runtimeStore, useRuntime } from '../../runtime';
 import { ParamKnob } from '../shape/ParamKnob';
+import { EditRecording } from './EditRecording';
 import { ImportSampleButton } from './ImportSampleButton';
+import { RecordAudio } from './RecordAudio';
 import { importInProgress, importedRecently } from './importState';
 import { isBuiltinId, useSampleOverview, useStoredFile } from './sampleOverview';
 import {
@@ -542,6 +550,7 @@ function RecordingEditor(props: { trackId: Id; sampleId: Id; name: string; partN
         <WaveformTrim trackId={trackId} name={name} overview={overview} status={status} duration={duration} />
         <TrimFooter trackId={trackId} duration={duration} />
       </section>
+      <EditRecording trackId={trackId} available={!missing} />
       <PlaybackSection trackId={trackId} />
       <TempoSection trackId={trackId} sampleId={sampleId} duration={duration} />
       <section className={styles.section} aria-labelledby={importTitleId}>
@@ -551,6 +560,7 @@ function RecordingEditor(props: { trackId: Id; sampleId: Id; name: string; partN
           </h3>
           <span className={styles.rule} aria-hidden="true" />
         </div>
+        <RecordAudio trackId={trackId} />
         <ImportSampleButton trackId={trackId} variant="button" />
       </section>
     </div>
@@ -577,7 +587,7 @@ function NoRecording(props: { trackId: Id; info: PartInfo }) {
       <p className={styles.intro}>
         {sampler ? (
           <>
-            <strong>{info.name}</strong> has no recording yet. Import one from this device or choose a built-in recording.
+            <strong>{info.name}</strong> has no recording yet. Record one from a microphone or instrument, import one from this device, or choose a built-in recording.
           </>
         ) : (
           <>
@@ -585,6 +595,7 @@ function NoRecording(props: { trackId: Id; info: PartInfo }) {
           </>
         )}
       </p>
+      {sampler && <RecordAudio trackId={trackId} />}
       <ImportSampleButton trackId={trackId} variant="dropzone" />
       <section className={styles.section} aria-labelledby={titleId}>
         <div className={styles.head}>

@@ -86,7 +86,7 @@ test('a project with an imported sample survives export and import into a fresh 
     const bytes = new Uint8Array(await blob.arrayBuffer());
     return { filename, bytes: Array.from(bytes) };
   });
-  expect(bundle.filename).toMatch(/\.sb01\.zip$/);
+  expect(bundle.filename).toMatch(/\.omnisong\.zip$/);
   const projectBefore = await page1.evaluate(() => (window as any).__switchboard.project());
   await ctx1.close();
 
@@ -169,7 +169,7 @@ test('a storage failure shows "Not saved" with Try again and Export project file
   await expect(pop.getByRole('button', { name: 'Try again' })).toBeVisible();
   // The recovery export downloads the project file and says so.
   const [download] = await Promise.all([page.waitForEvent('download'), pop.getByRole('button', { name: 'Export project file' }).click()]);
-  expect(download.suggestedFilename()).toMatch(/\.sb01\.zip$/);
+  expect(download.suggestedFilename()).toMatch(/\.omnisong\.zip$/);
   await expect(page.getByText(`Saved “${download.suggestedFilename()}” to your downloads. Keep it as your backup.`)).toBeVisible();
   // Recovery: storage frees up, Try again saves.
   await page.evaluate(() => (window as any).__restorePut());

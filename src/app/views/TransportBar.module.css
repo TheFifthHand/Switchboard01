@@ -375,6 +375,22 @@
     display: none;
   }
 }
+/*
+ * The MIDI & audio key (shown while MIDI or an audio input is on) needs about
+ * 40 px: where the one-row strip has no room for it, MIDI & audio stays in the
+ * More menu (Advanced wraps onto two rows below 1180 px, so it fits there).
+ */
+@media (min-width: 1024px) and (max-width: 1179px) {
+  .bar[data-mode='simple'] .devicesKey {
+    display: none;
+  }
+}
+@media (min-width: 1180px) and (max-width: 1279px) {
+  .bar[data-mode='advanced'] .devicesKey {
+    display: none;
+  }
+}
+
 /* Smallest supported width (1024 px, also 200 % zoom): the bar.beat readout gives way. */
 @media (max-width: 1079px) {
   .position {

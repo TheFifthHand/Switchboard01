@@ -15,7 +15,7 @@ import styles from './ExportDialog.module.css';
 type SourceKey = string; // 'now' | 'song' | `perf:<id>` | `scene:<row>`
 
 function safeName(s: string): string {
-  return s.replace(/[\\/:*?"<>|]+/g, '').trim().slice(0, 80) || 'switchboard';
+  return s.replace(/[\\/:*?"<>|]+/g, '').trim().slice(0, 80) || 'omni-song';
 }
 
 export function ExportDialog(props: { open: boolean; onClose(): void; initialSource?: SourceKey }) {

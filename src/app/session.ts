@@ -182,6 +182,8 @@ export class Session {
   private pendingKeys = new Map<string, { released: boolean }>();
   private auditionCounter = 0;
   private sampleLoads = new Map<Id, Promise<void>>();
+  /** Told whenever every held note was let go of (Stop, Pause, Mute All, blur, a stall, a new project). */
+  private releaseListeners = new Set<() => void>();
 
   constructor(initial: Project) {
     this.store = new ProjectStore(initial);
@@ -1172,6 +1174,34 @@ export class Session {
     // A replayed take drives the arpeggiator itself (live keys are off then): it plays on.
     if (this.transport && !this.replayingId) for (const t of this.store.getState().tracks) this.transport.setArpHeld(t.id, []);
     patchRuntime({ held: {} });
+    for (const fn of [...this.releaseListeners]) {
+      try {
+        fn();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
+  /**
+   * Be told when every held note is let go of at once (Stop, Pause, Mute All,
+   * window blur, a stall, a replay or another project starting), so outside
+   * note sources (MIDI) can forget their keys and pedal-held notes too.
+   */
+  onAllNotesReleased(fn: () => void): () => void {
+    this.releaseListeners.add(fn);
+    return () => {
+      this.releaseListeners.delete(fn);
+    };
+  }
+
+  /**
+   * Bend a part's playing and future notes by `cents` (MIDI pitch wheel), now.
+   * 0 = centred. Ignored during a replay (the take plays as recorded).
+   */
+  setPitchBend(trackId: Id, cents: number): void {
+    if (!this.engine || !this.ctx || this.replayingId) return;
+    this.engine.setPitchBend(trackId, Number.isFinite(cents) ? cents : 0, this.ctx.currentTime);
   }
 
   /** Pitches held on a part; `forArp`: only the keys that went to the arpeggiator. */
@@ -1252,6 +1282,30 @@ export class Session {
     } else if (seqState.playing?.slot !== slot) {
       this.applyLaunchResults([this.transport!.launchClip(trackId, slot)]);
     }
+  }
+
+  /**
+   * Make sure the live pads are playing for an audio recording: continue a
+   * pause (no count-in, as Record Notes does), or start from bar 1 with the
+   * lit clips (a default scene when nothing is lit) after `countInBars` bars
+   * of count-in. Already playing: nothing changes. False when audio cannot
+   * start or a song or replay is playing (recordings follow the live pads).
+   */
+  async startPlaybackForRecording(countInBars: number): Promise<boolean> {
+    if (!(await this.startAudio())) return false;
+    const t = this.transport!;
+    if (t.playing || t.paused) {
+      if (this.replayingId || runtimeStore.getState().mode !== 'live') return false;
+      if (t.paused) this.resumeFromPause();
+      return true;
+    }
+    this.armDefaultSceneIfIdle();
+    const countIn = Math.max(0, Math.min(4, Math.round(countInBars)));
+    t.start({ mode: { kind: 'live' }, countInBars: countIn });
+    this.stallResume = null;
+    patchRuntime({ playing: true, paused: false, mode: 'live', songBlock: null, countingIn: countIn > 0, stalled: null });
+    this.refreshLauncherRuntime();
+    return true;
   }
 
   stopRecordNotes(): void {
@@ -1512,7 +1566,7 @@ export class Session {
     try {
       await db.putSample(res.meta, res.blob);
     } catch (e) {
-      return { ok: false, message: e instanceof db.StorageError && e.kind === 'quota' ? 'Browser storage is full, so the recording could not be kept. Delete old projects or export and remove recordings.' : `The recording could not be stored: ${e instanceof Error ? e.message : String(e)}` };
+      return { ok: false, message: sampleStorageMessage(e) };
     }
     if (this.bank) {
       this.bank.add(res.meta.id, res.buffer);
@@ -1525,6 +1579,25 @@ export class Session {
     this.store.endGesture();
     if (!a.changed && (a.refused || a.reason)) return { ok: false, message: a.refused ?? a.message ?? 'The recording could not be assigned to this part.' };
     return { ok: true, message: `Imported "${res.meta.name}" (${res.meta.duration.toFixed(1)} s).` };
+  }
+
+  /**
+   * Keep audio made in the app (a recorded take, an edited version): its file
+   * goes to browser storage like an import, and its decoded audio straight
+   * into the live sample bank (no second decode). The project is not changed
+   * here; the caller adds the metadata in one undoable step.
+   */
+  async storeSample(meta: SampleMeta, blob: Blob, buffer: AudioBuffer | null): Promise<{ ok: true } | { ok: false; message: string }> {
+    try {
+      await db.putSample(meta, blob);
+    } catch (e) {
+      return { ok: false, message: sampleStorageMessage(e) };
+    }
+    if (buffer && this.bank && this.ctx && buffer.sampleRate === this.ctx.sampleRate) {
+      this.bank.add(meta.id, buffer);
+      this.loadedSampleIds.add(meta.id);
+    }
+    return { ok: true };
   }
 
   /* ------------------------------------------------------------------ */
@@ -1668,6 +1741,13 @@ function musicChanged(p: Project, prev: Project): boolean {
     if (a.clips !== b.clips || a.arp !== b.arp || a.instrument.kind !== b.instrument.kind) return true;
   }
   return false;
+}
+
+/** Why a recording could not be put in browser storage, in words. */
+export function sampleStorageMessage(e: unknown): string {
+  return e instanceof db.StorageError && e.kind === 'quota'
+    ? 'Browser storage is full, so the recording could not be kept. Delete old projects or export and remove recordings.'
+    : `The recording could not be stored: ${e instanceof Error ? e.message : String(e)}`;
 }
 
 export function formatSeconds(s: number): string {

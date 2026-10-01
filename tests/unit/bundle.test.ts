@@ -5,7 +5,8 @@ import type { Project } from '../../src/project/types';
 import { ProjectStore } from '../../src/state/projectStore';
 import { insertEffect, connect } from '../../src/state/commands/patch';
 import { setMacroTarget } from '../../src/state/commands/tracks';
-import { BUNDLE_EXTENSION, BUNDLE_MAX_BYTES, BundleExportError, bundleFileName, exportBundle, importBundle, samplePath } from '../../src/persistence/bundle';
+import { BUNDLE_ACCEPT, BUNDLE_EXTENSION, BUNDLE_MAX_BYTES, BundleExportError, LEGACY_BUNDLE_EXTENSIONS, bundleFileName, exportBundle, importBundle, samplePath } from '../../src/persistence/bundle';
+import { PROJECT_SCHEMA, PROJECT_VERSION } from '../../src/project/types';
 
 const SAMPLE_BYTES = new Uint8Array(Array.from({ length: 2048 }, (_, i) => (i * 37) % 256));
 
@@ -96,7 +97,9 @@ describe('project bundles', () => {
 
   it('gives readable errors for bad files', async () => {
     const notZip = await importBundle(new Blob(['hello, this is text']));
-    expect(notZip).toEqual({ ok: false, error: expect.stringMatching(/not a SWITCHBOARD project file/) });
+    expect(notZip).toEqual({ ok: false, error: expect.stringMatching(/not an Omni Song project file/) });
+    // It names the current file type and the one earlier versions saved.
+    if (!notZip.ok) expect(notZip.error).toMatch(/\.omnisong\.zip.*\.sb01\.zip/);
 
     const good = new Uint8Array(await (await exportBundle(createProject({ now: 0 }), async () => null)).arrayBuffer());
     const corrupt = good.slice(0, Math.floor(good.length / 2));
@@ -106,7 +109,7 @@ describe('project bundles', () => {
     if (!damaged.ok) expect(damaged.error).toMatch(/damaged|could not be opened/);
 
     const noProject = await importBundle(new Blob([zipSync({ 'README.txt': strToU8('hi') })]));
-    expect(noProject).toEqual({ ok: false, error: 'This zip file does not contain a SWITCHBOARD project (project.json is missing).' });
+    expect(noProject).toEqual({ ok: false, error: 'This zip file does not contain an Omni Song project (project.json is missing).' });
 
     const badJson = await importBundle(new Blob([zipSync({ 'project.json': strToU8('{"schema": ') })]));
     expect(badJson).toEqual({ ok: false, error: expect.stringMatching(/not valid JSON/) });
@@ -117,7 +120,7 @@ describe('project bundles', () => {
 
     const newer = { ...JSON.parse(JSON.stringify(createProject({ now: 0 }))), version: 99 };
     const future = await importBundle(new Blob([zipSync({ 'project.json': strToU8(JSON.stringify(newer)) })]));
-    expect(future).toEqual({ ok: false, error: 'This project file cannot be opened: This project was made with a newer version of SWITCHBOARD.' });
+    expect(future).toEqual({ ok: false, error: 'This project file cannot be opened: This project was made with a newer version of Omni Song.' });
 
     expect(await importBundle(new Blob([]))).toEqual({ ok: false, error: 'This file is empty.' });
   });
@@ -155,7 +158,7 @@ describe('project bundles', () => {
       }
     }
     expect(patched).toBe(true);
-    expect(await importBundle(new Blob([zip]))).toEqual({ ok: false, error: 'This project file expands to more data than SWITCHBOARD can open.' });
+    expect(await importBundle(new Blob([zip]))).toEqual({ ok: false, error: 'This project file expands to more data than Omni Song can open.' });
   });
 
   it('refuses to export a bundle that would be too large to import again', async () => {
@@ -169,9 +172,49 @@ describe('project bundles', () => {
     expect(read).toBe(false);
   });
 
+  it('saves new project files as .omnisong.zip with a README that names Omni Song', async () => {
+    expect(BUNDLE_EXTENSION).toBe('.omnisong.zip');
+    expect(bundleFileName({ name: 'Night Drive' })).toBe('Night-Drive.omnisong.zip');
+    const entries = unzipSync(new Uint8Array(await (await exportBundle(createProject({ now: 0 }), async () => null)).arrayBuffer()));
+    const readme = new TextDecoder().decode(entries['README.txt']);
+    expect(readme).toMatch(/^Omni Song project file/);
+    expect(readme).toContain('.omnisong.zip');
+    // Existing users' data keeps its internal format id.
+    expect(JSON.parse(new TextDecoder().decode(entries['project.json'])).schema).toBe('switchboard01.project');
+    expect(PROJECT_SCHEMA).toBe('switchboard01.project');
+  });
+
+  it('still opens project files saved by SWITCHBOARD / 01 (.sb01.zip, older format) and offers them in the file picker', async () => {
+    expect(LEGACY_BUNDLE_EXTENSIONS).toContain('.sb01.zip');
+    for (const ext of ['.omnisong.zip', '.sb01.zip', '.zip']) expect(BUNDLE_ACCEPT.split(',')).toContain(ext);
+
+    // A version-1 project (before mastering existed) with the old README, as 1.0 wrote it.
+    const v1 = JSON.parse(JSON.stringify(fullProject()));
+    delete v1.mastering;
+    v1.version = 1;
+    const oldReadme = 'SWITCHBOARD / 01 project file\n\nTo open it: in SWITCHBOARD / 01, open the project library, choose Import and pick this .sb01.zip file.\n';
+    const zip = zipSync({ 'project.json': strToU8(JSON.stringify(v1, null, 2)), 'README.txt': strToU8(oldReadme), 'samples/smp_loop.wav': SAMPLE_BYTES });
+    const file = new File([zip], 'Night Drive.sb01.zip', { type: 'application/zip' });
+
+    const r = await importBundle(file);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // Upgraded to the current format, everything else as it was.
+    expect(r.project.version).toBe(PROJECT_VERSION);
+    expect(r.project.schema).toBe('switchboard01.project');
+    expect(r.project.mastering.enabled).toBe(true);
+    expect(r.project.name).toBe('Night Drive');
+    expect(r.project.tracks.map((t) => t.clips.map((c) => c?.name ?? null))).toEqual(v1.tracks.map((t: Project['tracks'][number]) => t.clips.map((c) => c?.name ?? null)));
+    expect(r.project.performances[0].events).toEqual(v1.performances[0].events);
+    expect(await blobBytes(r.samples[0].blob)).toEqual([...SAMPLE_BYTES]);
+    // The same bytes under the new extension open identically: only the contents count.
+    const again = await importBundle(new File([zip], 'Night Drive.omnisong.zip', { type: 'application/zip' }));
+    expect(again.ok && JSON.stringify(again.project)).toBe(JSON.stringify(r.project));
+  });
+
   it('names files safely', () => {
     expect(bundleFileName({ name: 'Night Drive / v2?' })).toBe(`Night-Drive-v2${BUNDLE_EXTENSION}`);
-    expect(bundleFileName({ name: '///' })).toBe(`switchboard-project${BUNDLE_EXTENSION}`);
+    expect(bundleFileName({ name: '///' })).toBe(`omni-song-project${BUNDLE_EXTENSION}`);
     expect(samplePath({ id: 'smp_a', mime: 'audio/mpeg' })).toBe('samples/smp_a.mp3');
   });
 });

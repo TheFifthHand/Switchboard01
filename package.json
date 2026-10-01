@@ -1,8 +1,8 @@
 {
-  "name": "switchboard01",
+  "name": "omni-song",
   "private": true,
-  "version": "1.0.0",
-  "description": "SWITCHBOARD / 01 — a browser-based electronic music console. Runs entirely on your device.",
+  "version": "2.0.0",
+  "description": "Omni Song (formerly SWITCHBOARD / 01) — make electronic music in your browser. Runs entirely on your device.",
   "type": "module",
   "license": "UNLICENSED",
   "engines": {

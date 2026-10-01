@@ -18,6 +18,7 @@ import type { MeterFrame } from '../../audio/contracts';
 import { OfflineMenuItems, OfflineStatus } from './OfflineStatus';
 import { RecordOptions, quantizeCaption, recordOptionsCaption } from './RecordOptions';
 import { MOD_ARIA, MOD_KEY, MenuItem, MenuSeparator, MoreIcon, Popover, anchorFromElement } from './ClipMenu';
+import { DevicesDialog, DevicesKey, midi } from './devices';
 import styles from './TransportBar.module.css';
 
 const VIEW_OPTIONS = [
@@ -305,7 +306,7 @@ function RecordGroup() {
  * (Undo, Redo, Projects, Export, the Simple · Advanced switch, the offline
  * state and the Update action, which the key marks when one waits).
  */
-function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; projectName: string }) {
+function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; onOpenDevices(): void; projectName: string }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const history = useHistory();
@@ -315,12 +316,12 @@ function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; projectN
   const close = () => setOpen(false);
   return (
     <>
-      <Tooltip name="More" tip={updateReady ? 'A new version is ready: Update is in this menu. Also Tips, Undo, Redo, your projects and WAV export.' : 'Tips, Undo, Redo, Simple or Advanced, your projects and WAV export.'}>
+      <Tooltip name="More" tip={updateReady ? 'A new version is ready: Update is in this menu. Also Tips, Undo, Redo, your projects, WAV export and MIDI & audio.' : 'Tips, Undo, Redo, Simple or Advanced, your projects, WAV export, and MIDI keyboards and audio input.'}>
         <button
           ref={btnRef}
           type="button"
           className={styles.more}
-          aria-label={updateReady ? 'More: update ready, undo, redo, tips, projects and export' : 'More: undo, redo, tips, projects and export'}
+          aria-label={updateReady ? 'More: update ready, undo, redo, tips, projects, export, MIDI and audio' : 'More: undo, redo, tips, projects, export, MIDI and audio'}
           aria-haspopup="menu"
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
@@ -403,6 +404,16 @@ function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; projectN
           >
             Export WAV…
           </MenuItem>
+          <MenuSeparator />
+          <MenuItem
+            icon="midi"
+            onSelect={() => {
+              close();
+              props.onOpenDevices();
+            }}
+          >
+            MIDI & audio…
+          </MenuItem>
         </Popover>
       )}
     </>
@@ -420,6 +431,11 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
   const takeRecording = useRuntime((s) => s.recording === 'performance');
   const history = useHistory();
   const advanced = uiMode === 'advanced';
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  // MIDI devices reconnect by themselves on a later visit, but only if the browser already allows them.
+  useEffect(() => {
+    void midi.autoConnect();
+  }, []);
 
   return (
     <header className={styles.bar} data-mode={uiMode} aria-label="Transport">
@@ -543,10 +559,12 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
         >
           <span className={styles.exportText}>Export</span>
         </Button>
-        <MoreMenu onOpenLibrary={props.onOpenLibrary} onOpenExport={props.onOpenExport} projectName={projectName} />
+        <DevicesKey onOpen={() => setDevicesOpen(true)} className={styles.devicesKey} />
+        <MoreMenu onOpenLibrary={props.onOpenLibrary} onOpenExport={props.onOpenExport} onOpenDevices={() => setDevicesOpen(true)} projectName={projectName} />
         {/* The app's own state (offline copy, waiting update) closes the strip. */}
         <OfflineStatus statusClassName={styles.offline} updateClassName={styles.update} />
       </div>
+      <DevicesDialog open={devicesOpen} onClose={() => setDevicesOpen(false)} />
     </header>
   );
 }

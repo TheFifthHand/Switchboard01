@@ -1,9 +1,13 @@
-SWITCHBOARD / 01 - START HERE
-=============================
+OMNI SONG - START HERE
+======================
 
-SWITCHBOARD / 01 is an electronic music console that runs entirely in your
-web browser, on your own computer. It needs no account and no internet
-connection once it is on your computer. Sound is made on your device.
+Omni Song lets you make electronic music in your web browser, on your own
+computer. Press one button and a beat plays; then make it yours. It needs no
+account and no internet connection once it is on your computer. Sound is
+made on your device.
+
+Omni Song is version 2.0 of the app that was called SWITCHBOARD / 01. Your
+projects and settings carry over (see 4 and 6).
 
 Recommended browser: Google Chrome or Microsoft Edge (current versions).
 Use headphones or speakers; start with a moderate volume.
@@ -13,8 +17,8 @@ Use headphones or speakers; start with a moderate volume.
 ---------------------------------------
   1. Extract this whole zip to a folder (right-click > Extract All...).
      Double-clicking inside the zip without extracting will NOT work.
-  2. Double-click  "Start SWITCHBOARD.bat".
-     A small black window opens and your browser shows the instrument at
+  2. Double-click  "Start Omni Song.bat".
+     A small black window opens and your browser shows Omni Song at
      http://127.0.0.1:4173/
      If Windows SmartScreen asks, choose "More info" > "Run anyway".
      The window uses PowerShell, which is built into Windows 10 and 11.
@@ -24,9 +28,10 @@ Use headphones or speakers; start with a moderate volume.
   The launcher only serves the "app" folder, and only to this computer
   (loopback address 127.0.0.1). Nothing is uploaded.
 
-  Already running? Double-clicking "Start SWITCHBOARD.bat" again just opens
+  Already running? Double-clicking "Start Omni Song.bat" again just opens
   the running copy in your browser; the new window closes by itself after a
-  few seconds.
+  few seconds. If an older SWITCHBOARD / 01 window is still open, the new
+  window says so: close the old window first, then start Omni Song again.
 
   Your browser keeps projects separately for each address, and the port
   number (4173) is part of the address. The launcher always uses
@@ -50,28 +55,44 @@ Use headphones or speakers; start with a moderate volume.
 
 3. JUMP IN
 ----------
-  Click "Jump In". A starter groove begins playing - this click is what
-  allows the browser to make sound. Then:
-    * Tap lit pads to stop/start parts; tap another pad in a column to
-      switch that part's pattern. Changes join on the next bar.
-    * Turn the Tone and Space knobs on the right to change the selected
-      part.
+  Click "Jump In". A starter beat begins playing - this click is what
+  allows the browser to make sound. A short quick guide and small
+  "Try this" hints show you one thing at a time; they never block
+  anything, and you can hide them.
+    * Play / Pause (top left, or the Space bar) pauses and continues
+      exactly where you were. Stop (Shift+Space) goes back to the start.
+    * Each column of pads is one part (Drums, Bass, Chords ...). Tap a
+      pad to switch that part to another loop; it joins on the next bar.
+    * Mute silences a part, Solo plays it on its own. Both are at the
+      top of each column.
+    * Drag a loop onto another pad to move it (hold Ctrl to copy).
+      Undo (Ctrl+Z) puts things back.
+    * "Change instrument" (on the right) picks another drum kit, synth or
+      recording for the selected part. The big knobs below it shape the
+      sound: Tone for darker or brighter, Space for more room around it.
     * Knobs: drag up or down (hold Shift for fine steps). Double-click
       puts a knob back to its default. For an exact value, click a knob,
       type a number and press Enter. Arrow keys work too.
     * Play the little keyboard with the mouse or your computer keys
       (A W S E D F T G Y H U J K ...). Musical Assist keeps you in key.
+    * Simple shows the essentials; Advanced (switch at the top) shows
+      every control. Switching never changes your music.
+    * Mix (top left) has a fader per part and mastering: pick a preset
+      such as Warm or Punchy and a loudness target for your finished song.
     * Record a performance: press "Performance" (under "Record" at the
       top), play for a while, then press it again to stop. To save it as
       a WAV file you can listen to anywhere, press "Export" (top right),
       choose your performance under "What to export" and press
       "Export WAV".
-    * Point at any control to see what it does. The "Tips" switch at the
-      top turns these explanations on or off.
+    * New in 2.0: play Omni Song from a MIDI keyboard or controller, and
+      record your voice or a guitar. See the MIDI & audio dialog in the
+      app for what your browser and devices support.
+    * Point at any control to see what it does. "Tips" in the More menu
+      (the button with three dots, top right) turns these explanations
+      and the "Try this" hints on or off.
   In a narrower window (or while an "Update" or "Not saved" button needs
-  the room), Tips, your projects and Export are in the More menu (the
-  button with three dots, top right). There, your projects open with
-  "Projects...".
+  the room), your projects and Export are in the More menu too. There,
+  your projects open with "Projects...".
 
 
 4. YOUR WORK
@@ -81,13 +102,15 @@ Use headphones or speakers; start with a moderate volume.
   change). Browser storage is working storage: for a real backup, click
   the folder button with your project's name (top right, or More >
   "Projects...") to open the Project library, then press
-  "Export this project". It saves one .sb01.zip file. To open that
+  "Export this project". It saves one .omnisong.zip file. To open that
   file on any computer, press "Import project file..." in the same
-  Project library.
+  Project library. Project files saved by SWITCHBOARD / 01 (.sb01.zip)
+  open the same way.
 
   After the first visit the app also works offline in the same browser,
   at the same address. You can install it as an app from the browser's
-  address bar (optional).
+  address bar (optional). If you installed SWITCHBOARD / 01 as an app, it
+  updates itself to Omni Song: press "Update" when the app offers it.
 
 
 5. TROUBLESHOOTING
@@ -95,12 +118,12 @@ Use headphones or speakers; start with a moderate volume.
   * No sound: check the system volume and output device; press the
     "Resume audio" button if the app shows one; make sure Mute All is off.
   * The black window says port 4173 is used by another program: it waits
-    for you to press Enter, then opens SWITCHBOARD at another address
+    for you to press Enter, then opens Omni Song at another address
     (for example http://127.0.0.1:4174/). There, My projects starts
     empty. Your projects are not lost: they stay with
     http://127.0.0.1:4173/. To get back to them, close the black window,
     close the other program (or restart the computer) and start
-    SWITCHBOARD again. To find the other program, open Command Prompt and
+    Omni Song again. To find the other program, open Command Prompt and
     run   netstat -ano | findstr :4173   - the last number is its PID,
     which Task Manager shows on the Details tab. To move a project from
     one address to the other, use "Export this project" and
@@ -116,9 +139,20 @@ Use headphones or speakers; start with a moderate volume.
     to see the error message.
 
 
-6. WHAT IS IN THIS FOLDER
+6. COMING FROM SWITCHBOARD / 01
+-------------------------------
+  * "Start SWITCHBOARD.bat" is now called "Start Omni Song.bat". It works
+    the same way and opens the same address, http://127.0.0.1:4173/, so
+    every project you saved in SWITCHBOARD / 01 is still in My projects.
+    If you kept a shortcut to the old .bat file, point it at the new one
+    (or extract this version over the old folder and delete the old .bat).
+  * Project files: new ones end in .omnisong.zip; your .sb01.zip files
+    still import.
+
+
+7. WHAT IS IN THIS FOLDER
 -------------------------
-  Start SWITCHBOARD.bat   starts SWITCHBOARD (Windows)
+  Start Omni Song.bat     starts Omni Song (Windows)
   START HERE.txt          this guide
   app\                    the instrument itself (the built web app)
   launcher\               the small local web servers that open it

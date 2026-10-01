@@ -12,6 +12,7 @@
  */
 import { uid } from '../project/factory';
 import type { SampleMeta } from '../project/types';
+import { encodeWav } from '../render/wav';
 
 export const IMPORT_LIMITS = {
   maxBytes: 50 * 1024 * 1024,
@@ -299,4 +300,54 @@ export async function decodeAudioFile(file: File, ctx: DecoderLike): Promise<Dec
     peaks: computePeaks(buffer),
   };
   return { ok: true, buffer, meta, blob: new Blob([bytes], { type: mime }) };
+}
+
+/* ------------------------------------------------------------------ */
+/* Audio made in the app (recorded takes, edited versions)             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The import limits apply to audio made in the app too (a recorded take, an
+ * edited version): null when it fits, else what to do, in words.
+ */
+export function madeAudioLimitMessage(name: string, seconds: number, bytes: number): string | null {
+  if (!(seconds > 0) || !(bytes > 0)) return `"${name}" is empty.`;
+  if (seconds > IMPORT_LIMITS.maxSeconds + 1e-6) return `"${name}" would be ${seconds.toFixed(1)} seconds long. The limit is ${IMPORT_LIMITS.maxSeconds} seconds — record fewer bars or crop it first.`;
+  if (bytes > IMPORT_LIMITS.maxBytes) return `"${name}" would be ${mb(bytes)} MB. The limit is ${mb(IMPORT_LIMITS.maxBytes)} MB — record fewer bars or crop it first.`;
+  return null;
+}
+
+/** Metadata for audio made in the app, in the same shape an import gets (a fresh id, a waveform overview). */
+export function madeAudioMeta(name: string, buffer: BufferLike, byteLength: number, mime = 'audio/wav'): SampleMeta {
+  return {
+    id: uid('smp'),
+    name: (name.replace(/\s+/g, ' ').trim() || 'Recording').slice(0, 80),
+    mime,
+    byteLength,
+    duration: buffer.duration,
+    sampleRate: buffer.sampleRate,
+    channels: buffer.numberOfChannels,
+    peaks: computePeaks(buffer),
+  };
+}
+
+export type MadeAudio = { ok: true; meta: SampleMeta; blob: Blob } | { ok: false; message: string };
+
+/**
+ * Encode audio made in the app as a WAV file to keep like an import: 24-bit
+ * (16-bit when 24-bit would pass the size limit), within the import limits,
+ * with its metadata. Nothing is stored here.
+ */
+export function encodeMadeAudio(name: string, channels: readonly Float32Array[], sampleRate: number): MadeAudio {
+  const frames = channels.reduce((m, c) => Math.max(m, c.length), 0);
+  const seconds = frames / sampleRate;
+  const header = 44;
+  const bytes24 = header + frames * channels.length * 3;
+  const depth = bytes24 <= IMPORT_LIMITS.maxBytes ? 24 : 16;
+  const bytes = depth === 24 ? bytes24 : header + frames * channels.length * 2;
+  const problem = madeAudioLimitMessage(name, seconds, bytes);
+  if (problem) return { ok: false, message: problem };
+  const wav = encodeWav(channels, sampleRate, depth);
+  const like: BufferLike = { length: frames, duration: seconds, sampleRate, numberOfChannels: channels.length, getChannelData: (c) => channels[c] };
+  return { ok: true, meta: madeAudioMeta(name, like, wav.byteLength), blob: new Blob([wav], { type: 'audio/wav' }) };
 }

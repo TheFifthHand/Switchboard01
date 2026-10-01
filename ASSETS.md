@@ -1,7 +1,7 @@
-# Asset provenance — SWITCHBOARD / 01
+# Asset provenance — Omni Song
 
-Every sound in SWITCHBOARD / 01 is generated on the user's device by original code in this
-repository. No recorded samples, loops, presets or patterns from third parties are bundled.
+Every sound in Omni Song (formerly SWITCHBOARD / 01) is generated on the user's device by original
+code in this repository. No recorded samples, loops, presets or patterns from third parties are bundled.
 
 | Asset | Source | Licence / permission |
 |-------|--------|----------------------|

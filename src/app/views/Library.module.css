@@ -26,6 +26,9 @@
   margin-left: auto;
   color: var(--ink-2);
 }
+.hintsButton {
+  color: var(--ink-2);
+}
 
 .messages {
   display: flex;

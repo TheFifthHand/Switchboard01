@@ -15,12 +15,14 @@ import { App } from '../../src/app/App';
 import { session } from '../../src/app/instance';
 import { runtimeStore } from '../../src/app/runtime';
 import { Library, type LibraryProps, type LibraryTab } from '../../src/app/views/Library';
+import { RENAME_NOTE_KEY } from '../../src/app/views/Welcome';
 import { BLANK_STARTER, STARTERS } from '../../src/content/starters';
+import { strToU8, zipSync } from 'fflate';
 import { exportBundle } from '../../src/persistence/bundle';
 import { closeDb, deleteDb, putSample, saveProject } from '../../src/persistence/db';
 import * as library from '../../src/persistence/library';
 import { createProject } from '../../src/project/factory';
-import type { Project } from '../../src/project/types';
+import { PROJECT_VERSION, type Project } from '../../src/project/types';
 import { setGuideDone, setView, uiStore } from '../../src/state/uiStore';
 import { cleanup, key, mount, wait } from './ui-harness';
 
@@ -299,7 +301,9 @@ describe('Project library', () => {
       input.dispatchEvent(new Event('change', { bubbles: true }));
     });
     const alert = await until(() => dialog().querySelector<HTMLElement>('[role="alert"]'), 'import error');
-    expect(alert.textContent).toMatch(/not a SWITCHBOARD project file/);
+    expect(alert.textContent).toMatch(/not an Omni Song project file/);
+    // It names the file type to choose, and the one earlier versions saved.
+    expect(alert.textContent).toContain('.omnisong.zip');
     expect(alert.textContent).toContain('.sb01.zip');
     expect(loaded).toEqual([]);
     expect(session.store.getState().id).toBe(a.id);
@@ -326,7 +330,7 @@ describe('Project library', () => {
       HTMLAnchorElement.prototype.click = realClick;
     }
     const file = saved as unknown as { name: string; href: string };
-    expect(file.name).toMatch(/\.sb01\.zip$/);
+    expect(file.name).toBe('Round-Trip.omnisong.zip');
     await until(() => dialog().textContent?.includes('to your downloads'), 'export message');
 
     const blob = await (await fetch(file.href)).blob();
@@ -632,6 +636,54 @@ describe('The first-launch preview and reopening', () => {
     expect(stored.some((p) => p.id === session.store.getState().id)).toBe(true);
   });
 
+  it('opens a project file saved by SWITCHBOARD / 01 (.sb01.zip, older format) from the file picker', async () => {
+    const a = project('Keep Me', Date.now());
+    await saveProject(a);
+    session.store.replace(a, { resetHistory: true });
+    open('projects');
+    const input = dialog().querySelector<HTMLInputElement>('input[type="file"]')!;
+    // The picker offers new and older project files.
+    const accept = input.accept.split(',');
+    expect(accept).toContain('.omnisong.zip');
+    expect(accept).toContain('.sb01.zip');
+    const importButton = buttonNamed('Import project file…')!;
+    expect(importButton).not.toBeNull();
+
+    // A version-1 project as SWITCHBOARD / 01 saved it: no mastering yet, the old README.
+    const old = JSON.parse(JSON.stringify(createProject({ name: 'Old Song' })));
+    delete old.mastering;
+    old.version = 1;
+    const zip = zipSync({ 'project.json': strToU8(JSON.stringify(old)), 'README.txt': strToU8('SWITCHBOARD / 01 project file\n') });
+    const dt = new DataTransfer();
+    dt.items.add(new File([zip], 'Old-Song.sb01.zip', { type: 'application/zip' }));
+    await act(async () => {
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await until(() => loaded.length > 0, 'import loaded');
+    expect(loaded).toEqual(['import']);
+    const opened = session.store.getState();
+    expect(opened.name).toBe('Old Song');
+    expect(opened.schema).toBe('switchboard01.project');
+    expect(opened.version).toBe(PROJECT_VERSION);
+    expect(opened.mastering).toBeTruthy();
+    expect((await library.listProjects()).map((p) => p.name).sort()).toEqual(['Keep Me', 'Old Song']);
+  });
+
+  it('"Show hints again" is offered next to the quick guide when the app supports it', async () => {
+    open('starters');
+    // Without a handler (an embedding that has no hints) there is no button.
+    expect(buttonNamed('Show hints again')).toBeNull();
+    cleanup();
+    let hints = 0;
+    mount(h(Library, { open: true, initialTab: 'starters', onClose: () => {}, onLoaded: () => {}, onShowGuide: () => {}, onShowHints: () => void (hints += 1) }));
+    const b = buttonNamed('Show hints again');
+    expect(b).not.toBeNull();
+    expect(buttonNamed('Show the quick guide again')).not.toBeNull();
+    await click(b);
+    expect(hints).toBe(1);
+  });
+
   it('importing a project file right after editing the preview keeps both, and reopens the import', async () => {
     await session.boot();
     const preview = session.store.getState();
@@ -647,6 +699,44 @@ describe('The first-launch preview and reopening', () => {
     expect(stored.find((p) => p.id === preview.id)?.bpm).toBe(97);
     expect(stored.some((p) => p.id === open.id)).toBe(true);
     expect((await library.openLast())?.project.id).toBe(open.id);
+  });
+
+  it('the Welcome card says Omni Song; someone coming back from SWITCHBOARD / 01 is told once that it was renamed', async () => {
+    localStorage.removeItem(RENAME_NOTE_KEY);
+    const before = createProject({ name: 'From Before' });
+    await saveProject(before);
+    await library.setLastProject(before.id);
+    const boot = await session.boot();
+    expect(boot.lastProject?.id).toBe(before.id);
+    const first = mount(h(App, { boot }));
+    const title = document.getElementById('welcome-title')!;
+    const card = title.closest('[role="dialog"]')!;
+    expect(title.textContent).toBe('Omni Song');
+    expect(card.getAttribute('aria-labelledby')).toBe('welcome-title');
+    expect(card.textContent).toContain('Start with a beat. Make it yours.');
+    expect(buttonNamed('Jump In')).not.toBeNull();
+    expect(buttonNamed('Continue “From Before”')).not.toBeNull();
+    expect(card.querySelector('[data-testid="welcome-renamed"]')?.textContent).toBe('SWITCHBOARD / 01 is now called Omni Song. Your projects and settings are all still here.');
+    first.unmount();
+    // Once is enough.
+    mount(h(App, { boot }));
+    expect(document.getElementById('welcome-title')!.textContent).toBe('Omni Song');
+    expect(document.querySelector('[data-testid="welcome-renamed"]')).toBeNull();
+  });
+
+  it('a first visit never mentions the old name, not even when coming back later', async () => {
+    localStorage.removeItem(RENAME_NOTE_KEY);
+    const boot = await session.boot();
+    expect(boot.lastProject).toBeNull();
+    const first = mount(h(App, { boot }));
+    expect(document.querySelector('[data-testid="welcome-renamed"]')).toBeNull();
+    first.unmount();
+    const later = createProject({ name: 'Made in 2.0' });
+    await saveProject(later);
+    await library.setLastProject(later.id);
+    mount(h(App, { boot: await session.boot() }));
+    expect(buttonNamed('Continue “Made in 2.0”')).not.toBeNull();
+    expect(document.querySelector('[data-testid="welcome-renamed"]')).toBeNull();
   });
 
   it('reopening skips a damaged project and says why on the Welcome card', async () => {
@@ -700,7 +790,7 @@ describe('The first-launch preview and reopening', () => {
       exportButton.focus();
       await click(exportButton);
       await until(() => saved, 'download');
-      expect(saved).toMatch(/\.sb01\.zip$/);
+      expect(saved).toMatch(/\.omnisong\.zip$/);
       await until(() => runtimeStore.getState().notice?.text === `Saved “${saved}” to your downloads. Keep it as your backup.`, 'success message');
       expect(document.activeElement).toBe(exportButton);
 

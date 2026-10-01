@@ -1,9 +1,10 @@
-# Omni Song — interface direction (wave 1)
+# Omni Song — interface direction
 
-The product is being renamed from SWITCHBOARD / 01 to **Omni Song** (the rename itself happens in
-wave 2; until then, new user-facing text avoids the product name). This document is the shared
-rulebook for the wave-1 interface work. When in doubt, choose the option a first-time user would
-understand without reading anything.
+The product is **Omni Song** (version 2.0 of what was SWITCHBOARD / 01). This document is the
+shared rulebook for its interface. When in doubt, choose the option a first-time user would
+understand without reading anything. User-facing text says "Omni Song"; mention the old name only
+where it helps someone coming from 1.0 (the Welcome card's one-time note, START HERE, project-file
+import).
 
 ## Principles
 
@@ -111,6 +112,25 @@ Advanced only.
 Categories with icons and counts — Drums & Percussion, Bass, Keys, Pads & Strings, Leads,
 Plucks & Bells, Textures & FX, Recordings — plus search, Preview, "Current" marker and a one-line
 description per sound. Target: at least 12 drum kits and 60 synth presets that genuinely differ.
+
+## Help for newcomers
+
+- **Quick guide** (offered once, after the first Jump In; replayable from the Project library):
+  three coach marks — Play / Pause; the pads with Mute and Solo; Change instrument with the big
+  knobs. Non-modal: only the callout takes the pointer, and it never covers the transport.
+- **"Try this" hints** (after the guide; `src/app/views/hints/`): a small chip that suggests one
+  next action at a time — tap a pad in the Bass column, Mute on Drums (and back), drag a clip, turn
+  Tone, Change instrument, a mastering preset in Mix, record a Performance — and moves on when the
+  real state shows it was done (never on a timer or a click on the hint itself). A step done early
+  is not suggested again; **Next hint** passes one over.
+  - Placement: the free spot nearest the top of the workspace; never over the transport, the pads
+    or the keyboard; it avoids every control and, where it can, text. It moves only when something
+    appears under it. It is not a dialog, takes no focus and claims no keys.
+  - A step that belongs to another view offers a button that goes there (Show the pads, Open Mix).
+  - Screen readers hear each new suggestion through a polite status message.
+  - Shown only while **Tips** are on; **Hide hints** closes them (remembered in localStorage,
+    `omnisong.hints`); **Show hints again** in the Project library starts over and turns Tips on.
+- **Welcome**: "Start with a beat. Make it yours." and **Jump In** stay the first thing on screen.
 
 ## Words to use
 

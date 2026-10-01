@@ -1,6 +1,7 @@
 /**
- * Application shell: transport strip, the current view, the keyboard strip,
- * dialogs and global keyboard/focus handling.
+ * Application shell (Omni Song): transport strip, the current view, the
+ * keyboard strip, dialogs, the quick guide and "Try this" hints, and global
+ * keyboard/focus handling.
  */
 import { useEffect, useState } from 'react';
 import { Button, TipsProvider, ToastProvider, useToasts } from '../ui/components';
@@ -16,6 +17,7 @@ import { Welcome } from './views/Welcome';
 import { ExportDialog } from './views/ExportDialog';
 import { Library, storageMessage, type LibraryTab } from './views/Library';
 import { Guide } from './views/Guide';
+import { Hints, showHintsAgain, startHints } from './views/hints';
 import { uiStore } from '../state/uiStore';
 import { ShapeView } from './views/shape/ShapeView';
 import { ArrangeView } from './views/arrange/ArrangeView';
@@ -99,6 +101,11 @@ export function App({ boot }: { boot: BootInfo }) {
   // The guide is offered once, after the first Jump In (or first starter picked from Welcome).
   const offerGuide = () => {
     if (!uiStore.getState().guideDone) setGuide(true);
+  };
+  // Jump In also starts the "Try this" hints (once; they show after the guide).
+  const jumpedIn = () => {
+    offerGuide();
+    startHints();
   };
 
   // Global shortcuts: Space = Play/Pause, Shift+Space = Stop, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y = undo/redo,
@@ -195,6 +202,8 @@ export function App({ boot }: { boot: BootInfo }) {
             <KeyboardStrip />
           </footer>
         </div>
+        {/* After the instrument in the DOM: a non-blocking chip in a free spot, shown after the guide. */}
+        <Hints active={!welcome && !guide} />
         {welcome && (
           <Welcome
             lastProject={boot.lastProject}
@@ -202,7 +211,7 @@ export function App({ boot }: { boot: BootInfo }) {
             storageError={boot.storageError}
             onClose={() => setWelcome(false)}
             onBrowse={() => setLibrary({ tab: 'starters', fromWelcome: true })}
-            onJumpedIn={offerGuide}
+            onJumpedIn={jumpedIn}
           />
         )}
         <Library
@@ -220,6 +229,14 @@ export function App({ boot }: { boot: BootInfo }) {
             setWelcome(false);
             setGuideRun((n) => n + 1);
             setGuide(true);
+          }}
+          onShowHints={() => {
+            setLibrary(null);
+            setWelcome(false);
+            setGuide(false);
+            // Hints are part of Tips: asking for them turns Tips back on.
+            setTipsEnabled(true);
+            showHintsAgain();
           }}
         />
         <ExportDialog open={exportOpen} initialSource={exportSource} onClose={() => { setExportOpen(false); setExportSource(undefined); }} />

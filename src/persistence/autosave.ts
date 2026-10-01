@@ -65,7 +65,7 @@ export function saveErrorMessage(kind: StorageErrorKind, detail?: string): strin
     case 'unavailable':
       return 'Browser storage is not available here (private browsing or blocked by settings). Export the project file to keep your work.';
     case 'blocked':
-      return 'Another SWITCHBOARD tab is holding the storage. Close other tabs, then try again.';
+      return 'Another Omni Song tab is holding the storage. Close other tabs, then try again.';
     case 'not-found':
       return 'Saving failed because the project storage changed. Try again, or export the project file to keep a copy.';
     default:

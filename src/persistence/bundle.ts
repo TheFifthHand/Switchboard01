@@ -1,5 +1,8 @@
 /**
- * Project bundles (.sb01.zip): the portable backup and exchange format.
+ * Project bundles (.omnisong.zip): the portable backup and exchange format.
+ * Files saved before the rename to Omni Song end in .sb01.zip; they hold the
+ * same format and open exactly like new ones (import looks at the contents,
+ * never at the file name).
  *
  *   project.json          the Project (validated and migrated on import)
  *   samples/<id>.<ext>    original bytes of every imported recording
@@ -14,7 +17,11 @@ import { uid } from '../project/factory';
 import type { Id, Project, SampleMeta } from '../project/types';
 import { validateProject } from '../project/validate';
 
-export const BUNDLE_EXTENSION = '.sb01.zip';
+export const BUNDLE_EXTENSION = '.omnisong.zip';
+/** Extensions of project files saved by earlier versions (SWITCHBOARD / 01). They still import. */
+export const LEGACY_BUNDLE_EXTENSIONS: readonly string[] = ['.sb01.zip'];
+/** What the import file picker offers: new and older project files, and any zip. */
+export const BUNDLE_ACCEPT = [BUNDLE_EXTENSION, ...LEGACY_BUNDLE_EXTENSIONS, '.zip', 'application/zip'].join(',');
 export const BUNDLE_MIME = 'application/zip';
 export const BUNDLE_MAX_BYTES = 300 * 1024 * 1024;
 /** Upper bound on the uncompressed content we are willing to expand (zip-bomb guard). */
@@ -22,19 +29,22 @@ const MAX_EXPANDED_BYTES = 600 * 1024 * 1024;
 const PROJECT_FILE = 'project.json';
 const SAMPLE_DIR = 'samples/';
 
-export const BUNDLE_README = `SWITCHBOARD / 01 project file
-==============================
+export const BUNDLE_README = `Omni Song project file
+=====================
 
-This zip file is a complete SWITCHBOARD / 01 project: patterns, scenes,
-sounds and settings, routing and macros, the song arrangement, recorded
-performances, and every recording you imported.
+This zip file is a complete Omni Song project: patterns, scenes, sounds
+and settings, routing and macros, mixing and mastering, the song
+arrangement, recorded performances, and every recording you imported.
 
-  project.json        the project (plain JSON, schema "switchboard01.project")
+  project.json        the project (plain JSON; its format id is
+                      "switchboard01.project", from the app's first name)
   samples/            your imported recordings, as the original files
 
-To open it: in SWITCHBOARD / 01, open the project library, choose Import and
-pick this .sb01.zip file. It works in any browser profile, on any computer,
-without an internet connection.
+To open it: in Omni Song, open the Project library (the folder button at
+the top right), press "Import project file..." and pick this .omnisong.zip
+file. It works in any browser profile, on any computer, without an
+internet connection. Project files from earlier versions (.sb01.zip) open
+the same way.
 
 Browser storage is working storage; keep project files like this one as your
 backup.
@@ -72,7 +82,7 @@ export function bundleFileName(project: Pick<Project, 'name'>): string {
     .trim()
     .replace(/\s+/g, '-')
     .slice(0, 60);
-  return `${base || 'switchboard-project'}${BUNDLE_EXTENSION}`;
+  return `${base || 'omni-song-project'}${BUNDLE_EXTENSION}`;
 }
 
 export class BundleExportError extends Error {
@@ -147,7 +157,7 @@ export async function importBundle(file: Blob, opts: ImportBundleOptions = {}): 
     if (file.size > BUNDLE_MAX_BYTES) return { ok: false, error: `This file is larger than the ${BUNDLE_MAX_BYTES / MB} MB limit for project files.` };
     if (file.size === 0) return { ok: false, error: 'This file is empty.' };
     const bytes = new Uint8Array(await file.arrayBuffer());
-    if (!isZip(bytes)) return { ok: false, error: `This is not a SWITCHBOARD project file. Choose a ${BUNDLE_EXTENSION} file exported from SWITCHBOARD.` };
+    if (!isZip(bytes)) return { ok: false, error: `This is not an Omni Song project file. Choose a ${BUNDLE_EXTENSION} file exported from Omni Song (or a ${LEGACY_BUNDLE_EXTENSIONS[0]} file from an earlier version).` };
 
     let expanded = 0;
     let tooBig = false;
@@ -165,10 +175,10 @@ export async function importBundle(file: Blob, opts: ImportBundleOptions = {}): 
     } catch {
       return { ok: false, error: 'This project file is damaged and could not be opened.' };
     }
-    if (tooBig) return { ok: false, error: 'This project file expands to more data than SWITCHBOARD can open.' };
+    if (tooBig) return { ok: false, error: 'This project file expands to more data than Omni Song can open.' };
 
     const json = entries[PROJECT_FILE];
-    if (!json) return { ok: false, error: 'This zip file does not contain a SWITCHBOARD project (project.json is missing).' };
+    if (!json) return { ok: false, error: 'This zip file does not contain an Omni Song project (project.json is missing).' };
     let raw: unknown;
     try {
       raw = JSON.parse(strFromU8(json));

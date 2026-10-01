@@ -1,0 +1,57 @@
+.key {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 32px;
+  height: 32px;
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, var(--shell-hi), var(--shell));
+  box-shadow: var(--shadow-raised);
+  color: var(--ink-2);
+}
+
+.key:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.key:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+/* Corner lamps: MIDI activity (amber) top right, recording (coral) bottom right. */
+.key .lamp {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+}
+
+/* Coral = recording (the key's name says "recording audio"). */
+.rec {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--coral);
+  animation: blink 1.2s ease-in-out infinite;
+}
+
+.key[data-recording] {
+  border-color: var(--coral);
+  color: var(--coral-ink);
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.35;
+  }
+}

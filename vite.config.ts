@@ -12,10 +12,14 @@ export default defineConfig({
       registerType: 'prompt',
       injectRegister: false,
       includeAssets: ['icons/*.png', 'icons/*.svg'],
+      // The rename to Omni Song changes only what people see. The install identity
+      // (start_url and scope, no explicit id), the manifest and service-worker file
+      // names and the cache stay the same, so existing installs and offline copies
+      // update in place and keep their projects.
       manifest: {
-        name: 'SWITCHBOARD / 01',
-        short_name: 'Switchboard',
-        description: 'A browser-based electronic music console. Runs entirely on your device.',
+        name: 'Omni Song',
+        short_name: 'Omni Song',
+        description: 'Make electronic music in your browser. Runs entirely on your device.',
         theme_color: '#e9e5dc',
         background_color: '#e9e5dc',
         display: 'standalone',

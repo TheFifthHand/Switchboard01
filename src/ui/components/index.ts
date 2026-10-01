@@ -1,5 +1,5 @@
 /**
- * SWITCHBOARD / 01 component kit. See src/ui/gallery/Gallery.tsx (?gallery)
+ * Omni Song component kit. See src/ui/gallery/Gallery.tsx (?gallery)
  * for every component in every state.
  */
 export { Icon, ICON_NAMES, type IconName, type IconProps } from './Icon';

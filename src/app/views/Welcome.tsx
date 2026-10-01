@@ -2,11 +2,34 @@
  * The first screen: the real instrument behind a small card with Jump In.
  * Jump In is the user gesture that enables browser audio. "Other starters &
  * projects" opens the project library on its Starters tab.
+ *
+ * Someone coming back from SWITCHBOARD / 01 (the app's name before 2.0) is
+ * told once, on this card, that it is now Omni Song and their projects are
+ * still here.
  */
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../ui/components';
 import { session, useProject } from '../instance';
 import styles from './Welcome.module.css';
+
+/** Remembered (localStorage) once the "now called Omni Song" line has been shown. */
+export const RENAME_NOTE_KEY = 'omnisong.renameNoted';
+
+function readFlag(key: string): boolean {
+  try {
+    return globalThis.localStorage?.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeFlag(key: string): void {
+  try {
+    globalThis.localStorage?.setItem(key, '1');
+  } catch {
+    // Storage blocked: the line may show again next time, which is harmless.
+  }
+}
 
 export interface WelcomeProps {
   lastProject: { id: string; name: string } | null;
@@ -25,8 +48,14 @@ export function Welcome({ lastProject, warnings = [], storageError, onClose, onB
   const [busy, setBusy] = useState(false);
   // Continue resumes the loaded project; the library may have renamed or switched it meanwhile.
   const openName = useProject((p) => p.name);
+  // Returning users (a stored project from before) learn about the new name once.
+  const [renamed] = useState(() => lastProject !== null && !readFlag(RENAME_NOTE_KEY));
   useEffect(() => {
     jumpRef.current?.focus();
+  }, []);
+  // Noted on every first screen, so only people who used the app before 2.0 ever see the line.
+  useEffect(() => {
+    writeFlag(RENAME_NOTE_KEY);
   }, []);
 
   const jumpIn = () => {
@@ -47,14 +76,23 @@ export function Welcome({ lastProject, warnings = [], storageError, onClose, onB
     <div className={styles.backdrop} role="dialog" aria-modal="true" aria-labelledby="welcome-title" aria-describedby="welcome-desc">
       <div className={styles.card}>
         <div className={styles.brand}>
-          <span id="welcome-title" className={styles.name}>
-            SWITCHBOARD
+          <span className={styles.mark} aria-hidden="true">
+            <span />
+            <span />
+            <span />
           </span>
-          <span className={`${styles.num} mono`}>/ 01</span>
+          <h1 id="welcome-title" className={styles.name}>
+            Omni Song
+          </h1>
         </div>
         <p id="welcome-desc" className={styles.tagline}>
           Start with a beat. Make it yours.
         </p>
+        {renamed && (
+          <p className={styles.renamed} data-testid="welcome-renamed">
+            SWITCHBOARD / 01 is now called Omni Song. Your projects and settings are all still here.
+          </p>
+        )}
         <Button ref={jumpRef} variant="primary" size="lg" icon="play" onClick={jumpIn} disabled={busy} className={styles.jump} aria-describedby="welcome-sound">
           {busy ? 'Starting…' : 'Jump In'}
         </Button>

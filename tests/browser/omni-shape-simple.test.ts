@@ -174,6 +174,15 @@ describe('Simple Shape: macros and instrument', () => {
     expect(inst.textContent).toContain(INSTRUMENT_LABEL.drums);
     expect(inst.textContent).toContain(soundName(project(), track('t3').instrument));
   });
+
+  it('a sampler part offers Record audio right on the card (no need for Advanced); other parts do not', () => {
+    const m = setup('t8');
+    expect(track('t8').instrument.kind).toBe('sampler');
+    expect(instCard(m.container).textContent).toContain('Record audio');
+    m.unmount();
+    const other = setup('t3');
+    expect(instCard(other.container).textContent).not.toContain('Record audio');
+  });
 });
 
 describe('Simple Shape: effects', () => {
