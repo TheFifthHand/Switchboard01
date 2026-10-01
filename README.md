@@ -52,6 +52,17 @@ Knobs: drag up or down (hold Shift for fine steps), double-click to go back to t
 a knob and type a value such as `2.5k` or `-6`. Arrow keys, Page Up/Down and Home/End work once a
 knob has focus. Space plays and pauses, Shift+Space stops, M mutes the selected part, Ctrl+Z undoes.
 
+### New in 2.1: build a song by moving blocks
+
+**Arrange** shows the song as one strip of blocks (a scene played a number of passes), with a row
+per part under each block. Drag a block and the others slide aside to make room; let go and it
+clicks into place. Drag a block's right edge to make it longer or shorter, hold Ctrl (or Alt) while
+dragging to copy it, and click a pass line to split it. Click a part in a block to switch it off or
+on just there, or drop a scene card onto a block to layer that scene's parts in. Click the ruler to
+play from any bar. Everything can be undone, works with the keyboard too, and changes what you hear
+right away, even while the song plays. The Loops pads and scene rows move the same smooth way.
+Step-by-step: "Build a song" in [`docs/GUIDE.md`](docs/GUIDE.md).
+
 ### New in 2.0: MIDI keyboards and audio input
 
 - **Play from a MIDI keyboard or controller.** Connect it in the **MIDI & audio** dialog (More →

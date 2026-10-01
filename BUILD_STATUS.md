@@ -66,22 +66,22 @@ reviewed as a pull request from the development branch.
 
 ## State at handoff
 
-- Release package: `release/omni-song-2.0.0.zip` (production build in `app/`, `Start Omni
+- Release package: `release/omni-song-2.1.0.zip` (production build in `app/`, `Start Omni
   Song.bat`, `START HERE.txt`, `launcher/`, `ASSETS.md`, and the repository source in `source/`).
-  Rebuild with `npm run package`. The 1.0 zip was removed from the branch (it stays in git history).
+  Rebuild with `npm run package`. Older zips stay in git history (2.0 is on `main`).
 - Evidence: `TEST_REPORT.md` (results and measurements), `docs/ACCEPTANCE.md` (every requirement of
   the brief with its evidence), `docs/screenshots/`, `evidence/wav/`, `evidence/launcher-smoke.txt`.
 - Guides: `docs/GUIDE.md` (first loop; record, mix, master and export; MIDI keyboard; recording
   your voice or guitar).
-- No failing checks: typecheck clean; unit 909, browser 925, e2e 25 tests pass.
+- No failing checks: typecheck clean; unit 1008, browser 999, e2e 25 tests pass.
 - Remaining work is local only: listening, physical latency, a real MIDI keyboard and microphone,
   the Windows launcher on Windows, Chrome/Edge on Windows, real background-tab throttling (see
   TEST_REPORT.md).
 
 ## Next action
 
-Review and merge the song-timeline pull request. For local verification of 2.0: extract
-`release/omni-song-2.0.0.zip` on Windows,
+Review and merge the song-timeline pull request. For local verification: extract
+`release/omni-song-2.1.0.zip` on Windows,
 double-click `Start Omni Song.bat`, press Jump In, then follow `docs/GUIDE.md`. Possible next
 steps are in `docs/ROADMAP.md` (local music-generator bridge, webcam movement control, WebXR).
 

@@ -1,8 +1,8 @@
-# TEST REPORT — Omni Song 2.0
+# TEST REPORT — Omni Song 2.1
 
-_Formerly SWITCHBOARD / 01. Test results and evidence for the 2.0 build. Every requirement of the
-original brief, and the 2.0 additions, is listed with its evidence in
-[`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)._
+_Formerly SWITCHBOARD / 01. Test results and evidence for the 2.1 build (2.0 plus the song
+timeline). Every requirement of the original brief, and the 2.0 and 2.1 additions, is listed with
+its evidence in [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)._
 
 ## How to reproduce
 
@@ -19,18 +19,21 @@ npm run package                       # build, then release/omni-song-<version>.
 ## Results
 
 Run in the cloud container (Linux, 4 CPUs, Chromium 141 via Playwright 1.56.1, Node 22) on the
-2.0 handoff commit:
+2.1 handoff commit:
 
 | Suite | Files | Tests | Result |
 |-------|-------|-------|--------|
 | Typecheck (`tsc --noEmit`, app + tests) | — | — | clean |
-| Unit (`tests/unit`, Node) | 40 | 909 | all pass |
-| Browser (`tests/browser`, real Chromium) | 65 | 925 | all pass, none skipped |
+| Unit (`tests/unit`, Node) | 45 | 1008 | all pass |
+| Browser (`tests/browser`, real Chromium) | 73 | 999 | all pass, none skipped |
 | End-to-end (`e2e`, production build) | 8 | 25 | all pass |
 
 Two timing-sensitive tests (`omni-input-audio` early stop, `variation` "stays fast") each failed
 once while the machine was saturated by parallel runs and pass on their own and in the full runs
-above; they compare against wall-clock time, which the audio clock can lag under heavy load.
+above; they compare against wall-clock time, which the audio clock can lag under heavy load. In
+the 2.1 work, `omni-fix-space-keys` failed in one full run because a view remembered in
+localStorage by an earlier test file opened Shape instead of Play; the test now sets its starting
+view (an isolation fix in the test, not an app change).
 
 ## What kinds of evidence exist
 
@@ -40,7 +43,7 @@ above; they compare against wall-clock time, which the audio clock can lag under
 | Logic checks | Sequencer timing, swing, tempo, launch quantization, pause/resume, arrangement, replay, graph validation, undo/redo, undo groups and entry ids, validation, schema v1→v2 migration, persistence, bundles (incl. old `.sb01.zip`), WAV encoding, import limits, loudness maths, MIDI, sample edits, launcher, package | `tests/unit/*.test.ts` |
 | Browser interaction checks | Components and the whole app in real Chromium (pointer, keyboard, layout at 1024–1920 px and 960×540); Playwright driving the production build: fresh profiles, downloads, storage failures, offline, stalls, 3-minute runs, keyboard-only use, axe-core audits, MIDI with a fake MIDIAccess, audio input from a generated stream | `tests/browser/*`, `e2e/*.spec.ts` |
 | Independent reviews | Before handoff, five area audits of every brief requirement (45 gaps, all fixed), then a correctness review (5 defects, reproduced, fixed with regression tests) and a hands-on usability/accessibility review of the real app (13 problems, fixed) | `docs/ACCEPTANCE.md`, git history |
-| Launcher smoke test | The 2.0 release zip extracted to a path with spaces, served by `launcher/serve.ps1` (PowerShell 7) as `Start Omni Song.bat` does; loopback binding, traversal refusal, reuse of a running copy, Jump In playing from the package | `evidence/launcher-smoke.txt` |
+| Launcher smoke test | The 2.1 release zip extracted to a path with spaces, served by `launcher/serve.ps1` (PowerShell 7) as `Start Omni Song.bat` does; loopback binding, traversal refusal, reuse of a running copy, Jump In playing from the package, a song block dragged with the mouse and undone | `evidence/launcher-smoke.txt` |
 | Listening review | **None.** The cloud environment has no speakers. Nothing here claims musical quality or low physical latency from sample values. | — |
 | Local hardware checks | Still to be done on the user's Windows PC (see the end). | — |
 
@@ -88,6 +91,27 @@ above; they compare against wall-clock time, which the audio clock can lag under
 | "Try this" hints that follow real actions, never cover controls; updated quick guide | ✅ | browser `omni-hints-*`, `omni-fix-play-hints`, `guide`; e2e `omni` |
 | Undo toasts tied to their own step; "Undid / Redid" feedback | ✅ | browser `omni-fix-undo-toast`; unit `omni-fix-history-ids` |
 
+## Omni Song 2.1 additions: the song timeline
+
+| Feature | Status | Evidence |
+|---|---|---|
+| Song blocks with names and per-part changes (a part layered in from another scene, or switched off, in one block); 1–16 passes; validation drops dangling changes | ✅ | unit `song-blocks` (commands, validation, plan lengths) |
+| Group commands, each one undo step: move, duplicate, paste, remove, split, join, layer (fill or replace), reset parts, rename | ✅ | unit `song-blocks`, `song-lane` |
+| Per-part changes play, live and in exports (same sequencer) | ✅ | unit `song-live`; browser `song-live` (offline render energy per block) |
+| Edits apply while the song plays or is paused, re-planned from the playing block; splits/joins change nothing audible; deleting the playing block hands over at the next bar; changes to the playing block's parts apply at once, in phase | ✅ | unit `song-live`, `song-live-edits`, `song-live-fuzz` (seeded random edit sequences: launches on bar lines or edit points, one clip per part, no doubled notes, exactly one end, lane playhead inside the lane and monotonic); browser `song-live`, `song-live-edits` (real session) |
+| Play from a bar; transport readout and lane playhead follow the song timeline | ✅ | unit `song-live`; browser `song-live` |
+| Song lane: drag with live slot opening and a settle, Ctrl/Alt copy, edge drag for passes, split/join, multi-select, clipboard, rename, part cells and picker, scene cards layer or insert, ruler play-from-bar, Follow, zoom/Fit song, locked during a take | ✅ | unit `song-lane` (pure gesture logic); browser `song-lane` (real pointer input), `song-lane-touch` (real touch and pen input via CDP), `song-lane-layout` (1366×768, 1920×1080, 960×540 at 2×, long song, reduced motion, axe), `arrange` |
+| Loops pads and scene rows: lifted pad follows the pointer, swap/replace/refusal previews, settle, scene-row slot | ✅ | browser `omni-pad-drag` (real mouse, keyboard and touch via CDP), `omni-pad-drag-layout`, `omni-pad-drag-motion`, `omni-play-loops` |
+| Independent reviews | ✅ | hands-on UX review with frame timing in Chromium (P1/P2 findings fixed; see below); adversarial correctness review (5 defects reproduced with failing tests, fixed, regression-tested) |
+
+Frame timing of drags (headless Chromium without a GPU, so paint costs are pessimistic; "late" =
+frame over 20 ms). Song lane, 6 blocks, 2 s drag: 4 late of 314 frames, no long frames at normal
+speed. 24 blocks with edge auto-scroll at 4× CPU slowdown: 30.5 % / 11.2 % late frames before the
+fix round, 6.8 % / 9.3 % after (two back-to-back rounds; main-thread CPU per drag −19 %). Pad drag at
+normal speed: 13 late of 1208 frames before, 0 of 1110 after. The drop of a block still costs one
+long frame of about 90–140 ms at 4× (React commit + style/layout); at normal speed it stays under
+about 70 ms. These are machine measurements, not a listening or feel test.
+
 ## Audio measurements (automated, not listening)
 
 ### Timing
@@ -125,7 +149,7 @@ render bit-identically (cable undo test).
 
 | Size | Files |
 |------|-------|
-| 1366 × 768 | `01-welcome`, `02-play-loops`, `03-play-queued`, `04-play-drums`, `04-play-notes`, `04-play-steps`, `05-shape-cables`, `06-arrange`, `07-play-cables-drawer`, `08-shape-cable-panel`, `09-shape-sampler`, `13-sound-browser`, `14-project-library`, `16-shape-simple`, `17-mix`, `18-mix-mastering-warm` |
+| 1366 × 768 | `01-welcome`, `02-play-loops`, `03-play-queued`, `04-play-drums`, `04-play-notes`, `04-play-steps`, `05-shape-cables`, `06-arrange`, `07-play-cables-drawer`, `08-shape-cable-panel`, `09-shape-sampler`, `13-sound-browser`, `14-project-library`, `16-shape-simple`, `17-mix`, `18-mix-mastering-warm`, `22-arrange-song-playing` (Drums off in block 2), `23-arrange-drag` (a block mid-drag, the others making room), `24-play-pad-drag` (a pad mid-drag over a swap) |
 | 1920 × 1080 | `10-play`, `11-steps`, `12-shape`, `15-shape-cable-panel` |
 | 200 % zoom (960 × 540 CSS px at 2×) | `20-welcome-zoom200`, `21-play-zoom200` |
 
@@ -152,11 +176,18 @@ mastering changes nothing). Short, synthesized material only: no user recordings
 - Input monitoring goes through its own limiter, not through the mastering chain.
 - On a window blur, live sampler one-shots are cut (held notes are released on blur); a replay or
   export of a take plays them through.
+- Song lane: a horizontal finger swipe on a block drags it (scroll by finger on the ruler, the strip
+  under the blocks or the scrollbar); touch was tested with emulated touch input, not on a device.
+  A quick double-click on one part cell leaves an undo step that changes nothing.
+- After a split or join in a block whose clips have lengths that do not divide each other (e.g. 3
+  bars), the continued block keeps the loop phases that were sounding (nothing audible changes);
+  playing that block again from its start can sound slightly different until the next block.
 
 ## Remaining local hardware checks (cannot be done in the cloud)
 
 - Listen through real speakers or headphones: starter balance, the new sounds, effects and
-  mastering presets, click-free transitions.
+  mastering presets, click-free transitions, and song edits made while the song plays.
+- Feel of the song lane and pad drags with your own mouse, touchpad or touch screen.
 - Physical latency of keyboard, pad and MIDI playing, and the recording offset, on the user's audio
   device and MIDI keyboard.
 - A real microphone / audio interface (tests used a generated stream).

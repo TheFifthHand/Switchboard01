@@ -1,7 +1,7 @@
-# Acceptance checklist — Omni Song 2.0
+# Acceptance checklist — Omni Song 2.1
 
 _Formerly SWITCHBOARD / 01._ Every requirement of `PRODUCT_BRIEF.md`, section by section, with where
-it lives and how it is checked, followed by the Omni Song 2.0 additions. Status: ✅ met and checked · ⚠️ met with a stated limit · ❌ not met.
+it lives and how it is checked, followed by the Omni Song 2.0 and 2.1 additions. Status: ✅ met and checked · ⚠️ met with a stated limit · ❌ not met.
 Evidence kinds: **unit** (Node logic tests), **browser** (Vitest in real Chromium, incl. offline
 audio renders through the real engine), **e2e** (Playwright against the production build),
 **code** (verified by reading the code in the final audit; no dedicated test).
@@ -129,7 +129,7 @@ What remains is listed under "Limits" at the end.
 | Requirement | Status | Evidence |
 |---|---|---|
 | Clean-clone commands documented | ✅ | `README.md`, `CLAUDE.md` |
-| Production build + downloadable source/build package | ✅ | `release/omni-song-2.0.0.zip` (`npm run package`: builds first; app + Windows launcher + START HERE + `source/`); unit `wp5-package`, `omni-rename-package` |
+| Production build + downloadable source/build package | ✅ | `release/omni-song-2.1.0.zip` (`npm run package`: builds first; app + Windows launcher + START HERE + `source/`); unit `wp5-package`, `omni-rename-package` |
 | Windows launch route + START HERE; loopback only; serves only the build folder | ⚠️ | `launcher/`, `Start Omni Song.bat`; unit `wp5-launcher`; the packaged launchers ran under PowerShell 7 and Node on Linux (`evidence/launcher-smoke.txt`: 127.0.0.1 only, traversal refused, a second start reuses the running copy, Jump In plays); not run on Windows here |
 | No claim that a cloud localhost address is reachable | ✅ | README / START HERE |
 
@@ -160,6 +160,25 @@ service or runtime download).
 | Undo toasts tied to their own step; "Undid / Redid" feedback | ✅ | `projectStore.ts`; browser `omni-fix-undo-toast`; unit `omni-fix-history-ids` |
 | Later, not in 2.0 (by agreement): a bridge to a local music generator (YuE2), webcam body tracking, VR/AR headsets | — | `docs/ROADMAP.md` |
 
+## Omni Song 2.1 additions: the song timeline
+
+Asked for after 2.0: "the movement of song bits so sleek and smooth and so easy to edit and extend
+and combine … perfect and reliable … clicking together." Built and reviewed on a pull request into
+`main` (which holds 2.0).
+
+| Requirement | Status | Evidence |
+|---|---|---|
+| Move song sections smoothly: blocks sit edge to edge, the others slide aside while dragging, the block settles into its slot; one undo step | ✅ | `SongLane.tsx`, `laneGestures.ts`, `songDrag.ts`; unit `song-lane`; browser `song-lane`, `song-lane-touch`; screenshot `23-arrange-drag-1366` |
+| Extend: drag a block's edge (whole passes, 1–16), the rest ripples; keyboard + and − | ✅ | browser `song-lane`; unit `song-blocks` |
+| Edit: copy (Ctrl/Alt-drag, Ctrl+D), multi-select, clipboard, split at a pass line, join, rename, delete with Undo; keyboard path for every action | ✅ | browser `song-lane`, `arrange`; unit `song-blocks`, `song-lane` |
+| Combine: per block, switch a part off or play another scene's part in it; drop a scene card onto a block to layer it (fills silent parts; Shift replaces) | ✅ | `src/project/arrangement.ts`, `layerScene`; unit `song-blocks`; browser `song-lane`; screenshot `22-arrange-song-playing-1366` |
+| What the lane shows is what plays, also while the song plays or is paused (live re-planning from the playing block); exports match | ✅ | `Sequencer.replanSong`; unit `song-live`, `song-live-edits`, `song-live-fuzz`; browser `song-live`, `song-live-edits` |
+| Play from any bar; readout and playhead follow the song timeline | ✅ | browser `song-live`, `song-lane` |
+| Reliable gestures: Esc, release outside, lost pointer, window switch or unmount cancel with no edit; a second finger is ignored; refused clearly while a take records | ✅ | browser `song-lane`, `song-lane-touch`, `omni-pad-drag` |
+| Loops pads and scene rows move as smoothly (lifted pad, previews, settle, scene-row slot) | ✅ | `LoopsGrid.tsx`, `src/ui/motion.ts`; browser `omni-pad-drag*`; screenshot `24-play-pad-drag-1366` |
+| Smooth on a modest PC | ⚠️ | measured, not felt: 60 fps drags at normal speed; at 4× CPU slowdown some late frames remain during long auto-scroll drags and the drop costs one long frame (TEST_REPORT.md) |
+| Layout at 1366×768, 1920×1080 and 200 % zoom; axe-core | ✅ | browser `song-lane-layout`, `omni-pad-drag-layout` |
+
 ## Limits (not hidden)
 
 - No listening review: nothing here claims musical quality or physical latency from sample values.
@@ -171,3 +190,5 @@ service or runtime download).
 - Recorded audio takes are at most 4 bars; MIDI pitch bend is heard live but not recorded into
   performance takes; input monitoring has its own limiter and does not pass through mastering.
 - MIDI keyboards and microphones were tested with simulated devices only.
+- Song lane and pad drags were tested with real mouse, keyboard, touch and pen input sent to
+  Chromium, not on a physical touch screen; a horizontal finger swipe on a block drags it.

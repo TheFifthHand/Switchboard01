@@ -1,13 +1,14 @@
 Launcher smoke test, 2026-10-01, in the cloud container (Linux, PowerShell 7.4.6, Node 22). This is not a Windows run; see TEST_REPORT.md.
 
-== Package: release/omni-song-2.0.0.zip extracted to .../Jo Ann Downloads/omni-song
+== Package: release/omni-song-2.1.0.zip extracted to .../Jo Ann Downloads/omni-song
 == PowerShell 7.4.6 (Linux), same arguments as 'Start Omni Song.bat': -File launcher/serve.ps1 -Root <package>/app
    ps> 
    ps>   Omni Song
-   ps>   Running at http://127.0.0.1:4410/  (this computer only)
+   ps>   Running at http://127.0.0.1:4173/  (this computer only)
    ps>   Keep this window open while you play. Close it or press Ctrl+C to stop.
    ps> 
--- listening socket for 4410 in /proc/net/tcp (0100007F = 127.0.0.1): 0100007F:113A
+   ps>   Open http://127.0.0.1:4173/ in your browser.
+-- listening socket for 4173 in /proc/net/tcp (0100007F = 127.0.0.1): 0100007F:104D
    GET (as-is) / -> 200
    GET (as-is) /manifest.webmanifest -> 200
    GET (as-is) /sw.js -> 200
@@ -19,10 +20,12 @@ Launcher smoke test, 2026-10-01, in the cloud container (Linux, PowerShell 7.4.6
 -- from the container's non-loopback address 192.0.2.2: 000 (000 = refused)
 -- a second start while the first runs:
    ps2> 
-   ps2>   Omni Song is already running at http://127.0.0.1:4410/
+   ps2>   Omni Song is already running at http://127.0.0.1:4173/
    ps2>   The window (or program) that started it keeps it running.
-   ps2>   Open http://127.0.0.1:4410/ in your browser.
+   ps2>   Opening it in your browser.
    ps2>   To start a different copy (for example a newer version), close the other window first.
    ps2> 
--- Jump In in Chromium against the package served by serve.ps1: {"audio":"running","project":"House Starter","masterRms":0.2113,"masterPeak":0.4919,"pageErrors":0}
+   ps2>   Open http://127.0.0.1:4173/ in your browser.
+-- Jump In in Chromium against the package served by serve.ps1: {"audio":"running","project":"House Starter","masterRms":0.2063,"masterPeak":0.473,"pageErrors":0}
+-- song lane in the package: block 4 dragged to position 2 with the mouse -> moved; Undo -> back as before; page errors 0
 -- launcher stopped (closing the window or Ctrl+C does this on Windows)
