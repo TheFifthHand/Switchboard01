@@ -19,6 +19,7 @@ import { OfflineMenuItems, OfflineStatus } from './OfflineStatus';
 import { RecordOptions, quantizeCaption, recordOptionsCaption } from './RecordOptions';
 import { MOD_ARIA, MOD_KEY, MenuItem, MenuSeparator, MoreIcon, Popover, anchorFromElement } from './ClipMenu';
 import { DevicesDialog, DevicesKey, midi } from './devices';
+import { songTimelineBar, useSongPlan } from './arrange/songPlan';
 import styles from './TransportBar.module.css';
 
 const VIEW_OPTIONS = [
@@ -57,12 +58,20 @@ function positionText(tick: number, bar: number, beat: number): string {
   return tick < 0 ? 'Count' : `${bar + 1}.${beat + 1}`;
 }
 
+/** The transport's position; in song mode on the song timeline as the Arrange lane draws it. */
+function transportPositionText(t: NonNullable<typeof session.transport>): string {
+  const p = t.getPosition();
+  const song = p.tick < 0 ? null : songTimelineBar(p.tick);
+  if (song === null) return positionText(p.tick, p.bar, p.beat);
+  const bar = Math.floor(song + 1e-9);
+  return positionText(p.tick, bar, Math.min(3, Math.floor((song - bar) * 4 + 1e-9)));
+}
+
 /** The current position: Stopped at 1.1, the paused position, or the playhead while playing. */
 function heldPositionText(): string {
   const t = session.transport;
   if (!t || !t.paused) return '1.1';
-  const p = t.getPosition();
-  return positionText(p.tick, p.bar, p.beat);
+  return transportPositionText(t);
 }
 
 /** Bar.beat with the transport's state word above it (Playing / Paused / Stopped / Song / Replay). */
@@ -72,12 +81,13 @@ function Position() {
   const paused = useRuntime((s) => s.paused);
   const mode = useRuntime((s) => s.mode);
   const word = transportWord({ playing, paused, mode });
+  // A song edited while paused moves the paused position on the timeline: show it again.
+  useSongPlan();
   const last = useRef('');
   useRafLoop(() => {
     const t = session.transport;
     if (!ref.current || !t) return;
-    const p = t.getPosition();
-    const text = positionText(p.tick, p.bar, p.beat);
+    const text = transportPositionText(t);
     if (text !== last.current) {
       last.current = text;
       ref.current.textContent = text;

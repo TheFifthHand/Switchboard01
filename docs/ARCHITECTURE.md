@@ -54,7 +54,9 @@ Rules:
   mapping (`macroMap`) of `{module, param, min, max, curve, macroFrom, macroTo}` targets.
   A mapped param is controlled by its macro. Pump is a tempo-synchronized ducking envelope — not
   an audio sidechain.
-- Arrangement: ordered blocks `{sceneId, repeats}`; song length = Σ scene bars × repeats.
+- Arrangement: ordered blocks `{sceneId, repeats, label?, parts?}`; `parts` changes single parts in
+  that block only (another scene's clip, or `null` = silent). One pass = the longest clip the block
+  plays (`blockBars`); song length = Σ pass × repeats.
 - Performances: a snapshot of the musical state + timestamped events (launch, scene, notes, macro,
   param, mute, tempo, swing, master). During a take the store is locked to an allow-list: only the
   edits the take records (knob/param moves, macros, mutes, tempo, swing, master volume) go through;
@@ -141,8 +143,25 @@ Rules:
   the pass first.
 - `RealtimeTransport` emits `arpNote` when the audio clock reaches an arpeggiator note that was not
   cancelled; Record Notes records those (at their real grid tick and gate) on arp parts.
-- After a stall, Resume restarts what was playing: the song from its block, a replay from its start,
-  otherwise the live pads.
+- After a stall, Resume restarts what was playing: the song from its block (found by id), a replay
+  from its start, otherwise the live pads.
+- Song playback is what the Arrange lane shows. `start()` lays out every block's part choices as
+  'song' transitions (a layered part plays the other scene's slot, an off part stops at the block
+  start); `playSong(i, {fromBar})` starts at that lane bar, the block containing it in phase.
+- Edits while a song plays or is paused (undo/redo included): when `songSignature()` changes, the
+  session calls `transport.replanSong()` → `Sequencer.replanSong(now + 10 ms)`, which lays the rest
+  out again anchored on the block playing now, by id. It keeps its start and takes its new length
+  (a length already passed ends it at the next bar line); parts whose clip in it changed switch at
+  the next bar line, in phase with its start; a deleted block plays to its planned end, then the
+  first block that followed it and still exists, from its new position; everything after follows
+  the project. A block whose start has not sounded yet starts as edited. Song transitions from the
+  switch point on are replaced in `pending` and in `history` (a rewind cannot bring stale ones back),
+  then the transport invalidates. Song transitions sort before a pad launch at the same tick (the
+  pad wins), and notes sounding across a switch are cut when the switch is applied, so an edit undone
+  before it leaves them alone. Scene reorders are followed first by `relocateSongRows`.
+- `Sequencer.songPlan()` (absolute ticks; blocks before the playing one laid out in the current
+  order) feeds `views/arrange/songPlan.ts`; `songTimelineBar(tick)` maps the playhead onto the lane
+  for the lane playhead and the transport readout.
 - `renderOffline()` (src/render/offline.ts) drives the same Sequencer + AudioEngine on an
   `OfflineAudioContext`, in chunks via `suspend()` for progress and cancellation. At the end of the
   music it calls `transportStopped()` like the live transport (sampler one-shots end, take

@@ -1,11 +1,11 @@
-/* Song: header, lane (ruler + blocks + playhead) and the scene palette. */
+/* Song: header, the lane (part names, ruler, blocks with part cells, playhead) and the scene palette. */
 
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  padding: 12px 14px 12px;
+  padding: 10px 14px 10px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -157,44 +157,82 @@
   gap: 8px;
 }
 
-/* An information note (neutral, like the kit's info Notice): not a selection, not an error. */
-.stale {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: -2px;
-  padding: 4px 6px 4px 12px;
-  border-radius: var(--r-md);
-  background: var(--surface-hi);
-  box-shadow:
-    0 0 0 1px rgba(20, 24, 28, 0.11),
-    inset 3px 0 0 var(--ink-3);
-  color: var(--ink);
-  font-size: var(--fs-sm);
-}
-.stale > svg {
-  flex: none;
-  color: var(--ink-2);
-}
-.stale span {
-  flex: 1;
-  min-width: 0;
-}
-
 /* ---------- lane ---------- */
 
 .lane {
+  /* Geometry shared by the part names, the blocks and the overlays. */
+  --ruler-h: 18px;
+  --head-h: 40px;
+  --row-h: 15px;
+  --row-gap: 2px;
+  --rows: 8;
+  --cells-pad: 4px;
+  --track-h: calc(var(--head-h) + 2 * var(--cells-pad) + var(--rows) * var(--row-h) + (var(--rows) - 1) * var(--row-gap) + 2px);
+  --names-w: 84px;
+  /* Motion: blocks slide aside (ease-out) and settle into a slot (a little spring). */
+  --lane-slide: 170ms;
+  --lane-ease: cubic-bezier(0.2, 0.8, 0.25, 1);
+  --lane-spring: cubic-bezier(0.3, 1.32, 0.5, 1);
+  --clip: #d2d7db;
+  --clip-2: #c3c9ce;
+  --seam: #b7bdc2;
+
   position: relative;
+  display: flex;
   min-width: 0;
-  padding: 6px 8px 8px;
+  padding: 4px 6px 0 0;
   border-radius: var(--r-md);
   background: linear-gradient(180deg, var(--sunk), var(--surface-lo) 40%);
   box-shadow: inset 0 1px 3px rgba(20, 24, 28, 0.16), 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
+/* Part names, beside the blocks (they do not scroll). */
+.names {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--row-gap);
+  width: var(--names-w);
+  padding-top: calc(var(--ruler-h) + var(--head-h) + var(--cells-pad) + 1px);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.namesHead {
+  position: absolute;
+  top: calc(4px + var(--ruler-h));
+  left: 0;
+  width: var(--names-w);
+  height: var(--head-h);
+  padding: 0 10px 6px 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.nameRow {
+  height: var(--row-h);
+  padding: 0 10px 0 6px;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  line-height: var(--row-h);
+  color: var(--ink-2);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .scroller {
+  position: relative;
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
 }
 .scroller::-webkit-scrollbar {
   height: 8px;
@@ -208,35 +246,39 @@
   border-radius: 4px;
   background: var(--line-strong);
 }
-.scroller::-webkit-scrollbar-thumb:hover {
-  background: var(--ink-3);
-}
 .scroller[data-fade-right] {
-  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 48px), rgba(0, 0, 0, 0.25));
-  mask-image: linear-gradient(90deg, #000 calc(100% - 48px), rgba(0, 0, 0, 0.25));
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 40px), rgba(0, 0, 0, 0.3));
+  mask-image: linear-gradient(90deg, #000 calc(100% - 40px), rgba(0, 0, 0, 0.3));
 }
 .scroller[data-fade-left] {
-  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.25), #000 48px);
-  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.25), #000 48px);
+  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.3), #000 40px);
+  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.3), #000 40px);
 }
 .scroller[data-fade-left][data-fade-right] {
-  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.25), #000 48px, #000 calc(100% - 48px), rgba(0, 0, 0, 0.25));
-  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.25), #000 48px, #000 calc(100% - 48px), rgba(0, 0, 0, 0.25));
+  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.3), #000 40px, #000 calc(100% - 40px), rgba(0, 0, 0, 0.3));
+  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.3), #000 40px, #000 calc(100% - 40px), rgba(0, 0, 0, 0.3));
 }
 
 .content {
   position: relative;
   min-width: 100%;
-  padding-top: 20px;
+  padding-top: var(--ruler-h);
 }
+
+/* ---------- ruler ---------- */
 
 .ruler {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  height: 18px;
-  pointer-events: none;
+  height: var(--ruler-h);
+  cursor: pointer;
+  outline: none;
+  border-radius: 3px;
+}
+.ruler:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--teal);
 }
 .mark {
   position: absolute;
@@ -244,6 +286,7 @@
   width: 1px;
   height: 4px;
   background: var(--line-strong);
+  pointer-events: none;
 }
 .mark[data-label] {
   height: 7px;
@@ -254,15 +297,15 @@
 }
 .markNum {
   position: absolute;
-  bottom: 7px;
+  bottom: 6px;
   left: 3px;
   font-size: 10px;
   line-height: 1;
-  color: var(--ink-3);
+  color: var(--ink-2);
   white-space: nowrap;
 }
 .mark[data-start] .markNum {
-  color: var(--ink-2);
+  color: var(--ink);
   font-weight: 500;
 }
 .endMark {
@@ -271,128 +314,231 @@
   width: 1px;
   height: 10px;
   background: var(--ink-3);
+  pointer-events: none;
 }
-.endMark .markNum {
-  left: auto;
-  right: 4px;
+.rulerHover {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: calc(var(--ruler-h) + var(--track-h));
+  border-left: 1px solid var(--teal);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 7;
 }
+.rulerHover[data-on] {
+  opacity: 0.9;
+}
+.rulerHoverLabel {
+  position: absolute;
+  top: 1px;
+  left: 3px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--teal-ink);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* ---------- blocks ---------- */
 
 .track {
   position: relative;
-  height: 104px;
+  height: var(--track-h);
 }
-
-/* ---------- block ---------- */
 
 .block {
   position: absolute;
   top: 0;
-  bottom: 0;
+  left: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: 7px 8px 0 6px;
+  /* Edge to edge: the seam is each block's left border. */
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: linear-gradient(180deg, var(--shell-hi), var(--shell));
-  box-shadow: var(--shadow-raised);
+  border-left-color: var(--seam);
+  border-right-width: 0;
+  background: linear-gradient(180deg, var(--shell-hi), var(--shell) 60%);
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
-  touch-action: none;
-  overflow: hidden;
-  transition:
-    left var(--t-med) var(--ease),
-    width var(--t-med) var(--ease),
-    box-shadow var(--t-fast) var(--ease),
-    border-color var(--t-fast) var(--ease),
-    opacity var(--t-fast) var(--ease);
+  touch-action: pan-y;
+  outline: none;
+  transition: transform var(--lane-slide) var(--lane-ease);
+  will-change: transform;
+  /* Narrow blocks drop the pass detail from the header (container query below). */
+  container-type: inline-size;
+}
+.block[data-last] {
+  border-right-width: 1px;
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+.block[data-first] {
+  border-left-color: var(--line);
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
 }
 .block:hover {
-  border-color: var(--line-strong);
+  background: linear-gradient(180deg, #faf8f4, var(--shell-hi) 60%);
+}
+.track[data-instant] .block {
+  transition: none !important;
+}
+/* Selected (teal) and playing (amber) frames sit inside the block so neighbours never move. */
+.block::before,
+.block::after {
+  content: '';
+  position: absolute;
+  inset: -1px 0 -1px -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 3;
+}
+.block[data-current]::before {
+  box-shadow: inset 0 0 0 2px var(--amber), 0 0 10px var(--amber-glow);
+}
+.block[data-selected]::after {
+  box-shadow: inset 0 0 0 2px var(--teal);
+}
+.block[data-selected][data-current]::after {
+  box-shadow: inset 0 0 0 4px var(--teal), inset 0 0 0 2px var(--amber);
 }
 .block:focus-visible {
-  outline: none;
-  border-color: var(--teal);
-  box-shadow: var(--shadow-raised), 0 0 0 1px var(--teal) inset, var(--focus-ring);
+  z-index: 4;
 }
-.block[data-current] {
-  border-color: var(--amber);
-  background: linear-gradient(180deg, var(--shell-hi), rgba(242, 166, 52, 0.22));
-  box-shadow: var(--shadow-raised), 0 0 0 1px var(--amber) inset, 0 0 12px var(--amber-glow);
+.block:focus-visible::after {
+  box-shadow: inset 0 0 0 2px var(--teal), 0 0 0 2px var(--shell-hi), 0 0 0 4px var(--teal);
 }
-.block[data-lifted] {
-  opacity: 0.4;
-  border-style: dashed;
+.block[data-hidden] {
+  visibility: hidden;
+}
+.block[data-settling] {
+  z-index: 5;
+  transition:
+    transform 300ms var(--lane-spring),
+    box-shadow 220ms var(--lane-ease);
+  box-shadow: var(--shadow-float);
 }
 .block[data-missing] {
   background: repeating-linear-gradient(135deg, var(--surface-hi) 0 6px, var(--surface) 6px 12px);
-  color: var(--ink-3);
+}
+.block[data-layer-target]::after {
+  box-shadow: inset 0 0 0 2px var(--teal), 0 0 14px var(--teal-glow);
+}
+.block[data-layer-target='none']::after {
+  box-shadow: inset 0 0 0 2px var(--line-strong);
+}
+.lane[data-dragging='move'] .block,
+.lane[data-dragging='move'] .scroller {
+  cursor: grabbing;
+}
+.lane[data-dragging='resize'] .block,
+.lane[data-dragging='resize'] .scroller {
+  cursor: col-resize;
+}
+.lane[data-dragging='resize'] .block {
+  transition-duration: 90ms;
 }
 
-.blockTop {
+/* Block header */
+.bhead {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  height: 28px;
-}
-
-.grip {
-  display: grid;
   flex: none;
-  place-items: center;
-  width: 12px;
-  color: var(--ink-3);
-  opacity: 0.8;
-}
-
-.blockName {
-  display: inline-flex;
-  flex: 1;
   align-items: center;
-  gap: 3px;
+  gap: 1px;
+  height: var(--head-h);
   min-width: 0;
-  height: 28px;
-  padding: 0 6px;
-  margin: 0;
-  border: 1px solid transparent;
-  border-radius: var(--r-sm);
-  background: transparent;
+  padding: 0 2px 0 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.block[data-current] .bhead {
+  background: linear-gradient(180deg, rgba(242, 166, 52, 0.08), rgba(242, 166, 52, 0.24));
+}
+.block[data-selected] .bhead {
+  background: linear-gradient(180deg, rgba(35, 149, 142, 0.05), rgba(35, 149, 142, 0.16));
+}
+.titles {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+}
+.name {
+  overflow: hidden;
   font-size: var(--fs-md);
   font-weight: 650;
+  line-height: 16px;
   color: var(--ink);
-  text-align: left;
-}
-.blockName:hover,
-.blockName[aria-expanded='true'] {
-  border-color: var(--line);
-  background: var(--shell-hi);
-  box-shadow: var(--shadow-raised);
-}
-.blockName[aria-expanded='true'] {
-  border-color: var(--teal);
-  color: var(--teal-ink);
-}
-.blockName svg {
-  flex: none;
-  color: var(--ink-3);
-}
-.blockNameText {
-  min-width: 0;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.blockPlay,
-.blockRemove,
-.stepBtn,
-.cardAdd {
+.meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  line-height: 14px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.len {
+  flex: none;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.calc {
+  flex: none;
+  color: var(--ink-3);
+}
+@container (max-width: 170px) {
+  .calc,
+  .sceneTag {
+    display: none;
+  }
+}
+.sceneTag {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: italic;
+}
+.nowTag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  font-weight: 650;
+  color: var(--amber-ink);
+}
+.layerTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 650;
+  color: var(--teal-ink);
+  text-overflow: ellipsis;
+}
+.skipped {
+  color: var(--coral-ink);
+  font-weight: 600;
+}
+.hbtn {
   display: grid;
   flex: none;
   place-items: center;
-  width: 28px;
+  width: 26px;
   height: 28px;
   padding: 0;
   margin: 0;
@@ -400,154 +546,450 @@
   border-radius: var(--r-sm);
   background: transparent;
   color: var(--ink-2);
+  cursor: pointer;
 }
-.blockPlay:hover:not(:disabled),
-.blockRemove:hover,
-.stepBtn:hover:not([aria-disabled='true']),
-.cardAdd:hover {
+.hbtn:hover:not(:disabled),
+.hbtn[aria-expanded='true'] {
   border-color: var(--line);
   background: linear-gradient(180deg, #fdfdfc, #eff0f1);
   box-shadow: var(--shadow-raised);
   color: var(--ink);
 }
-.blockPlay:hover:not(:disabled) {
+.hbtn[data-play]:hover:not(:disabled) {
   color: var(--amber-ink);
 }
-.blockPlay:disabled {
+.hbtn[aria-expanded='true'] {
+  border-color: var(--teal);
+  color: var(--teal-ink);
+}
+.hbtn:disabled {
   opacity: 0.4;
   cursor: default;
 }
-.blockRemove:hover {
-  color: var(--coral-ink);
-}
-.stepBtn[aria-disabled='true'] {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.blockMeta {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+.renameInput {
+  width: 100%;
   min-width: 0;
-  height: 20px;
-  padding: 0 4px 0 8px;
-  white-space: nowrap;
-}
-.blockTotal {
-  font-size: var(--fs-sm);
-  font-weight: 500;
-  color: var(--ink);
-}
-.blockCalc {
-  font-size: var(--fs-xs);
-  color: var(--ink-3);
-}
-.blockSkipped {
-  font-size: var(--fs-xs);
-  color: var(--coral-ink);
-}
-.nowTag {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: var(--fs-xs);
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  color: var(--amber-ink);
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--teal);
+  border-radius: 3px;
+  background: #fff;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--teal-wash);
 }
 
-.blockBottom {
+/* Part cells */
+.cells {
+  position: relative;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-  height: 32px;
-  padding-left: 4px;
-}
-
-.stepper {
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  height: 28px;
-  padding: 0 1px;
-  border-radius: var(--r-sm);
-  background: rgba(20, 24, 28, 0.045);
-  box-shadow: inset 0 1px 1.5px rgba(20, 24, 28, 0.1);
-}
-.stepper .stepBtn {
-  width: 26px;
-  height: 26px;
-}
-.stepValue {
-  min-width: 26px;
-  font-size: var(--fs-sm);
-  font-weight: 500;
-  text-align: center;
-  color: var(--ink);
-}
-
-.repeatStrip {
-  display: flex;
-  gap: 2px;
-  height: 5px;
-  margin: auto -8px 0 -6px;
-  padding: 0 1px 1px;
-}
-.repeatCell {
   flex: 1;
-  border-radius: 1px;
-  background: rgba(20, 24, 28, 0.1);
+  flex-direction: column;
+  gap: var(--row-gap);
+  padding: var(--cells-pad) 3px var(--cells-pad) 3px;
 }
-.block[data-current] .repeatCell {
-  background: rgba(227, 155, 47, 0.55);
-}
-
-/* ---------- drag feedback ---------- */
-
-.marker {
-  position: absolute;
-  top: -4px;
-  bottom: -4px;
-  width: 4px;
-  margin-left: -2px;
-  border-radius: 2px;
-  background: var(--teal);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7), 0 0 10px var(--teal-glow);
-  pointer-events: none;
-  z-index: 3;
-}
-.marker::before {
+/* Faint lines between passes (also right while an edge drag changes the number of passes). */
+.cells::after {
   content: '';
   position: absolute;
-  top: -5px;
-  left: -3px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--teal);
+  inset: 0 0 0 0;
+  z-index: 1;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent 0,
+    transparent calc(100% / var(--passes, 1) - 1px),
+    rgba(20, 24, 28, 0.2) calc(100% / var(--passes, 1) - 1px),
+    rgba(20, 24, 28, 0.2) calc(100% / var(--passes, 1))
+  );
 }
-
-.endZone {
+.cellsMissing {
+  padding: 8px;
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  color: var(--ink-2);
+}
+.cellRow {
+  position: relative;
+  display: flex;
+  height: var(--row-h);
+  min-width: 0;
+}
+.cell {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 5px;
+  margin: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 10.5px;
+  line-height: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.cell > svg {
+  flex: none;
+}
+.cellText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cell[data-kind='scene'] {
+  background: var(--clip);
+  box-shadow: inset 2px 0 0 var(--ink-3);
+}
+.cell[data-kind='layer'] {
+  background: repeating-linear-gradient(135deg, var(--clip) 0 4px, var(--clip-2) 4px 8px);
+  box-shadow: inset 2px 0 0 var(--ink-2);
+  font-weight: 600;
+}
+.cell[data-kind='off'] {
+  box-shadow: inset 0 0 0 1px var(--coral);
+  color: var(--coral-ink);
+  font-weight: 650;
+}
+.cell[data-kind='empty'] {
+  box-shadow: inset 0 0 0 1px rgba(20, 24, 28, 0.1);
+}
+button.cell:hover {
+  filter: brightness(0.96);
+}
+button.cell[data-kind='off']:hover,
+button.cell[data-kind='empty']:hover {
+  background: rgba(20, 24, 28, 0.05);
+}
+.block[data-current] .cell[data-kind='scene'],
+.block[data-current] .cell[data-kind='layer'] {
+  background-color: #f2d6a6;
+  box-shadow: inset 2px 0 0 var(--amber);
+}
+.block[data-current] .cell[data-kind='layer'] {
+  background-image: repeating-linear-gradient(135deg, #f2d6a6 0 4px, #e9c88f 4px 8px);
+}
+.cell[data-preview] {
+  background: var(--teal-wash) !important;
+  box-shadow: inset 0 0 0 1px var(--teal) !important;
+  color: var(--teal-ink);
+  font-weight: 650;
+}
+.cell:focus-visible {
+  z-index: 2;
+  outline: 2px solid var(--teal);
+  outline-offset: 0;
+  box-shadow: none;
+}
+.pick {
   position: absolute;
   top: 0;
-  bottom: 0;
+  right: 0;
   display: grid;
   place-items: center;
-  padding: 0 10px;
-  border: 1.5px dashed var(--line-strong);
-  border-radius: var(--r-md);
-  font-size: var(--fs-sm);
-  color: var(--ink-3);
-  text-align: center;
+  width: 16px;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0 3px 3px 0;
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--ink-2);
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
 }
-.endZone[data-drop] {
-  border-color: var(--teal);
-  background: var(--teal-wash);
+.cellRow:hover .pick,
+.pick:focus-visible {
+  opacity: 1;
+}
+.pick:hover {
   color: var(--teal-ink);
 }
 
+/* Pass dividers. The lines let clicks through to the cells; while the block is hovered, a
+   scissors button under each line (on the block's bottom edge) splits the block there. */
+.divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: -4px;
+  left: -1px;
+  border-left: 1.5px dashed var(--teal);
+  opacity: 0;
+}
+.divider:hover::after {
+  opacity: 1;
+}
+.split {
+  position: absolute;
+  /* Touching the block's bottom edge, so moving onto it keeps the block hovered. */
+  top: calc(100% - 1px);
+  left: -9px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 16px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--shell-hi);
+  color: var(--ink-2);
+  box-shadow: var(--shadow-raised);
+  opacity: 0;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.block:hover .split,
+.block:focus-within .split,
+.split:focus-visible {
+  opacity: 1;
+}
+.split:hover {
+  border-color: var(--teal);
+  background: var(--teal);
+  color: #fff;
+}
+
+/* Right-edge handle: drag for passes. Its grip sits on the seam, over the next block. */
+.edge {
+  position: absolute;
+  top: var(--head-h);
+  bottom: 0;
+  right: -6px;
+  width: 12px;
+  z-index: 3;
+  cursor: col-resize;
+  touch-action: none;
+}
+.edge::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 6px;
+  height: 26px;
+  margin-top: -13px;
+  border: 1.5px solid var(--shell-hi);
+  border-radius: 3px;
+  background: var(--ink-3);
+  box-shadow: 0 1px 2px rgba(20, 24, 28, 0.25);
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease);
+}
+/* A hovered, focused or selected block sits above its right neighbour so its handle is reachable. */
+.block:hover,
+.block:focus-within,
+.block[data-selected] {
+  z-index: 2;
+}
+.block:hover .edge::after,
+.block:focus-within .edge::after,
+.block[data-selected] .edge::after {
+  opacity: 0.75;
+}
+.edge:hover::after,
+.block[data-resizing] .edge::after {
+  opacity: 1;
+  background: var(--teal);
+}
+@media (pointer: coarse) {
+  .edge {
+    right: -10px;
+    width: 20px;
+  }
+  .edge::after {
+    left: 7px;
+    opacity: 0.75;
+  }
+}
+.lane[data-dragging] .divider,
+.lane[data-dragging] .pick {
+  visibility: hidden;
+}
+
+/* ---------- seams (join) ---------- */
+
+.seams {
+  position: relative;
+  height: 22px;
+  pointer-events: none;
+}
+.join {
+  position: absolute;
+  top: 4px;
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 15px;
+  padding: 0 6px 0 4px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--shell-hi);
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+.join:hover {
+  border-color: var(--teal);
+  color: var(--teal-ink);
+}
+.lane[data-dragging] .join {
+  visibility: hidden;
+}
+
+/* ---------- gesture feedback ---------- */
+
+/* The lifted copy of the dragged blocks (follows the pointer horizontally). */
+.clone {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  z-index: 6;
+  pointer-events: none;
+  will-change: transform;
+  transform-origin: 50% 60%;
+}
+.clone[data-outside] {
+  opacity: 0.45;
+}
+.cloneItem {
+  position: absolute;
+  top: 0;
+  height: 100%;
+}
+.face {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border: 1px solid var(--line-strong);
+  border-left-color: var(--seam);
+  background: linear-gradient(180deg, #fbfaf7, var(--shell-hi) 60%);
+  box-shadow: var(--shadow-float);
+}
+.face {
+  container-type: inline-size;
+}
+.face[data-copy] {
+  border-color: var(--teal);
+}
+.badge {
+  position: absolute;
+  top: calc(100% + 1px);
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 17px;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: var(--ink);
+  color: var(--ink-inverse);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow-raised);
+}
+.badge[data-copy] {
+  background: var(--teal-ink);
+}
+
+
+/* Where a scene card will be inserted. */
+.slot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--teal);
+  border-radius: 6px;
+  background: var(--teal-wash);
+  color: var(--teal-ink);
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.slot[data-on] {
+  opacity: 1;
+  visibility: visible;
+}
+/* Before the slot opens: a line on the boundary. */
+.slot[data-pending] {
+  width: 4px !important;
+  margin-left: -2px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--teal);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7), 0 0 10px var(--teal-glow);
+}
+.slot[data-pending] .slotText {
+  display: none;
+}
+.slotText {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The passes and bars while an edge is dragged. */
+.bubble {
+  position: absolute;
+  top: -21px;
+  left: 0;
+  translate: -50% 0;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: var(--ink);
+  color: var(--ink-inverse);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 8;
+}
+.bubble[data-on] {
+  opacity: 1;
+}
+
+/* A scene card being dragged (follows the pointer anywhere). */
 .ghost {
   position: fixed;
   top: 0;
@@ -556,19 +998,21 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 140px;
-  padding: 8px 12px;
+  min-width: 150px;
+  padding: 7px 11px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-md);
   background: linear-gradient(180deg, var(--shell-hi), var(--shell));
   box-shadow: var(--shadow-float);
   pointer-events: none;
-  opacity: 0.94;
 }
 .ghost[data-drop] {
   border-color: var(--teal);
 }
 .ghostName {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: var(--fs-md);
   font-weight: 650;
 }
@@ -578,6 +1022,7 @@
 }
 .ghost[data-drop] .ghostMeta {
   color: var(--teal-ink);
+  font-weight: 600;
 }
 
 /* ---------- playhead ---------- */
@@ -585,15 +1030,15 @@
 .playhead {
   position: absolute;
   top: 2px;
-  bottom: 0;
   left: 0;
   width: 2px;
+  height: calc(var(--ruler-h) + var(--track-h) - 2px);
   margin-left: -1px;
   background: var(--amber);
   box-shadow: 0 0 6px var(--amber-glow);
   opacity: 0;
   pointer-events: none;
-  z-index: 2;
+  z-index: 6;
   will-change: transform;
 }
 .playhead::before {
@@ -608,6 +1053,14 @@
 .playhead:not([data-on]) {
   display: none;
 }
+/* While blocks are carried or resized the lane shows a preview; the ruler and playhead (which show
+   the song as it is) step back until the drop. */
+.lane[data-dragging] .playhead {
+  opacity: 0.3 !important;
+}
+.lane[data-dragging] .ruler {
+  opacity: 0.45;
+}
 
 /* ---------- empty ---------- */
 
@@ -617,6 +1070,7 @@
   justify-content: center;
   gap: 16px;
   height: 100%;
+  margin-right: 6px;
   padding: 0 20px;
   border: 1.5px dashed var(--line-strong);
   border-radius: var(--r-md);
@@ -666,8 +1120,8 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  height: 46px;
-  padding: 0 6px 0 6px;
+  height: 42px;
+  padding: 0 5px 0 6px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: linear-gradient(180deg, var(--shell-hi), var(--shell));
@@ -683,6 +1137,13 @@
 .card[data-lifted] {
   opacity: 0.5;
   border-style: dashed;
+}
+.grip {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 12px;
+  color: var(--ink-3);
 }
 .cardText {
   display: flex;
@@ -705,10 +1166,21 @@
   white-space: nowrap;
 }
 .cardAdd {
-  border-color: var(--line);
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
   background: linear-gradient(180deg, #fdfdfc, #eff0f1);
   box-shadow: var(--shadow-raised);
   color: var(--ink);
+}
+.cardAdd:hover {
+  border-color: var(--line-strong);
 }
 
 .hint {
@@ -726,6 +1198,28 @@
   font-size: var(--fs-xs);
   color: var(--ink-3);
 }
+.menuNote {
+  max-width: 300px;
+  padding: 0 10px 4px 32px;
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  color: var(--ink-3);
+  white-space: normal;
+}
+
+/* ---------- motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .block,
+  .block[data-settling],
+  .slot,
+  .split,
+  .edge::after {
+    transition: none !important;
+  }
+}
+
+/* ---------- widths ---------- */
 
 @media (min-width: 1600px) {
   .mode {
@@ -763,5 +1257,8 @@
   .hint {
     flex-basis: 100%;
     text-align: left;
+  }
+  .lane {
+    --names-w: 70px;
   }
 }

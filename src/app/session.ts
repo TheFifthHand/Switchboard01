@@ -47,7 +47,7 @@ import * as db from '../persistence/db';
 import * as library from '../persistence/library';
 import type { LaunchResult } from '../time/contracts';
 import { makeSnapshot, projectFromSnapshot } from '../time/snapshot';
-import { Sequencer, type NoteEvent } from '../time/sequencer';
+import { Sequencer, songSignature, type NoteEvent } from '../time/sequencer';
 import { RealtimeTransport } from '../time/transport';
 import { notify, patchRuntime, runtimeStore, setTrackRuntime, type PlayMode } from './runtime';
 
@@ -175,8 +175,8 @@ export class Session {
   /** The open project is a starter that could not be stored when it was started: its first save adds it to the library. */
   private unstored = false;
   private replayingId: Id | null = null;
-  /** What was playing when playback stalled, so Resume restarts the same thing. */
-  private stallResume: { mode: PlayMode; songBlock: number | null; replayId: Id | null } | null = null;
+  /** What was playing when playback stalled, so Resume restarts the same thing (the song block by id). */
+  private stallResume: { mode: PlayMode; songBlock: number | null; songBlockId: Id | null; replayId: Id | null } | null = null;
   private loadedSampleIds = new Set<Id>();
   /** Keys pressed before the engine existed: played as soon as audio is ready. */
   private pendingKeys = new Map<string, { released: boolean }>();
@@ -490,7 +490,8 @@ export class Session {
         setTrackRuntime(ev.trackId, { playingSlot: ev.slot, queued });
         if (this.noteRec && ev.trackId === this.noteRec.trackId && ev.slot !== this.noteRec.slot) this.stopRecordNotes();
       }),
-      t.on('block', (ev) => patchRuntime({ songBlock: ev.blockIndex, songBlockId: ev.blockId })),
+      // A block deleted while it plays has no place in the arrangement (index -1) until the next one starts.
+      t.on('block', (ev) => patchRuntime({ songBlock: ev.blockIndex >= 0 ? ev.blockIndex : null, songBlockId: ev.blockId })),
       t.on('beat', (ev) => {
         const counting = runtimeStore.getState().countingIn;
         if (counting !== ev.countIn) patchRuntime({ countingIn: ev.countIn });
@@ -499,7 +500,7 @@ export class Session {
       t.on('arpNote', (ev) => this.recordArpNote(ev)),
       t.on('stalled', (s) => {
         const rt = runtimeStore.getState();
-        this.stallResume = { mode: rt.mode, songBlock: rt.songBlock, replayId: this.replayingId };
+        this.stallResume = { mode: rt.mode, songBlock: rt.songBlock, songBlockId: rt.songBlockId, replayId: this.replayingId };
         this.finishTake('stalled');
         this.stopRecordNotes();
         this.releaseAllNotes();
@@ -543,7 +544,9 @@ export class Session {
           if (was && was !== t.arp && ((was.enabled && !t.arp.enabled) || (was.latch && !t.arp.latch))) this.transport.clearArpLatch(t.id);
         }
       }
-      if (musicChanged(p, prev)) this.transport.invalidate();
+      // A song playing (or paused) follows edits to its blocks and to the clips they play; that also regenerates.
+      const replanned = this.followSongEdits(p, prev);
+      if (!replanned && musicChanged(p, prev)) this.transport.invalidate();
     }
     if (p.samples !== prev.samples) void this.loadProjectSamples(p);
     if (p.tracks !== prev.tracks) this.stopPartsWithoutClip(p);
@@ -586,6 +589,45 @@ export class Session {
       moved = true;
     }
     if (moved && !this.replayingId) this.refreshLauncherRuntime();
+  }
+
+  /**
+   * The song is always played as the Arrange lane shows it: an edit while it
+   * plays or is paused (blocks, their order, lengths, scenes, part choices,
+   * or the clips they play, undo and redo included) lays out the rest of the
+   * song again from the block playing now (see Sequencer.replanSong). Scene
+   * reorders were already followed by `followMovedClips`, which then changes
+   * nothing more here. Returns true when playback changed.
+   */
+  private followSongEdits(p: Project, prev: Project): boolean {
+    const seq = this.sequencer;
+    const t = this.transport;
+    if (!seq || !t || seq.mode.kind !== 'song' || !(seq.playing || seq.paused)) return false;
+    // The song depends on the blocks, the scenes and the clips (not on sounds or knobs).
+    if (p.arrangement === prev.arrangement && p.scenes === prev.scenes && p.tracks.every((t, i) => t.clips === prev.tracks[i]?.clips)) return false;
+    if (songSignature(p) === songSignature(prev)) return false;
+    const changed = t.replanSong();
+    this.syncSongBlock();
+    // Pads show what each part switches to at the next bar.
+    if (changed) this.refreshLauncherRuntime();
+    return changed;
+  }
+
+  /** The runtime's song block is the block playing now (by id) at its place in the arrangement; null once it was deleted. */
+  private syncSongBlock(): void {
+    const seq = this.sequencer;
+    const t = this.transport;
+    const rt = runtimeStore.getState();
+    if (!seq || !t || rt.mode !== 'song') return;
+    let id = rt.songBlockId;
+    if (id === null) {
+      const tick = t.getPosition().tick;
+      id = seq.songPlan()?.find((b) => tick < b.endTick)?.blockId ?? null;
+    }
+    if (id === null) return;
+    const i = this.store.getState().arrangement.blocks.findIndex((b) => b.id === id);
+    const songBlock = i >= 0 ? i : null;
+    if (songBlock !== rt.songBlock || id !== rt.songBlockId) patchRuntime({ songBlock, songBlockId: id });
   }
 
   /** A part whose playing (or armed) clip was deleted stops, so undo does not silently resume it. */
@@ -731,7 +773,10 @@ export class Session {
     const fromTick = fromBar !== undefined && Number.isFinite(fromBar) ? Math.max(0, Math.floor(fromBar)) * TICKS_PER_BAR : undefined;
     this.transport!.start({ mode: { kind: 'song', fromBlock }, fromTick });
     this.stallResume = null;
-    patchRuntime({ playing: true, paused: false, mode: 'song', songBlock: fromBlock, songBlockId: null, stalled: null });
+    // The block the song starts in (its 'block' event confirms it when it sounds).
+    const at = this.transport!.getPosition().tick;
+    const first = this.sequencer!.songPlan()?.find((b) => at < b.endTick);
+    patchRuntime({ playing: true, paused: false, mode: 'song', songBlock: first ? first.index : fromBlock, songBlockId: first?.blockId ?? null, stalled: null });
     this.refreshLauncherRuntime();
   }
 
@@ -772,7 +817,12 @@ export class Session {
     // Playback was started again another way meanwhile (e.g. Record Notes): only the banner goes.
     if (this.transport?.playing) return;
     const replayId = resume?.mode === 'replay' ? resume.replayId : null;
-    if (resume?.mode === 'song') await this.playSong(resume.songBlock ?? 0);
+    if (resume?.mode === 'song') {
+      // The block that was playing, found by id (blocks may have moved meanwhile).
+      const blocks = this.store.getState().arrangement.blocks;
+      const byId = resume.songBlockId ? blocks.findIndex((b) => b.id === resume.songBlockId) : -1;
+      await this.playSong(byId >= 0 ? byId : Math.min(resume.songBlock ?? 0, Math.max(0, blocks.length - 1)));
+    }
     else if (replayId && this.store.getState().performances.some((p) => p.id === replayId)) await this.replayPerformance(replayId);
     else await this.play();
   }

@@ -1,22 +1,25 @@
 /**
  * Song lane geometry (pure: no DOM, no React).
  *
- * Blocks are laid out left to right with widths proportional to their length
- * in bars (scene bars × repeats). A block never gets narrower than
- * MIN_BLOCK_WIDTH so its controls stay usable; the ruler and the playhead map
- * bars through the same per-block geometry, so bar numbers always line up
- * with block edges even when a short block is widened.
+ * Blocks sit edge to edge, left to right, with widths proportional to their
+ * length in bars (one pass × repeats). A block is never narrower than
+ * MIN_BLOCK_WIDTH, so its header stays usable; the ruler, the playhead and
+ * the pass dividers map bars through the same per-block geometry, so bar
+ * numbers always line up with block edges even when a short block is widened.
  *
- * A song that fits fills the lane. A song that does not fit scrolls, at the
- * scale where its shortest block is exactly the minimum width (so all blocks
- * keep their true proportions), within SCROLL_MAX_PX_PER_BAR.
+ * The scale (pixels per bar) comes from a fixed ladder of zoom steps: the
+ * largest step at which the whole song fits the lane. Because the steps are
+ * coarse, most edits (one more pass, a block moved, split or joined) keep the
+ * scale, so blocks do not change size under the pointer. A song that does
+ * not fit even at the smallest step scrolls, at the step where its shortest
+ * block is about the minimum width (within SCROLL_MAX_PX_PER_BAR).
  */
 
 export interface LaneBlockInput {
   id: string;
-  /** Bars of one pass of the block's scene (0 when the scene is missing: the block is skipped). */
+  /** Bars of one pass of the block (0 when its scene is missing: the song skips the block). */
   bars: number;
-  /** 1..8 */
+  /** 1..MAX_BLOCK_REPEATS */
   repeats: number;
 }
 
@@ -27,8 +30,11 @@ export interface LaneBlock {
   width: number;
   /** First bar of the block on the song timeline (0-based). */
   startBar: number;
-  /** Length of the block in bars (bars × repeats; 0 for a skipped block). */
+  /** Length of the block in bars (pass × repeats; 0 for a skipped block). */
   totalBars: number;
+  /** Bars of one pass (0 for a skipped block). */
+  passBars: number;
+  repeats: number;
 }
 
 export interface SongLayout {
@@ -40,84 +46,66 @@ export interface SongLayout {
   contentWidth: number;
 }
 
-export const BLOCK_GAP = 6;
-export const MIN_BLOCK_WIDTH = 140;
-export const MAX_PX_PER_BAR = 60;
-export const MIN_PX_PER_BAR = 10;
+export const MIN_BLOCK_WIDTH = 112;
+/** Zoom steps (pixels per bar), smallest first. */
+export const ZOOM_STEPS = [10, 11, 12, 14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56] as const;
+export const MIN_PX_PER_BAR = ZOOM_STEPS[0];
+export const MAX_PX_PER_BAR = ZOOM_STEPS[ZOOM_STEPS.length - 1];
 /** Largest scale of a song that scrolls (so one short block cannot make long ones huge). */
-export const SCROLL_MAX_PX_PER_BAR = 24;
+export const SCROLL_MAX_PX_PER_BAR = 25;
+/** Most repeats a block can have (mirrors MAX_BLOCK_REPEATS; kept here so the geometry stays dependency-free). */
+const MAX_REPEATS = 16;
 
 export function clampRepeats(r: number): number {
-  return Number.isFinite(r) ? Math.min(8, Math.max(1, Math.round(r))) : 1;
+  return Number.isFinite(r) ? Math.min(MAX_REPEATS, Math.max(1, Math.round(r))) : 1;
 }
 
-/**
- * The largest scale (≤ MAX_PX_PER_BAR) at which every block, widened to at
- * least MIN_BLOCK_WIDTH, fits in `room`; null when the song only fits below
- * MIN_PX_PER_BAR (it then scrolls).
- */
+/** Width of a block of `totalBars` at `pxPerBar` (a skipped block gets the minimum). */
+export function blockWidth(totalBars: number, pxPerBar: number): number {
+  return Math.floor(Math.max(MIN_BLOCK_WIDTH, totalBars * pxPerBar));
+}
+
+function widthAt(totals: readonly number[], ppb: number): number {
+  let w = 0;
+  for (const t of totals) w += blockWidth(t, ppb);
+  return w;
+}
+
+/** The largest zoom step at which every block fits in `room`, or null when none does. */
 function fitScale(totals: readonly number[], room: number): number | null {
-  // Blocks that would be too narrow get the minimum width; the rest share what is left.
-  // Fixing a block only ever lowers the scale, so this settles in at most n rounds.
-  const fixed = totals.map((t) => t <= 0);
-  for (let iter = 0; iter <= totals.length; iter++) {
-    let flexBars = 0;
-    let fixedCount = 0;
-    let longestFixed = 0;
-    totals.forEach((t, i) => {
-      if (fixed[i]) {
-        fixedCount++;
-        longestFixed = Math.max(longestFixed, t);
-      } else flexBars += t;
-    });
-    const flexRoom = room - fixedCount * MIN_BLOCK_WIDTH;
-    if (flexRoom < 0) return null;
-    // Every block sits at the minimum width: the scale at which the longest of them just fills it.
-    const scale = Math.min(MAX_PX_PER_BAR, flexBars > 0 ? flexRoom / flexBars : longestFixed > 0 ? MIN_BLOCK_WIDTH / longestFixed : MAX_PX_PER_BAR);
-    if (scale < MIN_PX_PER_BAR) return null;
-    let changed = false;
-    totals.forEach((t, i) => {
-      if (!fixed[i] && t * scale < MIN_BLOCK_WIDTH) {
-        fixed[i] = true;
-        changed = true;
-      }
-    });
-    if (!changed) return scale;
-  }
+  for (let i = ZOOM_STEPS.length - 1; i >= 0; i--) if (widthAt(totals, ZOOM_STEPS[i]) <= room) return ZOOM_STEPS[i];
   return null;
 }
 
-/**
- * Scale of a song that does not fit: the shortest block gets exactly the
- * minimum width, so every block stays in true proportion (unless that would
- * pass SCROLL_MAX_PX_PER_BAR, or fall under MIN_PX_PER_BAR).
- */
+/** Scale of a song that does not fit: about the step where its shortest block is the minimum width. */
 function scrollScale(totals: readonly number[]): number {
   const shortest = Math.min(...totals.filter((t) => t > 0));
   if (!Number.isFinite(shortest)) return MIN_PX_PER_BAR;
-  return Math.min(SCROLL_MAX_PX_PER_BAR, Math.max(MIN_PX_PER_BAR, MIN_BLOCK_WIDTH / shortest));
+  const want = Math.min(SCROLL_MAX_PX_PER_BAR, MIN_BLOCK_WIDTH / shortest);
+  let step: number = MIN_PX_PER_BAR;
+  for (const s of ZOOM_STEPS) if (s <= want) step = s;
+  return step;
 }
 
-/** Lay the blocks out in `available` pixels (the lane scrolls when they do not fit). */
-export function layoutSong(inputs: readonly LaneBlockInput[], available: number): SongLayout {
-  const n = inputs.length;
+/**
+ * Lay the blocks out in `available` pixels (the lane scrolls when they do
+ * not fit). `opts.pxPerBar` keeps a given scale (used while a gesture is in
+ * progress so nothing rescales under the pointer).
+ */
+export function layoutSong(inputs: readonly LaneBlockInput[], available: number, opts: { pxPerBar?: number } = {}): SongLayout {
   const totals = inputs.map((b) => (b.bars > 0 ? b.bars * clampRepeats(b.repeats) : 0));
   const totalBars = totals.reduce((a, b) => a + b, 0);
-  const room = Math.max(0, available - BLOCK_GAP * Math.max(0, n - 1));
-  const ppb = fitScale(totals, room) ?? scrollScale(totals);
-
+  const ppb = opts.pxPerBar ?? fitScale(totals, Math.max(0, available)) ?? scrollScale(totals);
   const blocks: LaneBlock[] = [];
   let x = 0;
   let bar = 0;
   inputs.forEach((b, index) => {
-    // Floor, so rounding never makes a fitting song overflow the lane.
-    const width = Math.floor(Math.max(MIN_BLOCK_WIDTH, totals[index] * ppb));
-    blocks.push({ id: b.id, index, x, width, startBar: bar, totalBars: totals[index] });
-    x += width + BLOCK_GAP;
+    const width = blockWidth(totals[index], ppb);
+    blocks.push({ id: b.id, index, x, width, startBar: bar, totalBars: totals[index], passBars: b.bars > 0 ? b.bars : 0, repeats: clampRepeats(b.repeats) });
+    x += width;
     bar += totals[index];
   });
-  const last = blocks[blocks.length - 1];
-  return { blocks, totalBars, pxPerBar: ppb, contentWidth: last ? last.x + last.width : 0 };
+  return { blocks, totalBars, pxPerBar: ppb, contentWidth: x };
 }
 
 /** Horizontal position of a bar line (0-based bar, may be fractional) on the lane. */
@@ -132,6 +120,33 @@ export function barToX(layout: SongLayout, bar: number): number {
   }
   const last = blocks[blocks.length - 1];
   return last.x + last.width;
+}
+
+/**
+ * The bar at lane position `x` (0-based, whole bars) and the block it is in;
+ * null outside the song or over a skipped block.
+ */
+export function xToBar(layout: SongLayout, x: number): { bar: number; index: number } | null {
+  for (const b of layout.blocks) {
+    if (x < b.x || x >= b.x + b.width) continue;
+    if (b.totalBars <= 0) return null;
+    const k = Math.min(b.totalBars - 1, Math.max(0, Math.floor(((x - b.x) / b.width) * b.totalBars)));
+    return { bar: b.startBar + k, index: b.index };
+  }
+  return null;
+}
+
+/** The block that holds song bar `bar` (0-based), or null past the end. */
+export function blockAtBar(layout: SongLayout, bar: number): LaneBlock | null {
+  return layout.blocks.find((b) => b.totalBars > 0 && bar >= b.startBar && bar < b.startBar + b.totalBars) ?? null;
+}
+
+/** Offsets (inside the block) of the lines between its passes. */
+export function passDividers(width: number, repeats: number): number[] {
+  const r = clampRepeats(repeats);
+  const out: number[] = [];
+  for (let k = 1; k < r; k++) out.push(Math.round((k * width) / r));
+  return out;
 }
 
 export interface RulerMark {
@@ -173,23 +188,10 @@ export function rulerMarks(layout: SongLayout, minSpacing = 56): RulerMark[] {
   return out;
 }
 
-/** Insertion gap (0..n) nearest to lane position `x`: the gap before block i, or n for the end. */
-export function gapAt(layout: SongLayout, x: number): number {
-  for (const b of layout.blocks) if (x < b.x + b.width / 2) return b.index;
-  return layout.blocks.length;
-}
-
-/** Lane position of an insertion gap (the middle of the space between two blocks). */
+/** Lane position of insertion gap `gap` (0 = before the first block, n = after the last). */
 export function gapX(layout: SongLayout, gap: number): number {
   const b = layout.blocks;
-  if (!b.length) return 0;
-  if (gap <= 0) return b[0].x - BLOCK_GAP / 2;
-  if (gap >= b.length) return b[b.length - 1].x + b[b.length - 1].width + BLOCK_GAP / 2;
-  return (b[gap - 1].x + b[gap - 1].width + b[gap].x) / 2;
-}
-
-/** moveBlock destination for dropping block `from` into insertion gap `gap` (null = no change). */
-export function moveTarget(from: number, gap: number): number | null {
-  const to = gap > from ? gap - 1 : gap;
-  return to === from ? null : to;
+  if (!b.length || gap <= 0) return 0;
+  if (gap >= b.length) return layout.contentWidth;
+  return b[gap].x;
 }

@@ -1,0 +1,321 @@
+/**
+ * Song lane gestures as pure functions (no DOM, no React): where a dragged
+ * group of blocks lands, where every other block sits while it is dragged,
+ * how many passes an edge drag makes, how fast the lane scrolls near its
+ * edges, selection, the paste position and the scene-card drop target.
+ *
+ * The lane calls these on every pointer move and writes the results straight
+ * to the DOM, so what a preview shows is exactly what the drop commits (the
+ * preview order comes from `orderAfterMove`, the same function moveBlocks
+ * uses).
+ */
+
+/** Movement (px) before a press becomes a drag; a shorter press is a click. */
+export const DRAG_THRESHOLD_PX = 4;
+/** How far (px) the dragged centre must pass the halfway point between two slots before the target changes. */
+export const GAP_HYSTERESIS_PX = 10;
+/** Width (px) of the lane edge zones that scroll it during a drag. */
+export const AUTOSCROLL_ZONE_PX = 56;
+/** Fastest auto-scroll (px per second), reached at (or past) the lane edge. */
+export const AUTOSCROLL_MAX_PX_S = 900;
+/** Smallest pointer travel (px) for one pass in an edge drag, so passes of a short block are still easy to hit. */
+export const MIN_PASS_STEP_PX = 18;
+
+type Id = string;
+
+/* ------------------------------------------------------------------ */
+/* Moving and copying blocks                                           */
+/* ------------------------------------------------------------------ */
+
+/** Left edge of each insertion slot among blocks of `widths` placed edge to edge (n + 1 values). */
+export function slotLefts(widths: readonly number[]): number[] {
+  const out = [0];
+  for (const w of widths) out.push(out[out.length - 1] + w);
+  return out;
+}
+
+/**
+ * Insertion gap (0..n) among the `others` (the blocks that are not dragged)
+ * for a dragged group of width `groupWidth` whose centre is at `centre`.
+ *
+ * The group goes to the slot whose centre is nearest, which is the same as
+ * comparing its centre with the neighbours' midpoints. Next to the current
+ * target the halfway point must be passed by `hysteresis` px, so a pointer
+ * resting on a boundary never makes the blocks flicker; a fast move that
+ * skips several slots is followed at once.
+ */
+export function targetGap(otherWidths: readonly number[], groupWidth: number, centre: number, current: number | null, hysteresis = GAP_HYSTERESIS_PX): number {
+  const lefts = slotLefts(otherWidths);
+  const centres = lefts.map((l) => l + groupWidth / 2);
+  let best = 0;
+  for (let g = 1; g < centres.length; g++) if (Math.abs(centre - centres[g]) < Math.abs(centre - centres[best])) best = g;
+  if (current === null || current < 0 || current >= centres.length || best === current) return best;
+  if (best === current + 1) {
+    const half = (centres[current] + centres[current + 1]) / 2;
+    return centre > half + hysteresis ? best : current;
+  }
+  if (best === current - 1) {
+    const half = (centres[current] + centres[current - 1]) / 2;
+    return centre < half - hysteresis ? best : current;
+  }
+  return best;
+}
+
+/**
+ * Convert a gap among the others into the insertion point of the full list
+ * that orderAfterMove / moveBlocks / duplicateBlocks expect.
+ */
+export function fullGap(list: readonly { id: Id }[], moving: ReadonlySet<Id>, othersGap: number): number {
+  let seen = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (moving.has(list[i].id)) continue;
+    if (seen === othersGap) return i;
+    seen++;
+  }
+  return list.length;
+}
+
+/** The gap among the others where the moving blocks are now (the slot of the first of them). */
+export function currentOthersGap(list: readonly { id: Id }[], moving: ReadonlySet<Id>): number {
+  let g = 0;
+  for (const b of list) {
+    if (moving.has(b.id)) return g;
+    g++;
+  }
+  return g;
+}
+
+/**
+ * Positions of blocks placed edge to edge in `order`, with an optional
+ * empty slot of `slot.width` px opened before index `slot.at`.
+ */
+export function packPositions(order: readonly Id[], widthOf: (id: Id) => number, slot?: { at: number; width: number } | null): Map<Id, number> {
+  const out = new Map<Id, number>();
+  let x = 0;
+  order.forEach((id, i) => {
+    if (slot && i === slot.at) x += slot.width;
+    out.set(id, x);
+    x += widthOf(id);
+  });
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Edge drag (length in passes)                                        */
+/* ------------------------------------------------------------------ */
+
+/** Pointer travel for one pass: the pass width at the lane's scale, never under MIN_PASS_STEP_PX. */
+export function edgeStepPx(passBars: number, pxPerBar: number): number {
+  return Math.max(MIN_PASS_STEP_PX, passBars * pxPerBar);
+}
+
+/** Repeats after dragging a block's right edge by `dx` px (whole passes, 1..max). */
+export function repeatsFromEdge(startRepeats: number, dx: number, stepPx: number, max = 16): number {
+  const r = startRepeats + Math.round(dx / Math.max(1, stepPx));
+  return Math.min(max, Math.max(1, r));
+}
+
+/* ------------------------------------------------------------------ */
+/* Auto-scroll                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Scroll velocity (px per second; negative = left) for a pointer at `x`
+ * near the visible edges [left, right] of the lane: zero outside the edge
+ * zones, growing towards the edge, fastest at and beyond it.
+ */
+export function autoScrollVelocity(x: number, left: number, right: number, zone = AUTOSCROLL_ZONE_PX, max = AUTOSCROLL_MAX_PX_S): number {
+  const z = Math.max(1, Math.min(zone, (right - left) / 3));
+  const into = (d: number) => {
+    const f = Math.min(1, Math.max(0, (z - d) / z));
+    return max * f * f;
+  };
+  if (x < left + z) return -into(x - left);
+  if (x > right - z) return into(right - x);
+  return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Selection                                                           */
+/* ------------------------------------------------------------------ */
+
+export interface LaneSelection {
+  /** Selected block ids in song order. */
+  ids: readonly Id[];
+  /** Where a Shift range starts. */
+  anchor: Id | null;
+}
+
+export const EMPTY_SELECTION: LaneSelection = { ids: [], anchor: null };
+
+function inOrder(order: readonly Id[], ids: Iterable<Id>): Id[] {
+  const want = new Set(ids);
+  return order.filter((id) => want.has(id));
+}
+
+function range(order: readonly Id[], a: Id, b: Id): Id[] {
+  const i = order.indexOf(a);
+  const j = order.indexOf(b);
+  if (i < 0 || j < 0) return j >= 0 ? [b] : [];
+  return order.slice(Math.min(i, j), Math.max(i, j) + 1);
+}
+
+/**
+ * A click on block `id`: plain = only it; `toggle` (Ctrl/Cmd) adds or
+ * removes it; `shift` selects the range from the anchor (with `toggle`,
+ * adds the range to what is selected).
+ */
+export function selectByClick(sel: LaneSelection, order: readonly Id[], id: Id, mods: { shift?: boolean; toggle?: boolean } = {}): LaneSelection {
+  if (!order.includes(id)) return sel;
+  if (mods.shift) {
+    const anchor = sel.anchor && order.includes(sel.anchor) ? sel.anchor : id;
+    const span = range(order, anchor, id);
+    return { ids: inOrder(order, mods.toggle ? [...sel.ids, ...span] : span), anchor };
+  }
+  if (mods.toggle) {
+    const has = sel.ids.includes(id);
+    return { ids: inOrder(order, has ? sel.ids.filter((x) => x !== id) : [...sel.ids, id]), anchor: id };
+  }
+  return { ids: [id], anchor: id };
+}
+
+export type LaneKeyMove = 'prev' | 'next' | 'first' | 'last';
+
+/**
+ * Arrow keys / Home / End from the focused block: focus moves and the
+ * selection follows it; with `extend` (Shift) the selection becomes the range
+ * from the anchor to the new focus.
+ */
+export function selectByKey(sel: LaneSelection, order: readonly Id[], focus: Id | null, move: LaneKeyMove, extend: boolean): { selection: LaneSelection; focus: Id | null } {
+  if (!order.length) return { selection: EMPTY_SELECTION, focus: null };
+  const i = focus ? order.indexOf(focus) : -1;
+  let j: number;
+  if (move === 'first') j = 0;
+  else if (move === 'last') j = order.length - 1;
+  else if (i < 0) j = move === 'next' ? 0 : order.length - 1;
+  else j = Math.min(order.length - 1, Math.max(0, i + (move === 'next' ? 1 : -1)));
+  const to = order[j];
+  if (!extend) return { selection: { ids: [to], anchor: to }, focus: to };
+  const anchor = sel.anchor && order.includes(sel.anchor) ? sel.anchor : (focus && order.includes(focus) ? focus : to);
+  return { selection: { ids: range(order, anchor, to), anchor }, focus: to };
+}
+
+export function selectAll(order: readonly Id[]): LaneSelection {
+  return { ids: [...order], anchor: order[0] ?? null };
+}
+
+/** Drop ids that are no longer in the song (undo, another edit). Returns `sel` itself when nothing changed. */
+export function pruneSelection(sel: LaneSelection, order: readonly Id[]): LaneSelection {
+  const ids = inOrder(order, sel.ids);
+  const anchor = sel.anchor && order.includes(sel.anchor) ? sel.anchor : (ids[0] ?? null);
+  if (ids.length === sel.ids.length && ids.every((x, i) => x === sel.ids[i]) && anchor === sel.anchor) return sel;
+  return { ids, anchor };
+}
+
+/** The blocks an action applies to: the selection when there is one, else the focused block. */
+export function actionTargets(sel: LaneSelection, order: readonly Id[], focus: Id | null): Id[] {
+  const ids = inOrder(order, sel.ids);
+  if (ids.length) return ids;
+  return focus && order.includes(focus) ? [focus] : [];
+}
+
+/** The blocks a block's own menu acts on: the selection when that block is in it, else the block alone. */
+export function menuTargets(sel: LaneSelection, order: readonly Id[], id: Id): Id[] {
+  const ids = inOrder(order, sel.ids);
+  return ids.includes(id) ? ids : [id];
+}
+
+/** Where pasted blocks go: right after the last selected (or focused) block, else at the end. */
+export function pasteGap(order: readonly Id[], sel: LaneSelection, focus: Id | null): number {
+  const targets = actionTargets(sel, order, focus);
+  if (!targets.length) return order.length;
+  return order.indexOf(targets[targets.length - 1]) + 1;
+}
+
+/**
+ * Where a moved selection goes with Alt+Left/Right: one block earlier or
+ * later, as an insertion gap of the full list; null at the edge.
+ */
+export function nudgeGap(order: readonly Id[], ids: readonly Id[], dir: -1 | 1): number | null {
+  const moving = new Set(ids);
+  const idx = order.map((id, i) => (moving.has(id) ? i : -1)).filter((i) => i >= 0);
+  if (!idx.length) return null;
+  if (dir < 0) {
+    const first = idx[0];
+    // The nearest block before the first moving one that is not moving itself.
+    let j = first - 1;
+    while (j >= 0 && moving.has(order[j])) j--;
+    return j < 0 ? null : j;
+  }
+  const last = idx[idx.length - 1];
+  let j = last + 1;
+  while (j < order.length && moving.has(order[j])) j++;
+  return j >= order.length ? null : j + 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Scene card drop: insert between blocks, or layer into one           */
+/* ------------------------------------------------------------------ */
+
+export type CardTarget = { kind: 'none' } | { kind: 'insert'; gap: number } | { kind: 'layer'; index: number };
+
+export const NO_TARGET: CardTarget = { kind: 'none' };
+
+export interface CardBlock {
+  x: number;
+  width: number;
+  /** False for a block whose scene is missing (it can only be dropped next to). */
+  layerable: boolean;
+}
+
+/** Width of the zone at each end of a block that means "insert next to it" rather than "layer into it". */
+export function cardEdge(width: number): number {
+  return Math.min(40, Math.max(14, width * 0.25));
+}
+
+/**
+ * Where a scene card being dragged at lane position `x` would go. Blocks are
+ * given at their resting positions; while an insertion slot of `slotWidth`
+ * is open at a gap, the blocks after it are drawn shifted right by that much.
+ *
+ * The current target is kept while the pointer stays over what it shows (the
+ * open slot and the edges next to it, or the middle of the layer target), so
+ * opening or closing the slot never flips the target back and forth. Past
+ * that, the target comes from the resting layout: the middle of a block
+ * layers into it, its ends insert before or after it.
+ */
+export function cardTarget(blocks: readonly CardBlock[], x: number, current: CardTarget, slotWidth: number): CardTarget {
+  const n = blocks.length;
+  if (n === 0) return { kind: 'insert', gap: 0 };
+  const end = blocks[n - 1].x + blocks[n - 1].width;
+  if (current.kind === 'insert' && current.gap >= 0 && current.gap <= n) {
+    const g = current.gap;
+    const left = g < n ? blocks[g].x : end;
+    const before = g > 0 ? cardEdge(blocks[g - 1].width) : Infinity;
+    const after = g < n ? cardEdge(blocks[g].width) : Infinity;
+    if (x >= left - before && x <= left + slotWidth + after) return current;
+  } else if (current.kind === 'layer' && current.index >= 0 && current.index < n) {
+    const b = blocks[current.index];
+    const e = cardEdge(b.width);
+    if (b.layerable && x >= b.x + e && x <= b.x + b.width - e) return current;
+  }
+  if (x < 0) return { kind: 'insert', gap: 0 };
+  if (x >= end) return { kind: 'insert', gap: n };
+  for (let i = 0; i < n; i++) {
+    const b = blocks[i];
+    if (x >= b.x + b.width) continue;
+    if (!b.layerable) return { kind: 'insert', gap: x < b.x + b.width / 2 ? i : i + 1 };
+    const e = cardEdge(b.width);
+    if (x < b.x + e) return { kind: 'insert', gap: i };
+    if (x > b.x + b.width - e) return { kind: 'insert', gap: i + 1 };
+    return { kind: 'layer', index: i };
+  }
+  return { kind: 'insert', gap: n };
+}
+
+export function sameCardTarget(a: CardTarget, b: CardTarget): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'insert' && b.kind === 'insert') return a.gap === b.gap;
+  if (a.kind === 'layer' && b.kind === 'layer') return a.index === b.index;
+  return true;
+}

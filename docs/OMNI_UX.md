@@ -108,6 +108,79 @@ Advanced only.
   Colour (Warmth), Stereo (Width, Mono Bass), Loudness. **A/B**: hold or toggle to hear the mix
   without mastering.
 
+## Arrange (song lane)
+
+The song is one continuous strip of **blocks** (a scene played a number of passes), edge to edge,
+joined by a thin seam, widths proportional to their length. Code: `src/app/views/arrange/`
+(SongPanel, SongLane, SongBlock, BlockMenu; pure logic in songLayout, songDrag, songModel;
+pointer gestures in laneGestures).
+
+**Layout.** Part names in a column on the left (they do not scroll); to their right the lane
+scrolls sideways (never the page): the ruler (bar numbers), then the blocks. A block is a header
+(name — its label, or the scene name; with a label the scene name is shown small — length, ▶ play
+from here, ⋯ actions) over one cell per part (15 px rows). Faint lines mark its passes. The scale
+comes from fixed zoom steps (the largest that fits the lane), so small edits do not resize every
+block; a long song scrolls. Below the lane: the **SCENES** palette (name, bars, parts, **+**).
+
+**Cells.** A filled bar with the clip name = the part plays its scene's clip; striped with a layers
+icon and **from Lift** = it plays another scene's clip there (layered in); coral outline with **Off**
+= switched off in this block; a faint empty outline = the scene has no clip for it (silent). Colour
+is never alone: there is always text or an icon.
+
+**Colour.** Amber = the block playing now (outline, **Playing**, its cells glow). Teal = selection,
+focus and drop targets (a block selected, the slot a scene card will open, the block it will be
+layered into). Coral = Off.
+
+**Gestures** (a press becomes a drag after 4 px, so clicks stay clicks):
+- **Select**: click a header (teal); Shift+click a range; Ctrl/⌘+click toggles; a click on the empty
+  lane or Esc clears; Ctrl+A selects all. Actions apply to the selection.
+- **Move**: drag a block (header or cells). It lifts and follows the pointer exactly; the others
+  slide aside (170 ms ease-out) to open the slot where it will land; what you see is what the drop
+  commits (one Undo). The target is the slot nearest the dragged block's centre, with 10 px of
+  hysteresis. On release it springs into its slot. Esc, a release above or below the lane, a lost
+  pointer or a window switch put everything back with no edit. Near the lane's ends it scrolls,
+  faster closer to the edge.
+- **Copy**: hold Ctrl, Alt or ⌘ while dragging (or press it mid-drag; release to move again). The
+  dragged block shows **+ Copy**; the original stays. Ctrl+D duplicates the selection after itself.
+- **Length**: drag a block's right edge (12 px handle, col-resize cursor, shown on hover, focus,
+  selection and on touch). Whole passes, 1–16; the block widens live, the blocks after it follow, a
+  bubble says "×3 · 12 bars". One Undo per drag. Keyboard: + and −.
+- **Split / join**: hovering a block shows scissors under each pass line; a click splits there. The
+  menu has **Split in half** and **Join with next** (unavailable with its reason when the neighbour
+  plays something else). Neighbours with the same material show **Join** under their seam.
+- **Parts**: click a cell to switch that part off in this block, click again to bring it back; a
+  cell with nothing to switch opens the **part picker**: "<scene>: <clip> (default)", any other scene
+  with a clip for that part ("Lift: Hook"), or **Off in this block**. Right-click a cell, "." on a
+  focused cell, or ▾ on hover (Advanced) opens it too. **Reset all parts** is in the block menu.
+- **Combine**: drag a scene card onto the middle of a block to **layer** it: the block is outlined,
+  the cells that change read *from Lift* and the header says "Layer Lift into Groove". On a boundary
+  a line shows first and, after a short rest, the slot opens: drop to **insert** a new block.
+- **Clipboard**: Ctrl+C / Ctrl+X / Ctrl+V (paste after the selection, else at the end); Delete or
+  Backspace removes the selection (toast with Undo).
+- **Rename**: F2, a double-click on the name, or **Rename…**: Enter saves, Esc cancels, empty shows
+  the scene name again.
+- **Ruler**: click a bar (or Enter on the focused ruler, ←/→ to choose) to play the song from there;
+  the bar under the pointer is marked. The playhead follows the transport and keeps itself in view
+  while the song plays, unless you are dragging or scrolled the lane in the last few seconds.
+
+**Keyboard** (the blocks are one Tab stop, arrow keys move between them): ←/→, Home/End; Shift
+extends the selection; Alt+←/→ moves the selection one block; ↓ enters the part cells (↑/↓ rows,
+←/→ the same part in the next block, Enter/Space switch, "." picker, Esc back); Enter, ".", the menu
+key or Shift+F10 open the actions menu, which lists every action (parts with a checkbox each, play
+from here, edit clips in Play, rename, change scene, layer a scene, passes, split, join, duplicate,
+copy, cut, paste, move, remove). Letter keys stay with the instrument. A polite status line says what
+changed ("Moved Groove to position 3", "Groove: 3 passes, 12 bars").
+
+**Motion.** Only transform and opacity animate. With *reduce motion* blocks jump to their places;
+everything else is the same.
+
+**Playing and locks.** Edits apply while the song plays or is paused (playback re-plans from the
+block playing now), so there is no "restart" notice. While a performance take records, the song is
+locked: a drag or an edit is refused at once with the reason, and nothing is half applied.
+
+**Simple vs Advanced.** Simple hides the "4 × 4" pass detail and the cells' ▾; cells, drag, the
+edge handle, split and join stay.
+
 ## Sound browser
 
 Categories with icons and counts — Drums & Percussion, Bass, Keys, Pads & Strings, Leads,

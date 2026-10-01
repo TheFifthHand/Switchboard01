@@ -453,6 +453,21 @@ export class RealtimeTransport {
     if (this.sequencer.relocateSongRows(rows) && this.sequencer.playing) this.invalidateFrom(now + INVALIDATE_MARGIN, now);
   }
 
+  /**
+   * The song was edited while it plays or is paused: lay out the rest of it
+   * again from the block playing now (see Sequencer.replanSong) and
+   * regenerate what was scheduled from then on. Returns true when playback
+   * changed.
+   */
+  replanSong(): boolean {
+    this.assertAlive();
+    const now = this.ctx.currentTime;
+    const at = now + INVALIDATE_MARGIN;
+    if (!this.sequencer.replanSong(at)) return false;
+    if (this.sequencer.playing) this.invalidateFrom(at, now);
+    return true;
+  }
+
   setTempo(bpm: number): void {
     this.assertAlive();
     const now = this.ctx.currentTime;
