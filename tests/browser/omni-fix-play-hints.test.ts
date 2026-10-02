@@ -19,7 +19,7 @@ import { session } from '../../src/app/instance';
 import { patchRuntime } from '../../src/app/runtime';
 import type { BootInfo } from '../../src/app/session';
 import { HINT_CLICK_GUARD_MS } from '../../src/app/views/hints/Hints';
-import { HINTS_STORAGE_KEY, HINT_IDS, INITIAL_HINTS, hintsStore, markHintDone, showHintsAgain, type HintId } from '../../src/app/views/hints/hintsState';
+import { HINTS_STORAGE_KEY, HINT_IDS, INITIAL_HINTS, hideHints, hintsStore, markHintDone, showHintsAgain, type HintId } from '../../src/app/views/hints/hintsState';
 import { deleteDb } from '../../src/persistence/db';
 import { selectTrack, setGuideDone, setPadMode, setTipsEnabled, setUiMode, setView, type UiMode } from '../../src/state/uiStore';
 import { cleanup, mount, wait } from './ui-harness';
@@ -132,11 +132,11 @@ function overlaps(a: DOMRect, b: DOMRect): boolean {
   return a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
 }
 
-/** Headings and status lines (their words, line by line) the chip covers. */
-function coveredKeyText(): string[] {
+/** Headings and status lines (their words, line by line) the chip covers; with `headers`, also a panel header's words (the Song header's labels). */
+function coveredKeyText(opts: { headers?: boolean } = {}): string[] {
   const c = chip()!.getBoundingClientRect();
   const out: string[] = [];
-  for (const el of document.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"], [role="status"], [role="alert"]')) {
+  for (const el of document.querySelectorAll(`h1, h2, h3, h4, h5, h6, [role="heading"], [role="status"], [role="alert"]${opts.headers ? ', main header' : ''}`)) {
     if (chip()!.contains(el) || el.closest('header[aria-label="Transport"]')) continue;
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
@@ -267,8 +267,9 @@ describe('the chip never covers a heading or a status line', () => {
           });
           showStep(step);
           await settle();
-          expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toContain('The Loops pads decide what plays.');
-          expect(coveredKeyText(), `${w} ${mode} arrange ${step}: covers`).toEqual([]);
+          expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toMatch(/Loops pads decide what plays\./);
+          // The Song header's words too ("Export tail", "Length"): the chip finds room elsewhere.
+          expect(coveredKeyText({ headers: true }), `${w} ${mode} arrange ${step}: covers`).toEqual([]);
           expect(coveredControls(), `${w} ${mode} arrange ${step}: covers`).toEqual([]);
           expectNoOverlapInside(`${w} ${mode} arrange ${step}`);
         }
@@ -342,4 +343,27 @@ describe('the closing line says where Export is', () => {
     await settle(900);
     expect(chip()!.textContent).toContain('Export, at the top right');
   });
+});
+
+describe('the page is exactly the window, hints showing', () => {
+  for (const [w, hh] of [
+    [1920, 1080],
+    [1366, 768],
+  ] as const) {
+    it(`at ${w} x ${hh}: no page scroll in any view, hints showing or hidden (the hints' status line takes no room)`, async () => {
+      await openAt(w, hh, 'pad');
+      expect(document.querySelector('[data-hints-status]'), 'the hints are showing').not.toBeNull();
+      for (const hidden of [false, true]) {
+        if (hidden) act(() => hideHints());
+        for (const view of ['play', 'shape', 'arrange', 'mix'] as const) {
+          act(() => setView(view));
+          await settle(200);
+          const doc = document.scrollingElement!;
+          const label = `${view}${hidden ? ', hints hidden' : ''}`;
+          expect(doc.scrollHeight, `${label}: page taller than the window`).toBeLessThanOrEqual(window.innerHeight);
+          expect(doc.scrollWidth, `${label}: page wider than the window`).toBeLessThanOrEqual(window.innerWidth);
+        }
+      }
+    });
+  }
 });

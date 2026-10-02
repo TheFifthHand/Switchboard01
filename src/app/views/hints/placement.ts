@@ -3,10 +3,12 @@
  * that covers nothing. The transport is never covered; the pads and the
  * keyboard are avoided as a whole (gaps included); every other control is
  * avoided, and so are headings (a view's title, a panel's name) and status
- * explanations (what "Playback follows", a recording's state); other text
- * and displays are avoided where possible. When no spot is free (a crowded
- * view, a very small window), the spot that covers the least wins: controls,
- * headings and status lines count far more than other text.
+ * explanations (what "Playback follows", a recording's state); the rest of a
+ * panel header's text (the Song header's "Export tail") comes next, then
+ * other text and displays, avoided where possible. When no spot is free (a
+ * crowded view, a very small window), the spot that covers the least wins:
+ * controls, headings and status lines count far more than a panel header's
+ * text, which counts more than other text.
  */
 
 export interface Box {
@@ -37,6 +39,8 @@ export const WEIGHT_PLAYED = 3;
 export const WEIGHT_CONTROL = 6;
 /** Headings and status lines: what a view or panel is, and what is happening. Covering them hides the context. */
 export const WEIGHT_KEY_TEXT = 6;
+/** The text of a panel's header (labels of the controls beside it): avoided before other text, but never at a control's cost. */
+export const WEIGHT_PANEL_TEXT = 2;
 /** Other text, meters and displays. */
 export const WEIGHT_INFO = 0.4;
 
@@ -93,6 +97,12 @@ export function findSpot(size: { w: number; h: number }, area: Box, obstacles: r
 
 /** Text that says what a view or panel is, or what is happening now (see WEIGHT_KEY_TEXT). */
 const KEY_TEXT = 'h1, h2, h3, h4, h5, h6, [role="heading"], [role="status"], [role="alert"]';
+/**
+ * A panel's header (the Song header's totals and field labels such as
+ * "Export tail"): it names what the controls beside it do, so it is avoided
+ * before other text (see WEIGHT_PANEL_TEXT).
+ */
+const PANEL_TEXT = 'main header';
 const CONTROLS = 'button, a[href], input, select, textarea, [role="slider"], [role="tab"], [role="radio"], [role="switch"], [role="checkbox"], [role="button"], [role="menuitem"], [draggable="true"], [tabindex]:not([tabindex="-1"])';
 const GRAPHICS = 'canvas, svg, img, [role="img"], [role="meter"], [role="progressbar"]';
 /** Room kept between the chip and what it avoids. */
@@ -114,8 +124,9 @@ function onScreen(r: DOMRect, vw: number, vh: number): boolean {
  * leaves the rest of its row free).
  *
  * `text: false` is the quick check while the chip is shown: controls,
- * headings and status lines only (a few elements), so a part's longer name
- * in a heading moves the chip as surely as a new button does.
+ * headings, status lines and panel headers only (a few elements), so a
+ * part's longer name in a heading moves the chip as surely as a new button
+ * does.
  */
 export function readObstacles(chip: Element | null, vw: number, vh: number, opts: { text?: boolean } = {}): Obstacle[] {
   const out: Obstacle[] = [];
@@ -146,10 +157,15 @@ export function readObstacles(chip: Element | null, vw: number, vh: number, opts
     if (chip?.contains(el) || el.closest('[inert], header[aria-label="Transport"]') || !onScreen(el.getBoundingClientRect(), vw, vh)) continue;
     addText(el, WEIGHT_KEY_TEXT, 4);
   }
+  // The rest of a panel header's text (its headings and status lines are in already).
+  for (const el of document.querySelectorAll(PANEL_TEXT)) {
+    if (chip?.contains(el) || el.closest('[inert]') || !onScreen(el.getBoundingClientRect(), vw, vh)) continue;
+    addText(el, WEIGHT_PANEL_TEXT, 4, (n) => !!n.parentElement?.closest(KEY_TEXT));
+  }
   if (opts.text !== false) {
     for (const el of document.querySelectorAll(GRAPHICS)) add(el, WEIGHT_INFO, 2);
-    // Other visible text, line by line (headings and status lines are in already).
-    addText(document.body, WEIGHT_INFO, 2, (n) => !!n.parentElement?.closest(KEY_TEXT));
+    // Other visible text, line by line (headings, status lines and panel headers are in already).
+    addText(document.body, WEIGHT_INFO, 2, (n) => !!n.parentElement?.closest(`${KEY_TEXT}, ${PANEL_TEXT}`));
   }
   range.detach();
   return out;

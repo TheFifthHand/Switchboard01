@@ -126,11 +126,10 @@ export function PartPanel() {
           <h2 id="part-title" className={styles.title}>
             {header.name}
           </h2>
-          {status && (
-            <span className={styles.status} data-status={status === 'Solo' ? 'solo' : status === 'Muted' ? 'muted' : 'quiet'}>
-              {status}
-            </span>
-          )}
+          {/* Its line is always there (empty when nothing is muted or soloed), so Mute and Solo never move the panel. */}
+          <span className={styles.status} data-status={status === null ? undefined : status === 'Solo' ? 'solo' : status === 'Muted' ? 'muted' : 'quiet'}>
+            {status}
+          </span>
         </div>
         <Button size="sm" variant="ghost" icon="sliders" onClick={() => setView('shape')} tip="Open the Shape view: every sound setting and effect of this part.">
           Shape

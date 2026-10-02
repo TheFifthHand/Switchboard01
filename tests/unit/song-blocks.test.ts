@@ -34,6 +34,24 @@ function storeWith(blocks: { sceneRow: number; repeats: number }[]): { store: Pr
 
 const order = (s: ProjectStore) => s.getState().arrangement.blocks.map((b) => b.id);
 
+describe('cut', () => {
+  it('removing blocks as a Cut names its undo step "Cut block"', () => {
+    const { store, ids } = storeWith([
+      { sceneRow: 0, repeats: 2 },
+      { sceneRow: 1, repeats: 2 },
+      { sceneRow: 2, repeats: 2 },
+    ]);
+    expect(cmd.removeBlocks(store, [ids[1]], { cut: true }).changed).toBe(true);
+    expect(store.undoLabel()).toBe('Cut block');
+    store.undo();
+    cmd.removeBlocks(store, [ids[0], ids[2]], { cut: true });
+    expect(store.undoLabel()).toBe('Cut blocks');
+    store.undo();
+    cmd.removeBlocks(store, [ids[0]]);
+    expect(store.undoLabel()).toBe('Remove block');
+  });
+});
+
 describe('what a block plays', () => {
   it('follows its scene, a layered scene, or nothing, part by part', () => {
     const p = project();
@@ -469,6 +487,74 @@ describe('song helpers', () => {
       d.arrangement.blocks[0].sceneId = 'missing';
     });
     expect(reason(gone, 'build')).toBe('Scene missing');
+  });
+
+  it('uneven clip lengths (a 3-bar clip in a 4-bar pass): refused with a short reason; the song never changes length', () => {
+    // Pad 3 bars, drums 4: the pad-only passes of a build-up would be 3-bar passes in 4-bar room.
+    const uneven = shaped(4, { pad: 3, drums: 4 });
+    const before = structuredClone(uneven.store.getState().arrangement);
+    for (const kind of ['build', 'strip'] as const) {
+      const why = cmd.shapeProblem(uneven.store.getState(), 'blk_x', kind);
+      expect(why).toEqual({ short: 'Uneven clips', text: 'Its clips have different lengths (3 and 4 bars), so the repeats would not line up and the song would change length.' });
+      const r = cmd.shapeBlock(uneven.store, 'blk_x', kind);
+      expect(r.changed).toBe(false);
+      expect(r.message).toContain('different lengths');
+    }
+    // Breakdown without the drums leaves the 3-bar pad to fill 16 bars: refused too.
+    expect(cmd.shapeProblem(uneven.store.getState(), 'blk_x', 'breakdown')).toEqual({
+      short: 'Uneven clips',
+      text: 'Its clips have different lengths (3 and 4 bars): without the drums and bass the rest would not fill the block exactly, and the song would change length.',
+    });
+    expect(cmd.shapeBlock(uneven.store, 'blk_x', 'breakdown').changed).toBe(false);
+    expect(uneven.store.getState().arrangement).toEqual(before);
+    expect(uneven.store.historySize().undo).toBe(0);
+    // Lengths that divide the pass still work, and keep the song's length exactly (a 2-bar pad in 4-bar passes).
+    const even = shaped(4, { pad: 2, drums: 4 });
+    const length = ticks(even.store);
+    expect(cmd.shapeProblem(even.store.getState(), 'blk_x', 'build')).toBeNull();
+    expect(cmd.shapeBlock(even.store, 'blk_x', 'build').changed).toBe(true);
+    expect(ticks(even.store)).toBe(length);
+    // A 3-bar clip over three 4-bar passes fills 12 bars exactly: allowed (four 3-bar passes).
+    const twelve = shaped(4, { pad: 3, drums: 4 }, undefined);
+    twelve.store.apply('arrange:x', (d) => {
+      d.arrangement.blocks[0].repeats = 3;
+    });
+    expect(cmd.shapeProblem(twelve.store.getState(), 'blk_x', 'breakdown')).toBeNull();
+    const t0 = ticks(twelve.store);
+    cmd.shapeBlock(twelve.store, 'blk_x', 'breakdown');
+    expect(playing(twelve.store)).toEqual([{ repeats: 4, plays: ['pad'] }]);
+    expect(ticks(twelve.store)).toBe(t0);
+  });
+
+  it('never changes the song length: across clip-length mixes and repeat counts, each helper keeps the length exactly or is refused with nothing changed', () => {
+    const lens = [1, 2, 3, 4, null] as const;
+    let shapedCount = 0;
+    let refused = 0;
+    // A deterministic walk over mixes of four parts' lengths and 1–16 repeats.
+    for (let seed = 0; seed < 400; seed++) {
+      const pick = (k: number) => lens[(seed * 7 + k * 13 + Math.floor(seed / (k + 2))) % lens.length];
+      const lengths = { drums: pick(1), bass: pick(2), chords: pick(3), pad: pick(4) };
+      const repeats = 1 + ((seed * 5) % 16);
+      for (const kind of ['build', 'strip', 'breakdown'] as const) {
+        const s = shaped(repeats, lengths);
+        const before = structuredClone(s.store.getState().arrangement);
+        const t0 = ticks(s.store);
+        const problem = cmd.shapeProblem(s.store.getState(), 'blk_x', kind);
+        const r = cmd.shapeBlock(s.store, 'blk_x', kind);
+        if (problem) {
+          refused++;
+          expect(r.changed).toBe(false);
+          expect(s.store.getState().arrangement).toEqual(before);
+        } else {
+          shapedCount++;
+          expect(r.changed, `${kind} ${JSON.stringify(lengths)} ×${repeats}`).toBe(true);
+          expect(ticks(s.store), `${kind} ${JSON.stringify(lengths)} ×${repeats}`).toBe(t0);
+        }
+      }
+    }
+    // Both outcomes happen in the walk.
+    expect(shapedCount).toBeGreaterThan(100);
+    expect(refused).toBeGreaterThan(100);
   });
 
   it('refuses when the song has no room for the new blocks', () => {

@@ -51,6 +51,18 @@ export interface ApplyResult {
   noStep?: boolean;
 }
 
+/**
+ * What the latest change to the project was, for listeners that keep state of
+ * their own per undo step (the song loop): a recorded edit (a new step, or one
+ * merged into the newest step by its gesture or group), an undo or redo of a
+ * step, or a change outside the history (an unrecorded edit, a project swap).
+ */
+export interface ChangeInfo {
+  kind: 'edit' | 'undo' | 'redo' | 'other';
+  /** The history entry the change belongs to (null for 'other'). */
+  entryId: number | null;
+}
+
 export interface HistoryEntry {
   /** Unique for the app's lifetime; kept when later edits merge into this step. */
   id: number;
@@ -175,6 +187,7 @@ export class ProjectStore implements ReadableStore<Project> {
   private lockPaths: ((path: readonly (string | number)[]) => boolean) | null = null;
   private readonly now: () => number;
   private readonly limit: number;
+  private change: ChangeInfo = { kind: 'other', entryId: null };
   /** History and lock state, for undo buttons and lock banners. */
   readonly info: Store<HistoryInfo>;
 
@@ -201,6 +214,9 @@ export class ProjectStore implements ReadableStore<Project> {
       recipe(d as Project);
     });
     if (patches.length === 0) return { changed: false };
+    // A gesture that came back to where it started: its step is dropped (known at the return).
+    let undone = false;
+    let entryId: number | null = null;
 
     if (opts.skipHistory) {
       // Redo entries were recorded against the pre-change state; they would no longer apply cleanly.
@@ -218,8 +234,8 @@ export class ProjectStore implements ReadableStore<Project> {
     } else {
       const top = this.undoStack[this.undoStack.length - 1];
       const inGroup = !!this.group && !!top && this.group.entry === top;
-      let undone = false;
       if (inGroup || (opts.gesture !== undefined && top && top.gesture === opts.gesture && this.openGesture === opts.gesture)) {
+        entryId = top.id;
         top.patches.push(...patches);
         // Inverses run newest-first.
         top.inverse = [...inverse, ...top.inverse];
@@ -234,14 +250,22 @@ export class ProjectStore implements ReadableStore<Project> {
         if (opts.gesture !== undefined && !this.group) entry.base = base;
         this.undoStack.push(entry);
         if (this.group) this.group.entry = entry;
+        entryId = entry.id;
         if (this.undoStack.length > this.limit) this.undoStack.splice(0, this.undoStack.length - this.limit);
       }
       // After a gesture cancelled itself out, its next edit starts a fresh step.
       this.openGesture = undone ? null : (opts.gesture ?? null);
       this.redoStack = [];
     }
+    this.change = entryId === null ? { kind: 'other', entryId: null } : { kind: 'edit', entryId };
     this.commit(next);
-    return { changed: true };
+    // No undo step left for this edit: a message about it must not offer Undo (that would undo an older step).
+    return undone ? { changed: true, noStep: true } : { changed: true };
+  }
+
+  /** The latest change (see ChangeInfo); listeners called for it can read it. */
+  lastChange(): ChangeInfo {
+    return this.change;
   }
 
   /** Close the current gesture so the next edit with the same id starts a new undo step. */
@@ -305,6 +329,7 @@ export class ProjectStore implements ReadableStore<Project> {
     this.undoStack.pop();
     this.redoStack.push(entry);
     this.openGesture = null;
+    this.change = { kind: 'undo', entryId: entry.id };
     this.commit(applyPatches(this.store.getState(), entry.inverse));
     return { changed: true };
   }
@@ -316,6 +341,7 @@ export class ProjectStore implements ReadableStore<Project> {
     this.redoStack.pop();
     this.undoStack.push(entry);
     this.openGesture = null;
+    this.change = { kind: 'redo', entryId: entry.id };
     this.commit(applyPatches(this.store.getState(), entry.patches));
     return { changed: true };
   }
@@ -330,17 +356,20 @@ export class ProjectStore implements ReadableStore<Project> {
     const prev = this.store.getState();
     this.openGesture = null;
     if (opts.resetHistory === false) {
+      const id = nextEntryId();
       this.undoStack.push({
-        id: nextEntryId(),
+        id,
         label: opts.label ?? 'project:Replace project',
         patches: [{ op: 'replace', path: [], value: next }],
         inverse: [{ op: 'replace', path: [], value: prev }],
       });
       if (this.undoStack.length > this.limit) this.undoStack.splice(0, this.undoStack.length - this.limit);
       this.redoStack = [];
+      this.change = { kind: 'edit', entryId: id };
     } else {
       this.undoStack = [];
       this.redoStack = [];
+      this.change = { kind: 'other', entryId: null };
     }
     this.store.setState(next);
     this.info.setState(this.computeInfo());

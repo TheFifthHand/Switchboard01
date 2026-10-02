@@ -178,6 +178,10 @@ and combine … perfect and reliable … clicking together." Built and reviewed 
 | Loops pads and scene rows move as smoothly (lifted pad, previews, settle, scene-row slot) | ✅ | `LoopsGrid.tsx`, `src/ui/motion.ts`; browser `omni-pad-drag*`; screenshot `24-play-pad-drag-1366` |
 | Smooth on a modest PC | ⚠️ | measured, not felt: 60 fps drags at normal speed; at 4× CPU slowdown some late frames remain during long auto-scroll drags and the drop costs one long frame (TEST_REPORT.md) |
 | Layout at 1366×768, 1920×1080 and 200 % zoom; axe-core | ✅ | browser `song-lane-layout`, `omni-pad-drag-layout` |
+| Hear a section over and over while shaping it: loop a set of blocks (button, ruler band, menu), seamless, live edits keep working | ✅ | unit `song-loop`, `song-loop-history`, `song-live-fuzz`; browser `song-loop`, `song-lane-loop` |
+| Extend and combine in one click: Build up, Strip down, Breakdown (one undo step, song length kept) | ✅ | unit `song-blocks`, `song-live-helpers`; browser `song-lane-loop` |
+| One obvious Play: in Arrange the transport Play/Space, Stop and Export act on the song; export the loop | ✅ | browser `omni-play-song-key`, `export-dialog`, `export-range`, `export-while-playing` |
+| Newcomer review findings (state visible under the pointer, menus not covering their trigger, steady tooltips, visible Undo/Redo, readable pads, no layout shift, plain words) | ✅ | browser `omni-fix-toggles`, `clipmenu-popover`, `tooltip-still-pointer`, `wp1-transport*`, `omni-fix-play-pads`, `song-lane-polish` |
 
 ## Limits (not hidden)
 

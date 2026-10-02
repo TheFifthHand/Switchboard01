@@ -155,8 +155,9 @@
 .buttons {
   display: flex;
   gap: 8px;
+  min-width: 0;
 }
-/* Loop: the lane's own icon in the label, teal when on (the loop band is teal too). */
+/* Loop: the lane's own icon in the label, teal when on (the loop band is teal too), and what it acts on. */
 .loopButton svg {
   flex: none;
   margin: -2px 6px -3px -1px;
@@ -166,19 +167,31 @@
 .loopButton[data-on] svg {
   color: var(--teal-ink);
 }
+.loopWhat {
+  display: inline-block;
+  max-width: 190px;
+  margin-left: 5px;
+  overflow: hidden;
+  font-weight: 500;
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 
 /* ---------- lane ---------- */
 
 .lane {
   /* Geometry shared by the part names, the blocks and the overlays. */
-  /* The ruler: a row for the loop band over the bar numbers. */
-  --ruler-h: 26px;
-  --loop-h: 10px;
+  /* The ruler: a row for the loop band (and its grips) over the bar numbers. */
+  --ruler-h: 34px;
+  --loop-h: 16px;
   --head-h: 38px;
   /* The strip under the blocks: Join chips on seams, the drag label (their 24 px targets may reach past it). */
   --seams-h: 22px;
-  /* Part rows grow with the window's height: 15 px at 768 high, up to 24 px at 1080 and above. */
-  --row-h: clamp(15px, calc(15px + (100vh - 768px) * 0.0289), 24px);
+  /* Part rows grow with the free height: the Arrange view shares it out (--lane-row-h, 18 to 32 px);
+     without it (a narrow window that scrolls) they grow with the window's height. */
+  --row-h: var(--lane-row-h, clamp(18px, calc(18px + (100vh - 768px) * 0.045), 32px));
   --row-gap: 2px;
   --rows: 8;
   --cells-pad: 4px;
@@ -244,7 +257,10 @@
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  padding-bottom: 2px;
+  /* A tall window: what the part rows cannot use (they stop at 32 px) is lane room below the blocks
+     (--lane-extra, set by the Arrange view; a click there clears the selection, a scene card dropped
+     there still lands), never an empty band under the song. */
+  padding-bottom: calc(2px + var(--lane-extra, 0px));
   scrollbar-width: thin;
   /* The lane's own background, opaque and scrolling with the blocks: the browser can then scroll the
      lane on the compositor (no repaint per scrolled frame) and still keep crisp text. */
@@ -366,11 +382,12 @@
 }
 
 /* The loop: a teal band over the looped blocks (its label says Loop), dashed lines down their outer
-   edges, and a grip at each end that drags to another block edge. */
+   edges, and a grip at each end that drags to another block edge. Band and grips stay in the loop
+   row, above the bar numbers. */
 .loopBand {
   position: absolute;
-  top: 1px;
-  height: calc(var(--loop-h) - 1px);
+  top: 2px;
+  height: calc(var(--loop-h) - 4px);
   display: flex;
   align-items: stretch;
   border-radius: 6px;
@@ -396,12 +413,13 @@
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
-/* A 24 px target (the ruler's height) around each end; a short grip shows where it is. */
+/* A 24 px wide target around each end, as tall as the loop row (it never covers the bar numbers);
+   an 8 px grip shows where it is. */
 .loopEnd {
   position: absolute;
-  top: -1px;
+  top: -2px;
   width: 24px;
-  height: var(--ruler-h);
+  height: calc(var(--loop-h) + 2px);
   cursor: ew-resize;
   pointer-events: auto;
   touch-action: none;
@@ -416,13 +434,12 @@
   content: '';
   position: absolute;
   top: 0;
-  left: 10px;
-  width: 4px;
-  height: calc(var(--loop-h) + 2px);
-  border-radius: 2px;
+  left: 8px;
+  width: 8px;
+  height: var(--loop-h);
+  border-radius: 3px;
   background: var(--teal);
-  box-shadow: 0 0 0 1.5px var(--shell-hi);
-  opacity: 0.85;
+  box-shadow: 0 0 0 1.5px var(--shell-hi), 0 1px 2px rgba(20, 24, 28, 0.25);
 }
 .loopEnd:hover::after,
 .ruler[data-looping] .loopEnd::after {
@@ -607,6 +624,20 @@
   font-weight: 500;
   color: var(--ink-2);
 }
+/* While the right edge is dragged, the header says the length the drop gives (teal: the edge is the selection). */
+.liveLen {
+  display: none;
+  flex: none;
+  font-weight: 650;
+  color: var(--teal-ink);
+}
+.block[data-resizing] .liveLen {
+  display: inline;
+}
+.block[data-resizing] .len,
+.block[data-resizing] .calc {
+  display: none;
+}
 .calc {
   flex: none;
   color: var(--ink-3);
@@ -691,6 +722,61 @@
   .hbtn {
     width: 32px;
     height: 32px;
+  }
+}
+/* A narrow block (an overview zoom step): its header is its name (and Playing / Next); the length,
+   play and actions appear on hover, on keyboard focus and while its menu is open, over the right end
+   of the header (right-click and Enter open the menu too). The scissors give way (Split in half is in
+   the menu); on the narrowest blocks only the actions button shows. */
+@container (max-width: 95px) {
+  .bhead {
+    padding: 0 1px 0 5px;
+  }
+  .name {
+    font-size: var(--fs-sm);
+  }
+  .len,
+  .calc,
+  .sceneTag {
+    display: none;
+  }
+  .hbtn {
+    position: absolute;
+    top: 3px;
+    right: 2px;
+    display: none;
+    width: 24px;
+    height: 30px;
+    border-color: var(--line);
+    background: var(--shell-hi);
+    box-shadow: var(--shadow-raised);
+  }
+  .hbtn[data-play] {
+    right: 28px;
+  }
+  .block:hover .hbtn,
+  .block:focus-within .hbtn,
+  .hbtn[aria-expanded='true'] {
+    display: grid;
+  }
+  .cells .split {
+    display: none;
+  }
+  /* Clip names would show a letter or two: a part that plays is its filled bar (a layered one keeps its
+     layers icon), Off keeps its word; hovering a cell says what it plays. */
+  .cell {
+    padding: 0 4px;
+  }
+  .cell[data-kind='scene'] .cellText,
+  .cell[data-kind='layer'] .cellText,
+  .cellFrom {
+    display: none;
+  }
+}
+@container (max-width: 63px) {
+  .block:hover .hbtn[data-play],
+  .block:focus-within .hbtn[data-play] {
+    display: none;
   }
 }
 .renameInput {
@@ -808,10 +894,11 @@
   box-shadow: inset 2px 0 0 var(--ink-2);
   font-weight: 600;
 }
+/* Off: calm, not an alarm: a coral tick on the left (switched off on purpose) and the word in grey. */
 .cell[data-kind='off'] {
-  box-shadow: inset 0 0 0 1px var(--coral);
-  color: var(--coral-ink);
-  font-weight: 650;
+  box-shadow: inset 2px 0 0 var(--coral), inset 0 0 0 1px rgba(20, 24, 28, 0.08);
+  color: var(--ink-3);
+  font-weight: 500;
 }
 .cell[data-kind='empty'] {
   box-shadow: inset 0 0 0 1px rgba(20, 24, 28, 0.1);
@@ -938,7 +1025,8 @@ button.cell[data-kind='empty']:hover {
   box-shadow: 0 0 0 2px var(--shell-hi), 0 0 0 4px var(--teal);
 }
 
-/* Right-edge handle: drag for passes. Its grip sits on the seam, over the next block. */
+/* Right-edge handle: drag to change how many times the block plays. Its target reaches over the seam;
+   a subtle grip just inside the block's right edge is always there, stronger on hover, focus and selection. */
 .edge {
   position: absolute;
   top: var(--head-h);
@@ -953,15 +1041,15 @@ button.cell[data-kind='empty']:hover {
   content: '';
   position: absolute;
   top: 50%;
-  left: 3px;
-  width: 6px;
+  left: 0;
+  width: 5px;
   height: 26px;
   margin-top: -13px;
-  border: 1.5px solid var(--shell-hi);
+  border: 1px solid var(--shell-hi);
   border-radius: 3px;
   background: var(--ink-3);
-  box-shadow: 0 1px 2px rgba(20, 24, 28, 0.25);
-  opacity: 0;
+  box-shadow: 0 1px 2px rgba(20, 24, 28, 0.2);
+  opacity: 0.38;
   transition: opacity var(--t-fast) var(--ease);
 }
 /* A hovered, focused or selected block sits above its right neighbour so its handle is reachable. */
@@ -986,7 +1074,7 @@ button.cell[data-kind='empty']:hover {
     width: 20px;
   }
   .edge::after {
-    left: 7px;
+    left: 3px;
     opacity: 0.75;
   }
 }
@@ -1302,9 +1390,10 @@ button.cell[data-kind='empty']:hover {
 }
 .lockLine {
   position: absolute;
+  /* Right under the blocks (in the seam strip), however much room the lane has below them. */
+  top: calc(4px + var(--ruler-h) + var(--track-h) + 1px);
   left: var(--names-w);
   right: 6px;
-  bottom: 3px;
   display: flex;
   justify-content: center;
   pointer-events: none;
@@ -1539,9 +1628,16 @@ button.cell[data-kind='empty']:hover {
   color: var(--ink-3);
   white-space: normal;
 }
-/* The block menu: room for two actions (and their shortcuts) side by side. */
+/* The block menu: room for two actions (and their shortcuts) side by side; one width for all its
+   lists, so opening one never moves the menu sideways. */
 .blockMenu[role='menu'] {
+  width: min(404px, calc(100vw - 16px));
   max-width: min(404px, calc(100vw - 16px));
+}
+/* Every list of the menu keeps the first level's size (set inline); a longer one scrolls inside. */
+.menuBody {
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 /* Two equal columns, each as wide as the wider item needs (the menu grows to fit them). */
 .menuPair {

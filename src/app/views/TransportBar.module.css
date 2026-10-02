@@ -103,6 +103,21 @@
   min-width: 84px;
   font-size: var(--fs-lg);
 }
+/* In Arrange, Play plays the song: "song" under "Play" says so, in the key's own width. */
+.playWord {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 15px;
+}
+.playSong {
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
 .stop[data-size] {
   --h: 40px;
   --px: 11px;
@@ -219,6 +234,11 @@
   border-radius: var(--r-sm);
   white-space: nowrap;
 }
+/* "Saved", "Saving…" and "Preview" share one width, so autosaving never moves the keys beside it. */
+.saveText {
+  min-width: 4.2em;
+  text-align: left;
+}
 .saveDot {
   width: 7px;
   height: 7px;
@@ -313,6 +333,21 @@
 .exportKey[data-size] {
   --px: 10px;
 }
+
+/* Undo and Redo: always on the strip; the words where there is room, else the icons (see the widths below). */
+.history {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.history .historyKey[data-size] {
+  --px: 8px;
+  gap: 5px;
+}
+.history .historyKey[aria-disabled='true'] {
+  cursor: default;
+}
 /* The MIDI & audio key with both of its icons, a little snugger. */
 .right .devicesKey {
   gap: 2px;
@@ -330,99 +365,87 @@
 }
 
 /*
- * What the strip shows at each width; everything else is in More (which also
- * always has Undo, Redo, Projects, Export and the Simple · Advanced switch).
- * Simple, the default:
- *   1024-1279  Stop as its square; Undo, Redo, Projects and Export in More
- *   1280-1365  + the word "Stop" and Export (with its word)
- *   1366-1599  + the Simple · Advanced switch
- *   1440-1599  + Projects (its folder)
- *   1600 up    + Undo, Redo and the save word; from 1760 the project's name
- * Advanced (Swing takes room): the word "Stop" from 1600, Undo, Redo,
- * Projects and Export from 1700.
- * A failed save ("Not saved") or a waiting Update key needs room too: the
- * Simple · Advanced switch and Projects give theirs first, never Export or Stop.
+ * What the strip shows at each width. Always on it: the views, Play, Stop,
+ * Tempo, Record, Master, Mute All, the save state, Undo, Redo and More.
+ * Everything else is one press away in More, which always lists the offline
+ * state (and Update), Undo, Redo, Simple or Advanced, Tips, Projects, Export
+ * and MIDI & audio.
+ * Simple, the default (one row at every width):
+ *   1024-1279  Stop as its square; the Simple · Advanced switch, Export and Projects in More
+ *   1280-1365  + the word "Stop"
+ *   1366-1439  + the Simple · Advanced switch and Export (with its word)
+ *   1440-1599  + Projects (its folder), the offline state, "Not saved" in words
+ *   1600 up    + the words of Undo and Redo, a waiting Update key, roomier spacing
+ *   1700 up    + the save word; from 1800 the project's name
+ * Advanced (Swing takes room): two rows below 1180 px; the switch from 1366,
+ * the word "Stop" from 1600, Projects and Export from 1700, the save word
+ * from 1800, the project's name from 1920.
+ * Below 1600 px Undo and Redo are icon keys (named "Undo …" / "Redo …", with
+ * tooltips) and a waiting update is a coral dot on More (Update is its first row).
+ * Things that come and go take room from the least important first:
+ * - a waiting Update key or a failed save: Projects and the words of Undo and
+ *   Redo ("Not saved" shows as the coral warning key beside an Update key);
+ * - the MIDI & audio key: the offline state, the words of Undo and Redo and of
+ *   "Not saved", and at 1366-1439 px the bar.beat readout.
+ * Never the save state, Undo, Redo, Export or Stop, nor the switch from 1366 px.
  */
-@media (max-width: 1599px) {
-  .right .historyKey {
-    display: none;
-  }
-}
 @media (max-width: 1439px) {
   .right .projectKey {
     display: none;
   }
 }
-@media (max-width: 1279px) {
-  .right .exportKey {
+@media (max-width: 1365px) {
+  .right .exportKey,
+  .right .modeSwitch {
     display: none;
   }
 }
 @media (max-width: 1699px) {
-  .bar[data-mode='advanced'] .right .historyKey,
   .bar[data-mode='advanced'] .right .projectKey,
   .bar[data-mode='advanced'] .right .exportKey {
     display: none;
   }
 }
-@media (max-width: 1365px) {
-  .right .modeSwitch {
+/* A waiting Update key takes Projects' room (an update waits only until it is applied), and so does a failed save below 1920 px. */
+.right:has(.update) .projectKey {
+  display: none;
+}
+@media (max-width: 1919px) {
+  .right:has(.saveError) .projectKey {
     display: none;
   }
 }
-/* "Not saved" needs room: on narrower screens the More menu makes it. */
-@media (max-width: 1599px) {
-  .right:has(.saveError) .projectKey,
-  .right:has(.saveError) .modeSwitch {
-    display: none;
-  }
+/* The MIDI & audio key takes the offline state's room (it is in More). */
+.right:has(.devicesKey) .offline {
+  display: none;
 }
-/* So does a waiting Update key, until the strip is wide enough for everything. */
-@media (max-width: 1799px) {
-  .right:has(.update) .historyKey,
-  .right:has(.update) .projectKey {
-    display: none;
-  }
-}
-@media (max-width: 1599px) {
-  .right:has(.update) .modeSwitch {
-    display: none;
-  }
-}
-/* And the MIDI & audio key, where it is on the strip: the offline state (also in More) makes room for it. */
-@media (max-width: 1799px) {
-  .bar[data-mode='simple'] .right:has(.devicesKey) .offline {
-    display: none;
-  }
-}
-@media (min-width: 1280px) and (max-width: 1799px) {
-  .bar[data-mode='advanced'] .right:has(.devicesKey) .offline {
-    display: none;
-  }
-}
-/* Below 1180 px: no room for the offline state or the Update key; both are in More. */
-@media (max-width: 1179px) {
-  .right .offline,
-  .right .update {
-    display: none;
-  }
-  .moreBadge {
-    display: block;
-  }
-  /* A failed save shows as its coral warning key; "Not saved" is its name and the popover says why. */
+/*
+ * A failed save shows as its coral warning key ("Not saved" is its name and
+ * tooltip; the popover says why and how to recover): below 1440 px, below
+ * 1600 px beside the MIDI & audio key, and beside a waiting Update key.
+ */
+@media (max-width: 1439px) {
   .saveError .saveText {
     display: none;
   }
 }
-/* A waiting Update key and a failed save together: below 1600 px the save shows as its coral warning key. */
-@media (min-width: 1180px) and (max-width: 1599px) {
-  .right:has(.update) .saveError .saveText {
+@media (max-width: 1599px) {
+  .right:has(.devicesKey) .saveError .saveText {
+    display: none;
+  }
+}
+.right:has(.update) .saveError .saveText {
+  display: none;
+}
+/* Below 1440 px the offline state is in More. */
+@media (max-width: 1439px) {
+  .right .offline {
     display: none;
   }
 }
 /*
  * The MIDI & audio key (shown while MIDI or an audio input is on) needs about
- * 40 px: where the one-row strip has no room for it, MIDI & audio stays in the
+ * 44 px: where the one-row strip has no room for it, MIDI & audio stays in the
  * More menu (Advanced wraps onto two rows below 1180 px, so it fits there).
  */
 @media (min-width: 1024px) and (max-width: 1179px) {
@@ -430,38 +453,47 @@
     display: none;
   }
 }
-@media (min-width: 1180px) and (max-width: 1365px) {
-  .right:has(.update) .devicesKey {
+@media (min-width: 1180px) and (max-width: 1279px) {
+  .bar[data-mode='advanced'] .devicesKey {
     display: none;
   }
 }
-/* Advanced from 1180 px (one row, with Swing): as tight as Simple below 1180 px. */
-@media (min-width: 1180px) and (max-width: 1279px) {
-  .bar[data-mode='advanced'] .devicesKey,
-  .bar[data-mode='advanced'] .right .update {
+/* Below 1600 px a waiting Update is in More, which shows a coral dot for it. */
+@media (max-width: 1599px) {
+  .right .update {
     display: none;
   }
-  .bar[data-mode='advanced'] .moreBadge {
+  .moreBadge {
     display: block;
-  }
-  .bar[data-mode='advanced'] .saveError .saveText {
-    display: none;
   }
 }
 
-/* Smallest supported width (1024 px, also 200 % zoom): the bar.beat readout gives way. */
-@media (max-width: 1079px) {
+/* Smallest supported widths (1024-1099 px, also 200 % zoom): the bar.beat readout gives way; at 1366-1439 px it makes room for the MIDI & audio key. */
+@media (max-width: 1099px) {
   .position {
     display: none;
   }
 }
+@media (min-width: 1366px) and (max-width: 1439px) {
+  .bar:has(.devicesKey) .position {
+    display: none;
+  }
+}
 
-/* Narrow desktop: the project's name is in the Projects key's tooltip and the More menu. */
-@media (max-width: 1759px) {
+/* The project's name (also in the Projects key's tooltip and the More menu) from 1800 px; in Advanced from 1920 px. */
+@media (max-width: 1799px) {
   .projectName {
     display: none;
   }
   .right .project[data-size] {
+    gap: 0;
+  }
+}
+@media (max-width: 1919px) {
+  .bar[data-mode='advanced'] .projectName {
+    display: none;
+  }
+  .bar[data-mode='advanced'] .right .project[data-size] {
     gap: 0;
   }
 }
@@ -505,7 +537,11 @@
   }
 }
 
-/* Below 1600 px: tighter spacing. */
+/*
+ * Below 1600 px: tighter spacing, snugger view tabs (each still at least 40 px
+ * wide), Record and Mute All keys, and a snugger Simple · Advanced switch (its
+ * keys still 32 px tall), so the switch, Undo and Redo fit on the one row.
+ */
 @media (max-width: 1599px) {
   .bar {
     gap: 5px;
@@ -513,13 +549,104 @@
   .group {
     padding-left: 5px;
   }
+  .bar .views[data-size] [role='tab'] {
+    min-width: 40px;
+    padding: 0 5px;
+  }
+  .bar .modeSwitch[data-size] [role='radio'] {
+    padding: 0 5px;
+  }
+  .bar .recButtons > button[data-size] {
+    --px: 7px;
+  }
+  .bar .muteAll[data-size] {
+    --px: 8px;
+  }
 }
-/* Below 1600 px the save state shows as its lamp (words return on errors). */
-@media (max-width: 1599px) {
+/* Below 1700 px (Advanced: 1800 px) the save state shows as its lamp (words return on errors). */
+@media (max-width: 1699px) {
   .saveOk .saveText,
   .saveBusy .saveText,
   .savePreview .saveText {
     display: none;
+  }
+}
+@media (max-width: 1799px) {
+  .bar[data-mode='advanced'] .saveOk .saveText,
+  .bar[data-mode='advanced'] .saveBusy .saveText,
+  .bar[data-mode='advanced'] .savePreview .saveText {
+    display: none;
+  }
+}
+
+/*
+ * Undo and Redo as icon keys (their names stay "Undo …" / "Redo …", their
+ * tooltips say what they undo): below 1600 px, and to 1919 px where a waiting
+ * Update key, a failed save or the MIDI & audio key needs their words' room.
+ */
+@media (max-width: 1599px) {
+  .history .historyKey[data-size] {
+    width: var(--h);
+    padding: 0;
+    gap: 0;
+  }
+  .historyWord {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+@media (min-width: 1600px) and (max-width: 1919px) {
+  .right:has(.update) .history .historyKey[data-size],
+  .right:has(.saveError) .history .historyKey[data-size],
+  .right:has(.devicesKey) .history .historyKey[data-size] {
+    width: var(--h);
+    padding: 0;
+    gap: 0;
+  }
+  .right:has(.update) .historyWord,
+  .right:has(.saveError) .historyWord,
+  .right:has(.devicesKey) .historyWord {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+/* 1024-1279 px, and Advanced (one row with Swing) to 1365 px: snugger spacing still. */
+@media (min-width: 1280px) and (max-width: 1365px) {
+  .bar[data-mode='advanced'] {
+    gap: 4px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .bar[data-mode='advanced'] .group {
+    padding-left: 4px;
+  }
+}
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .bar {
+    gap: 4px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .group {
+    padding-left: 4px;
+  }
+  .bar .muteAll[data-size] {
+    --px: 7px;
+  }
+}
+/* Advanced with Swing, 1180-1279 px: a little snugger still. */
+@media (min-width: 1180px) and (max-width: 1279px) {
+  .bar[data-mode='advanced'] .muteAll[data-size] {
+    --px: 6px;
   }
 }
 

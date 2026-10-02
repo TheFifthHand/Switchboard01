@@ -14,6 +14,7 @@ import * as cmd from '../../src/state/commands';
 import { ProjectStore } from '../../src/state/projectStore';
 import {
   AUTOSCROLL_MAX_PX_S,
+  EDGE_SCROLL_MIN_PX_S,
   EMPTY_SELECTION,
   GAP_HYSTERESIS_PX,
   MIN_PASS_STEP_PX,
@@ -24,6 +25,7 @@ import {
   cardEdge,
   cardTarget,
   currentOthersGap,
+  edgeDragVelocity,
   edgeStepPx,
   fullGap,
   ghostFlips,
@@ -41,10 +43,37 @@ import {
   type CardBlock,
   type CardTarget,
 } from '../../src/app/views/arrange/songDrag';
-import { FOLLOW_LEAD, MIN_BLOCK_WIDTH, ZOOM_STEPS, anchorAt, anchorX, barToX, blockAtBar, followScroll, gapX, layoutSong, passDividers, rulerMarks, scrollToShow, xToBar, zoomStep } from '../../src/app/views/arrange/songLayout';
+import {
+  COMPACT_BLOCK_WIDTH,
+  FOLLOW_LEAD,
+  MIN_BLOCK_WIDTH,
+  MIN_PX_PER_BAR,
+  OVERVIEW_BELOW,
+  OVERVIEW_MIN_BLOCKS,
+  ROW_MAX_PX,
+  ROW_MIN_PX,
+  ZOOM_STEPS,
+  anchorAt,
+  anchorX,
+  barToX,
+  blockAtBar,
+  fitLaneHeight,
+  fitRowHeight,
+  fitSong,
+  followScroll,
+  gapX,
+  layoutSong,
+  minBlockWidth,
+  passDividers,
+  rulerMarks,
+  scrollToShow,
+  tailRoom,
+  xToBar,
+  zoomStep,
+} from '../../src/app/views/arrange/songLayout';
 import { cubicBezier, easeSlide, easeSpring } from '../../src/app/views/arrange/laneMotion';
 import { LANE_SETTINGS_KEY, readFollow, writeFollow } from '../../src/app/views/arrange/laneSettings';
-import { blockLabel, blockView, cellLabel, cellTip, cellToast, cellToggle, laneBlocks, layerPreview, layerText, partChoices, resizeText } from '../../src/app/views/arrange/songModel';
+import { blockLabel, blockView, cellLabel, cellTip, cellToast, cellToggle, laneBlocks, layerPreview, layerText, liveLengthText, partChoices, resizeText, timesText } from '../../src/app/views/arrange/songModel';
 
 /* ------------------------------------------------------------------ */
 /* Geometry                                                            */
@@ -57,13 +86,14 @@ describe('lane geometry', () => {
     { id: 'c', bars: 4, repeats: 2 },
   ];
 
-  it('places blocks edge to edge, proportional, at a zoom step that fits', () => {
+  it('places blocks edge to edge, proportional, at a zoom step that fits (with one block width of room after them)', () => {
     const l = layoutSong(song, 1000);
     expect(ZOOM_STEPS).toContain(l.pxPerBar);
-    expect(l.contentWidth).toBeLessThanOrEqual(1000);
+    expect(l.room).toBe(MIN_BLOCK_WIDTH);
+    expect(l.contentWidth + l.room).toBeLessThanOrEqual(1000);
     // The next step up would not fit.
     const bigger = ZOOM_STEPS.find((s) => s > l.pxPerBar)!;
-    expect(32 * bigger).toBeGreaterThan(1000);
+    expect(32 * bigger + tailRoom(bigger)).toBeGreaterThan(1000);
     expect(l.blocks.map((b) => b.x)).toEqual([0, l.blocks[0].width, l.blocks[0].width + l.blocks[1].width]);
     expect(l.blocks[1].width).toBe(2 * l.blocks[0].width);
     expect(l.blocks.map((b) => b.startBar)).toEqual([0, 8, 24]);
@@ -71,10 +101,10 @@ describe('lane geometry', () => {
   });
 
   it('keeps the scale for small edits (zoom steps), and holds a given scale', () => {
-    // 30 bars fit at 32 px per bar (960 px): one more bar still fits at the same step.
+    // 30 bars fit at 28 px per bar (840 px and 112 px of room): one more bar still fits at the same step.
     const thirty = [song[0], song[1], { id: 'c', bars: 6, repeats: 1 }];
     const before = layoutSong(thirty, 1000);
-    expect(before.pxPerBar).toBe(32);
+    expect(before.pxPerBar).toBe(28);
     const after = layoutSong([song[0], song[1], { id: 'c', bars: 7, repeats: 1 }], 1000);
     expect(after.pxPerBar).toBe(before.pxPerBar);
     expect(after.blocks[1].width).toBe(before.blocks[1].width);
@@ -84,7 +114,8 @@ describe('lane geometry', () => {
   });
 
   it('widens a short block to the minimum and keeps the ruler on its edges', () => {
-    const l = layoutSong([{ id: 'a', bars: 1, repeats: 1 }, ...song], 600);
+    const l = layoutSong([{ id: 'a', bars: 1, repeats: 1 }, ...song], 1000);
+    expect(l.pxPerBar).toBeGreaterThanOrEqual(OVERVIEW_BELOW);
     expect(l.blocks[0].width).toBe(MIN_BLOCK_WIDTH);
     const starts = rulerMarks(l).filter((m) => m.blockStart);
     expect(starts.map((m) => m.bar)).toEqual([0, 1, 9, 25]);
@@ -92,13 +123,84 @@ describe('lane geometry', () => {
     expect(starts.every((m) => m.label)).toBe(true);
   });
 
-  it('a song that does not fit scrolls at a step where its shortest block is about the minimum width', () => {
+  it('a long song fits whole at an overview step: compact blocks (never narrower than COMPACT_BLOCK_WIDTH)', () => {
+    // 14 blocks, 140 bars: no readable step fits 1200 px; an overview step does.
     const bars = [16, 16, 12, 8, 16, 8, 8, 8, 8, 8, 8, 8, 8, 8];
     const l = layoutSong(bars.map((b, i) => ({ id: String(i), bars: b, repeats: 1 })), 1200);
+    expect(l.pxPerBar).toBeLessThan(OVERVIEW_BELOW);
+    expect(l.contentWidth + l.room).toBeLessThanOrEqual(1200);
+    expect(l.room).toBe(COMPACT_BLOCK_WIDTH);
+    for (const b of l.blocks) expect(b.width).toBe(Math.max(COMPACT_BLOCK_WIDTH, Math.floor(b.totalBars * l.pxPerBar)));
+    expect(minBlockWidth(OVERVIEW_BELOW)).toBe(MIN_BLOCK_WIDTH);
+    expect(minBlockWidth(OVERVIEW_BELOW - 1)).toBe(COMPACT_BLOCK_WIDTH);
+  });
+
+  it('a song too long to fit at any step opens scrolling at a readable step (its shortest block about the minimum width)', () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({ id: String(i), bars: 8, repeats: 1 }));
+    const l = layoutSong(many, 1200);
     expect(l.contentWidth).toBeGreaterThan(1200);
     expect(ZOOM_STEPS).toContain(l.pxPerBar);
+    expect(l.pxPerBar).toBeGreaterThanOrEqual(OVERVIEW_BELOW);
     expect(8 * l.pxPerBar).toBeLessThanOrEqual(MIN_BLOCK_WIDTH);
     for (const b of l.blocks) expect(b.width).toBe(Math.max(MIN_BLOCK_WIDTH, Math.floor(b.totalBars * l.pxPerBar)));
+  });
+
+  it('Fit song never makes a song that is cut off bigger: 24 blocks fit at 1366 px; one that cannot fit goes to the smallest step and says it does not fit', () => {
+    // The starter's six blocks four times (24 blocks, 288 bars) in a 1366 px window's lane (about 1218 px).
+    const house = [8, 16, 16, 8, 16, 8];
+    const long = Array.from({ length: 24 }, (_, i) => ({ id: String(i), bars: 4, repeats: house[i % 6] / 4 }));
+    const fit = fitSong(long, 1218);
+    expect(fit.fits).toBe(true);
+    const l = layoutSong(long, 1218, { pxPerBar: fit.pxPerBar });
+    expect(l.contentWidth + l.room).toBeLessThanOrEqual(1218);
+    // Opening the lane picks the same scale; a scrolling scale it zoomed in to before is not what Fit does.
+    expect(layoutSong(long, 1218).pxPerBar).toBe(fit.pxPerBar);
+    // Whatever scale the lane is at, Fit is never larger than a scale at which the song is cut off.
+    for (const s of ZOOM_STEPS) {
+      const at = layoutSong(long, 1218, { pxPerBar: s });
+      if (at.contentWidth + at.room > 1218) expect(fit.pxPerBar).toBeLessThan(s);
+    }
+    // 100 blocks cannot fit: the smallest step, and it says so.
+    const huge = Array.from({ length: 100 }, (_, i) => ({ id: String(i), bars: 4, repeats: 2 }));
+    expect(fitSong(huge, 1218)).toEqual({ pxPerBar: MIN_PX_PER_BAR, fits: false });
+    expect(layoutSong(huge, 1218).pxPerBar).toBeGreaterThanOrEqual(OVERVIEW_BELOW);
+  });
+
+  it('a long song of few blocks opens readable (it scrolls); Fit song still shows it whole, compact', () => {
+    // The starter's six blocks (72 bars) in a 200 % zoomed lane (about 800 px): no readable step fits.
+    const house = [8, 16, 16, 8, 16, 8].map((bars, i) => ({ id: String(i), bars: 4, repeats: bars / 4 }));
+    expect(house.length).toBeLessThan(OVERVIEW_MIN_BLOCKS);
+    const open = layoutSong(house, 800);
+    expect(open.pxPerBar).toBeGreaterThanOrEqual(OVERVIEW_BELOW);
+    expect(open.contentWidth + open.room).toBeGreaterThan(800);
+    const fit = fitSong(house, 800);
+    expect(fit.fits).toBe(true);
+    expect(fit.pxPerBar).toBeLessThan(OVERVIEW_BELOW);
+    // Ten blocks or more: the lane opens whole, at that overview step.
+    const ten = Array.from({ length: 12 }, (_, i) => house[i % 6]).map((b, i) => ({ ...b, id: String(i) }));
+    const tenFit = fitSong(ten, 1218);
+    expect(tenFit.fits).toBe(true);
+    expect(layoutSong(ten, 1218).pxPerBar).toBe(tenFit.pxPerBar);
+  });
+
+  it('part rows share the free height out, 18 to 32 px', () => {
+    expect(ROW_MIN_PX).toBe(18);
+    expect(ROW_MAX_PX).toBe(32);
+    expect(fitRowHeight(8 * 27 + 5, 8)).toBe(27);
+    expect(fitRowHeight(1000, 8)).toBe(32);
+    expect(fitRowHeight(40, 8)).toBe(18);
+    expect(fitRowHeight(-50, 8)).toBe(18);
+    expect(fitRowHeight(200, 0)).toBe(18);
+  });
+
+  it('what the rows cannot use (they stop at 32 px) goes to the lane below the blocks', () => {
+    // A tall window: 8 rows at 32 px and the rest for the lane.
+    expect(fitLaneHeight(8 * 32 + 300, 8)).toEqual({ row: 32, extra: 300 });
+    // Rows still growing: only the rounding is left over.
+    expect(fitLaneHeight(8 * 27 + 5, 8)).toEqual({ row: 27, extra: 5 });
+    // Too little room: the rows keep their minimum, nothing extra.
+    expect(fitLaneHeight(40, 8)).toEqual({ row: 18, extra: 0 });
+    expect(fitLaneHeight(Number.NaN, 8)).toEqual({ row: 18, extra: 0 });
   });
 
   it('maps bars to x and back through the same geometry', () => {
@@ -211,6 +313,15 @@ describe('edge drag and auto-scroll', () => {
     expect(repeatsFromEdge(2, 5000, 64)).toBe(16);
   });
 
+  it("an edge drag scrolls the lane only once the pointer reaches the lane's visible edge, faster past it", () => {
+    // Anywhere inside the lane, also near its edges: no scrolling (the last block's edge cannot run away).
+    for (const x of [500, 940, 990, 998, 10, 3]) expect(edgeDragVelocity(x, 0, 1000)).toBe(0);
+    expect(edgeDragVelocity(999, 0, 1000)).toBe(EDGE_SCROLL_MIN_PX_S);
+    expect(edgeDragVelocity(1020, 0, 1000)).toBeGreaterThan(EDGE_SCROLL_MIN_PX_S);
+    expect(edgeDragVelocity(1200, 0, 1000)).toBe(AUTOSCROLL_MAX_PX_S);
+    expect(edgeDragVelocity(-100, 0, 1000)).toBe(-AUTOSCROLL_MAX_PX_S);
+  });
+
   it('scrolls only near the lane edges, faster closer to them', () => {
     expect(autoScrollVelocity(500, 0, 1000)).toBe(0);
     const near = autoScrollVelocity(990, 0, 1000);
@@ -238,13 +349,13 @@ describe('zoom, follow and labels that stay readable', () => {
   });
 
   it('an edit keeps the scale it was given: a longer song scrolls instead of shrinking', () => {
-    const fit = layoutSong(song, 600);
-    const longer = [...song, { id: 'd', bars: 4, repeats: 8 }];
+    const fit = layoutSong(song, 700);
+    const longer = [...song, { id: 'd', bars: 4, repeats: 2 }];
     // Fitting again would shrink every block; holding the scale keeps each block's width and place.
-    expect(layoutSong(longer, 600).pxPerBar).toBeLessThan(fit.pxPerBar);
-    const held = layoutSong(longer, 600, { pxPerBar: fit.pxPerBar });
+    expect(layoutSong(longer, 700).pxPerBar).toBeLessThan(fit.pxPerBar);
+    const held = layoutSong(longer, 700, { pxPerBar: fit.pxPerBar });
     for (const b of fit.blocks) expect(held.blocks.find((x) => x.id === b.id)).toMatchObject({ x: b.x, width: b.width });
-    expect(held.contentWidth).toBeGreaterThan(600);
+    expect(held.contentWidth).toBeGreaterThan(700);
   });
 
   it('a zoom keeps its anchor (a block and how far into it) at the same place on screen', () => {
@@ -388,9 +499,14 @@ describe('selection', () => {
     expect(menuTargets(s, order, 'e')).toEqual(['e']);
   });
 
-  it('pastes after the selection, else after the focused block, else at the end', () => {
-    expect(pasteGap(order, { ids: ['b', 'c'], anchor: 'b' }, 'a')).toBe(3);
+  it('pastes after the block it is pasted from (after the selection when that block is in it), else after the selection, else at the end', () => {
+    // From a selected block: after the selection.
+    expect(pasteGap(order, { ids: ['b', 'c'], anchor: 'b' }, 'b')).toBe(3);
+    // From a block outside the selection (as Ctrl+C and its menu act on it alone): after that block.
+    expect(pasteGap(order, { ids: ['b', 'c'], anchor: 'b' }, 'a')).toBe(1);
     expect(pasteGap(order, EMPTY_SELECTION, 'a')).toBe(1);
+    // From no block: after the selection, else at the end.
+    expect(pasteGap(order, { ids: ['b', 'c'], anchor: 'b' }, null)).toBe(3);
     expect(pasteGap(order, EMPTY_SELECTION, null)).toBe(5);
   });
 
@@ -573,9 +689,12 @@ describe('part cells', () => {
     expect(cellToast('Drums', 'Groove', undefined, null)).toBe('Drums back on in Groove');
     expect(cellToast('Lead', 'Groove', 'x', 'Lift')).toBe('Lead plays Lift in Groove');
     for (const t of [cellToast('Drums', 'Groove', null, null), cellToast('Drums', 'Groove', undefined, null)]) expect(t).not.toMatch(/next bar/);
-    // The edge bubble speaks in passes.
-    expect(resizeText(4, 3)).toBe('3 passes · 12 bars');
-    expect(resizeText(4, 1, true)).toBe('1 pass · 4 bars (4 × 1)');
+    // The edge bubble says how many times the block plays (not "passes"); the header shows the length live.
+    expect(resizeText(4, 3)).toBe('3 times · 12 bars');
+    expect(timesText(1)).toBe('once');
+    expect(liveLengthText(4, 3)).toBe('12 bars');
+    expect(liveLengthText(4, 3, true)).toBe('12 bars 4 × 3');
+    expect(resizeText(4, 1, true)).toBe('once · 4 bars (4 × 1)');
   });
 
   it('a block whose scene was deleted is shown as skipped', () => {

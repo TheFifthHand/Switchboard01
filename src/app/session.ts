@@ -48,7 +48,7 @@ import * as library from '../persistence/library';
 import type { LaunchResult, SongLoop } from '../time/contracts';
 import { makeSnapshot, projectFromSnapshot } from '../time/snapshot';
 import { Sequencer, songBlocks, songSignature, type NoteEvent } from '../time/sequencer';
-import { sameSongLoop, songLoopAfterEdit, songLoopRange } from '../time/songLoop';
+import { SongLoopHistory, sameSongLoop, songLoopRange } from '../time/songLoop';
 import { RealtimeTransport } from '../time/transport';
 import { notify, patchRuntime, runtimeStore, setTrackRuntime, type PlayMode } from './runtime';
 
@@ -153,6 +153,16 @@ interface NoteRecording {
 
 /** Arpeggiator notes are written into the clip in batches (their ticks come from the audio clock). */
 const ARP_RECORD_BATCH_MS = 200;
+/**
+ * While an export prepares and renders, live playback is scheduled this far
+ * ahead (see RealtimeTransport.holdAhead): building the export's engine
+ * blocks the main thread for a moment (about a third of a second on a fast
+ * computer, several times that on a slow one), and the music plays on
+ * through it.
+ */
+const EXPORT_LOOKAHEAD_S = 2;
+/** Shown when playback stopped because an export kept the computer too busy (never blame the browser for it). */
+export const EXPORT_STALL_MESSAGE = 'Playback stopped: the export kept this computer too busy to play on in time. Resume to continue.';
 
 export class Session {
   readonly store: ProjectStore;
@@ -187,6 +197,10 @@ export class Session {
   private releaseListeners = new Set<() => void>();
   /** Asked before Record Performance or Record Notes starts: a reason to wait, or null (see addRecordGuard). */
   private recordGuards = new Set<() => string | null>();
+  /** How the song loop follows edits, and undo and redo of the steps that changed it. */
+  private readonly loopHistory = new SongLoopHistory();
+  /** Exports preparing or rendering (live playback is scheduled further ahead meanwhile). */
+  private exportsRunning = 0;
 
   constructor(initial: Project) {
     this.store = new ProjectStore(initial);
@@ -428,6 +442,7 @@ export class Session {
       const transport = new RealtimeTransport({ ctx, engine, sequencer });
       this.sequencer = sequencer;
       this.transport = transport;
+      if (this.exportsRunning) transport.holdAhead(EXPORT_LOOKAHEAD_S);
       this.wireTransport(transport);
       ctx.onstatechange = () => this.updateAudioState();
       this.updateAudioState();
@@ -500,6 +515,8 @@ export class Session {
         const i = this.store.getState().arrangement.blocks.findIndex((b) => b.id === ev.blockId);
         if (i >= 0) patchRuntime({ songBlock: i, songBlockId: ev.blockId });
         else this.syncSongBlock();
+        // Playing into the loop (or a jump to it) starts looping here.
+        this.syncSongLooping();
       }),
       t.on('beat', (ev) => {
         const counting = runtimeStore.getState().countingIn;
@@ -521,12 +538,14 @@ export class Session {
           playing: false,
           paused: false,
           mode: 'live',
-          songBlock: null, songBlockId: null,
+          songBlock: null, songBlockId: null, songLooping: false,
           countingIn: false,
           stalled:
             s.reason === 'suspended'
               ? 'Playback stopped because the audio device paused.'
-              : 'Playback paused because the browser slowed this tab down (it was in the background or busy).',
+              : this.exportsRunning
+                ? EXPORT_STALL_MESSAGE
+                : 'Playback paused because the browser slowed this tab down (it was in the background or busy).',
         });
         this.refreshLauncherRuntime();
       }),
@@ -545,9 +564,11 @@ export class Session {
       this.engine.setProject(p);
       if (p.masterVolumeDb !== prev.masterVolumeDb) this.engine.setMasterVolume(p.masterVolumeDb);
     }
-    // The song loop follows the edit (see songLoopAfterEdit); another project has none.
+    // The song loop follows the edit (see SongLoopHistory: undoing an edit that shrank it brings it back);
+    // another project has none.
     const loopWas = runtimeStore.getState().songLoop;
-    const loop = p.id !== prev.id ? null : songLoopAfterEdit(loopWas, prev, p);
+    if (p.id !== prev.id) this.loopHistory.clear();
+    const loop = p.id !== prev.id ? null : this.loopHistory.follow(loopWas, prev, p, this.store.lastChange());
     if (this.transport && !this.replayingId) {
       if (p.bpm !== prev.bpm) this.transport.setTempo(p.bpm);
       if (p.swing !== prev.swing) this.transport.setSwing(p.swing);
@@ -558,7 +579,9 @@ export class Session {
           if (was && was !== t.arp && ((was.enabled && !t.arp.enabled) || (was.latch && !t.arp.latch))) this.transport.clearArpLatch(t.id);
         }
       }
-      // A song playing (or paused) follows edits to its blocks and to the clips they play; that also regenerates.
+      // A song playing (or paused) follows edits to its blocks and to the clips they play, in the edit's own
+      // task, so nothing ever reads a plan the edit made stale (measured: under a millisecond on a fast
+      // computer, a few at 4x CPU slowdown; see docs/ARCHITECTURE.md). The replan also regenerates.
       const replanned = this.followSongEdits(p, prev, loop);
       if (!replanned && musicChanged(p, prev)) this.transport.invalidate();
     }
@@ -628,7 +651,7 @@ export class Session {
     if (!seq || !t || seq.mode.kind !== 'song' || !(seq.playing || seq.paused)) return false;
     if (sameSongLoop(seq.songLoop, loop)) {
       // The song depends on the blocks, the scenes and the clips (not on sounds or knobs).
-      if (p.arrangement === prev.arrangement && p.scenes === prev.scenes && p.tracks.every((t, i) => t.clips === prev.tracks[i]?.clips)) return false;
+      if (!songEdited(p, prev)) return false;
       if (songSignature(p) === songSignature(prev)) return false;
     }
     const changed = t.replanSong(loop);
@@ -654,6 +677,20 @@ export class Session {
     const i = id === null ? -1 : this.store.getState().arrangement.blocks.findIndex((b) => b.id === id);
     const songBlock = i >= 0 ? i : null;
     if (songBlock !== rt.songBlock || id !== rt.songBlockId) patchRuntime({ songBlock, songBlockId: id });
+    this.syncSongLooping();
+  }
+
+  /**
+   * Runtime `songLooping`: the song plays (or is paused) inside its loop and
+   * will repeat it, as the sequencer has it at the playhead (false while it
+   * plays towards the loop or on to its end, and whenever the song is not on).
+   */
+  private syncSongLooping(): void {
+    const seq = this.sequencer;
+    const t = this.transport;
+    const rt = runtimeStore.getState();
+    const looping = !!seq && !!t && rt.mode === 'song' && seq.mode.kind === 'song' && (seq.playing || seq.paused) && seq.songLoopingAt(t.getPosition().tick);
+    if (looping !== rt.songLooping) patchRuntime({ songLooping: looping });
   }
 
   /**
@@ -731,7 +768,7 @@ export class Session {
     this.armDefaultSceneIfIdle();
     this.transport!.start({ mode: { kind: 'live' }, countInBars: 0 });
     this.stallResume = null;
-    patchRuntime({ playing: true, paused: false, mode: 'live', stalled: null, songBlock: null, songBlockId: null });
+    patchRuntime({ playing: true, paused: false, mode: 'live', stalled: null, songBlock: null, songBlockId: null, songLooping: false });
     this.refreshLauncherRuntime();
   }
 
@@ -743,7 +780,7 @@ export class Session {
     if (this.transport) this.transport.stop();
     if (this.replayingId) this.endReplay();
     this.stallResume = null;
-    patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, countingIn: false });
+    patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, songLooping: false, countingIn: false });
     this.refreshLauncherRuntime();
   }
 
@@ -770,6 +807,7 @@ export class Session {
     this.releaseAllNotes();
     this.stallResume = null;
     patchRuntime({ playing: false, paused: true, countingIn: false });
+    this.syncSongLooping();
     this.refreshLauncherRuntime();
   }
 
@@ -778,14 +816,22 @@ export class Session {
     this.stallResume = null;
     // The mode, song block and replay carry on as they were.
     patchRuntime({ playing: true, paused: false, stalled: null });
+    this.syncSongLooping();
     this.refreshLauncherRuntime();
   }
 
-  /** Space: Play / Pause. */
+  /**
+   * Space / the transport's Play: Pause while playing; otherwise continue a
+   * pause (whatever was playing: the pads, the song or a replay), else start.
+   * `song` (the Arrange view): a start plays the song, from the loop's first
+   * block when a loop is set; with no block that can play, the pads.
+   */
   async togglePlay(opts: { song?: boolean } = {}): Promise<void> {
-    if (this.playing) this.pause();
-    // In Arrange, Play plays the song (from the loop, if one is set); a pause resumes what was playing.
-    else if (opts.song && !this.transport?.paused && this.store.getState().arrangement.blocks.length) await this.playSong();
+    if (this.playing) {
+      this.pause();
+      return;
+    }
+    if (opts.song && !this.transport?.paused && songBlocks(this.store.getState()).length) await this.playSong();
     else await this.play();
   }
 
@@ -798,7 +844,8 @@ export class Session {
    * on and loops at the loop's end; outside it, playback continues at the
    * loop's first block at the next bar line (on Resume when paused);
    * cleared, the song plays on to its end (see Sequencer.setSongLoop).
-   * Edits keep it valid (see songLoopAfterEdit). Returns false (and changes
+   * Edits keep it valid, and Undo of an edit that shrank it brings it back
+   * (see songLoopAfterEdit, SongLoopHistory). Returns false (and changes
    * nothing) when a block it names is not in the song.
    */
   setSongLoop(range: SongLoop | null): boolean {
@@ -850,6 +897,7 @@ export class Session {
     const at = this.transport!.getPosition().tick;
     const first = this.sequencer!.songPlan()?.find((b) => at < b.endTick);
     patchRuntime({ playing: true, paused: false, mode: 'song', songBlock: first ? first.index : block, songBlockId: first?.blockId ?? null, stalled: null });
+    this.syncSongLooping();
     this.refreshLauncherRuntime();
   }
 
@@ -1706,7 +1754,7 @@ export class Session {
     this.replayingId = id;
     this.engine!.setProject(projectFromSnapshot(project, perf.snapshot));
     this.transport!.start({ mode: { kind: 'replay', performanceId: id } });
-    patchRuntime({ playing: true, paused: false, mode: 'replay', replayId: id, stalled: null });
+    patchRuntime({ playing: true, paused: false, mode: 'replay', replayId: id, stalled: null, songLooping: false });
     this.refreshLauncherRuntime();
   }
 
@@ -1781,22 +1829,38 @@ export class Session {
     return computeRenderPlan(this.store.getState(), source, tailSeconds);
   }
 
-  /** Render offline with the same engine and sequencer, and encode a WAV. */
+  /**
+   * Render offline with the same engine and sequencer, and encode a WAV.
+   * Music playing meanwhile plays on: while the export prepares and renders,
+   * live playback is scheduled further ahead (EXPORT_LOOKAHEAD_S), so the
+   * moments the export keeps the main thread busy (building its engine,
+   * encoding) do not interrupt it.
+   */
   async renderWav(opts: ExportOptions): Promise<Blob> {
-    await this.autosaver?.flush();
-    const project = this.store.getState();
-    const bank = await this.offlineBank(project, opts.sampleRate);
-    const buffer = await renderOffline({
-      project,
-      source: opts.source,
-      sampleRate: opts.sampleRate,
-      tailSeconds: opts.tailSeconds,
-      signal: opts.signal,
-      onProgress: opts.onProgress,
-      createEngine: (ctx) => AudioEngine.create(ctx, { samples: bank, seed: project.seed, meters: false }),
-    });
-    const channels = [buffer.getChannelData(0), buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : buffer.getChannelData(0)];
-    return new Blob([encodeWav(channels, buffer.sampleRate, opts.bitDepth)], { type: 'audio/wav' });
+    if (this.exportsRunning++ === 0) this.transport?.holdAhead(EXPORT_LOOKAHEAD_S);
+    try {
+      await this.autosaver?.flush();
+      const project = this.store.getState();
+      const bank = await this.offlineBank(project, opts.sampleRate);
+      const buffer = await renderOffline({
+        project,
+        source: opts.source,
+        sampleRate: opts.sampleRate,
+        tailSeconds: opts.tailSeconds,
+        signal: opts.signal,
+        onProgress: opts.onProgress,
+        createEngine: (ctx) => AudioEngine.create(ctx, { samples: bank, seed: project.seed, meters: false }),
+      });
+      const channels = [buffer.getChannelData(0), buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : buffer.getChannelData(0)];
+      return new Blob([encodeWav(channels, buffer.sampleRate, opts.bitDepth)], { type: 'audio/wav' });
+    } finally {
+      if (--this.exportsRunning === 0) this.transport?.holdAhead(null);
+    }
+  }
+
+  /** An export is preparing or rendering (see renderWav). */
+  get exporting(): boolean {
+    return this.exportsRunning > 0;
   }
 
   /** A sample bank at the export rate holding every recording the project uses. */
@@ -1902,6 +1966,11 @@ function soundsWhileHeld(track: Track): boolean {
   if (inst.kind === 'drums') return false;
   const value = (id: string) => inst.params[id] ?? specById(INSTRUMENT_PARAMS[inst.kind], id)?.default ?? 0;
   return inst.kind === 'sampler' ? value('mode') >= 1 : value('sustain') > 0;
+}
+
+/** Did anything the song plays change (its blocks, the scenes, the clips of a part)? */
+function songEdited(p: Project, prev: Project): boolean {
+  return p.arrangement !== prev.arrangement || p.scenes !== prev.scenes || p.tracks.some((t, i) => t.clips !== prev.tracks[i]?.clips);
 }
 
 /** Did anything that changes generated notes change (clips, instrument kind, arp)? */

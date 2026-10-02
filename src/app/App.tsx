@@ -181,9 +181,14 @@ export function App({ boot }: { boot: BootInfo }) {
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || isTypingTarget(e.target)) return;
+      const mod = e.ctrlKey || e.metaKey;
+      // Ctrl/⌘+A that no view used (the song lane selects its blocks with it): never select the page's text.
+      if (mod && !e.altKey && !e.shiftKey && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        return;
+      }
       // Shortcuts belong to an open modal dialog while it is showing.
       if (document.querySelector('[aria-modal="true"]')) return;
-      const mod = e.ctrlKey || e.metaKey;
       if (mod && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
         if (e.shiftKey) session.redo();
@@ -234,7 +239,8 @@ export function App({ boot }: { boot: BootInfo }) {
       spaceTaken = true;
       if (e.repeat) return;
       if (e.shiftKey) session.stop();
-      else void session.togglePlay();
+      // In Arrange, Space plays the song (as the transport's Play song key does); a pause resumes what was playing.
+      else void session.togglePlay({ song: uiStore.getState().view === 'arrange' });
     };
     // The key up of a Space the transport took does not reach the control either.
     const onSpaceUp = (e: KeyboardEvent) => {

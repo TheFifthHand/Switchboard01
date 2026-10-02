@@ -12,7 +12,7 @@ import { TICKS_PER_BAR } from '../../src/project/types';
 import { ProjectStore } from '../../src/state/projectStore';
 import type { SeqEvent, SongLoop, StartOptions } from '../../src/time/contracts';
 import { Sequencer, songBlocks, songSignature, type NoteCut, type NoteEvent, type SongBlockPlan } from '../../src/time/sequencer';
-import { sameSongLoop, songLoopAfterEdit, songLoopRange } from '../../src/time/songLoop';
+import { SongLoopHistory, sameSongLoop, songLoopRange } from '../../src/time/songLoop';
 import { makeClip, makeProject, notesOf, ofKind, setClip } from './sequencer-fixtures';
 
 export const BAR = 384;
@@ -110,6 +110,8 @@ export class Rig {
   readonly laneTrace: { lane: number; edits: number; total: number; loop: [number, number] | null; inside: boolean }[] = [];
   /** The song loop as the session holds it (runtime `songLoop`). */
   loop: SongLoop | null = null;
+  /** How the loop follows edits, undo and redo (as the session). */
+  readonly loopHistory = new SongLoopHistory();
   /** Voices released by a pause (note → tick). */
   private readonly released = new Map<NoteEvent, number>();
 
@@ -252,8 +254,9 @@ export class Rig {
         if (slots.size && this.seq.relocateSlots(tr.id, slots, at) && this.seq.playing) this.cancelFrom(at);
       }
     }
-    // The loop follows the edit (blocks deleted, split, joined) and goes to the replan with it.
-    const loop = songLoopAfterEdit(this.loop, prev, p);
+    // The loop follows the edit (blocks deleted, split, joined; undo and redo of a step that changed it)
+    // and goes to the replan with it.
+    const loop = this.loopHistory.follow(this.loop, prev, p, this.store.lastChange());
     let replanned = false;
     if (song && (this.seq.playing || this.seq.paused) && (songSignature(p) !== songSignature(prev) || !sameSongLoop(this.seq.songLoop, loop))) {
       replanned = this.seq.replanSong(at, loop);

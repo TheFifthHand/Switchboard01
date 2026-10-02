@@ -142,13 +142,14 @@
 }
 /* Muted = coral (attention), Solo = amber; the pressed key also sits lower and its word stays. */
 .toggle[data-kind='mute'][aria-pressed='true'] {
-  background: var(--coral);
-  border-color: var(--coral);
+  background: var(--coral-key);
+  border-color: var(--coral-key);
   color: #fff;
   box-shadow: var(--shadow-pressed);
 }
 .toggle[data-kind='solo'][aria-pressed='true'] {
-  background: var(--amber);
+  /* The lighter amber keeps the amber-ink word at 4.5:1 or better. */
+  background: var(--amber-hi);
   border-color: var(--amber);
   color: var(--amber-ink);
   box-shadow: var(--shadow-pressed);
@@ -165,10 +166,12 @@
 .partPlay {
   flex: none;
 }
+/* The meter and the status word (Muted / Not soloed / Solo) take turns in one box of the same size, so Mute and Solo never move anything. */
 .meter,
 .status {
   flex: 1 1 0;
   min-width: 0;
+  height: 14px;
 }
 .meter {
   display: flex;
@@ -224,7 +227,16 @@
     order: 3;
     flex: 1 1 100%;
   }
+}
+/* Very narrow columns: "Not soloed" may need two lines, so that line is two lines tall either way (the meter sits in its middle). */
+@container (max-width: 76px) {
+  .meter,
   .status {
+    height: 28px;
+  }
+  .status {
+    display: flex;
+    align-items: center;
     white-space: normal;
   }
 }
@@ -700,6 +712,10 @@
   white-space: nowrap;
 }
 .sceneCount {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--fs-xs);
   color: var(--ink-3);
 }

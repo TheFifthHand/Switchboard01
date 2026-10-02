@@ -213,7 +213,9 @@ describe('Tooltip', () => {
   it('appears after a hover delay, and describes the trigger for screen readers', async () => {
     const m = mount(h(TipHost, { enabled: true }));
     const trigger = m.container.querySelector<HTMLElement>('[data-testid="trigger"]')!;
+    // Hover: the pointer moves over the control (a tip never opens for a control that merely appears under a resting pointer).
     pointer(trigger, 'pointerover', { ...pointIn(trigger), buttons: 0 });
+    pointer(trigger, 'pointermove', { ...pointIn(trigger), buttons: 0 });
     await wait(120);
     expect(bubble()).toBeNull();
     await wait(400);
@@ -228,7 +230,10 @@ describe('Tooltip', () => {
   it('Escape dismisses a hover tooltip wherever focus is; it returns only after the pointer leaves', async () => {
     const m = mount(h(TipHost, { enabled: true }));
     const trigger = m.container.querySelector<HTMLElement>('[data-testid="trigger"]')!;
-    const hover = () => pointer(trigger, 'pointerover', { ...pointIn(trigger), buttons: 0 });
+    const hover = () => {
+      pointer(trigger, 'pointerover', { ...pointIn(trigger), buttons: 0 });
+      pointer(trigger, 'pointermove', { ...pointIn(trigger), buttons: 0 });
+    };
     hover();
     await wait(TOOLTIP_DELAY_MS + 100);
     await actFrame();

@@ -8,6 +8,9 @@
  *   focus, never intercepts the pointer (pointer-events: none), hides the
  *   moment anything is pressed so it never gets in the way of playing,
  *   closes on Escape wherever focus is, and is kept inside the viewport.
+ * - Hover means the pointer moved over the control: a control that comes to
+ *   lie under a resting pointer (after a drop, or when a dialog, menu or the
+ *   guide closes, or a hint appears) shows nothing until the pointer moves.
  * - An optional `hint` says how to operate the control (gestures, shortcuts);
  *   it comes last and, like the explanations, follows the Tips setting.
  * - When Tips are off, a tooltip still shows a control's `name` if it has one
@@ -170,8 +173,10 @@ export function Tooltip({ name, tip, detail, hint, placement = 'top', disabled, 
   if (!isValidElement(children)) return children;
   if (!hasContent) return children;
 
-  const onPointerOver = (e: PointerEvent) => {
-    if (e.pointerType === 'touch' || suppressed.current || open || timer.current !== undefined) return;
+  // The hover delay starts when the pointer moves over the control, never just because something
+  // appeared under a pointer at rest (the browser then sends pointerover, but no pointermove).
+  const onPointerMove = (e: PointerEvent) => {
+    if (e.pointerType === 'touch' || e.buttons !== 0 || suppressed.current || open || timer.current !== undefined) return;
     timer.current = window.setTimeout(() => {
       timer.current = undefined;
       setOpen(true);
@@ -219,7 +224,7 @@ export function Tooltip({ name, tip, detail, hint, placement = 'top', disabled, 
     <span
       ref={anchorRef}
       className={styles.anchor}
-      onPointerOver={onPointerOver}
+      onPointerMove={onPointerMove}
       onPointerOut={onPointerOut}
       onPointerDown={onPointerDown}
       onFocus={onFocus}

@@ -163,6 +163,27 @@ export function autoScrollVelocity(x: number, left: number, right: number, zone 
   return 0;
 }
 
+/** Speed (px per second) of an edge drag's auto-scroll with the pointer right at the lane's visible edge. */
+export const EDGE_SCROLL_MIN_PX_S = 240;
+/** How far past the visible edge (px) an edge drag's auto-scroll reaches full speed. */
+export const EDGE_SCROLL_RAMP_PX = 48;
+
+/**
+ * Auto-scroll for a block's right-edge drag: only once the pointer reaches or
+ * passes the lane's visible edge (a pointer still inside the lane never
+ * scrolls it, so the last block's edge cannot run away), faster the further
+ * past the edge it goes.
+ */
+export function edgeDragVelocity(x: number, left: number, right: number, max = AUTOSCROLL_MAX_PX_S): number {
+  const speed = (past: number) => {
+    const f = Math.min(1, past / EDGE_SCROLL_RAMP_PX);
+    return EDGE_SCROLL_MIN_PX_S + (max - EDGE_SCROLL_MIN_PX_S) * f * f;
+  };
+  if (x >= right - 1) return speed(x - (right - 1));
+  if (x <= left + 1) return -speed(left + 1 - x);
+  return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Selection                                                           */
 /* ------------------------------------------------------------------ */
@@ -175,6 +196,15 @@ export interface LaneSelection {
 }
 
 export const EMPTY_SELECTION: LaneSelection = { ids: [], anchor: null };
+
+/**
+ * The selection the Loop button acts on: only one the user made (a click, a
+ * modified click, the arrow keys, Ctrl+A), never one an action left behind
+ * (the blocks a drop, a paste, a duplicate or a helper made).
+ */
+export interface LaneSelectionState extends LaneSelection {
+  byUser: boolean;
+}
 
 function inOrder(order: readonly Id[], ids: Iterable<Id>): Id[] {
   const want = new Set(ids);
@@ -253,9 +283,14 @@ export function menuTargets(sel: LaneSelection, order: readonly Id[], id: Id): I
   return ids.includes(id) ? ids : [id];
 }
 
-/** Where pasted blocks go: right after the last selected (or focused) block, else at the end. */
+/**
+ * Where pasted blocks go, the way the other block actions pick their blocks
+ * (Ctrl+C, Ctrl+D, the block's menu): from a block (`focus`), right after the
+ * selection when that block is in it, else right after the block; with no
+ * block, after the selection, else at the end.
+ */
 export function pasteGap(order: readonly Id[], sel: LaneSelection, focus: Id | null): number {
-  const targets = actionTargets(sel, order, focus);
+  const targets = focus && order.includes(focus) ? menuTargets(sel, order, focus) : actionTargets(sel, order, null);
   if (!targets.length) return order.length;
   return order.indexOf(targets[targets.length - 1]) + 1;
 }

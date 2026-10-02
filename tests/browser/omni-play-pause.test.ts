@@ -15,7 +15,7 @@ import { PAUSE_UNAVAILABLE_MESSAGE, Session } from '../../src/app/session';
 import { session as appSession } from '../../src/app/instance';
 import { TransportBar } from '../../src/app/views/TransportBar';
 import { App } from '../../src/app/App';
-import { setGuideDone } from '../../src/state/uiStore';
+import { setGuideDone, setPadMode, setView } from '../../src/state/uiStore';
 import { getStarter } from '../../src/content/starters';
 import { deleteDb } from '../../src/persistence/db';
 import type { Project } from '../../src/project/types';
@@ -36,6 +36,9 @@ function session(p: Project = house()): Session {
 
 beforeEach(async () => {
   await deleteDb();
+  // The view is remembered in localStorage, which test files share: start on the Loops pads.
+  setView('play');
+  setPadMode('loops');
   patchRuntime({ muteAll: false, stalled: null, playing: false, paused: false, mode: 'live', replayId: null, songBlock: null, recording: 'off', recordTarget: null, notice: null });
 });
 

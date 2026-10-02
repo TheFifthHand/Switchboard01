@@ -31,6 +31,18 @@ describe('random edits while the song plays, against the final plan', () => {
     expect(problems.slice(0, 12)).toEqual([]);
   });
 
+  it('with the song helpers (build up, strip down, breakdown), mostly on the playing block', () => {
+    const problems: string[] = [];
+    for (let seed = 1; seed <= Math.ceil(SEEDS * 0.6); seed++) problems.push(...runFuzz(seed, { split: true, shape: true, steps: 20 }));
+    expect(problems.slice(0, 12)).toEqual([]);
+  });
+
+  it('with the song helpers and song loops', () => {
+    const problems: string[] = [];
+    for (let seed = 1; seed <= Math.ceil(SEEDS * 0.6); seed++) problems.push(...runFuzz(seed, { split: true, shape: true, loops: true, steps: 20 }));
+    expect(problems.slice(0, 12)).toEqual([]);
+  });
+
   it('with song loops and splits', () => {
     const problems: string[] = [];
     for (let seed = 1; seed <= Math.ceil(SEEDS * 0.6); seed++) problems.push(...runFuzz(seed, { split: true, loops: true, steps: 20 }));

@@ -3,13 +3,17 @@
  * input (Chrome DevTools Protocol Input.dispatchMouseEvent: hit testing,
  * pointer capture and click synthesis are the browser's own), checked on the
  * runtime loop (session.setSongLoop) and the project in session.store:
- * - the Loop toggle: the selected blocks, else the playing block, else the
- *   first; pressed state; what the status line says; off again;
+ * - the Loop button: it names its target (the blocks the user selected by a
+ *   click or the keyboard, else the loop that is on, else the playing block,
+ *   else the first); pressing it loops them, again turns the loop off, and
+ *   with other blocks selected moves the loop there; a selection an action
+ *   left (a duplicate) does not count; pressed state; the status line;
  * - a drag across the ruler loops the blocks it crosses (the band shows it
  *   while dragging, snapped to block edges); a click still plays from that
  *   bar; the band's two ends drag to other block edges; Esc puts it back;
- * - the block menu's Loop this block / Loop selected blocks / Stop looping;
- *   a loop whose blocks are gone is ignored;
+ * - the block menu's Loop list (Loop this block / Loop selected blocks / Stop
+ *   looping); a loop whose blocks are gone is ignored; the menu fits a
+ *   laptop screen and its lists never move it;
  * - Build up, Strip down and Breakdown from the menu: the right part cells,
  *   one undo step, refusals with their reason, and the song as it plays
  *   follows at once.
@@ -45,6 +49,8 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   act(() => patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, songLoop: null, songLooping: false, replayId: null }));
+  // The view is remembered in localStorage, shared with the other test files: leave the default.
+  act(() => setView('play'));
 });
 
 async function setup() {
@@ -146,22 +152,24 @@ function cellKinds(ids: Id[], parts: string[]) {
 
 /* ------------------------------------------------------------------ */
 
-describe('the Loop toggle', () => {
-  it('loops the first block, the playing block, or the selected blocks (first to last), and turns off again', async () => {
+describe('the Loop button', () => {
+  it('names what it loops: the first block, the playing block, or the blocks the user selected; again turns it off', async () => {
     await setup();
     const ids = blockIds();
     expect(toggle().getAttribute('aria-pressed')).toBe('false');
     expect(band()).toBeNull();
-    // Nothing selected, stopped: the first block.
+    // Nothing selected, stopped: the first block, by name.
+    expect(toggle().getAttribute('aria-label')).toBe('Loop Intro (block 1)');
+    expect(toggle().textContent).toContain('Intro (block 1)');
     await clickAt(centre(toggle()));
     expect(loop()).toEqual({ fromBlockId: ids[0], toBlockId: ids[0] });
     expect(toggle().getAttribute('aria-pressed')).toBe('true');
-    expect(status()).toBe('Looping Intro (block 1).');
+    expect(status()).toBe('Loop on: Intro (block 1).');
     const b = band()!.getBoundingClientRect();
     expect(Math.abs(b.left - blockEl(ids[0]).getBoundingClientRect().left)).toBeLessThan(1.5);
     expect(Math.abs(b.right - blockEl(ids[0]).getBoundingClientRect().right)).toBeLessThan(1.5);
     expect(band()!.textContent).toContain('Loop');
-    // Off: the song plays through.
+    // Pressed again on the same blocks: off, the song plays through.
     await clickAt(centre(toggle()));
     expect(loop()).toBeNull();
     expect(toggle().getAttribute('aria-pressed')).toBe('false');
@@ -170,25 +178,55 @@ describe('the Loop toggle', () => {
     // The block playing now.
     act(() => patchRuntime({ playing: true, mode: 'song', songBlock: 2, songBlockId: ids[2] }));
     await settle(60);
+    expect(toggle().getAttribute('aria-label')).toBe('Loop Lift (block 3)');
     await clickAt(centre(toggle()));
     expect(loop()).toEqual({ fromBlockId: ids[2], toBlockId: ids[2] });
+    // A loop on and nothing selected: the button names that loop, and turns it off (not onto the playing block).
+    act(() => patchRuntime({ songBlock: 3, songBlockId: ids[3] }));
+    await settle(60);
+    expect(toggle().getAttribute('aria-label')).toBe('Loop Lift (block 3)');
     await clickAt(centre(toggle()));
+    expect(loop()).toBeNull();
     act(() => patchRuntime({ playing: false, mode: 'live', songBlock: null, songBlockId: null }));
     // Blocks 2 and 4 selected (Ctrl+click): blocks 2 to 4.
     const name = (id: Id) => centre(blockEl(id).querySelector<HTMLElement>('[class*="name"]')!);
     await clickAt(name(ids[1]));
     await clickAt(name(ids[3]), 2);
     expect([...document.querySelectorAll<HTMLElement>('[data-block-id][data-selected]')].map((e) => e.dataset.blockId)).toEqual([ids[1], ids[3]]);
+    expect(toggle().getAttribute('aria-label')).toBe('Loop blocks 2–4');
     await clickAt(centre(toggle()));
     expect(loop()).toEqual({ fromBlockId: ids[1], toBlockId: ids[3] });
-    expect(status()).toBe('Looping Groove to Break (blocks 2–4).');
-    // Play song asks the session for the song from the loop (no block index: it starts at the loop's first block).
-    const play = vi.spyOn(session, 'playSong').mockResolvedValue();
-    await clickAt(centre([...document.querySelectorAll<HTMLElement>('button')].find((b) => b.textContent === 'Play song')!));
-    expect(play).toHaveBeenCalledTimes(1);
-    expect(play.mock.calls[0][0]).toBeUndefined();
+    expect(status()).toBe('Loop on: Groove to Break (blocks 2–4).');
+    // Another block selected while that loop is on: the button names it and moves the loop there.
+    await clickAt(name(ids[4]));
+    expect(toggle().getAttribute('aria-label')).toBe('Loop Lift (block 5)');
+    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+    await clickAt(centre(toggle()));
+    expect(loop()).toEqual({ fromBlockId: ids[4], toBlockId: ids[4] });
     // The loop is playback state: no project edit, no undo step.
     expect(undoCount()).toBe(0);
+  });
+
+  it('a selection an action left (the copies a duplicate made) is not what the button loops', async () => {
+    await setup();
+    const ids = blockIds();
+    act(() => blockEl(ids[1]).focus());
+    await act(async () => {
+      await cdp().send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'd', code: 'KeyD', windowsVirtualKeyCode: 68, modifiers: 2 });
+      await cdp().send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'd', code: 'KeyD', windowsVirtualKeyCode: 68, modifiers: 2 });
+    });
+    await settle(60);
+    // The copy is selected (and focused), but the user did not select it: the button names the first block.
+    const copy = blockIds()[2];
+    expect(blockEl(copy).hasAttribute('data-selected')).toBe(true);
+    expect(toggle().getAttribute('aria-label')).toBe('Loop Intro (block 1)');
+    // Arrow keys are the user's own selection: the button follows them.
+    await act(async () => {
+      await cdp().send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+      await cdp().send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    });
+    await settle(60);
+    expect(toggle().getAttribute('aria-label')).toBe('Loop Lift (block 4)');
   });
 
   it('a loop whose blocks are gone is ignored: no band, the toggle is off and turns it on afresh', async () => {
@@ -224,7 +262,7 @@ describe('the ruler', () => {
     expect(Math.abs(during!.right - blockEl(ids[3]).getBoundingClientRect().right)).toBeLessThan(1.5);
     expect(loop()).toEqual({ fromBlockId: ids[1], toBlockId: ids[3] });
     expect(band()!.hasAttribute('data-preview')).toBe(false);
-    expect(status()).toBe('Looping Groove to Break (blocks 2–4).');
+    expect(status()).toBe('Loop on: Groove to Break (blocks 2–4).');
     // The drag did not play anything; a plain click (and a 2 px wiggle) plays from the bar under it.
     expect(play).not.toHaveBeenCalled();
     const at = rulerAt(ids[4], 0.05);
@@ -284,19 +322,22 @@ describe('the ruler', () => {
 });
 
 describe('the block menu', () => {
-  it('Loop this block, Loop selected blocks and Stop looping', async () => {
+  it('its Loop list: Loop this block, Loop selected blocks and Stop looping', async () => {
     await setup();
     const ids = blockIds();
     await openMenu(ids[1]);
-    expect(() => menuItem('Stop looping')).toThrow();
+    act(() => menuItem('Loop…').click());
+    expect(menuItem('Stop looping').getAttribute('aria-disabled')).toBe('true');
     act(() => menuItem('Loop this block').click());
     await settle(60);
     expect(loop()).toEqual({ fromBlockId: ids[1], toBlockId: ids[1] });
-    expect(status()).toBe('Looping Groove (block 2).');
+    expect(status()).toBe('Loop on: Groove (block 2).');
     await openMenu(ids[1]);
+    expect(menuItem('Loop…').textContent).toContain('Loop is on');
+    act(() => menuItem('Loop…').click());
     const again = menuItem('Loop this block');
     expect(again.getAttribute('aria-disabled')).toBe('true');
-    expect(again.textContent).toContain('Looping now');
+    expect(again.textContent).toContain('Loop is on');
     act(() => again.click());
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
     act(() => menuItem('Stop looping').click());
@@ -307,18 +348,67 @@ describe('the block menu', () => {
     await clickAt(name(ids[1]));
     await clickAt(name(ids[2]), 8);
     await openMenu(ids[2]);
+    act(() => menuItem('Loop…').click());
     act(() => menuItem('Loop selected blocks').click());
     await settle(60);
     expect(loop()).toEqual({ fromBlockId: ids[1], toBlockId: ids[2] });
-    // A menu fits a laptop screen (no scrolling at 768 high).
+  });
+
+  it('fits a 1366 x 768 screen (most used actions first, the rest in lists); opening a list or going Back never moves it', async () => {
     await page.viewport(1366, 768);
-    await settle(100);
-    await openMenu(ids[4]);
-    const m = document.querySelector<HTMLElement>('[role="menu"]')!;
-    expect(m.scrollHeight).toBeLessThanOrEqual(m.clientHeight + 1);
-    for (const text of ['One pass fewer', 'Copy block', 'Cut block', 'Move earlier', 'Move later', 'Stop looping']) {
-      const t = menuItem(text).querySelector<HTMLElement>('[class*="itemText"]')!;
-      expect(t.scrollWidth, `${text} is cut off`).toBeLessThanOrEqual(t.clientWidth + 1);
+    await setup();
+    const ids = blockIds();
+    const rect = () => {
+      const r = document.querySelector<HTMLElement>('[role="menu"]')!.getBoundingClientRect();
+      return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+    };
+    for (const i of [1, 4]) {
+      await openMenu(ids[i]);
+      const m = document.querySelector<HTMLElement>('[role="menu"]')!;
+      const r = m.getBoundingClientRect();
+      expect(r.top).toBeGreaterThanOrEqual(0);
+      expect(r.bottom).toBeLessThanOrEqual(768);
+      expect(m.scrollHeight).toBeLessThanOrEqual(m.clientHeight + 1);
+      // Short enough to sit wholly below (or above) its ⋯ at 768 high, so it never has to cover it.
+      const trigger = blockEl(ids[i]).querySelector<HTMLElement>('[aria-haspopup="menu"]')!.getBoundingClientRect();
+      expect(r.height).toBeLessThanOrEqual(Math.max(768 - trigger.bottom, trigger.top) - 8);
+      expect(r.height).toBeLessThanOrEqual(560);
+      // The most used first: play from here, rename, duplicate, split, join, then one more time / one fewer.
+      const items = [...m.querySelectorAll<HTMLElement>('[role^="menuitem"]')].map((x) => x.querySelector('[class*="itemText"]')?.textContent ?? x.textContent);
+      expect(items.slice(0, 7)).toEqual(['Play song from here', 'Rename…', 'Duplicate block', 'Split in half', 'Join with next', 'One more time', 'One time fewer']);
+      expect(items.at(-1)).toBe('Remove from song');
+      for (const text of ['One time fewer', 'Join with next', 'Split in half', 'Scenes and clips…', 'Copy, cut, move…']) {
+        const t = menuItem(text).querySelector<HTMLElement>('[class*="itemText"]')!;
+        expect(t.scrollWidth, `${text} is cut off`).toBeLessThanOrEqual(t.clientWidth + 1);
+      }
+      // Every list keeps the menu's place and size.
+      const at = rect();
+      for (const list of ['Parts in this block…', 'Scenes and clips…', 'Shape this block…', 'Loop…', 'Copy, cut, move…']) {
+        act(() => menuItem(list).click());
+        await settle(30);
+        expect(rect(), list).toEqual(at);
+        // Focus moves to the list's first item (Back), for the keyboard.
+        expect(document.activeElement?.textContent).toContain('Back');
+        if (list === 'Scenes and clips…') {
+          act(() => menuItem('Change scene').click());
+          await settle(30);
+          expect(rect(), 'Change scene…').toEqual(at);
+          act(() => menuItem('Back').click());
+        }
+        if (list === 'Copy, cut, move…') {
+          for (const text of ['Copy block', 'Cut block', 'Move earlier', 'Move later']) {
+            const t = menuItem(text).querySelector<HTMLElement>('[class*="itemText"]')!;
+            expect(t.scrollWidth, `${text} is cut off`).toBeLessThanOrEqual(t.clientWidth + 1);
+          }
+        }
+        act(() => menuItem('Back').click());
+        await settle(30);
+        expect(rect(), `Back from ${list}`).toEqual(at);
+      }
+      await cdp().send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await cdp().send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await settle(60);
+      expect(document.querySelector('[role="menu"]')).toBeNull();
     }
   });
 });
@@ -358,7 +448,7 @@ describe('song helpers', () => {
     expect(blocks()[1].parts).toBeUndefined();
   });
 
-  it('a looped block keeps looping as a whole after Build up splits it', async () => {
+  it('a looped block keeps looping as a whole after Build up splits it, after Undo and after Redo (the session keeps the loop; the lane only draws it)', async () => {
     await setup();
     const ids = blockIds();
     act(() => session.setSongLoop({ fromBlockId: ids[0], toBlockId: ids[1] }));
@@ -367,8 +457,25 @@ describe('song helpers', () => {
     act(() => menuItem('Build up').click());
     await settle(120);
     const now = blockIds();
-    expect(loop()).toEqual({ fromBlockId: ids[0], toBlockId: now[4] });
-    expect(Math.abs(band()!.getBoundingClientRect().right - blockEl(now[4]).getBoundingClientRect().right)).toBeLessThan(1.5);
+    const covers = (first: Id, last: Id) => {
+      expect(loop()).toEqual({ fromBlockId: first, toBlockId: last });
+      const b = band()!.getBoundingClientRect();
+      expect(Math.abs(b.left - blockEl(first).getBoundingClientRect().left)).toBeLessThan(1.5);
+      expect(Math.abs(b.right - blockEl(last).getBoundingClientRect().right)).toBeLessThan(1.5);
+    };
+    // The whole build (Groove became blocks 2–5) is in the loop.
+    expect(now.length).toBe(ids.length + 3);
+    covers(ids[0], now[4]);
+    // Undo: Groove is one block again, and the loop ends with it.
+    act(() => session.undo());
+    await settle(260);
+    expect(blockIds()).toEqual(ids);
+    covers(ids[0], ids[1]);
+    // Redo: the build again, all of it looped.
+    act(() => session.redo());
+    await settle(260);
+    expect(blockIds()).toEqual(now);
+    covers(ids[0], now[4]);
   });
 
   it('Strip down and Breakdown; a helper that cannot work says why and does nothing', async () => {
@@ -400,7 +507,7 @@ describe('song helpers', () => {
     const build = menuItem('Build up');
     expect(build.getAttribute('aria-disabled')).toBe('true');
     expect(build.textContent).toContain('Plays once');
-    expect(document.querySelector('[role="menu"]')!.textContent).toContain('give it at least 2 passes first');
+    expect(document.querySelector('[role="menu"]')!.textContent).toContain('make it play at least 2 times first');
     act(() => build.click());
     expect(undoCount()).toBe(undo);
     expect(blocks()[0].parts).toBeUndefined();
@@ -422,6 +529,9 @@ describe('song helpers', () => {
     await settle(150);
     // The song as it plays now has the new blocks, with the drums silent until the last pass.
     const plan = getSongPlan()!;
+    const rs = runtimeStore.getState();
+    // (If the browser stalls, the session stops the song and says so: the message shows it.)
+    expect(plan, JSON.stringify({ playing: rs.playing, paused: rs.paused, mode: rs.mode, stalled: rs.stalled, notice: rs.notice, block: rs.songBlockId })).not.toBeNull();
     const made = blockIds().slice(1, 5);
     const drums = trackId('Drums');
     for (const [i, id] of made.entries()) {

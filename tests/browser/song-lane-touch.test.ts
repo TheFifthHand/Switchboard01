@@ -46,6 +46,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await cdp().send('Emulation.setTouchEmulationEnabled', { enabled: false });
   cleanup();
+  // The view is remembered in localStorage, shared with the other test files: leave the default.
+  act(() => setView('play'));
 });
 
 async function setup() {
@@ -143,9 +145,9 @@ describe('touch', () => {
   });
 
   it('a quick finger swipe over the blocks scrolls the lane natively and edits nothing', async () => {
-    // A song longer than the lane, so it scrolls.
+    // A song longer than the lane even at the smallest zoom step, so it scrolls.
     act(() => {
-      for (let i = 0; i < 10; i++) cmd.addBlock(session.store, project().scenes[i % 4].id, undefined, 4);
+      for (let i = 0; i < 40; i++) cmd.addBlock(session.store, project().scenes[i % 4].id, undefined, 4);
     });
     session.store.clearHistory();
     await setup();

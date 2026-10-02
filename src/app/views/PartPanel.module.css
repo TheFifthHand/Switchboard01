@@ -39,15 +39,21 @@
   margin: 0;
   font-size: var(--fs-xl);
   font-weight: 650;
-  line-height: 1.2;
+  line-height: 21px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* One line under the name, kept even when empty (Muted / Not soloed / Solo come and go without moving anything). */
 .status {
+  height: 14px;
   font-size: var(--fs-sm);
   font-weight: 650;
+  line-height: 14px;
   color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* Muted is coral (silenced on purpose); Not soloed is plain grey (nothing is wrong); Solo is amber. */
 .status[data-status='muted'] {
@@ -94,13 +100,14 @@
   color: var(--ink);
 }
 .toggle[data-kind='mute'][aria-pressed='true'] {
-  background: var(--coral);
-  border-color: var(--coral);
+  background: var(--coral-key);
+  border-color: var(--coral-key);
   color: #fff;
   box-shadow: var(--shadow-pressed);
 }
 .toggle[data-kind='solo'][aria-pressed='true'] {
-  background: var(--amber);
+  /* The lighter amber keeps the amber-ink word at 4.5:1 or better. */
+  background: var(--amber-hi);
   border-color: var(--amber);
   color: var(--amber-ink);
   box-shadow: var(--shadow-pressed);

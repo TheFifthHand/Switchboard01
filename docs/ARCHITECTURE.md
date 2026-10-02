@@ -132,9 +132,16 @@ Rules:
   120 ms look-ahead against `AudioContext.currentTime`, dispatches events to the engine, keeps
   handles of voices that have not started so `invalidate()` can cancel and regenerate them, and
   emits UI events when their audio time arrives.
-- Stall policy: if the ticker falls more than 250 ms behind (background throttling, suspended
-  context) the transport stops coherently (no backlog is played) and raises a `stalled` state that
-  the UI shows with a Resume button.
+- Stall policy: if the ticker falls more than 250 ms behind what it has scheduled (background
+  throttling, suspended context, a busy main thread) the transport stops coherently (no backlog is
+  played) and raises a `stalled` state that the UI shows with a Resume button.
+- Export while playing: while an export prepares and renders (`Session.renderWav`), live playback is
+  scheduled 2 s ahead instead of 120 ms (`RealtimeTransport.holdAhead`), so the export's main-thread
+  work does not interrupt it (building the offline engine's graph, `AudioEngine.setProject`, blocks
+  the main thread ~340 ms for a starter on a fast machine, several times that on a slow one; that
+  work is in `src/audio` and is not split up). Edits, launches, Pause and Stop still act at once
+  (what was scheduled from then on is cancelled or regenerated). A block longer than that still
+  stalls; the message then says the export kept the computer busy, never that the browser did.
 - Pause / Resume: Pause records the musical position (tick, each playing clip's phase, queued
   launches, song block, replay position), releases held notes and stops scheduling; Play restarts
   the sequencer at that tick with the same launcher state (`relocateSlots` / `relocateSongRows`), so
@@ -151,8 +158,18 @@ Rules:
   'song' transitions (a layered part plays the other scene's slot, an off part stops at the block
   start); `playSong(i, {fromBar})` starts at that lane bar, the block containing it in phase;
   `playSong()` (neither given) starts at the song loop's first block, else at the first block.
+  `Session.togglePlay({ song })` (Space / the transport's Play; `song` in Arrange): Pause while
+  playing; otherwise a pause continues whatever was paused (pads, song or replay); a start plays the
+  song (from the loop's first block when a loop is set), or the pads when no block can play.
 - Edits while a song plays or is paused (undo/redo included): when `songSignature()` changes, the
-  session calls `transport.replanSong()` → `Sequencer.replanSong(now + 10 ms)`. The **edit point**
+  session calls `transport.replanSong()` → `Sequencer.replanSong(now + 10 ms)` in the edit's own
+  task, so no reader (the lane playhead, the song plan store, the next transport action) ever sees
+  a plan the edit made stale. It is cheap: for a lane drop while the House starter's song plays
+  (headless Chromium), the replan's own work in the drop task is 0.8 ms median (2.5 ms p90), 2.8 ms
+  (8.9 ms p90) at 4× CPU slowdown, against a drop frame of ~20 ms (~90 ms at 4×) that is React's
+  commit and layout. Running it after the next paint instead was measured and dropped: it saved
+  about that much in the drop frame but made the frame after it longer (a second React commit for
+  the new plan: +3 ms median, +29 ms at 4×). The **edit point**
   is the playhead at that time (the pause point while paused), rounded up to a whole tick; nothing
   before it changes. The anchor is the plan block under the playhead. It **has started** when its
   start lies before the playhead's floor (the start, pause or resume point; right after Resume the
@@ -171,6 +188,12 @@ Rules:
      a join while the second block plays, undoing either, a deleted block whose neighbour plays the
      same), playback continues in that block: no switch, every clip keeps its loop phase, the lane
      playhead does not move.
+  3b. Otherwise, when the block there plays the anchor's scene and this edit made or changed it (new,
+     or another length or other part choices than in the plan played: Build up, Strip down,
+     Breakdown on the playing block, or undoing / redoing one), playback continues in that block from
+     its start on the lane (a pass line of the block that played, so every later block stays on the
+     phrase grid); its parts that differ from what sounds switch at the edit point, in phase with that
+     start. The lane playhead does not jump back and nothing plays a pass late or is skipped.
   4. Otherwise the anchor (shortened below the playhead, or deleted) sounds on to the **next bar
      line**: shortened, with its changed parts switched at the edit point; deleted, as it was. There
      the block after it takes over (for a deleted block: the first block that followed it and still
@@ -206,14 +229,32 @@ Rules:
     for the playhead's place on the edited lane, rules 2–4 above); a waiting jump is kept.
   - The session keeps the loop valid on every project change, before the replan
     (`songLoopAfterEdit`, src/time/songLoop.ts): both end blocks still there → unchanged (blocks
-    moved between them join it); a split keeps both halves (a new second half right after the last
-    block becomes the last block); an end block joined into the block before it → that block;
-    otherwise a deleted end block shrinks the loop to the first (last) block of its old span still
-    there; nothing left, or another project → cleared. Undoing a deletion does not widen it again.
+    moved between them join it); the loop's last block itself changed (another length or other
+    parts) and new blocks of its scene follow right after it (Split, Build up, Strip down,
+    Breakdown, undoing a join, or redoing any of them) → those join it, the last of them becomes the
+    loop's last block (a block of the same scene pasted or duplicated after an unchanged last block
+    stays outside); an end block joined into the block before it → that block; otherwise a deleted
+    end block shrinks the loop to the first (last) block of its old span still there; nothing left,
+    or another project → cleared.
+  - Undo and redo (`SongLoopHistory`, src/time/songLoop.ts): an edit that changed the loop is
+    remembered by its undo step id (`ProjectStore.lastChange()` tells the store's listeners whether
+    a change was an edit, an undo or a redo, and of which step). Undoing that step brings the loop
+    back as it was before the edit (an end block deleted, the loop shrunk or cleared: the old loop
+    returns with its blocks), redoing it as it was after, as long as the loop was not changed since
+    and its end blocks are in the song; otherwise the rules above apply. An undo or redo that
+    changed the loop by those rules (undoing the step that made a block the loop ends on) is
+    remembered the same way, so redoing that step restores the loop.
+  - Runtime `songLooping` (`Sequencer.songLoopingAt`): true exactly while the block the lane shows
+    at the playhead is one of the loop's blocks the plan repeats (also paused there); false while
+    the song plays towards the loop or a jump to it waits, when it plays on to its end (no loop,
+    cleared, or started after the loop), and when the song is not on. The session updates it on
+    start, block events, replans after edits, loop changes, pause, resume, stop and stalls.
   - Every pass sends its 'block' events (runtime `songBlock`/`songBlockId` follow); the lane maps a
     repeat by its id, so the lane playhead and the readout go back to the loop's start.
     `songTimelineBar` reads the sequencer's live plan (`songLaneTickAt`), never a stale copy.
-    Replay, live pads and exports ignore the loop.
+    Replay and live pads ignore the loop; exports render the song through, or (Export "Loop
+    (blocks a–b)") the loop's blocks once: render source `songRange` plays the song from block a to
+    the end of block b (every part as the song plays it there), then the tail.
 - An 'end' is always handed out where the driver gets it: never before the resume point or before
   the floor of a rewind, so the transport stops even if the end came to lie behind music already
   handed out.
@@ -236,13 +277,19 @@ Rules:
 - `renderOffline()` (src/render/offline.ts) drives the same Sequencer + AudioEngine on an
   `OfflineAudioContext`, in chunks via `suspend()` for progress and cancellation. At the end of the
   music it calls `transportStopped()` like the live transport (sampler one-shots end, take
-  automation hands back), then renders the tail.
+  automation hands back), then renders the tail. Sources: the song, part of it (`songRange`), a
+  performance, a scene or the launcher state. The Export dialog offers the song first when it is
+  opened in Arrange or while the song plays or is paused.
 
 ## State, commands, undo
 
 - `ProjectStore` (src/state/) holds the current Project immutably. Every edit is a named command
   run through immer `produceWithPatches`; history stores patches + inverse patches.
-- Continuous gestures (knob drags) pass a gesture id so one drag = one undo step.
+- Continuous gestures (knob drags) pass a gesture id so one drag = one undo step. A gesture that
+  comes back to where it started leaves no step; `apply()` then returns `noStep: true`, so a
+  message about it offers no Undo (which would undo an older step).
+- `lastChange()` says what the latest change was (an edit, an undo or a redo of which step, or a
+  change outside the history), for listeners that keep state per step (the song loop).
 - An undo group (`beginGroup(label)` / `endGroup()`) merges every recorded edit into one step; a
   Record Notes pass uses it, so Undo removes the pass (new clip, notes, knob moves made meanwhile).
 - UI-only state (selected track, view, pad mode, octave, tips) lives in a separate UI store and is

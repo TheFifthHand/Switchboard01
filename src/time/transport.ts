@@ -256,6 +256,9 @@ export class RealtimeTransport {
   private readonly dispatcher: EngineDispatcher;
   private readonly listeners = new Map<TransportEventName, Set<(payload: unknown) => void>>();
   private queue: Timed[] = [];
+  /** How far ahead of the audio clock events are scheduled now (`lookahead`, or more while held, see holdAhead). */
+  private ahead: number;
+  /** Audio time up to which events were handed to the engine (and not cancelled). */
   private horizon = 0;
   private stallUntil = 0;
   private lastState: string | undefined;
@@ -272,6 +275,7 @@ export class RealtimeTransport {
     this.engine = opts.engine;
     this.sequencer = opts.sequencer;
     this.lookahead = opts.lookahead ?? DEFAULT_LOOKAHEAD;
+    this.ahead = this.lookahead;
     this.interval = opts.interval ?? DEFAULT_INTERVAL;
     const seq = this.sequencer;
     this.dispatcher = new EngineDispatcher({
@@ -487,6 +491,20 @@ export class RealtimeTransport {
     return true;
   }
 
+  /**
+   * Schedule `seconds` ahead of the audio clock instead of the usual
+   * look-ahead (null: back to it), while the main thread will be busy for a
+   * while (an export preparing and rendering): playback goes on through a
+   * block up to about that long, and only a longer one stops it (the stall
+   * policy). Edits, launches, Pause and Stop still act at once: what was
+   * scheduled from their time on is cancelled or regenerated.
+   */
+  holdAhead(seconds: number | null): void {
+    if (this.disposed) return;
+    this.ahead = seconds === null || !Number.isFinite(seconds) ? this.lookahead : Math.max(this.lookahead, seconds);
+    if (this.sequencer.playing) this.schedule(this.ctx.currentTime);
+  }
+
   setTempo(bpm: number): void {
     this.assertAlive();
     const now = this.ctx.currentTime;
@@ -544,6 +562,8 @@ export class RealtimeTransport {
     this.engine.cancelScheduledAutomation(fromTime);
     this.queue = this.queue.filter((q) => q.time < fromTime);
     this.sequencer.invalidate(fromTime);
+    // What was handed out from `fromTime` on is gone: it is generated again below.
+    this.horizon = Math.min(this.horizon, fromTime);
     this.schedule(now);
   }
 
@@ -658,9 +678,10 @@ export class RealtimeTransport {
 
   private schedule(now: number): void {
     if (!this.sequencer.playing && !this.sequencer.idleActive) return;
-    const until = now + this.lookahead;
+    const until = now + this.ahead;
     const events = this.sequencer.process(until);
-    this.horizon = until;
+    // Events further ahead (scheduled while the look-ahead was held longer) are still there.
+    this.horizon = Math.max(this.horizon, until);
     this.dispatcher.dispatch(events);
     this.dispatcher.applyCuts(this.sequencer.takeCuts(), now);
   }

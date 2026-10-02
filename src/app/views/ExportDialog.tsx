@@ -2,17 +2,24 @@
  * Export audio: renders offline with the same engine, routing, timing and
  * automation as playback (not a recording of the speakers) and saves a
  * stereo PCM WAV.
+ *
+ * Opened from Arrange (or while the song plays) it offers the song first.
+ * With a song loop set, "Loop" exports the looped blocks once (with the
+ * tail). Music playing on goes on while the export prepares and renders.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dialog, NumberField, SegmentedControl, Select } from '../../ui/components';
 import type { RenderSource } from '../../render/offline';
+import { uiStore } from '../../state/uiStore';
+import { songBlocks } from '../../time/sequencer';
+import { songLoopRange } from '../../time/songLoop';
 import { session, useProject } from '../instance';
-import { runtimeStore } from '../runtime';
+import { runtimeStore, useRuntime } from '../runtime';
 import { formatSeconds } from '../session';
 import { downloadBlob } from '../download';
 import styles from './ExportDialog.module.css';
 
-type SourceKey = string; // 'now' | 'song' | `perf:<id>` | `scene:<row>`
+type SourceKey = string; // 'now' | 'song' | 'loop' | `perf:<id>` | `scene:<row>`
 
 function safeName(s: string): string {
   return s.replace(/[\\/:*?"<>|]+/g, '').trim().slice(0, 80) || 'omni-song';
@@ -25,6 +32,12 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
   const scenes = useProject((p) => p.scenes);
   const blocks = useProject((p) => p.arrangement.blocks.length);
   const defaultTail = useProject((p) => p.arrangement.tailSeconds);
+  const songLoop = useRuntime((s) => s.songLoop);
+  // The loop's first and last block on the lane (1-based, as the lane counts them), or null.
+  const loopBlocks = useProject((p) => {
+    const r = songLoopRange(songBlocks(p), songLoop);
+    return r ? `${r[0] + 1}-${r[1] + 1}` : null;
+  });
 
   const [source, setSource] = useState<SourceKey>('now');
   const [bars, setBars] = useState(8);
@@ -41,7 +54,10 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
     setMessage(null);
     setProgress(null);
     setTail(defaultTail);
-    const init = props.initialSource ?? (performances.length && runtimeStore.getState().recording === 'off' ? `perf:${performances[performances.length - 1].id}` : 'now');
+    const rt = runtimeStore.getState();
+    // From Arrange, or while the song plays or is paused, the song is what there is to export.
+    const song = blocks > 0 && (uiStore.getState().view === 'arrange' || (rt.mode === 'song' && (rt.playing || rt.paused)));
+    const init = props.initialSource ?? (song ? 'song' : performances.length && rt.recording === 'off' ? `perf:${performances[performances.length - 1].id}` : 'now');
     setSource(init);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -50,12 +66,26 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
     const o = [{ value: 'now', label: 'Clips playing now (loop)' }];
     for (let r = 0; r < scenes.length; r++) o.push({ value: `scene:${r}`, label: `Scene: ${scenes[r].name} (loop)` });
     if (blocks) o.push({ value: 'song', label: 'Song (arrangement)' });
+    if (loopBlocks) {
+      const [a, b] = loopBlocks.split('-');
+      o.push({ value: 'loop', label: a === b ? `Loop (block ${a})` : `Loop (blocks ${a}–${b})` });
+    }
     for (const p of performances) o.push({ value: `perf:${p.id}`, label: `Performance: ${p.name}` });
     return o;
-  }, [scenes, blocks, performances]);
+  }, [scenes, blocks, loopBlocks, performances]);
+
+  // The loop was cleared while it was chosen: the whole song instead.
+  useEffect(() => {
+    if (source === 'loop' && !loopBlocks && progress === null) setSource(blocks ? 'song' : 'now');
+  }, [source, loopBlocks, blocks, progress]);
 
   const renderSource = (): RenderSource => {
     if (source === 'song') return { kind: 'song' };
+    if (source === 'loop') {
+      if (!songLoop) throw new Error('No loop is set');
+      // The looped blocks once, as the song plays them there.
+      return { kind: 'songRange', fromBlockId: songLoop.fromBlockId, toBlockId: songLoop.toBlockId };
+    }
     if (source.startsWith('perf:')) return { kind: 'performance', performanceId: source.slice(5) };
     if (source.startsWith('scene:')) return { kind: 'scene', row: Number(source.slice(6)), bars };
     const launcher = session.sequencer?.getLauncherSnapshot() ?? session.store.getState().tracks.map((t) => ({ trackId: t.id, playing: null }));
@@ -71,7 +101,7 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
   const loopish = source === 'now' || source.startsWith('scene:');
   const nothingPlaying = source === 'now' && !(session.sequencer?.getLauncherSnapshot().some((e) => e.playing) ?? false);
   const label = options.find((o) => o.value === source)?.label ?? '';
-  const defaultFile = `${safeName(projectName)} - ${safeName(label.replace(/^(Performance|Scene): /, '').replace(/ \(.*\)$/, ''))}`;
+  const defaultFile = `${safeName(projectName)} - ${safeName(source === 'loop' && loopBlocks ? `Loop ${loopBlocks}` : label.replace(/^(Performance|Scene): /, '').replace(/ \(.*\)$/, ''))}`;
   const busy = progress !== null;
 
   const start = async () => {

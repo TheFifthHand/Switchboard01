@@ -97,13 +97,19 @@ export function barsText(bars: number): string {
   return bars === 1 ? '1 bar' : `${bars} bars`;
 }
 
-export function passesText(n: number): string {
-  return n === 1 ? '1 pass' : `${n} passes`;
+/** How many times a block plays its scene: "once", "3 times". */
+export function timesText(n: number): string {
+  return n === 1 ? 'once' : `${n} times`;
 }
 
-/** The edge-drag bubble: "3 passes · 12 bars" (Advanced adds how it is made: "(4 × 3)"). */
+/** The edge-drag bubble: "3 times · 12 bars" (Advanced adds how it is made: "(4 × 3)"). */
 export function resizeText(passBars: number, repeats: number, advanced = false): string {
-  return `${passesText(repeats)} · ${barsText(passBars * repeats)}${advanced ? ` (${passBars} × ${repeats})` : ''}`;
+  return `${timesText(repeats)} · ${barsText(passBars * repeats)}${advanced ? ` (${passBars} × ${repeats})` : ''}`;
+}
+
+/** A block's length in its header while its right edge is dragged: "12 bars" (Advanced: "12 bars 4 × 3"). */
+export function liveLengthText(passBars: number, repeats: number, advanced = false): string {
+  return `${barsText(passBars * repeats)}${advanced ? ` ${passBars} × ${repeats}` : ''}`;
 }
 
 /** "16 bars (4 × 4)": the length with how it is made. */
@@ -245,9 +251,11 @@ function partsCount(n: number): string {
 /* ------------------------------------------------------------------ */
 
 /** The tooltip of a part cell: what a click on it does. */
-export function cellTip(v: Pick<BlockView, 'name'>, c: CellView): string {
+export function cellTip(v: Pick<BlockView, 'name'>, c: CellView, sayWhat = false): string {
   const t = cellToggle(c);
   if (t === 'picker') return `Click: choose what ${c.partName} plays in ${v.name}`;
+  // A compact block shows no clip names: the tip says what the part plays first.
+  if (sayWhat && t.choice === null) return `${c.partName} ${cellState(c)}. Click: switch it off in this block`;
   return t.choice === null ? `Click: switch ${c.partName} off in this block` : `Click: switch ${c.partName} back on in this block`;
 }
 

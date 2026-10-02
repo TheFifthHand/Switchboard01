@@ -45,6 +45,8 @@ afterEach(() => {
   act(() => {
     patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, replayId: null });
     setUiMode('simple');
+    // The view is remembered in localStorage, shared with the other test files: leave the default.
+    setView('play');
   });
 });
 
@@ -274,6 +276,10 @@ describe('dragging blocks', () => {
   });
 
   it('dragging near the lane edge scrolls it, and the drop target follows the scroll', async () => {
+    // A song too long to show whole in a 700 px lane (it opens scrolling).
+    act(() => {
+      for (let i = 0; i < 16; i++) cmdAddBlock(project().scenes[i % 4].id);
+    });
     await setup(700);
     const ids = blockIds();
     const scroller = blockEl(ids[0]).closest<HTMLElement>('[data-fade-right], [data-fade-left]') ?? blockEl(ids[0]).parentElement!.parentElement!.parentElement!;
@@ -308,9 +314,15 @@ describe('length, split and join', () => {
     pointer(document.body, 'pointermove', { clientX: start.clientX + 6, clientY: start.clientY });
     pointer(document.body, 'pointermove', { clientX: start.clientX + 3 * pass + 4, clientY: start.clientY });
     const bubble = document.querySelector<HTMLElement>('[data-testid="lane-bubble"]')!;
-    expect(bubble.textContent).toBe('5 passes · 20 bars');
+    expect(bubble.textContent).toBe('5 times · 20 bars');
     expect(bubble.hasAttribute('data-on')).toBe(true);
     expect(lane().dataset.carry).toBe('resize');
+    // The block's header says the length the drop gives, live (its own length is the old one until the drop).
+    await actFrame();
+    const liveLen = blockEl(id).querySelector<HTMLElement>('[data-live-len]')!;
+    expect(liveLen.textContent).toBe('20 bars');
+    expect(getComputedStyle(liveLen).display).not.toBe('none');
+    expect(getComputedStyle(blockEl(id).querySelector('[data-testid="block-length"]')!).display).toBe('none');
     // The block widened and the next one rippled by the same amount; nothing committed yet.
     expect(parseFloat(blockEl(id).style.width)).toBeCloseTo(5 * pass, -1);
     expect(placedX(ids[1])).toBeCloseTo(x1 + 3 * pass, -1);
@@ -319,7 +331,10 @@ describe('length, split and join', () => {
     expect(blocks()[0].repeats).toBe(5);
     expect(undoCount()).toBe(before + 1);
     expect(bubble.hasAttribute('data-on')).toBe(false);
-    expect(status()).toContain('5 passes, 20 bars');
+    expect(status()).toContain('plays 5 times, 20 bars');
+    await actFrame();
+    expect(getComputedStyle(liveLen).display).toBe('none');
+    expect(blockEl(id).querySelector('[data-testid="block-length"]')!.textContent).toBe('20 bars');
     // The ruler numbers block 2's first bar after the longer Intro.
     await actFrame();
     const ruler = document.querySelector('[data-testid="song-ruler"]')!;
@@ -342,7 +357,7 @@ describe('length, split and join', () => {
     await setup();
     const id = blockIds()[1]; // Groove, 4 passes
     const before = undoCount();
-    click(byLabel('Split Groove after pass 1 of 4', blockEl(id)));
+    click(byLabel('Split Groove in two after it plays once (of 4)', blockEl(id)));
     expect(blocks().length).toBe(7);
     expect(blocks()[1]).toMatchObject({ id, repeats: 1 });
     expect(blocks()[2]).toMatchObject({ sceneId: blocks()[1].sceneId, repeats: 3 });
@@ -354,7 +369,7 @@ describe('length, split and join', () => {
     expect(blocks().length).toBe(6);
     expect(blocks()[1]).toMatchObject({ id, repeats: 4 });
     // Split again; this time join from the chip on the seam between the two halves.
-    click(byLabel('Split Groove after pass 2 of 4', blockEl(id)));
+    click(byLabel('Split Groove in two after it plays 2 times (of 4)', blockEl(id)));
     const chip = document.querySelector<HTMLElement>(`[data-join="${id}"]`)!;
     expect(chip).not.toBeNull();
     click(chip);
@@ -621,7 +636,7 @@ describe('keyboard only', () => {
     expect(document.activeElement).toBe(blockEl(ids[0]));
     key(document.activeElement!, 'keydown', { key: '+' });
     expect(blocks()[0].repeats).toBe(3);
-    expect(status()).toBe('Intro: 3 passes, 12 bars.');
+    expect(status()).toBe('Intro: plays 3 times, 12 bars.');
     // Down into the part cells; Enter toggles; up and down; Escape back to the block.
     key(document.activeElement!, 'keydown', { key: 'ArrowDown' });
     const drums = trackId('Drums');
@@ -655,6 +670,7 @@ describe('keyboard only', () => {
     expect(blocks()[2].repeats).toBe(2);
     act(() => blockEl(ids[0]).focus());
     key(blockEl(ids[0]), 'keydown', { key: 'Enter' });
+    click(menuItem('Scenes and clips'));
     click(menuItem('Layer a scene in'));
     click(menuItem('Break'));
     expect(Object.values(blocks()[0].parts ?? {}).every((v) => v === sceneId('Break'))).toBe(true);
@@ -663,8 +679,10 @@ describe('keyboard only', () => {
     key(blockEl(ids[0]), 'keydown', { key: 'ArrowRight', altKey: true });
     expect(blockIds()[1]).toBe(ids[0]);
     key(document.activeElement!, 'keydown', { key: 'Enter' });
+    click(menuItem('Copy, cut, move'));
     click(menuItem('Copy block'));
     key(document.activeElement!, 'keydown', { key: 'Enter' });
+    click(menuItem('Copy, cut, move'));
     click(menuItem('Paste after'));
     expect(blocks()[2].sceneId).toBe(blocks()[1].sceneId);
     // The ruler: arrows choose a bar, Enter plays the song from it.
@@ -1037,7 +1055,7 @@ describe('feedback', () => {
     key(blockEl(ids[0]), 'keydown', { key: 'ArrowRight', altKey: true });
     expect(notice()).toMatchObject({ text: 'Moved Intro to position 2', action: 'undo' });
     key(blockEl(ids[0]), 'keydown', { key: '+' });
-    expect(notice()).toMatchObject({ text: 'Intro: 3 passes, 12 bars', action: 'undo' });
+    expect(notice()).toMatchObject({ text: 'Intro: plays 3 times, 12 bars', action: 'undo' });
     key(blockEl(ids[0]), 'keydown', { key: 'F2' });
     const input = blockEl(ids[0]).querySelector<HTMLInputElement>('input')!;
     typeInto(input, 'Opening');
@@ -1052,7 +1070,7 @@ describe('feedback', () => {
     expect(selected()).toEqual([ids[2]]);
     act(() => patchRuntime({ notice: null }));
     pointer(document.body, 'pointerup', { clientX: r.left + 6 + 180, clientY: r.top + 20 });
-    expect(notice()?.text).toMatch(/^Lift: \d+ passes, \d+ bars$/);
+    expect(notice()?.text).toMatch(/^Lift: plays \d+ times, \d+ bars$/);
   });
 
   it('a dropped block settles in about 200 ms from where it was let go, starting at once', async () => {
@@ -1074,6 +1092,8 @@ describe('feedback', () => {
     const content = lane().querySelector<HTMLElement>('[class*="content"]')!.getBoundingClientRect().left;
     expect(Math.abs(Number(/translate3d\((-?[\d.]+)px/.exec(first)![1]) + content - dropLeft)).toBeLessThan(3);
     await settle(260);
+    // (Allow a busy machine a little longer to finish the 200 ms settle.)
+    for (let i = 0; i < 20 && (scriptAnimations(el).length || el.hasAttribute('data-settling')); i++) await settle(50);
     expect(scriptAnimations(el).length).toBe(0);
     expect(el.hasAttribute('data-settling')).toBe(false);
   });
@@ -1151,7 +1171,10 @@ describe('feedback', () => {
     expect(blockEl(ids[3]).dataset.next).toBeUndefined();
   });
 
-  it('dragging a block edge near the lane end scrolls the lane, and the scrolled distance counts', async () => {
+  it("a block's edge scrolls the lane only once the pointer passes the lane's visible edge, and the scrolled distance counts", async () => {
+    act(() => {
+      for (let i = 0; i < 16; i++) cmdAddBlock(project().scenes[i % 4].id);
+    });
     await setup(700);
     const ids = blockIds();
     const sc = scroller();
@@ -1162,12 +1185,17 @@ describe('feedback', () => {
     const r0 = blocks()[1].repeats;
     pointer(edge, 'pointerdown', { clientX: r.left + 6, clientY: r.top + 20 });
     pointer(document.body, 'pointermove', { clientX: r.left + 12, clientY: r.top + 20 });
+    // Near the edge but inside the lane: it stays still (an edge never runs away under a resting pointer).
     pointer(document.body, 'pointermove', { clientX: right - 4, clientY: r.top + 20 });
-    const travel = right - 4 - (r.left + 6);
+    await settle(500);
+    expect(sc.scrollLeft).toBe(0);
+    // Past the visible edge: it scrolls, and the scrolled distance counts.
+    pointer(document.body, 'pointermove', { clientX: right + 30, clientY: r.top + 20 });
+    const travel = right + 30 - (r.left + 6);
     const pass = widthOf(id) / r0;
     await settle(700);
     expect(sc.scrollLeft).toBeGreaterThan(100);
-    pointer(document.body, 'pointerup', { clientX: right - 4, clientY: r.top + 20 });
+    pointer(document.body, 'pointerup', { clientX: right + 30, clientY: r.top + 20 });
     expect(blocks()[1].repeats).toBeGreaterThan(Math.min(16, r0 + Math.round(travel / pass)));
   });
 });

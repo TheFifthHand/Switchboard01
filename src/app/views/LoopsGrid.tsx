@@ -1252,7 +1252,7 @@ function LiftedRow({ ui, liftRef, labelRef }: { ui: Extract<DragUi, { kind: 'row
           <Icon name="play" size={12} />
         </span>
         <span className={styles.sceneName}>{ui.scene.name}</span>
-        <span className={`${styles.sceneCount} mono`}>{ui.scene.count}/8</span>
+        <span className={`${styles.sceneCount} mono`}>{scenePartsText(ui.scene.count)}</span>
         <LiftLabel labelRef={labelRef} />
       </div>
     </div>,
@@ -1444,6 +1444,17 @@ function TrackHeader(props: { col: ColumnSummary; index: number; anySolo: boolea
 /* Scenes                                                              */
 /* ------------------------------------------------------------------ */
 
+/** How many parts a scene row plays, in the words Arrange's scene cards use ("4 parts"). */
+export function scenePartsText(n: number): string {
+  return n === 0 ? 'no clips' : n === 1 ? '1 part' : `${n} parts`;
+}
+
+/** The scene button's tip: what "4 parts" means ("4 of 8 parts have a clip in this row …"). */
+function scenePartsTip(n: number, of: number): string {
+  if (n === 0) return `none of the ${of} parts has a clip in this row, so every part stops.`;
+  return `${n} of ${of} parts ${n === 1 ? 'has a clip' : 'have clips'} in this row and start; the others stop.`;
+}
+
 function SceneButton(props: {
   row: number;
   scene: Scene;
@@ -1489,7 +1500,7 @@ function SceneButton(props: {
   return (
     <div ref={cellRef} className={styles.sceneCell} data-scene-row={row} onContextMenu={(e) => onContextMenuOpen(e, (a) => open(a, btnRef.current))}>
       <Tooltip
-        tip={`Play the ${scene.name} scene: ${count} part${count === 1 ? '' : 's'} with clips in this row start, the others stop.`}
+        tip={`Play the ${scene.name} scene: ${scenePartsTip(count, columns.length)}`}
         detail="Scenes switch on the next bar. Drag the scene (or Alt+Up / Alt+Down) to reorder the rows; the clips move with it. Right-click or F2 to rename."
       >
         <button
@@ -1510,7 +1521,7 @@ function SceneButton(props: {
             <Icon name="play" size={12} />
           </span>
           <span className={styles.sceneName}>{scene.name}</span>
-          <span className={`${styles.sceneCount} mono`}>{count}/8</span>
+          <span className={`${styles.sceneCount} mono`}>{scenePartsText(count)}</span>
         </button>
       </Tooltip>
       <Tooltip name="Scene options" tip="Rename, move, add to the song or export this scene.">

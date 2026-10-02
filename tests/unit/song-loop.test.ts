@@ -356,18 +356,22 @@ describe('edits while the song loops', () => {
     expect(r.held('t4')).toEqual(plain.held('t4'));
   });
 
-  it('undo and redo are edits like any other; undoing a deletion does not widen the loop again', () => {
+  it('undo and redo are edits like any other; Undo of a deletion that shrank the loop brings the loop back, Redo shrinks it again', () => {
     const r = new Rig().setLoop('b1', 'b2').playSong().to(1000);
     r.edit((s) => cmd.removeBlocks(s, ['b2']));
+    expect(r.loop).toEqual({ fromBlockId: 'b1', toBlockId: 'b1' });
     r.to(1500);
     r.edit((s) => s.undo());
     expect(r.project.arrangement.blocks.map((b) => b.id)).toEqual(['b0', 'b1', 'b2', 'b3']);
-    expect(r.loop).toEqual({ fromBlockId: 'b1', toBlockId: 'b1' });
+    expect(r.loop).toEqual({ fromBlockId: 'b1', toBlockId: 'b2' });
+    // b2 plays after b1 again; deleted again while it plays (Redo), it sounds on to the next bar line and
+    // the loop that is left (b1) takes over there.
     r.to(2500);
     r.edit((s) => s.redo());
+    expect(r.loop).toEqual({ fromBlockId: 'b1', toBlockId: 'b1' });
     r.to(5000);
-    expect(blockIds(r, 5000)).toEqual([[768, 'b1'], [2304, 'b1'], [3840, 'b1']]);
-    expect(r.notes('t1').filter(before(5000))).toEqual(song(...cycles(768, 3, [[1, 1536]])).filter(before(5000)));
+    expect(blockIds(r, 5000)).toEqual([[768, 'b1'], [2304, 'b2'], [2688, 'b1'], [4224, 'b1']]);
+    expect(r.notes('t1').filter(before(5000))).toEqual(song([1, 768, 2304], [2, 2304, 2688], ...cycles(2688, 2, [[1, 1536]])).filter(before(5000)));
     seamless(r);
   });
 
@@ -504,5 +508,59 @@ describe('Replay and live pads ignore the loop', () => {
     r.play({ mode: { kind: 'live' } }).to(2000);
     expect(r.seq.songPlan()).toBeNull();
     expect(r.notes('t1').filter(before(2000))).toEqual(plays(0, 0, 2000));
+  });
+});
+
+describe('looping now (runtime songLooping, Sequencer.songLoopingAt)', () => {
+  const looping = (r: Rig) => r.seq.songLoopingAt(r.tick);
+
+  it('false while the song plays towards the loop; true inside it, on every pass and while paused there', () => {
+    const r = new Rig().setLoop('b1');
+    expect(looping(r)).toBe(false);
+    r.playSong(0).to(400);
+    expect(looping(r)).toBe(false);
+    r.to(800);
+    expect(looping(r)).toBe(true);
+    // The loop's second pass (b1 again from 2304).
+    r.to(2304 + 200);
+    expect(r.seq.songBlockAt(r.tick)).toEqual({ index: 1, blockId: 'b1' });
+    expect(looping(r)).toBe(true);
+    r.pause();
+    expect(looping(r)).toBe(true);
+    r.resume().to(2304 + 600);
+    expect(looping(r)).toBe(true);
+    // Cleared inside it: the song plays on to its end.
+    r.setLoop(null);
+    expect(looping(r)).toBe(false);
+  });
+
+  it('played from a block after the loop: never looping (the song plays to its end)', () => {
+    const r = new Rig().setLoop('b1').playSong(3);
+    for (const t of [3100, 3300, 3450]) {
+      r.to(t);
+      expect(looping(r)).toBe(false);
+    }
+  });
+
+  it('a loop set while the song plays outside it: false until the jump at the bar line, then true', () => {
+    const r = new Rig().playSong(0).to(100);
+    r.setLoop('b2');
+    expect(looping(r)).toBe(false);
+    r.to(380);
+    expect(looping(r)).toBe(false);
+    r.to(420);
+    expect(r.seq.songBlockAt(r.tick)!.blockId).toBe('b2');
+    expect(looping(r)).toBe(true);
+  });
+
+  it('an edit that moves the playing block out of the loop: false (the song plays on to its end), Undo: true again', () => {
+    const r = new Rig().setLoop('b1', 'b3').playSong(2).to(2304 + 100);
+    expect(looping(r)).toBe(true);
+    // b2 moved after b3: the loop (b1 .. b3) no longer holds it, and an edit never jumps.
+    r.edit((s) => cmd.moveBlocks(s, ['b2'], 4));
+    expect(r.seq.songBlockAt(r.tick)!.blockId).toBe('b2');
+    expect(looping(r)).toBe(false);
+    r.edit((s) => s.undo());
+    expect(looping(r)).toBe(true);
   });
 });

@@ -63,6 +63,8 @@ reviewed as a pull request from the development branch.
 | Song lane | done | edge-to-edge blocks with a row per part; drag with live slot opening and a settle; Ctrl/Alt copy; edge drag for passes; split/join; multi-select; clipboard; scene cards layer or insert; keyboard path for everything; Follow, zoom, Fit song |
 | Pads | done | Loops pads and scene rows lift, preview the result, and settle like the lane (shared `src/ui/motion.ts`) |
 | Reviews | done | hands-on UX review with frame timing (touch drags, re-fit on drop, follow snap-back, slow-PC stutter, layer semantics … fixed) and adversarial correctness review (5 defects reproduced and fixed with regression tests; a seeded fuzz of random live edits guards the rest) |
+| Round 2 | done | loop a section (Loop button, ruler band, block menu; seamless repeats; edits keep working inside it); Build up / Strip down / Breakdown; touch press-and-hold to pick up, swipe to scroll; a drop does about a third less work; gestures that end where they started leave no undo step |
+| Round 3 | done | a first-time-user review and a correctness review: one Play per screen (in Arrange the transport Play, Space, Stop and Export act on the song); export the looped section; playing on through an export; helpers on the playing block play what the lane shows; loops survive undo/redo; Fit song never zooms in, compact headers for long songs; taller part rows; calmer "Off" cells; menus never cover their button; tooltips wait for the pointer; toggles keep their "on" look under the pointer; Undo/Redo always on the top bar; plain words ("times", "Echo tail") |
 
 ## State at handoff
 
@@ -73,7 +75,7 @@ reviewed as a pull request from the development branch.
   the brief with its evidence), `docs/screenshots/`, `evidence/wav/`, `evidence/launcher-smoke.txt`.
 - Guides: `docs/GUIDE.md` (first loop; record, mix, master and export; MIDI keyboard; recording
   your voice or guitar).
-- No failing checks: typecheck clean; unit 1008, browser 999, e2e 25 tests pass.
+- No failing checks: typecheck clean; unit 1106, browser 1085, e2e 25 tests pass.
 - Remaining work is local only: listening, physical latency, a real MIDI keyboard and microphone,
   the Windows launcher on Windows, Chrome/Edge on Windows, real background-tab throttling (see
   TEST_REPORT.md).

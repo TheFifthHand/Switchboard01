@@ -217,6 +217,26 @@
 .pad[data-corner] .text {
   padding-right: 30px;
 }
+/*
+ * Beside that key a large name may use two lines ("Bell / Hook" rather than
+ * "Bell H…"). The text block holds two name lines: a one-line name keeps the
+ * length under it; a name that needs both lines hides the length (the selected
+ * clip's length is also in the pad actions under the grid).
+ */
+.pad[data-corner][data-label='lg'] .text {
+  max-height: 36px;
+  overflow: hidden;
+}
+.pad[data-corner][data-label='lg'] .text > * {
+  flex: none;
+}
+.pad[data-corner][data-label='lg'] .label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
 /* Pads with only a name (drum and note pads) may use two lines. */
 .pad[data-wrap] .label {

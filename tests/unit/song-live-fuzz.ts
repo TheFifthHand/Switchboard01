@@ -13,6 +13,8 @@
  *   plan says (a block that was continued after a split or join keeps the
  *   loop phases it had, so there any bar-aligned phase of the right clip is
  *   accepted).
+ * With `shape`, the song helpers (build up, strip down, breakdown) are used
+ * too, often on the block that plays.
  * With `loops`, song loops are also set (before Play, or while it plays or
  * is paused), changed and cleared at random, and the session's loop rules
  * apply to every edit (see songLoopAfterEdit). Then also:
@@ -48,9 +50,9 @@ function expected(p: Project, trackId: Id, row: number | null, loop: number, fro
   return out.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
 }
 
-export function runFuzz(seed: number, opts: { split: boolean; steps?: number; loops?: boolean }): string[] {
+export function runFuzz(seed: number, opts: { split: boolean; steps?: number; loops?: boolean; shape?: boolean }): string[] {
   const problems: string[] = [];
-  const where = `seed ${seed}${opts.split ? ' (split)' : ''}${opts.loops ? ' (loops)' : ''}`;
+  const where = `seed ${seed}${opts.split ? ' (split)' : ''}${opts.loops ? ' (loops)' : ''}${opts.shape ? ' (shape)' : ''}`;
   const rnd = mulberry32(seed);
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)];
   const r = new Rig();
@@ -87,7 +89,9 @@ export function runFuzz(seed: number, opts: { split: boolean; steps?: number; lo
     const p = r.project;
     const ids = p.arrangement.blocks.map((b) => b.id);
     const scene = () => pick(p.scenes).id;
-    const op = Math.floor(rnd() * (opts.loops ? 20 : 17));
+    // A song helper now and then (without `shape` no extra draw, so the other runs keep their seeds).
+    const shapeNow = opts.shape ? rnd() < 0.15 : false;
+    const op = shapeNow ? -1 : Math.floor(rnd() * (opts.loops ? 20 : 17));
     if (op === 16 && !paused) {
       r.setTempo(pick([90, 120, 150, 175]));
       lastEditTick = r.seq.getPosition(r.now + MARGIN).tick;
@@ -114,7 +118,12 @@ export function runFuzz(seed: number, opts: { split: boolean; steps?: number; lo
     }
     const changedBefore = r.project;
     r.edit((s) => {
-      if (op === 0 && ids.length) cmd.moveBlocks(s, [pick(ids)], Math.floor(rnd() * (ids.length + 1)));
+      if (shapeNow && ids.length) {
+        // Mostly the block that plays (that is where a helper changes what sounds at once).
+        const playing = r.seq.songBlockAt(pos)?.blockId;
+        const id = playing && rnd() < 0.7 ? playing : pick(ids);
+        cmd.shapeBlock(s, id, pick(['build', 'strip', 'breakdown'] as const));
+      } else if (op === 0 && ids.length) cmd.moveBlocks(s, [pick(ids)], Math.floor(rnd() * (ids.length + 1)));
       else if (op === 1) cmd.insertBlocks(s, [{ sceneId: scene(), repeats: 1 + Math.floor(rnd() * 3) }], Math.floor(rnd() * (ids.length + 1)));
       else if (op === 2 && ids.length > 2) cmd.removeBlocks(s, ids.filter(() => rnd() < 0.3));
       else if (op === 3 && ids.length) cmd.setBlockRepeats(s, pick(ids), 1 + Math.floor(rnd() * 4));

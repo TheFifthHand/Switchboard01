@@ -348,3 +348,60 @@ describe('renderOffline', () => {
     });
   });
 });
+
+describe('renderOffline: part of the song (songRange, a loop exported once)', () => {
+  /** Four blocks: a (row 0 x2), b (row 1), c (row 2 x2, chords layered from row 0), d (row 3); t1 marks each bar by pitch. */
+  function fourBlocks(): Project {
+    let p = createProject({ bpm: 120, now: 0 });
+    for (let row = 0; row < 4; row++) p = withClip(p, 't1', row, 1, [[0, 40 + row, 1], [192, 40 + row, 0.5]]);
+    p = withClip(p, 't4', 0, 1, [[96, 60, 0.7]]);
+    const [s0, s1, s2, s3] = p.scenes;
+    p.arrangement = {
+      tailSeconds: 1,
+      blocks: [
+        { id: 'a', sceneId: s0.id, repeats: 2 },
+        { id: 'b', sceneId: s1.id, repeats: 1 },
+        { id: 'c', sceneId: s2.id, repeats: 2, parts: { t4: s0.id } },
+        { id: 'd', sceneId: s3.id, repeats: 1 },
+      ],
+    };
+    return p;
+  }
+
+  it('plans the blocks from the first to the last (either way round); blocks no longer in the song cannot be exported', () => {
+    const p = fourBlocks();
+    const plan = computeRenderPlan(p, { kind: 'songRange', fromBlockId: 'b', toBlockId: 'c' }, 0.5);
+    expect(plan).toMatchObject({ startTick: 2 * 384, endTick: 5 * 384 });
+    // 3 bars at 120 BPM.
+    expect(plan.musicSeconds).toBeCloseTo(6, 9);
+    expect(plan.totalSeconds).toBeCloseTo(RENDER_START_OFFSET + 6 + 0.5, 9);
+    expect(computeRenderPlan(p, { kind: 'songRange', fromBlockId: 'c', toBlockId: 'b' }, 0.5)).toEqual(plan);
+    expect(() => computeRenderPlan(p, { kind: 'songRange', fromBlockId: 'b', toBlockId: 'gone' }, 0.5)).toThrow();
+  });
+
+  it('renders exactly what the song plays over those blocks, once, then the tail', async () => {
+    const p = fourBlocks();
+    const song = await renderOffline({ project: p, source: { kind: 'song' }, sampleRate: SR, tailSeconds: 1, ...factory() });
+    const f = factory();
+    const part = await renderOffline({ project: p, source: { kind: 'songRange', fromBlockId: 'b', toBlockId: 'c' }, sampleRate: SR, tailSeconds: 1, ...f });
+    // Length: the three bars plus the tail.
+    expect(part.length).toBe(Math.ceil((RENDER_START_OFFSET + 6 + 1) * SR));
+    // Sample for sample what the song render has from b's start (4 s in) to c's end.
+    const from = Math.round(4 * SR);
+    const n = Math.round(6 * SR);
+    for (const ch of [0, 1]) {
+      const a = part.getChannelData(ch).subarray(0, n);
+      const b = song.getChannelData(ch).subarray(from, from + n);
+      let diff = 0;
+      for (let i = 0; i < n; i++) diff = Math.max(diff, Math.abs(a[i] - b[i]));
+      expect(diff).toBe(0);
+    }
+    // The layered chords in c are there; nothing of a or d.
+    const pitches = f.engines[0].notes.map((x) => x.pitch);
+    expect(new Set(pitches)).toEqual(new Set([41, 42, 60]));
+    expect(f.engines[0].notes).toHaveLength(2 + 2 * 3);
+    // The music ends with c: the transport stop comes there, the tail rings on.
+    expect(f.engines[0].stops).toHaveLength(1);
+    expect(f.engines[0].stops[0]).toBeCloseTo(RENDER_START_OFFSET + 6, 6);
+  });
+});

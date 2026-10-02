@@ -8,8 +8,11 @@
  * across the ruler (every block from the one under the press to the one
  * under the pointer: the band always snaps to block edges), a drag of one of
  * the band's ends (to the nearest block edge, never past the other end), and
- * the Loop toggle / block menu (the selection, the playing block or the
- * first block). A loop whose blocks are gone is no loop.
+ * the Loop button / block menu. The Loop button names what it acts on: the
+ * blocks the user selected, else the loop that is on (pressing turns it
+ * off), else the block playing now, else the first block; when the user
+ * selected other blocks than the loop, pressing it moves the loop there. A
+ * loop whose blocks are gone is no loop.
  */
 import type { SongLayout } from './songLayout';
 
@@ -92,8 +95,8 @@ export function spanX(layout: SongLayout, span: LoopSpan): { left: number; right
 }
 
 /**
- * What the Loop toggle (or a block menu) loops: the span of the selected
- * blocks (first to last), else the block playing now, else the first block.
+ * What a block menu's Loop item loops: the span of the given blocks (first to
+ * last), else the block playing now, else the first block.
  */
 export function loopTarget(order: readonly Id[], selected: readonly Id[], playingId: Id | null): LoopSpan | null {
   const idx = selected.map((id) => order.indexOf(id)).filter((i) => i >= 0);
@@ -101,6 +104,24 @@ export function loopTarget(order: readonly Id[], selected: readonly Id[], playin
   const p = playingId ? order.indexOf(playingId) : -1;
   if (p >= 0) return { from: p, to: p };
   return order.length ? { from: 0, to: 0 } : null;
+}
+
+/**
+ * What the Loop button acts on: the blocks the user selected (by a click or
+ * the keyboard: `userSelected`, empty when the selection was left by an
+ * action such as a drop or a paste), else the loop that is on, else the block
+ * playing now, else the first block.
+ */
+export function loopButtonTarget(order: readonly Id[], userSelected: readonly Id[], playingId: Id | null, current: LoopSpan | null): LoopSpan | null {
+  if (userSelected.some((id) => order.includes(id))) return loopTarget(order, userSelected, null);
+  if (current) return current;
+  return loopTarget(order, [], playingId);
+}
+
+/** What pressing the Loop button does: turn the loop off (it is on `target` already), or set (or move) it to `target`. */
+export function loopButtonPress(current: LoopSpan | null, target: LoopSpan | null): LoopSpan | null {
+  if (!target) return null;
+  return current && sameSpan(current, target) ? null : target;
 }
 
 /** "Groove (block 2)" or "Groove to Lift (blocks 2–4)". */
@@ -111,7 +132,26 @@ export function loopName(names: readonly string[], span: LoopSpan): string {
   return `${a} to ${b} (blocks ${span.from + 1}–${span.to + 1})`;
 }
 
-/** What the lane says when the loop changes. */
+/** The Loop button's target, short: "Groove (block 3)" or "blocks 2–4". */
+export function loopTargetName(names: readonly string[], span: LoopSpan): string {
+  return span.from === span.to ? loopName(names, span) : `blocks ${span.from + 1}–${span.to + 1}`;
+}
+
+/** The Loop button's name and tooltip for `target`, with the loop that is on now. */
+export function loopButtonText(names: readonly string[], current: LoopSpan | null, target: LoopSpan | null): { label: string; tip: string } {
+  if (!target) return { label: 'Loop', tip: 'Add scene blocks first.' };
+  const what = loopTargetName(names, target);
+  const label = `Loop ${what}`;
+  if (!current) return { label, tip: `Repeat ${what} while the song plays.` };
+  if (sameSpan(current, target)) return { label, tip: `Loop on: ${loopName(names, current)}. Press to play the song through.` };
+  return { label, tip: `Loop on: ${loopName(names, current)}. Press to move the loop to ${what}.` };
+}
+
+/**
+ * What the lane says when the loop changes. "Loop on", not "looping": the
+ * loop is set whether or not the song plays inside it now (the mode box says
+ * "looping" only while it does).
+ */
 export function loopStatus(names: readonly string[], span: LoopSpan | null): string {
-  return span ? `Looping ${loopName(names, span)}.` : 'Loop off: the song plays through.';
+  return span ? `Loop on: ${loopName(names, span)}.` : 'Loop off: the song plays through.';
 }

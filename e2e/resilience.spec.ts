@@ -22,8 +22,11 @@ test('reopens and plays a built-in starter with the network unavailable', async 
   await page.reload();
   await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
   // The app reports that it is ready to work offline (the transport's status sits behind the Welcome card).
+  // The indicator is on the strip from 1440 px; narrower windows list it in the More menu.
+  await page.setViewportSize({ width: 1440, height: 800 });
   const offline = page.locator('header[aria-label="Transport"] [role="status"]', { hasText: 'Offline ready' });
   await expect(offline).toBeVisible();
+  await page.setViewportSize({ width: 1366, height: 768 });
   await context.setOffline(true);
   await page.reload();
   await expect(page.getByRole('button', { name: 'Jump In' })).toBeVisible();

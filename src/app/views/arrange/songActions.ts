@@ -17,7 +17,7 @@ import { MAX_BLOCK_REPEATS, type Id } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { session } from '../../instance';
 import { notify } from '../../runtime';
-import { barsText, cellToast, passesText } from './songModel';
+import { barsText, cellToast, timesText } from './songModel';
 
 const blocks = () => session.store.getState().arrangement.blocks;
 const sceneName = (sceneId: Id) => session.store.getState().scenes.find((s) => s.id === sceneId)?.name ?? 'Missing scene';
@@ -38,9 +38,14 @@ function position(id: Id): number {
   return blocks().findIndex((b) => b.id === id) + 1;
 }
 
-/** A toast with Undo for the edit just made (it replaces the toast before it). */
-function done(text: string): string {
-  notify(text.replace(/\.$/, ''), 'info', 'undo');
+/**
+ * A toast for the edit just made (it replaces the toast before it), with Undo
+ * unless the edit left no undo step of its own (`r.noStep`: a gesture that
+ * came back to where it started; Undo would take back an older edit).
+ */
+function done(text: string, r?: { noStep?: boolean }): string {
+  if (r?.noStep) notify(text.replace(/\.$/, ''));
+  else notify(text.replace(/\.$/, ''), 'info', 'undo');
   return text;
 }
 
@@ -78,6 +83,12 @@ export const LOCKED_TEXT = 'The song is locked while a take records.';
 /* ------------------------------------------------------------------ */
 
 let clipboard: cmd.BlockTemplate[] | null = null;
+/**
+ * Where the last Cut took its blocks from (an insertion gap) and the song as
+ * the Cut left it: while the song is still exactly that, Paste puts them back
+ * there.
+ */
+let cutFrom: { gap: number; blocks: readonly unknown[] } | null = null;
 
 export function hasBlockClipboard(): boolean {
   return !!clipboard?.length;
@@ -86,12 +97,19 @@ export function hasBlockClipboard(): boolean {
 /** For tests: empty the block clipboard. */
 export function clearBlockClipboard(): void {
   clipboard = null;
+  cutFrom = null;
+}
+
+/** Where the blocks just cut came from, while nothing else changed the song since the Cut; else null. */
+export function cutOrigin(): number | null {
+  return cutFrom && cutFrom.blocks === blocks() ? cutFrom.gap : null;
 }
 
 export function copyBlocks(ids: readonly Id[]): string | null {
   const list = blocks().filter((b) => ids.includes(b.id));
   if (!list.length) return null;
   clipboard = list.map((b) => cmd.blockTemplate(b));
+  cutFrom = null;
   const text = `Copied ${names(list.map((b) => b.id))}. Ctrl+V pastes after the selected block.`;
   notify(text);
   return text;
@@ -103,9 +121,11 @@ export function cutBlocks(ids: readonly Id[]): string | null {
   if (!list.length) return null;
   const label = names(list.map((b) => b.id));
   const templates = list.map((b) => cmd.blockTemplate(b));
-  if (!session.accepted(cmd.removeBlocks(session.store, list.map((b) => b.id)))) return null;
+  const gap = blocks().findIndex((b) => b.id === list[0].id);
+  if (!session.accepted(cmd.removeBlocks(session.store, list.map((b) => b.id), { cut: true }))) return null;
   clipboard = templates;
-  const text = `Cut ${label}. Ctrl+V pastes it back where you want it.`;
+  cutFrom = { gap, blocks: blocks() };
+  const text = `Cut ${label}. Ctrl+V pastes ${list.length === 1 ? 'it' : 'them'} back, after the block you select.`;
   notify(text, 'info', 'undo');
   return text;
 }
@@ -119,6 +139,7 @@ export function pasteBlocks(gap: number): { ids: Id[]; text: string } | null {
   if (refusedWhileLocked()) return null;
   const r = cmd.insertBlocks(session.store, clipboard, gap);
   if (!session.accepted(r) || !r.blockIds?.length) return null;
+  cutFrom = null;
   const first = position(r.blockIds[0]);
   const where = r.blockIds.length === 1 ? `block ${first}` : `blocks ${first}–${first + r.blockIds.length - 1}`;
   const skipped = r.skipped ? ` ${r.skipped === 1 ? 'One block was' : `${r.skipped} blocks were`} left out: its scene no longer exists.` : '';
@@ -188,32 +209,36 @@ export function newGesture(what: string): string {
   return `${what}-${Date.now()}-${gestureCounter}`;
 }
 
-/** "Groove: 3 passes, 12 bars". */
+/** "Groove: plays 3 times, 12 bars". */
 export function lengthStatus(name: string, repeats: number, passBars: number): string {
-  return `${name}: ${passesText(repeats)}, ${barsText(passBars * repeats)}.`;
+  return `${name}: plays ${timesText(repeats)}, ${barsText(passBars * repeats)}.`;
 }
 
 /**
  * Set repeats on blocks (one undo step for all of them; `gesture` lets an
- * edge drag pass its own id).
+ * edge drag pass its own id). `open` leaves the gesture open, so the next
+ * call with the same gesture joins this undo step (quick + / − presses).
  */
-export function setRepeats(ids: readonly Id[], repeats: (current: number) => number, gesture?: string): string | null {
+export function setRepeats(ids: readonly Id[], repeats: (current: number) => number, gesture?: string, open = false): string | null {
   if (refusedWhileLocked()) return null;
   const g = gesture ?? newGesture('repeats');
   const changed: Id[] = [];
+  let noStep = false;
   for (const id of ids) {
     const b = blocks().find((x) => x.id === id);
     if (!b) continue;
     const want = Math.min(MAX_BLOCK_REPEATS, Math.max(1, repeats(b.repeats)));
     if (want === b.repeats) continue;
-    if (!session.accepted(cmd.setBlockRepeats(session.store, id, want, g))) break;
+    const r = cmd.setBlockRepeats(session.store, id, want, g);
+    if (!session.accepted(r)) break;
+    noStep = !!r.noStep;
     changed.push(id);
   }
-  session.store.endGesture();
+  if (!open) session.store.endGesture();
   if (!changed.length) return null;
-  if (changed.length > 1) return done(`${changed.length} blocks changed length.`);
+  if (changed.length > 1) return done(`${changed.length} blocks changed length.`, { noStep });
   const b = blocks().find((x) => x.id === changed[0])!;
-  return done(lengthStatus(blockName(changed[0]), b.repeats, blockBars(session.store.getState(), b)));
+  return done(lengthStatus(blockName(changed[0]), b.repeats, blockBars(session.store.getState(), b)), { noStep });
 }
 
 /** Split a block after pass `afterPass`; returns the new block's id. */
@@ -223,7 +248,7 @@ export function splitBlock(id: Id, afterPass: number): { id: Id; text: string } 
   const r = cmd.splitBlock(session.store, id, afterPass);
   if (!session.accepted(r) || !r.blockId) return null;
   const b = blocks().find((x) => x.id === r.blockId)!;
-  const text = `Split ${name} after pass ${afterPass}: ${passesText(afterPass)} and ${passesText(b.repeats)}.`;
+  const text = `Split ${name} in two: it plays ${timesText(afterPass)}, then ${timesText(b.repeats)}.`;
   notify(text, 'info', 'undo');
   return { id: r.blockId, text };
 }
@@ -233,7 +258,7 @@ export function joinWithNext(id: Id): string | null {
   const name = blockName(id);
   if (!session.accepted(cmd.joinWithNext(session.store, id))) return null;
   const b = blocks().find((x) => x.id === id);
-  const text = `Joined ${name} with the next block: ${passesText(b?.repeats ?? 1)}.`;
+  const text = `Joined ${name} with the next block: it plays ${timesText(b?.repeats ?? 1)}.`;
   notify(text, 'info', 'undo');
   return text;
 }
@@ -277,9 +302,11 @@ export function layerScene(id: Id, sceneId: Id, mode: cmd.LayerMode = 'fill'): s
  */
 export function setPart(id: Id, trackId: Id, choice: Id | null | undefined, gesture?: string): string | null {
   if (refusedWhileLocked()) return null;
-  if (!session.accepted(cmd.setBlockPart(session.store, id, trackId, choice, gesture))) return null;
+  const r = cmd.setBlockPart(session.store, id, trackId, choice, gesture);
+  if (!session.accepted(r)) return null;
   const part = session.store.getState().tracks.find((t) => t.id === trackId)?.name ?? 'Part';
-  return done(`${cellToast(part, blockName(id), choice, typeof choice === 'string' ? sceneName(choice) : null)}.`);
+  // Clicked back to where it was: no undo step of its own, so the toast offers no Undo.
+  return done(`${cellToast(part, blockName(id), choice, typeof choice === 'string' ? sceneName(choice) : null)}.`, r);
 }
 
 /**

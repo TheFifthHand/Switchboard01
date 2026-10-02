@@ -1,16 +1,21 @@
 /**
  * Song: the arrangement as a magnetic, part-aware timeline.
  *
- *   [ SONG · Playback follows: …        Length · Tail · Play song · Stop · Export ]
+ *   [ SONG · Now playing: …                         Length · Echo tail · Loop ]
  *   [ Parts │ ruler, blocks edge to edge, one cell per part, playhead           ]
  *   [ SCENES  [Intro +] [Groove +] [Lift +] [Break +]                   hints     ]
  *
- * The lane itself (blocks, gestures, keyboard, menus) is SongLane. Edits apply
- * live while the song plays or is paused: playback re-plans from the block
- * playing now (see Sequencer.replanSong), so the lane is always what plays.
+ * One Play per screen: the transport's Play (and Space) plays the song here,
+ * and its Export starts from the song; ▶ on a block and a click on the bar
+ * numbers play from there. The mode box says what plays and how to play.
+ *
+ * The lane itself (blocks, gestures, keyboard, menus, the Loop button) is
+ * SongLane. Edits apply live while the song plays or is paused: playback
+ * re-plans from the block playing now (see Sequencer.replanSong), so the lane
+ * is always what plays.
  */
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Button, Led, NumberField, Tooltip, useRafLoop } from '../../../ui/components';
+import { Led, NumberField, Tooltip, useRafLoop } from '../../../ui/components';
 import { TICKS_PER_BAR, type ArrangementBlock, type Id, type Project } from '../../../project/types';
 import { clampBpm, ticksToSeconds } from '../../../time/clock';
 import { sceneBars, songLengthTicks } from '../../../time/sequencer';
@@ -22,11 +27,10 @@ import { notify, useRuntime } from '../../runtime';
 import { formatSeconds } from '../../session';
 import { barsLabel } from '../../labels';
 import type { SceneSummary } from './BlockMenu';
-import { LaneIcon } from './laneIcons';
 import { loopName, loopSpan } from './laneLoop';
-import { SongLane, type LaneControls } from './SongLane';
+import { SongLane } from './SongLane';
 import { blockView, viewKey, type BlockView } from './songModel';
-import { getSongPlan, startSong, useSongPlan } from './songPlan';
+import { getSongPlan, useSongPlan } from './songPlan';
 import styles from './SongPanel.module.css';
 
 /* ------------------------------------------------------------------ */
@@ -157,24 +161,38 @@ export function editSceneClips(row: number): void {
 /* Header                                                              */
 /* ------------------------------------------------------------------ */
 
-function ModeIndicator(props: { current: BlockView | null; next: BlockView | null; removed: boolean; blockCount: number; looping: string | null }) {
-  const { current, next, removed, blockCount, looping } = props;
+function capitalize(text: string): string {
+  return text ? text[0].toUpperCase() + text.slice(1) : text;
+}
+
+/**
+ * What plays now, in plain words ("Now playing: the song"), where it is, the
+ * loop ("looping Groove (block 2)" only while playback is inside the loop and
+ * will repeat it, else "loop set: …"), and a line on how to play.
+ */
+function ModeIndicator(props: { current: BlockView | null; next: BlockView | null; removed: boolean; blockCount: number; loop: string | null }) {
+  const { current, next, removed, blockCount, loop } = props;
   const mode = useRuntime((s) => s.mode);
   const playing = useRuntime((s) => s.playing);
   const paused = useRuntime((s) => s.paused);
   const replayId = useRuntime((s) => s.replayId);
+  const songLooping = useRuntime((s) => s.songLooping);
   const recordingTake = useRuntime((s) => s.recording === 'performance');
   const replayName = useProject((p) => (replayId ? (p.performances.find((x) => x.id === replayId)?.name ?? 'a take') : ''));
-  let follows: string;
+  const songOn = (playing || paused) && mode === 'song';
+  const loopText = loop ? (songOn && songLooping ? `looping ${loop}` : `loop set: ${loop}`) : '';
+  let label = 'Now playing:';
+  let value: string;
   let where = '';
   let caption: string;
   if (recordingTake) {
     // A take records live pad playing; the project is locked except for what it records.
-    follows = 'Live pads';
+    value = 'your pads';
     where = 'recording a take';
-    caption = 'The song and your takes cannot be edited until you stop recording. Play song or Replay ends the take first.';
-  } else if ((playing || paused) && mode === 'song') {
-    follows = 'Arrangement';
+    caption = 'The song and your takes cannot be edited until you stop recording. Playing the song or a take ends the recording first.';
+  } else if (songOn) {
+    if (paused) label = 'Paused:';
+    value = 'the song';
     where = current
       ? `${paused ? 'Paused in block' : 'Block'} ${current.index + 1} of ${blockCount} · ${current.name}`
       : removed
@@ -182,25 +200,34 @@ function ModeIndicator(props: { current: BlockView | null; next: BlockView | nul
           ? `Removed block ends at the bar · next: ${next.name} (block ${next.index + 1})`
           : 'Removed block ends at the bar · then the song ends'
         : '';
-    if (looping) where = where ? `${where} · looping ${looping}` : `Looping ${looping}`;
+    if (loopText) where = where ? `${where} · ${loopText}` : capitalize(loopText);
     caption = 'Edits play right away: move, lengthen or change blocks while the song plays. Pads still work: a tapped clip joins at the next bar until the next block starts.';
   } else if (playing && mode === 'replay') {
-    follows = 'Performance';
+    value = 'a recorded take';
     where = `“${replayName}”`;
     caption = 'The take plays back exactly as recorded. Pads and keys are ignored until you stop it.';
+  } else if (playing || paused) {
+    if (paused) label = 'Paused:';
+    value = 'your pads';
+    where = capitalize(loopText);
+    caption = paused
+      ? 'Play goes on with your pads from where they paused. Stop first, and Play (or Space) plays the song.'
+      : 'Your Loops pads decide what plays. ▶ on a block, or a click on the bar numbers, plays the song from there; your pads come back when it stops.';
   } else {
-    follows = 'Live pads';
-    caption = playing
-      ? 'The Loops pads decide what plays. Play song hands playback to the blocks below; your pads come back when it stops.'
-      : 'Stopped. Play song plays the blocks below in order; Play in the transport plays your pads.';
+    label = '';
+    value = 'Stopped';
+    where = capitalize(loopText);
+    caption = blockCount
+      ? `Play (or Space) plays the song from ${loop ? 'the loop' : 'the first block'}. ▶ on a block, or a click on the bar numbers, plays it from there.`
+      : 'Add scenes below to build a song, then press Play.';
   }
   const on = playing || paused;
   return (
     <div className={styles.mode} data-mode={on ? mode : 'stopped'} data-recording={recordingTake || undefined} role="status" aria-live="polite" data-testid="playback-mode">
       <div className={styles.modeLine}>
         <Led on={playing || recordingTake} tone={recordingTake ? 'coral' : playing ? 'amber' : 'neutral'} label={recordingTake ? 'Recording' : playing ? 'Playing' : paused ? 'Paused' : 'Stopped'} hideLabel size="sm" />
-        <span className={styles.modeLabel}>Playback follows:</span>
-        <strong className={styles.modeValue}>{follows}</strong>
+        {label && <span className={styles.modeLabel}>{label}</span>}
+        <strong className={styles.modeValue}>{value}</strong>
         {where && <span className={styles.modeWhere}>{where}</span>}
       </div>
       <p className={styles.modeCaption}>{caption}</p>
@@ -220,7 +247,7 @@ function SongTotals() {
   const secs = ticksToSeconds(ticks, bpm);
   return (
     <div className={styles.totals}>
-      <Tooltip tip="How long the song plays: every block's pass length times its passes." detail={`Estimated at ${Math.round(bpm)} BPM. Exports add the tail on top so echoes and reverb can ring out.`}>
+      <Tooltip tip="How long the song plays: every block's length, added up." detail={`Estimated at ${Math.round(bpm)} BPM. Exports add the echo tail on top so echoes and reverb can ring out.`}>
         <div className={styles.readout} tabIndex={0} role="group" aria-label={`Song length: ${barsLabel(bars)}, about ${formatSeconds(secs)} at ${Math.round(bpm)} BPM`}>
           <span className={styles.readoutLabel}>LENGTH</span>
           <span className={`${styles.readoutValue} mono`} data-testid="song-length">
@@ -229,7 +256,7 @@ function SongTotals() {
         </div>
       </Tooltip>
       <NumberField
-        label="Export tail"
+        label="Echo tail"
         value={tail}
         min={0}
         max={10}
@@ -238,7 +265,7 @@ function SongTotals() {
         chars={3}
         size="sm"
         onChange={(v, info) => session.accepted(cmd.setTailSeconds(session.store, v, info.gesture))}
-        tip="Extra seconds after the last block in song exports, so echoes and reverb can ring out."
+        tip="Extra seconds after the last block when you export the song, so echoes and reverb can ring out."
         detail="Saved with the project. The export dialog starts from this value."
       />
     </div>
@@ -269,12 +296,12 @@ export function SongPanel() {
   const next = handover?.next ?? null;
   const current = !handover && playingId ? (views.find((v) => v.id === playingId) ?? null) : null;
   const currentId = current?.id ?? null;
-  const empty = views.length === 0;
   // The loop (playback state), as the lane draws it: ignored when its blocks are gone.
   const songLoop = useRuntime((s) => s.songLoop);
   const loop = useMemo(() => loopSpan(views.map((v) => v.id), songLoop), [views, songLoop]);
-  const looping = loop ? loopName(views.map((v) => v.name), loop) : null;
-  const lane = useRef<LaneControls | null>(null);
+  const looped = loop ? loopName(views.map((v) => v.name), loop) : null;
+  // The lane renders the Loop button here (it knows what the button acts on).
+  const [loopSlot, setLoopSlot] = useState<HTMLDivElement | null>(null);
 
   return (
     <section className={styles.panel} aria-labelledby="song-title">
@@ -283,54 +310,15 @@ export function SongPanel() {
           <h2 id="song-title" className={styles.title}>
             Song
           </h2>
-          <ModeIndicator current={current} next={next} removed={removed} blockCount={views.length} looping={looping} />
+          <ModeIndicator current={current} next={next} removed={removed} blockCount={views.length} loop={looped} />
         </div>
         <div className={styles.headRight}>
           <SongTotals />
-          <div className={styles.buttons}>
-            <Button
-              variant="primary"
-              icon="play"
-              pressed={songPlaying}
-              onClick={() => void startSong()}
-              disabled={empty}
-              aria-label={songPlaying ? 'Play song from the start (playing now)' : 'Play song'}
-              tip={empty ? 'Add scene blocks first.' : loop ? `Play the song from the loop (${looping}).` : 'Play the blocks in order from the first one. Pressing it while the song plays starts it again from the top.'}
-              detail="Starting the song ends a performance recording in progress."
-            >
-              Play song
-            </Button>
-            <Button icon="stop" onClick={() => session.stop()} disabled={!playing && !paused} tip="Stop playback (song, replay or pads).">
-              Stop
-            </Button>
-            <Button
-              className={styles.loopButton}
-              pressed={!!loop}
-              tone="teal"
-              onClick={() => lane.current?.toggleLoop()}
-              disabled={empty}
-              aria-label="Loop"
-              data-testid="loop-toggle"
-              tip={empty ? 'Add scene blocks first.' : loop ? `Looping ${looping}. Press to play the song through again.` : 'Repeat part of the song while it plays: the selected blocks, else the block playing now, else the first block.'}
-              detail="Or drag across the bar numbers above the blocks; drag the ends of the Loop band to change it."
-            >
-              <LaneIcon name="loop" size={16} />
-              Loop
-            </Button>
-            <Button
-              icon="download"
-              onClick={() => window.dispatchEvent(new CustomEvent('sb:open-export', { detail: { source: 'song' } }))}
-              disabled={empty}
-              tip={empty ? 'Add scene blocks first.' : 'Render the whole song to a WAV file.'}
-              detail="Same sounds, effects and timing as playback, plus the export tail."
-            >
-              Export song
-            </Button>
-          </div>
+          <div ref={setLoopSlot} className={styles.buttons} />
         </div>
       </header>
 
-      <SongLane views={views} scenes={scenes} currentId={currentId} nextId={next?.id ?? null} songActive={songOn} songPlaying={songPlaying} editClips={editSceneClips} controls={lane} />
+      <SongLane views={views} scenes={scenes} currentId={currentId} nextId={next?.id ?? null} songActive={songOn} songPlaying={songPlaying} editClips={editSceneClips} loopSlot={loopSlot} />
     </section>
   );
 }

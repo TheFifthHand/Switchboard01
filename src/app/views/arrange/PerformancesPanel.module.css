@@ -68,6 +68,62 @@
   font-weight: 400;
 }
 
+/* No takes: one line (the song gets the room); the line opens how to record one. */
+.panel[data-collapsed] {
+  align-self: start;
+}
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 6px 8px 6px 14px;
+}
+.barButton {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 8px;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.head .barButton {
+  flex: none;
+}
+.barButton:hover {
+  border-color: var(--line);
+  background: var(--shell-hi);
+  color: var(--ink);
+}
+.barText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.barText b {
+  color: var(--ink);
+  font-weight: 650;
+}
+.barMore {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
 /* ---------- list ---------- */
 
 .body {

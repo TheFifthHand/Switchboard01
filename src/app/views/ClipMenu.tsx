@@ -5,17 +5,26 @@
  * Popover: a portalled surface positioned next to its trigger (or at the
  * pointer for a right-click), kept inside the viewport, closed by Escape, an
  * outside press or a window resize, and giving focus back to where it came
- * from. As role="menu" it moves focus with the arrow keys (Left/Right move
- * within a row of keys such as the clip length), Home/End jump, Tab closes.
- * As role="dialog" (a settings panel) it is not modal: keys other than
- * Escape pass through, so the computer keyboard still plays notes.
+ * from. Below the trigger (or above it) when it fits there, else beside it,
+ * so it never covers the key that opened it. A press on that key (the open
+ * popup's trigger, or the `ignore` element) is not an outside press: the
+ * key's own click closes it again. For a moment after it opens, a click that
+ * comes without the pointer moving (the second half of a double-click on the
+ * trigger) does nothing. Rows light up under the pointer only once it moves
+ * over the menu (keyboard focus always shows); then the row under the
+ * pointer takes the focus, so one row is lit at a time. As role="menu" it
+ * moves focus with the arrow keys (Left/Right move within a row of keys such
+ * as the clip length), Home/End jump, Tab closes; Ctrl/⌘+Z, Ctrl+Shift+Z and
+ * Ctrl+Y close it and reach the app's Undo / Redo. As role="dialog" (a
+ * settings panel) it is not modal: keys other than Escape pass through, so
+ * the computer keyboard still plays notes.
  *
  * Clip actions (rename, length, duplicate, copy/paste, clear, delete, new
  * clip) are all undoable project commands; destructive ones show a toast with
  * Undo. The same actions back the pad keyboard shortcuts (Delete, Ctrl+C,
  * Ctrl+V, F2) handled by the grid.
  */
-import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, Icon, type IconName } from '../../ui/components';
 import { SCENE_ROWS, type ClipBars, type Id } from '../../project/types';
@@ -98,6 +107,69 @@ export interface PopoverProps {
 
 const EDGE = 8;
 const GAP = 4;
+/**
+ * After opening, pointer clicks that come without the pointer moving are
+ * ignored for this long: the second click of a double-click on the trigger
+ * must never choose a menu item.
+ */
+export const MENU_CLICK_GUARD_MS = 300;
+/** Pointer travel (px) after opening that makes a click deliberate. */
+const MOVED_PX = 3;
+
+/** Where the pointer was last seen (its press or move), so a menu knows where it opened from. */
+let lastPointer: { x: number; y: number } | null = null;
+if (typeof document !== 'undefined') {
+  const note = (e: PointerEvent) => {
+    lastPointer = { x: e.clientX, y: e.clientY };
+  };
+  document.addEventListener('pointerdown', note, { capture: true, passive: true });
+  document.addEventListener('pointermove', note, { capture: true, passive: true });
+}
+
+/** Undo / Redo keys (Ctrl/⌘+Z, Ctrl/⌘+Shift+Z, Ctrl/⌘+Y). */
+export function isHistoryKey(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): boolean {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
+  const k = e.key.toLowerCase();
+  return k === 'z' || k === 'y';
+}
+
+/**
+ * Where a popover of size w x h goes next to `anchor` inside a vw x vh
+ * window: below (or above, as preferred) when it fits there whole; else
+ * beside the anchor (right, or left for end-aligned menus, whichever fits),
+ * top-aligned with it, so it never covers its trigger; failing that (a window
+ * too small for both), clamped into view.
+ */
+export function placePopover(
+  anchor: MenuAnchor,
+  size: { w: number; h: number },
+  view: { vw: number; vh: number },
+  opts: { placement?: 'below' | 'above'; align?: 'start' | 'end' } = {},
+): { left: number; top: number; side: 'below' | 'above' | 'right' | 'left' | 'over' } {
+  const { w, h } = size;
+  const { vw, vh } = view;
+  const placement = opts.placement ?? 'below';
+  const align = opts.align ?? 'start';
+  const below = anchor.top + anchor.height + GAP;
+  const above = anchor.top - GAP - h;
+  const fitsBelow = below + h <= vh - EDGE;
+  const fitsAbove = above >= EDGE;
+  const clampX = (x: number) => clamp(x, EDGE, Math.max(EDGE, vw - EDGE - w));
+  const clampY = (y: number) => clamp(y, EDGE, Math.max(EDGE, vh - EDGE - h));
+  const vertical = (side: 'below' | 'above') => ({ left: clampX(align === 'end' ? anchor.left + anchor.width - w : anchor.left), top: side === 'below' ? below : above, side });
+  if (placement === 'above' ? fitsAbove : fitsBelow) return vertical(placement);
+  if (placement === 'above' ? fitsBelow : fitsAbove) return vertical(placement === 'above' ? 'below' : 'above');
+  // Neither: beside the trigger, top-aligned with it.
+  const right = anchor.left + anchor.width + GAP;
+  const left = anchor.left - GAP - w;
+  const fitsRight = right + w <= vw - EDGE;
+  const fitsLeft = left >= EDGE;
+  const top = clampY(anchor.top);
+  if (align === 'end' ? fitsLeft : fitsRight) return { left: align === 'end' ? left : right, top, side: align === 'end' ? 'left' : 'right' };
+  if (align === 'end' ? fitsRight : fitsLeft) return { left: align === 'end' ? right : left, top, side: align === 'end' ? 'right' : 'left' };
+  // No room anywhere: inside the window, where it was meant to go.
+  return { left: clampX(align === 'end' ? anchor.left + anchor.width - w : anchor.left), top: clampY(placement === 'above' ? above : below), side: 'over' };
+}
 
 const ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]';
 
@@ -122,25 +194,40 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
     const el = ref.current;
     if (!el) return;
     const place = () => {
-      const w = el.offsetWidth;
-      const h = el.offsetHeight;
-      const vw = document.documentElement.clientWidth;
-      const vh = document.documentElement.clientHeight;
-      const below = anchor.top + anchor.height + GAP;
-      const above = anchor.top - GAP - h;
-      let top: number;
-      if (placement === 'above') top = above >= EDGE ? above : below;
-      else top = below + h <= vh - EDGE ? below : above >= EDGE ? above : below;
-      top = clamp(top, EDGE, Math.max(EDGE, vh - EDGE - h));
-      let left = align === 'end' ? anchor.left + anchor.width - w : anchor.left;
-      left = clamp(left, EDGE, Math.max(EDGE, vw - EDGE - w));
-      setPos((p) => (p && p.left === Math.round(left) && p.top === Math.round(top) ? p : { left: Math.round(left), top: Math.round(top) }));
+      const p = placePopover(anchor, { w: el.offsetWidth, h: el.offsetHeight }, { vw: document.documentElement.clientWidth, vh: document.documentElement.clientHeight }, { placement, align });
+      const left = Math.round(p.left);
+      const top = Math.round(p.top);
+      el.dataset.side = p.side;
+      setPos((q) => (q && q.left === left && q.top === top ? q : { left, top }));
     };
     place();
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(place) : null;
     ro?.observe(el);
     return () => ro?.disconnect();
   }, [anchor.left, anchor.top, anchor.width, anchor.height, placement, align]);
+
+  // A click right after opening, with the pointer where it was (a double-click on the trigger), chooses nothing.
+  const opened = useRef<{ at: number; x: number | null; y: number | null; moved: boolean }>({ at: 0, x: null, y: null, moved: false });
+  useLayoutEffect(() => {
+    opened.current = { at: performance.now(), x: lastPointer?.x ?? null, y: lastPointer?.y ?? null, moved: false };
+    const onMove = (e: PointerEvent) => {
+      const o = opened.current;
+      if (o.moved) return;
+      if (o.x === null || o.y === null) {
+        o.x = e.clientX;
+        o.y = e.clientY;
+      } else if (Math.hypot(e.clientX - o.x, e.clientY - o.y) >= MOVED_PX) o.moved = true;
+    };
+    document.addEventListener('pointermove', onMove, true);
+    return () => document.removeEventListener('pointermove', onMove, true);
+  }, []);
+  const guardClick = (e: MouseEvent<HTMLDivElement>) => {
+    const o = opened.current;
+    // Keyboard presses (detail 0) always count; so does a click after the pointer moved or the moment passed.
+    if (e.detail === 0 || o.moved || performance.now() - o.at >= MENU_CLICK_GUARD_MS) return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
 
   // Focus in on open (unless a child already took it), and back out on close.
   useLayoutEffect(() => {
@@ -165,11 +252,13 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Outside presses and window changes close it.
+  // Outside presses and window changes close it. A press on the open popup's own trigger is not outside:
+  // the trigger's click closes it (pressing it again toggles), instead of closing here and reopening there.
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node | null;
       if (!t || ref.current?.contains(t) || (ignore && ignore.contains(t))) return;
+      if (t instanceof Element && t.closest('[aria-haspopup][aria-expanded="true"]')) return;
       focusInside.current = false;
       onCloseRef.current();
     };
@@ -194,6 +283,17 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
     // A panel (arpeggiator, recording options, rename) is not modal: other keys keep
     // working, so computer-key notes, Space and Ctrl+Z still reach the instrument.
     if (role !== 'menu') return;
+    // Undo / Redo work with a menu open: the menu (about what is there now) closes and the key goes on to the app.
+    if (isHistoryKey(e)) {
+      onCloseRef.current();
+      return;
+    }
+    // Ctrl/⌘+A in a menu selects nothing (and never the page's text).
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (e.key === 'Tab') {
       e.preventDefault();
       e.stopPropagation();
@@ -269,6 +369,18 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
       className={[styles.popover, className].filter(Boolean).join(' ')}
       style={pos ? { left: pos.left, top: pos.top } : { left: -9999, top: 0, opacity: 0 }}
       onKeyDown={onKeyDown}
+      onClickCapture={guardClick}
+      onPointerMove={(e) => {
+        // Rows light up under the pointer only once it moves over the menu (not under a pointer resting where the menu opened).
+        const el = ref.current;
+        if (!el) return;
+        if (!('pointer' in el.dataset)) el.dataset.pointer = '';
+        // In a menu the row under a moving pointer also takes the focus, so one row is lit, never two
+        // (the keyboard then goes on from there).
+        if (role !== 'menu' || e.pointerType === 'touch') return;
+        const item = e.target instanceof Element ? e.target.closest<HTMLElement>(ITEM_SELECTOR) : null;
+        if (item && el.contains(item) && document.activeElement !== item) item.focus({ preventScroll: true });
+      }}
       onFocus={() => {
         focusInside.current = true;
       }}

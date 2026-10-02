@@ -52,27 +52,30 @@ Your work saves automatically in this browser; the top right shows **Saved**.
 ## Build a song (about three minutes)
 
 Open **Arrange** (top left). The **Song** lane plays scenes one after another, left to right. Each
-**block** is one scene played a number of times (its **passes**); the wider the block, the longer it
-plays. Under each block's name is one row per part: a filled bar means that part plays there, **Off**
-(in coral) means it is switched off in that block, and **Lift: Hook** (striped, with a layers icon)
-means it plays another scene's clip there. Press **Play song**, or ▶ on a block to start from it;
-the block playing now is outlined in amber and says **Playing**, and the lane scrolls along with it
-(turn **Follow** off, under the lane, to keep it still). You can change the song while it plays:
-every edit is heard right away.
+**block** is one scene played a number of times; the wider the block, the longer it plays. Under
+each block's name is one row per part: a filled bar means that part plays there, **Off** (grey, with
+a thin coral edge) means it is switched off in that block, and **Lift: Hook** (striped, with a
+layers icon) means it plays another scene's clip there. In Arrange the **Play** button at the top
+(or Space) plays the song; ▶ on a block, or a click on the bar numbers, starts it from there. The
+block playing now is outlined in amber and says **Playing**, and the lane scrolls along with it
+(it waits while your pointer moves over the lane; turn **Follow** off, under the lane, to keep it
+still). You can change the song while it plays: every edit is heard right away.
 
 1. **Move a block.** Drag a block by its name (or anywhere on it) left or right with the mouse or a
-   pen. On a touch screen, rest your finger on the block for a moment: it lifts (you see it pop up),
-   then drag it. A quick swipe just scrolls the lane, and holding a block then letting go without
-   moving shows its actions. The other blocks slide aside to show where it will land; let go and it
-   clicks into place. Hold **Ctrl** (Alt, or ⌘ on a Mac) while dragging to drop a **copy** instead.
-   Esc, or letting go away from the lane, puts everything back.
-2. **Make it longer or shorter.** Drag a block's right edge: it grows or shrinks one pass at a time,
-   and a bubble shows the passes and bars ("3 passes · 12 bars"). The blocks after it follow; near
-   the end of the lane it scrolls on for you. The blocks keep their size while you edit (a longer
-   song scrolls); **Fit song**, **−** and **+** under the lane, or Ctrl+wheel over it, change the
-   zoom.
+   pen. On a touch screen, rest your finger on the block for a moment: it pops up, then drag it. A
+   quick swipe just scrolls the lane, and holding a block then letting go without moving shows its
+   actions. The other blocks slide aside to show where it will land; let go and it clicks into
+   place. Hold **Ctrl** (Alt, or ⌘ on a Mac) while dragging to drop a **copy** instead. Esc, or
+   letting go away from the lane, puts everything back.
+2. **Play it more times, or fewer.** Every block has a small grip at its right edge: drag it. The
+   block grows or shrinks one repeat at a time, its header shows the new length, and a bubble says
+   how many times it plays ("3 times · 12 bars"). The blocks after it follow; drag past the end of
+   the lane and it scrolls on for you. With the keyboard, + and − do the same. The blocks keep their
+   size while you edit (a longer song scrolls); **Fit song**, **−** and **+** under the lane, or
+   Ctrl+wheel over it, change the zoom. Fit song shows a long song whole (its blocks then show just
+   their names: point at one for the rest).
 3. **Split and join.** Point at a block: a pair of scissors appears under each line between its
-   passes; click one to cut the block there. Two neighbours that play the same thing show **Join**
+   repeats; click one to cut the block there. Two neighbours that play the same thing show **Join**
    under their seam.
 4. **Switch a part in one block.** Click a part's bar in a block to switch it off there (it says
    **Off**, and a message says "Drums off in Groove" with **Undo**); click again to bring it back.
@@ -84,30 +87,38 @@ every edit is heard right away.
    adds it at the end.
 6. **Select several.** Click a block to select it (teal), Shift+click for a range, Ctrl+click to add
    or remove one. Dragging, **Ctrl+D** (duplicate), **Ctrl+C** / **Ctrl+X** / **Ctrl+V** (copy, cut,
-   paste after the selection) and **Delete** work on all selected blocks at once.
-7. **Loop a part of the song.** Press **Loop** (next to Stop): the selected blocks repeat while the
-   song plays (with nothing selected, the block playing now, or the first block). Or drag across the
-   bar numbers above the blocks: a teal **Loop** band covers the blocks you drag over. Drag either
-   end of the band to another block edge to change it; press **Loop** again to play the song
-   through. **Play song** starts at the loop. A click on the bar numbers still plays from that bar.
+   paste after the selected block) and **Delete** work on all selected blocks at once. Cut a block
+   and paste it straight away, and it goes back where it was.
+7. **Loop a part of the song.** **Loop** in the Song header says what it will loop: the blocks you
+   selected, else the block playing now, else the first block ("Loop Groove (block 2)"). Press it
+   and those blocks repeat while the song plays. Select other blocks and press it again to move the
+   loop there; press it with the looped blocks (or nothing) selected to play the song through again.
+   Or drag across the bar numbers above the blocks: a teal **Loop** band covers the blocks you drag
+   over. Drag either end of the band to another block edge to change it. **Play** starts at the
+   loop. A click on the bar numbers still plays from that bar.
 8. **Shape a block in one step.** Open a block's **⋯** and choose **Shape this block…**:
-   - **Build up**: the parts come in one at a time, pass by pass: pads and textures first, then
-     chords, lead and vocal, then percussion and bass, and the drums last.
+   - **Build up**: the parts come in one at a time, each time the block plays: pads and textures
+     first, then chords, lead and vocal, then percussion and bass, and the drums last.
    - **Strip down**: the other way round: everything first, then the parts drop out (drums first).
    - **Breakdown**: the drums, percussion and bass switch off in that block.
 
-   Build up and Strip down split the block into its passes; you see the result at once in the part
-   cells (**Off** where a part waits) and hear it right away. Each is one Undo.
+   Build up and Strip down split the block into its repeats; you see the result at once in the part
+   cells (**Off** where a part waits) and hear it right away. Each is one Undo, and the song keeps
+   its length (a block whose clips have different lengths, say 3 and 4 bars, cannot be shaped: the
+   menu says why).
 
 Everything is one Undo away (Ctrl+Z); each edit's message has an **Undo** button too. Each block's
-**⋯** button (or right-click, or Enter on a focused block) lists every action: play from here, loop,
-edit its clips, rename, the parts in the block, shape it, change, layer or replace with a scene,
-passes, split, join, copy, move and remove. Click the bar numbers above the blocks to play from that
-bar. While you record a performance the song is locked; the lane says so until you stop.
+**⋯** button (or right-click, or Enter on a focused block) lists every action: the ones you use most
+first (play from here, rename, duplicate, split, join, one more time / one time fewer), then
+**Parts…**, **Scenes and clips…**, **Shape this block…**, **Loop…** and **Copy, cut, move…**, which
+open in place (**Back** returns), and remove. The **Echo tail** beside the song's length is how many
+seconds an exported song keeps ringing after its last block. While you record a performance the
+song is locked; the lane says so until you stop.
 
 Without a mouse: Tab to the lane, then ←/→ choose a block (Shift extends the selection), Alt+←/→
-moves it, + and − change its passes, ↓ enters its parts (Enter switches one, "." chooses what it
-plays), F2 renames, Enter opens the actions.
+moves it, + and − change how many times it plays, ↓ enters its parts (Enter switches one, "."
+chooses what it plays), F2 renames, Enter opens the actions. After Undo or Redo the lane keeps your
+place.
 
 ## Record and export (about three minutes)
 

@@ -8,16 +8,21 @@
  *   │ Groove        ▶  ⋯    │  name · 16 bars (4 × 4) · Playing
  *   ├───────────┊───────────┤  ┊ = pass divider (hover: scissors splits there)
  *   │▌Four on th┊e floor    │  part plays (clip name)
- *   │ Off       ┊           │  switched off here (coral)
+ *   │▏Off       ┊           │  switched off here (a coral tick, grey word)
  *   │⧉ from Lift┊           │  layered from another scene
- *   └───────────┴──────────╢  ╢ = right-edge handle (drag = passes)
+ *   └───────────┴──────────╢  ╢ = right-edge handle (always shown, faint; drag = how many times it plays)
+ *
+ * A narrow block (an overview zoom step) has a compact header: its name, with
+ * ▶ and ⋯ shown on hover, focus or while its menu is open (the menu is also on
+ * right-click and Enter). While its right edge is dragged the header shows the
+ * length the drop will give.
  */
 import { memo, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Icon, Tooltip } from '../../../ui/components';
 import type { Id } from '../../../project/types';
 import { MAX_BLOCK_LABEL } from '../../../project/types';
 import { LaneIcon } from './laneIcons';
-import { barsText, blockLabel, cellLabel, cellOn, cellState, cellToggle, layerText, type BlockView, type CellView, type LayerPreview } from './songModel';
+import { barsText, blockLabel, cellLabel, cellOn, cellState, cellToggle, layerText, timesText, type BlockView, type CellView, type LayerPreview } from './songModel';
 import styles from './SongPanel.module.css';
 
 export interface BlockHandlers {
@@ -53,17 +58,23 @@ export interface SongBlockProps {
   advanced: boolean;
   renaming: boolean;
   menuOpen: boolean;
+  /** The part whose picker is open on this block, or null. */
+  pickerTrack: Id | null;
   /** A scene card hovers over this block: what layering it would change. */
   layer: LayerPreview | null;
   helpId: string;
   h: BlockHandlers;
 }
 
-/** The header's second line in full (its tooltip, for when a narrow block drops words): "Playing · 8 bars (4 × 2)". */
-export function metaTitle(block: Pick<BlockView, 'totalBars' | 'passBars' | 'repeats' | 'label' | 'sceneName'>, current: boolean, next: boolean): string {
+/**
+ * The header in full (its tooltip, for when a narrow block drops words, and
+ * for a compact block, which shows only its name): "Groove · Playing · 8
+ * bars: 4 bars, 2 times".
+ */
+export function metaTitle(block: Pick<BlockView, 'name' | 'totalBars' | 'passBars' | 'repeats' | 'label' | 'sceneName'>, current: boolean, next: boolean): string {
   const now = current ? 'Playing · ' : next ? 'Plays next · ' : '';
   const scene = block.label ? ` · scene ${block.sceneName}` : '';
-  return `${now}${barsText(block.totalBars)} (${block.passBars} × ${block.repeats})${scene}`;
+  return `${block.name} · ${now}${barsText(block.totalBars)}: ${barsText(block.passBars)}, ${timesText(block.repeats)}${scene}`;
 }
 
 /** A layered part: the layers icon, the scene it comes from and its clip ("Lift: Bell Hook"); the clip name gives way first. */
@@ -134,7 +145,7 @@ function RenameField(props: { block: BlockView; onDone(label: string | null): vo
 }
 
 export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
-  const { block, count, current, next, selected, tabbable, hidden, resizing, advanced, renaming, menuOpen, layer, helpId, h } = props;
+  const { block, count, current, next, selected, tabbable, hidden, resizing, advanced, renaming, menuOpen, pickerTrack, layer, helpId, h } = props;
   const id = block.id;
   const inner = -1;
   const layerSays = layer ? layerText(layer, block.name) : null;
@@ -164,7 +175,7 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
       onFocus={() => h.onFocus(id)}
     >
       <div className={styles.bhead}>
-        <div className={styles.titles} onDoubleClick={() => !block.missing && h.onStartRename(id)}>
+        <div className={styles.titles} title={layerSays || block.missing || renaming ? undefined : metaTitle(block, current, next)} onDoubleClick={() => !block.missing && h.onStartRename(id)}>
           {renaming ? (
             <RenameField block={block} onDone={(label) => h.onRename(id, label)} />
           ) : (
@@ -172,7 +183,7 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
           )}
           {/* One line; an item that does not fit wraps onto a hidden second line, so words are
               dropped whole (pass detail and scene first, then the length), never cut. */}
-          <span className={styles.meta} title={layerSays || block.missing ? undefined : metaTitle(block, current, next)}>
+          <span className={styles.meta}>
             {layerSays ? (
               <span className={styles.layerTag} data-none={!layerSays.changes || undefined}>
                 <LaneIcon name="layers" size={10} />
@@ -198,6 +209,8 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
                 <span className={`${styles.len} mono`} data-testid="block-length">
                   {barsText(block.totalBars)}
                 </span>
+                {/* While the right edge is dragged: the length the drop gives (written by the lane; React leaves it empty). */}
+                <span className={`${styles.liveLen} mono`} data-live-len="" aria-hidden="true" />
                 {advanced && (
                   <span className={`${styles.calc} mono`}>
                     {block.passBars} × {block.repeats}
@@ -209,13 +222,14 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
           </span>
         </div>
         <Tooltip name={`Play from block ${block.index + 1}`} tip="Start the song here." disabled={block.missing}>
-          <button type="button" className={styles.hbtn} data-play="" tabIndex={inner} aria-label={`Play song from block ${block.index + 1} (${block.name})`} disabled={block.missing} onClick={() => h.onPlay(id)}>
+          <button type="button" className={styles.hbtn} data-play="" data-drag-ok="" tabIndex={inner} aria-label={`Play song from block ${block.index + 1} (${block.name})`} disabled={block.missing} onClick={() => h.onPlay(id)}>
             <Icon name="play" size={11} />
           </button>
         </Tooltip>
         <button
           type="button"
           className={styles.hbtn}
+          data-drag-ok=""
           tabIndex={inner}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
@@ -261,6 +275,7 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
                       tabIndex={inner}
                       data-no-drag=""
                       aria-haspopup="menu"
+                      aria-expanded={pickerTrack === c.trackId}
                       aria-label={`Choose what ${c.partName} plays in ${block.name} (block ${block.index + 1}); now ${cellState(c)}`}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -281,7 +296,7 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
                 className={styles.split}
                 tabIndex={inner}
                 data-no-drag=""
-                aria-label={`Split ${block.name} after pass ${i + 1} of ${block.repeats}`}
+                aria-label={`Split ${block.name} in two after it plays ${timesText(i + 1)} (of ${block.repeats})`}
                 onClick={(e) => {
                   e.stopPropagation();
                   h.onSplit(id, i + 1);

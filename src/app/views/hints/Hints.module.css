@@ -2,6 +2,7 @@
  * The "Try this" chip. Row layout: label | suggestion | buttons, the
  * suggestion wrapping inside its column when the free spot is narrow.
  * Stacked layout (narrow spots): label and buttons, the suggestion below.
+ * Column layout (the narrowest): label, suggestion, buttons, one under another.
  * Compact hides the second sentence. Placement (Hints.tsx) picks the layout.
  * Teal marks guidance (teal = focus / selection), like the quick guide. It
  * floats in a free spot and sits below the transport, dialogs, menus, toasts
@@ -36,6 +37,21 @@
     'label actions'
     'text text';
   padding: 4px 6px 9px 12px;
+}
+/* Column (the narrowest spots): label, suggestion and buttons one under another, the buttons wrapping. */
+.chip[data-column] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    'label'
+    'text'
+    'actions';
+  row-gap: 4px;
+  padding: 7px 6px 6px 12px;
+}
+.chip[data-column] .actions {
+  justify-self: start;
+  justify-content: flex-start;
+  margin-left: -6px;
 }
 .chip[data-ready] {
   visibility: visible;

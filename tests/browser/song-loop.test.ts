@@ -168,7 +168,7 @@ describe('a song loop with the real session and transport', () => {
 });
 
 describe('the session owns the loop', () => {
-  it('a block of the loop deleted: the loop shrinks to what is left (Undo does not widen it again); every block deleted: cleared', async () => {
+  it('a block of the loop deleted: the loop shrinks to what is left (Undo brings it back); every block deleted: cleared (Undo brings it back)', async () => {
     const s = new Session(loopSong(120));
     live.push(s);
     expect(s.setSongLoop({ fromBlockId: 'b1', toBlockId: 'b3' })).toBe(true);
@@ -177,12 +177,17 @@ describe('the session owns the loop', () => {
     expect(rt().songLoop).toEqual({ fromBlockId: 'b1', toBlockId: 'b3' });
     cmd.removeBlocks(s.store, ['b3']);
     expect(rt().songLoop).toEqual({ fromBlockId: 'b1', toBlockId: 'b2' });
+    // Undo brings the block back, and the loop with it; Redo shrinks it again.
     s.store.undo();
+    expect(rt().songLoop).toEqual({ fromBlockId: 'b1', toBlockId: 'b3' });
+    s.store.redo();
     expect(rt().songLoop).toEqual({ fromBlockId: 'b1', toBlockId: 'b2' });
     cmd.removeBlocks(s.store, ['b1']);
     expect(rt().songLoop).toEqual({ fromBlockId: 'b2', toBlockId: 'b2' });
     cmd.removeBlocks(s.store, ['b2']);
     expect(rt().songLoop).toBeNull();
+    s.store.undo();
+    expect(rt().songLoop).toEqual({ fromBlockId: 'b2', toBlockId: 'b2' });
   });
 
   it('while the song plays: deleting the loop’s last block keeps playback in the loop that is left', async () => {

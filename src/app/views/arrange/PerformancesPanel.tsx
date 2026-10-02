@@ -10,6 +10,8 @@
  *   value of a knob, macro, tempo, swing or volume change, or end the take
  *   earlier (at a row, or at a typed position).
  * - Long takes render the first rows and grow on "Show more".
+ * - With no takes the panel is one line (the song gets the room); a click
+ *   opens how to record one.
  */
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Button, Icon, Led, Tooltip, parseParamInput, useRafLoop } from '../../../ui/components';
@@ -638,31 +640,73 @@ export function PerformancesPanel() {
   const recording = useRuntime((s) => s.recording === 'performance');
   const replayId = useRuntime((s) => (s.playing && s.mode === 'replay' ? s.replayId : null));
   const [expanded, setExpanded] = useState<Id | null>(null);
+  // With no takes the panel is a one-line bar until it is opened (it closes again when the last take goes).
+  const [openEmpty, setOpenEmpty] = useState(false);
   const ordered = useMemo(() => [...performances].reverse(), [performances]);
+  const bodyId = useId();
+  const none = performances.length === 0;
+  const collapsed = none && !openEmpty;
 
   // A take that no longer exists cannot stay open.
   useEffect(() => {
     if (expanded && !performances.some((p) => p.id === expanded)) setExpanded(null);
   }, [expanded, performances]);
+  const hadTakes = useRef(!none);
+  useEffect(() => {
+    if (hadTakes.current && none) setOpenEmpty(false);
+    hadTakes.current = !none;
+  }, [none]);
 
   const onToggle = useCallback((id: Id) => setExpanded((cur) => (cur === id ? null : id)), []);
 
+  const recordingChip = recording && (
+    <span className={styles.recording} role="status">
+      <Led on tone="coral" label="Recording a take" size="sm" blink />
+      <span className={styles.recordingText}>it appears here when you stop</span>
+    </span>
+  );
+
+  if (collapsed) {
+    return (
+      <section className={styles.panel} data-collapsed="" aria-labelledby="perf-title" data-testid="performances">
+        <header className={styles.bar}>
+          <h2 id="perf-title" className={styles.title}>
+            Performances
+          </h2>
+          <button type="button" className={styles.barButton} aria-expanded={false} onClick={() => setOpenEmpty(true)}>
+            <span className={styles.barText}>
+              No takes yet. <b>Performance</b> in the transport records one: launches, notes and knob moves, replayed exactly.
+            </span>
+            <span className={styles.barMore}>
+              How
+              <Icon name="chevronDown" size={14} />
+            </span>
+          </button>
+          {recordingChip}
+        </header>
+      </section>
+    );
+  }
+
   return (
-    <section className={styles.panel} aria-labelledby="perf-title">
+    <section className={styles.panel} aria-labelledby="perf-title" data-testid="performances">
       <header className={styles.head}>
         <h2 id="perf-title" className={styles.title}>
           Performances
           {performances.length > 0 && <span className={`${styles.count} mono`}>{performances.length}</span>}
         </h2>
         <p className={styles.explain}>Record Performance captures clip launches, notes and knob moves, and replays them exactly. Takes are saved with the project.</p>
-        {recording && (
-          <span className={styles.recording} role="status">
-            <Led on tone="coral" label="Recording a take" size="sm" blink />
-            <span className={styles.recordingText}>it appears here when you stop</span>
-          </span>
+        {recordingChip}
+        {none && (
+          <button type="button" className={styles.barButton} aria-expanded aria-controls={bodyId} onClick={() => setOpenEmpty(false)}>
+            <span className={styles.barMore}>
+              Hide
+              <Icon name="chevronUp" size={14} />
+            </span>
+          </button>
         )}
       </header>
-      <div className={styles.body} data-scroll-body>
+      <div id={bodyId} className={styles.body} data-scroll-body>
         {ordered.length === 0 ? (
           <div className={styles.empty}>
             <Icon name="recordPerformance" size={22} />

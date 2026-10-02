@@ -2,10 +2,12 @@
  * Arrange view in real Chromium: the song lane (blocks edge to edge with a
  * cell per part, keyboard and pointer reordering, passes, adding from the
  * palette by click and by drag, removing with undo, changing a block's scene,
- * the length readout, the playback-mode label, the current block while the
- * song plays and the empty state) and recorded performances (rename, delete
- * with undo, the event list and deleting events, notes as a press/release
- * pair, "Show more"). Everything is checked on the project in session.store —
+ * the length readout, the mode box (what plays, the loop, how to play), the
+ * current block while the song plays, one Play per screen (no Play song,
+ * Stop or Export song in the song header) and the empty state) and recorded
+ * performances (a one-line bar with no takes, rename, delete with undo, the
+ * event list and deleting events, notes as a press/release pair, "Show
+ * more"). Everything is checked on the project in session.store —
  * the same data playback and export use. The lane's gestures in depth (copy,
  * multi-select, edge drag, split/join, parts, layering, clipboard, keyboard)
  * are in song-lane.test.ts.
@@ -42,6 +44,8 @@ afterEach(() => {
   if (session.playing) act(() => session.stop());
   cleanup();
   act(() => patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, replayId: null }));
+  // The view is remembered in localStorage, shared with the other test files: leave the default.
+  act(() => setView('play'));
 });
 
 /** Poll (letting React and the audio clock run) until `cond` holds. */
@@ -266,10 +270,10 @@ describe('Song lane', () => {
     for (let i = 0; i < 20; i++) key(blockEl(id), 'keydown', { key: '+' });
     expect(repeats()).toBe(16);
     expect(lengthText()).toBe(expectedLength());
-    // The actions menu has the same: one pass fewer.
+    // The actions menu has the same: one time fewer.
     act(() => blockEl(id).focus());
     key(blockEl(id), 'keydown', { key: 'Enter' });
-    click(menuItem('One pass fewer'));
+    click(menuItem('One time fewer'));
     expect(repeats()).toBe(15);
   });
 
@@ -315,6 +319,7 @@ describe('Song lane', () => {
     const id = blockIds()[0];
     click(byLabel('Intro: block actions', blockEl(id)));
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    click(menuItem('Scenes and clips'));
     click(menuItem('Change scene'));
     const breakItem = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitemcheckbox"]')].find((x) => x.textContent!.startsWith('Break'))!;
     click(breakItem);
@@ -323,6 +328,7 @@ describe('Song lane', () => {
 
     // Edit clips switches to Play (Loops) with that scene row's clips selected.
     click(byLabel('Break: block actions', blockEl(id)));
+    click(menuItem('Scenes and clips'));
     click(menuItem('Edit clips'));
     const ui = uiStore.getState();
     expect(ui.view).toBe('play');
@@ -333,8 +339,10 @@ describe('Song lane', () => {
     expect(ui.selectedTrackId).toBe(withClip.id);
   });
 
-  it('changes the export tail with the field', async () => {
+  it('changes the echo tail (added to song exports) with the field', async () => {
     await setup();
+    expect(document.querySelector('section[aria-labelledby="song-title"]')!.textContent).toContain('Echo tail');
+    expect(document.querySelector('section[aria-labelledby="song-title"]')!.textContent).not.toContain('Export tail');
     const before = project().arrangement.tailSeconds;
     const field = document.querySelector<HTMLInputElement>('section[aria-labelledby="song-title"] input[role="spinbutton"]')!;
     act(() => field.focus());
@@ -360,7 +368,8 @@ describe('Song lane', () => {
     session.store.replace({ ...getStarter('house')!.build(), arrangement: { blocks: [], tailSeconds: 3 } }, { resetHistory: true });
     await setup();
     expect(document.body.textContent).toContain('Your song is empty');
-    expect(byLabel('Play song').hasAttribute('disabled')).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="loop-toggle"]')!.disabled).toBe(true);
+    expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toContain('Add scenes below to build a song');
     const addAll = [...document.querySelectorAll('button')].find((b) => b.textContent!.startsWith('Add all'))!;
     act(() => addAll.focus());
     click(addAll);
@@ -373,11 +382,16 @@ describe('Song lane', () => {
     expect(blockIds()).toEqual([]);
   });
 
-  it('says whether playback follows the arrangement or the pads, and marks the playing block by id while edits apply live', async () => {
+  it('says in plain words what plays (your pads, the song, a take) and how to play, and marks the playing block by id while edits apply live', async () => {
     await setup();
     const mode = () => document.querySelector('[data-testid="playback-mode"]')!.textContent!;
-    expect(mode()).toContain('Live pads');
     expect(mode()).toContain('Stopped');
+    expect(mode()).toContain('Play (or Space) plays the song from the first block');
+    expect(mode()).toContain('▶ on a block, or a click on the bar numbers, plays it from there');
+    expect(mode()).not.toContain('Playback follows');
+    act(() => patchRuntime({ playing: true, mode: 'live' }));
+    expect(mode()).toContain('Now playing:your pads');
+    act(() => patchRuntime({ playing: false }));
     // While a take records, the song and takes are locked (the take lock refuses their edits): say so.
     act(() => patchRuntime({ playing: true, mode: 'live', recording: 'performance' }));
     expect(mode()).toContain('recording a take');
@@ -385,7 +399,7 @@ describe('Song lane', () => {
     act(() => patchRuntime({ playing: false, recording: 'off' }));
     const ids = blockIds();
     act(() => patchRuntime({ playing: true, mode: 'song', songBlock: 2, songBlockId: ids[2] }));
-    expect(mode()).toContain('Arrangement');
+    expect(mode()).toContain('Now playing:the song');
     expect(mode()).toContain('Block 3 of 6');
     expect(mode()).toContain('Edits play right away');
     const current = blockEl(ids[2]);
@@ -404,21 +418,40 @@ describe('Song lane', () => {
     act(() => patchRuntime({ playing: false, paused: true }));
     expect(mode()).toContain('Paused in block');
     act(() => patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null }));
-    expect(mode()).toContain('Live pads');
+    expect(mode()).toContain('Stopped');
     expect(document.querySelector('[data-current]')).toBeNull();
   });
 
-  it('Play song, a block play icon and Stop drive the real transport; the playhead and current block follow it', async () => {
+  it('the mode box says "looping" only while playback is inside the loop and repeats it, else "loop set"', async () => {
+    await setup();
+    const ids = blockIds();
+    const mode = () => document.querySelector('[data-testid="playback-mode"]')!.textContent!;
+    act(() => patchRuntime({ songLoop: { fromBlockId: ids[1], toBlockId: ids[1] }, songLooping: false }));
+    // Stopped with a loop: Play starts there.
+    expect(mode()).toContain('Loop set: Groove (block 2)');
+    expect(mode()).toContain('plays the song from the loop');
+    // Playing outside the loop (block 4): the loop is set, not looping.
+    act(() => patchRuntime({ playing: true, mode: 'song', songBlock: 3, songBlockId: ids[3] }));
+    expect(mode()).toContain('Block 4 of 6');
+    expect(mode()).toContain('loop set: Groove (block 2)');
+    expect(mode()).not.toContain('looping');
+    // Inside the loop, repeating it: looping.
+    act(() => patchRuntime({ songBlock: 1, songBlockId: ids[1], songLooping: true }));
+    expect(mode()).toContain('looping Groove (block 2)');
+    expect(mode()).not.toContain('loop set');
+    act(() => patchRuntime({ playing: false, mode: 'live', songBlock: null, songBlockId: null, songLoop: null, songLooping: false }));
+  });
+
+  it('▶ on a block drives the real transport; the playhead and current block follow it; Stop hands back to the pads', async () => {
     await setup();
     const ids = blockIds();
     const mode = () => document.querySelector('[data-testid="playback-mode"]')!.textContent!;
     const head = () => document.querySelector<HTMLElement>('[data-testid="playhead"]')!;
 
-    click(byExactLabel('Play song'));
+    click(byLabel('Play song from block 1', blockEl(ids[0])));
     await waitFor(() => rt().playing && rt().mode === 'song' && !!session.transport?.playing, 'song playback');
     expect(rt().songBlockId).toBe(ids[0]);
-    expect(mode()).toContain('Arrangement');
-    expect(byExactLabel('Play song from the start (playing now)').getAttribute('aria-pressed')).toBe('true');
+    expect(mode()).toContain('the song');
 
     // Start from block 3: the transport jumps to its first bar (after Intro 8 + Groove 16 bars).
     click(byLabel('Play song from block 3', blockEl(ids[2])));
@@ -449,20 +482,29 @@ describe('Song lane', () => {
     key(document.activeElement!, 'keydown', { key: 'ArrowRight', altKey: true });
     expect(blockIds().indexOf(ids[2])).toBe(1);
     expect(rt().songBlockId).toBe(ids[2]);
-    await actFrame();
     const target = () => contentLeft() + placedX(ids[2]) + into;
-    expect(head().getBoundingClientRect().left - target()).toBeGreaterThan(shift * 0.3);
+    // It passes through places in between (a glide, not a jump), whatever the frame timing.
+    const seen: number[] = [];
+    const times: number[] = [performance.now()];
+    for (let i = 0; i < 8; i++) {
+      await actFrame();
+      seen.push(head().getBoundingClientRect().left - target());
+      times.push(performance.now());
+    }
+    // (A machine so busy that one frame takes as long as the whole glide cannot show a place in between.)
+    const starved = times.some((t, i) => i > 0 && t - times[i - 1] > 120);
+    expect(starved || seen.some((d) => d > 6 && d < shift - 6), JSON.stringify({ seen, shift, into, times })).toBe(true);
     await act(async () => {
       await wait(260);
     });
     await actFrame();
     expect(Math.abs(head().getBoundingClientRect().left - target())).toBeLessThan(25);
 
-    // Stop hands playback back to the pads.
-    click([...document.querySelectorAll('section[aria-labelledby="song-title"] button')].find((b) => b.textContent === 'Stop')!);
+    // Stop (the transport's) hands playback back to the pads.
+    act(() => session.stop());
     expect(rt().playing).toBe(false);
     expect(session.transport!.playing).toBe(false);
-    expect(mode()).toContain('Live pads');
+    expect(mode()).toContain('Stopped');
     expect(document.querySelector('[data-current]')).toBeNull();
   });
 
@@ -531,14 +573,20 @@ describe('Song lane', () => {
     expect(repeats()).toBe(before + 1);
   });
 
-  it('Export song opens the export dialog preset to the song', async () => {
+  it('one Play per screen: the song header has no Play song, Stop or Export song (the transport plays and exports the song here)', async () => {
     await setup();
-    const seen: unknown[] = [];
-    const on = (e: Event) => seen.push((e as CustomEvent).detail);
-    window.addEventListener('sb:open-export', on);
-    click([...document.querySelectorAll('button')].find((b) => b.textContent === 'Export song')!);
-    window.removeEventListener('sb:open-export', on);
-    expect(seen).toEqual([{ source: 'song' }]);
+    const header = document.querySelector<HTMLElement>('section[aria-labelledby="song-title"] header')!;
+    const names = [...header.querySelectorAll('button')].map((b) => b.getAttribute('aria-label') ?? b.textContent!.trim());
+    expect(names.some((n) => /^Play song/.test(n))).toBe(false);
+    expect(names.some((n) => /^(Stop|Export song)$/.test(n))).toBe(false);
+    // What stays: the length, the echo tail and Loop.
+    expect(header.querySelector('[data-testid="song-length"]')).not.toBeNull();
+    expect(header.querySelector('input[role="spinbutton"]')).not.toBeNull();
+    expect(header.querySelector('[data-testid="loop-toggle"]')).not.toBeNull();
+    // The ways to play are said where they are: ▶ on each block, the ruler, the mode box.
+    expect(byLabel('Play song from block 2', blockEl(blockIds()[1])).closest('[data-block-id]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="song-ruler"]')!.getAttribute('aria-label')).toContain('Enter plays the song from it');
+    expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toContain('Play (or Space) plays the song');
   });
 });
 
@@ -576,11 +624,21 @@ function sampleEvents(start = 768): PerformanceEvent[] {
 }
 
 describe('Performances', () => {
-  it('explains recordings and guides an empty list', async () => {
+  it('with no takes it is a one-line bar (the song gets the room); a click opens how to record one', async () => {
     await setup();
-    expect(document.body.textContent).toContain('captures clip launches, notes and knob moves, and replays them exactly');
-    expect(document.body.textContent).toContain('saved with the project');
-    expect(document.body.textContent).toContain('No performances yet');
+    const panel = document.querySelector<HTMLElement>('section[aria-labelledby="perf-title"]')!;
+    expect(panel.hasAttribute('data-collapsed')).toBe(true);
+    expect(panel.getBoundingClientRect().height).toBeLessThanOrEqual(52);
+    expect(panel.textContent).toContain('No takes yet');
+    const open = panel.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!;
+    click(open);
+    expect(panel.hasAttribute('data-collapsed')).toBe(false);
+    expect(panel.textContent).toContain('captures clip launches, notes and knob moves, and replays them exactly');
+    expect(panel.textContent).toContain('saved with the project');
+    expect(panel.textContent).toContain('No performances yet');
+    // Hide folds it back into one line.
+    click(panel.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')!);
+    expect(panel.hasAttribute('data-collapsed')).toBe(true);
   });
 
   it('lists a take with its length and event counts, renames it inline, deletes it with undo', async () => {
@@ -610,7 +668,9 @@ describe('Performances', () => {
     click(byLabel('Delete Big Finish', panel));
     expect(perfById(id)).toBeUndefined();
     expect(runtimeStore.getState().notice?.action).toBe('undo');
-    expect(panel.textContent).toContain('No performances yet');
+    // The last take gone: one line again.
+    expect(panel.textContent).toContain('No takes yet');
+    expect(panel.hasAttribute('data-collapsed')).toBe(true);
     act(() => session.undo());
     expect(perfById(id)?.name).toBe('Big Finish');
     expect(panel.textContent).toContain('Big Finish');
@@ -633,7 +693,7 @@ describe('Performances', () => {
     expect(session.transport!.getPosition().tick).toBeGreaterThanOrEqual(768);
     expect(panel.textContent).toContain('Replaying');
     expect(panel.textContent).toMatch(/\d\.\d s \/ \d\.\d s/);
-    expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toContain('Performance');
+    expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toContain('Now playing:a recorded take');
     click(byExactLabel('Stop replaying Take 1'));
     expect(rt().playing).toBe(false);
     expect(rt().replayId).toBeNull();

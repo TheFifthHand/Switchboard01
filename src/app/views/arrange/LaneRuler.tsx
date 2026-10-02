@@ -90,7 +90,8 @@ export const LaneRuler = memo(function LaneRuler({ layout, names, loop, contentR
     el.dataset.on = '';
     el.style.transform = `translate3d(${barToX(live.current.layout, b).toFixed(1)}px, 0, 0)`;
     const label = el.firstElementChild;
-    if (label) label.textContent = `Bar ${b + 1}`;
+    // A click (or Enter) plays from the bar it marks: the label says so.
+    if (label) label.textContent = `Play from bar ${b + 1}`;
   };
   const rulerAt = (clientX: number) => {
     const c = contentRef.current;

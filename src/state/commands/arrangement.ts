@@ -121,12 +121,13 @@ export function removeBlock(store: ProjectStore, blockId: Id): CommandResult {
   });
 }
 
-/** Remove several blocks in one step. */
-export function removeBlocks(store: ProjectStore, ids: readonly Id[]): CommandResult & { removed?: number } {
+/** Remove several blocks in one step (`opts.cut`: the step is called Cut, as the clipboard's Cut is). */
+export function removeBlocks(store: ProjectStore, ids: readonly Id[], opts: { cut?: boolean } = {}): CommandResult & { removed?: number } {
   const order = inSongOrder(store.getState(), ids);
   if (!order.length) return NOT_FOUND('block');
   const gone = new Set(order);
-  const r = run(store, order.length === 1 ? 'arrange:Remove block' : 'arrange:Remove blocks', (d) => {
+  const what = order.length === 1 ? 'block' : 'blocks';
+  const r = run(store, `arrange:${opts.cut ? 'Cut' : 'Remove'} ${what}`, (d) => {
     d.arrangement.blocks = d.arrangement.blocks.filter((b) => !gone.has(b.id));
   });
   return { ...r, removed: order.length };
@@ -179,7 +180,7 @@ export function moveBlocks(store: ProjectStore, ids: readonly Id[], gap: number)
 /** Repeats 1–MAX_BLOCK_REPEATS. A shared gesture id (an edge drag) makes one undo step. */
 export function setBlockRepeats(store: ProjectStore, blockId: Id, repeats: number, gesture?: string): CommandResult {
   if (!store.getState().arrangement.blocks.some((b) => b.id === blockId)) return NOT_FOUND('block');
-  if (!isFiniteNumber(repeats)) return refuse('invalid', 'Passes must be a number.');
+  if (!isFiniteNumber(repeats)) return refuse('invalid', 'How many times a block plays must be a number.');
   const v = clampRep(repeats);
   return run(store, 'arrange:Change length', (d) => {
     const b = d.arrangement.blocks.find((x) => x.id === blockId);
@@ -196,7 +197,7 @@ export function splitBlock(store: ProjectStore, blockId: Id, afterPass: number):
   const i = p.arrangement.blocks.findIndex((b) => b.id === blockId);
   if (i < 0) return NOT_FOUND('block');
   const b = p.arrangement.blocks[i];
-  if (!Number.isInteger(afterPass) || afterPass < 1 || afterPass >= b.repeats) return refuse('invalid', b.repeats < 2 ? 'A block that plays once cannot be split.' : 'Split between two passes of the block.');
+  if (!Number.isInteger(afterPass) || afterPass < 1 || afterPass >= b.repeats) return refuse('invalid', b.repeats < 2 ? 'A block that plays once cannot be split.' : 'Split between two times the block plays.');
   if (p.arrangement.blocks.length >= VALIDATION_LIMITS.maxBlocks) return refuse('limit', LIMIT_MESSAGE);
   const second = fromTemplate(p, { ...blockTemplate(b), repeats: b.repeats - afterPass });
   const r = run(store, 'arrange:Split block', (d) => {
@@ -215,7 +216,7 @@ export function joinProblemDetail(p: Project, blockId: Id): { short: string; tex
   const next = list[i + 1];
   if (!next) return { short: 'Last block', text: 'There is no block after this one.' };
   if (!sameMaterial(list[i], next)) return { short: 'Not the same', text: 'Only neighbours that play the same scene with the same parts can be joined.' };
-  if (list[i].repeats + next.repeats > MAX_BLOCK_REPEATS) return { short: `Over ${MAX_BLOCK_REPEATS} passes`, text: `Together they would play more than ${MAX_BLOCK_REPEATS} passes, the most one block holds.` };
+  if (list[i].repeats + next.repeats > MAX_BLOCK_REPEATS) return { short: `Over ${MAX_BLOCK_REPEATS} times`, text: `Together they would play more than ${MAX_BLOCK_REPEATS} times, the most one block holds.` };
   return null;
 }
 
@@ -438,35 +439,20 @@ function breakdownParts(p: Project, b: ArrangementBlock): { off: Id[]; left: num
   return { off, left: sounding.length - off.length };
 }
 
-/** Why a song helper cannot shape a block (a few words and the full reason), or null when it can. */
-export function shapeProblem(p: Project, blockId: Id, kind: ShapeKind): ShapeProblem | null {
-  const b = p.arrangement.blocks.find((x) => x.id === blockId);
-  if (!b) return { short: 'Gone', text: 'That block no longer exists.' };
-  if (sceneRow(p, b.sceneId) < 0) return { short: 'Scene missing', text: 'The scene this block played was deleted.' };
-  if (kind === 'breakdown') {
-    const { off, left } = breakdownParts(p, b);
-    if (!off.length) return { short: 'No beat or bass', text: 'No drums, percussion or bass play in this block.' };
-    if (!left) return { short: 'Nothing left', text: 'Only drums, percussion and bass play here: a breakdown would leave silence.' };
-    return null;
-  }
-  const k = soundingInBuildOrder(p, b).length;
-  if (clampRep(b.repeats) < 2) return { short: 'Plays once', text: 'The block plays once: give it at least 2 passes first.' };
-  if (k === 0) return { short: 'Nothing plays', text: 'No part plays in this block.' };
-  if (k === 1) return { short: 'One part', text: `Only one part plays in this block: there is nothing to ${kind === 'build' ? 'bring in' : 'drop out'} one at a time.` };
-  return null;
-}
-
 /**
  * Blocks that play `parts` of block `b` for `passes` of its passes: the pass
  * keeps its length in bars (when the parts left are shorter, it plays more
  * often, so the song's timing does not change), split into blocks of at most
- * MAX_BLOCK_REPEATS passes.
+ * MAX_BLOCK_REPEATS passes. Null when the parts left cannot fill those bars
+ * exactly (a 3-bar clip in a 4-bar pass): whole passes only, and the song
+ * must keep its length.
  */
-function shapedBlocks(p: Project, b: ArrangementBlock, parts: Record<Id, Id | null>, passes: number, passBars: number): Omit<ArrangementBlock, 'id'>[] {
+function shapedBlocks(p: Project, b: ArrangementBlock, parts: Record<Id, Id | null>, passes: number, passBars: number): Omit<ArrangementBlock, 'id'>[] | null {
   const draft: ArrangementBlock = { id: b.id, sceneId: b.sceneId, repeats: 1, parts };
   const bars = blockBars(p, draft);
-  // Whole passes only: with clip lengths that do not divide (a 3-bar clip in a 4-bar pass) the nearest count.
-  let repeats = Math.max(1, Math.round((passes * passBars) / bars));
+  const total = passes * passBars;
+  if (total % bars !== 0) return null;
+  let repeats = total / bars;
   const out: Omit<ArrangementBlock, 'id'>[] = [];
   while (repeats > 0) {
     const r = Math.min(MAX_BLOCK_REPEATS, repeats);
@@ -480,13 +466,77 @@ function shapedBlocks(p: Project, b: ArrangementBlock, parts: Record<Id, Id | nu
 }
 
 /**
+ * What a song helper makes of block `b` (pure): the blocks that replace it
+ * (without ids) and how many parts it shapes; `uneven` names the first part
+ * set that cannot fill its passes exactly (the helper is then refused, so the
+ * song never changes length behind the user's back).
+ */
+function shapePlan(p: Project, b: ArrangementBlock, kind: ShapeKind): { shaped: Omit<ArrangementBlock, 'id'>[]; parts: number; uneven: { clipBars: number; passBars: number } | null } {
+  const passBars = blockBars(p, b);
+  const base = { ...(b.parts ?? {}) };
+  const uneven = (parts: Record<Id, Id | null>) => ({ clipBars: blockBars(p, { id: b.id, sceneId: b.sceneId, repeats: 1, parts }), passBars });
+  if (kind === 'breakdown') {
+    const { off } = breakdownParts(p, b);
+    for (const t of off) base[t] = null;
+    const shaped = shapedBlocks(p, b, base, clampRep(b.repeats), passBars);
+    return shaped ? { shaped, parts: off.length, uneven: null } : { shaped: [], parts: off.length, uneven: uneven(base) };
+  }
+  const order = soundingInBuildOrder(p, b);
+  const sets = shapePasses(order, clampRep(b.repeats), kind);
+  // Neighbouring passes with the same parts are one block.
+  const runs: { set: Id[]; passes: number }[] = [];
+  for (const s of sets) {
+    const last = runs[runs.length - 1];
+    if (last && last.set.length === s.length) last.passes += 1;
+    else runs.push({ set: s, passes: 1 });
+  }
+  const shaped: Omit<ArrangementBlock, 'id'>[] = [];
+  for (const run of runs) {
+    const x = { ...base };
+    for (const t of order) if (!run.set.includes(t)) x[t] = null;
+    const made = shapedBlocks(p, b, x, run.passes, passBars);
+    if (!made) return { shaped: [], parts: order.length, uneven: uneven(x) };
+    shaped.push(...made);
+  }
+  return { shaped, parts: order.length, uneven: null };
+}
+
+/** Why a song helper cannot shape a block (a few words and the full reason), or null when it can. */
+export function shapeProblem(p: Project, blockId: Id, kind: ShapeKind): ShapeProblem | null {
+  const b = p.arrangement.blocks.find((x) => x.id === blockId);
+  if (!b) return { short: 'Gone', text: 'That block no longer exists.' };
+  if (sceneRow(p, b.sceneId) < 0) return { short: 'Scene missing', text: 'The scene this block played was deleted.' };
+  if (kind === 'breakdown') {
+    const { off, left } = breakdownParts(p, b);
+    if (!off.length) return { short: 'No beat or bass', text: 'No drums, percussion or bass play in this block.' };
+    if (!left) return { short: 'Nothing left', text: 'Only drums, percussion and bass play here: a breakdown would leave silence.' };
+  } else {
+    const k = soundingInBuildOrder(p, b).length;
+    if (clampRep(b.repeats) < 2) return { short: 'Plays once', text: 'The block plays once: make it play at least 2 times first.' };
+    if (k === 0) return { short: 'Nothing plays', text: 'No part plays in this block.' };
+    if (k === 1) return { short: 'One part', text: `Only one part plays in this block: there is nothing to ${kind === 'build' ? 'bring in' : 'drop out'} one at a time.` };
+  }
+  const { uneven } = shapePlan(p, b, kind);
+  if (uneven) {
+    const lengths = `Its clips have different lengths (${uneven.clipBars} and ${uneven.passBars} bars)`;
+    const text =
+      kind === 'breakdown'
+        ? `${lengths}: without the drums and bass the rest would not fill the block exactly, and the song would change length.`
+        : `${lengths}, so the repeats would not line up and the song would change length.`;
+    return { short: 'Uneven clips', text };
+  }
+  return null;
+}
+
+/**
  * Shape a block with a song helper (one undo step). Build up and strip down
  * split the block into its passes, switch parts off pass by pass (parts that
  * are silent in the block stay silent) and join neighbouring passes that end
  * up with the same parts again; breakdown switches off the block's sounding
  * drums, percussion and bass. The first resulting block keeps the block's id.
  * Every change is a per-part change, so it shows in the part cells and plays
- * at once.
+ * at once. The song keeps its length exactly: when the parts left could not
+ * fill a pass (uneven clip lengths), the helper is refused.
  */
 export function shapeBlock(store: ProjectStore, blockId: Id, kind: ShapeKind): CommandResult & { blockIds?: Id[]; parts?: number } {
   const p = store.getState();
@@ -495,33 +545,7 @@ export function shapeBlock(store: ProjectStore, blockId: Id, kind: ShapeKind): C
   const problem = shapeProblem(p, blockId, kind);
   if (problem) return refuse('invalid', problem.text);
   const b = p.arrangement.blocks[i];
-  const passBars = blockBars(p, b);
-  const base = { ...(b.parts ?? {}) };
-  let shaped: Omit<ArrangementBlock, 'id'>[];
-  let parts: number;
-  if (kind === 'breakdown') {
-    const { off } = breakdownParts(p, b);
-    for (const t of off) base[t] = null;
-    shaped = shapedBlocks(p, b, base, clampRep(b.repeats), passBars);
-    parts = off.length;
-  } else {
-    const order = soundingInBuildOrder(p, b);
-    const sets = shapePasses(order, clampRep(b.repeats), kind);
-    // Neighbouring passes with the same parts are one block.
-    const runs: { set: Id[]; passes: number }[] = [];
-    for (const s of sets) {
-      const last = runs[runs.length - 1];
-      if (last && last.set.length === s.length) last.passes += 1;
-      else runs.push({ set: s, passes: 1 });
-    }
-    shaped = [];
-    for (const run of runs) {
-      const x = { ...base };
-      for (const t of order) if (!run.set.includes(t)) x[t] = null;
-      shaped.push(...shapedBlocks(p, b, x, run.passes, passBars));
-    }
-    parts = order.length;
-  }
+  const { shaped, parts } = shapePlan(p, b, kind);
   if (p.arrangement.blocks.length - 1 + shaped.length > VALIDATION_LIMITS.maxBlocks) return refuse('limit', LIMIT_MESSAGE);
   const out: ArrangementBlock[] = shaped.map((x, j) => ({ ...x, id: j === 0 ? b.id : uid('blk') }));
   const label = kind === 'build' ? 'arrange:Build up' : kind === 'strip' ? 'arrange:Strip down' : 'arrange:Breakdown';

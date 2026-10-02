@@ -286,13 +286,15 @@ button.head:hover {
 }
 
 .mute[aria-pressed='true'] {
-  background: var(--coral);
+  background: var(--coral-key);
   color: #fff;
   box-shadow: inset 0 1px 2px rgba(20, 24, 28, 0.25);
 }
 
 .solo[aria-pressed='true'] {
-  background: var(--amber);
+  /* The lighter amber keeps the amber-ink word at 4.5:1 or better. */
+  background: var(--amber-hi);
+  box-shadow: inset 0 0 0 1px var(--amber), inset 0 1px 2px rgba(20, 24, 28, 0.2);
   color: var(--amber-ink);
   box-shadow: inset 0 1px 2px rgba(20, 24, 28, 0.2);
 }

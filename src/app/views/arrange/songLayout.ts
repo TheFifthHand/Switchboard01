@@ -2,18 +2,28 @@
  * Song lane geometry (pure: no DOM, no React).
  *
  * Blocks sit edge to edge, left to right, with widths proportional to their
- * length in bars (one pass × repeats). A block is never narrower than
- * MIN_BLOCK_WIDTH, so its header stays usable; the ruler, the playhead and
- * the pass dividers map bars through the same per-block geometry, so bar
- * numbers always line up with block edges even when a short block is widened.
+ * length in bars (one pass × repeats). A block is never narrower than the
+ * minimum width of its scale (MIN_BLOCK_WIDTH, so its header stays usable;
+ * at the overview steps below OVERVIEW_BELOW px per bar COMPACT_BLOCK_WIDTH,
+ * with a compact header); the ruler, the playhead and the pass dividers map
+ * bars through the same per-block geometry, so bar numbers always line up
+ * with block edges even when a short block is widened.
+ *
+ * After the last block the lane keeps free room (`room`, one block width at
+ * the scale) where blocks are dropped at the end and where the last block's
+ * edge can be dragged out without reaching the lane's visible edge.
  *
  * The scale (pixels per bar) comes from a fixed ladder of zoom steps. The
- * lane fits the song (the largest step at which it fits) when it opens, when
- * the window is resized and on Fit song; edits keep the scale it has (a
- * longer song scrolls), so blocks never change size under the pointer. A song
- * that does not fit even at the smallest step scrolls, at the step where its
- * shortest block is about the minimum width (within SCROLL_MAX_PX_PER_BAR).
- * Zooming keeps an anchor (a block and how far into it) where it is on screen.
+ * lane fits the song (the largest step at which the whole song and its room
+ * fit) when it opens and when the window is resized: at a readable step, or,
+ * for a song of OVERVIEW_MIN_BLOCKS blocks or more, at an overview step
+ * (compact blocks) when only that shows it whole; otherwise it opens
+ * scrolling at a readable step (its shortest block about the minimum width,
+ * within SCROLL_MAX_PX_PER_BAR). Fit song shows the whole song at any step
+ * that does, else as much as the smallest step allows (fitSong). Edits keep
+ * the scale the lane has (a longer song scrolls), so blocks never change size
+ * under the pointer. Zooming keeps an anchor (a block and how far into it)
+ * where it is on screen.
  */
 
 export interface LaneBlockInput {
@@ -45,11 +55,23 @@ export interface SongLayout {
   pxPerBar: number;
   /** Right edge of the last block. */
   contentWidth: number;
+  /** Free room kept after the last block (px). */
+  room: number;
 }
 
 export const MIN_BLOCK_WIDTH = 112;
-/** Zoom steps (pixels per bar), smallest first. */
-export const ZOOM_STEPS = [10, 11, 12, 14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56] as const;
+/** Narrowest block at an overview step (its header shows the name; play and actions on hover, focus or the menu). */
+export const COMPACT_BLOCK_WIDTH = 44;
+/**
+ * A block narrower than this (px) is drawn compact: its name only in the
+ * header, no clip names in its cells (SongPanel.module.css, the container
+ * query at 95 px). Only overview steps make blocks this narrow.
+ */
+export const COMPACT_HEADER_BELOW = 96;
+/** Zoom steps (pixels per bar), smallest first. The steps below OVERVIEW_BELOW show a long song whole. */
+export const ZOOM_STEPS = [3, 4, 5, 6, 8, 10, 11, 12, 14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56] as const;
+/** Scales under this many px per bar are overview steps: blocks may be compact. */
+export const OVERVIEW_BELOW = 10;
 export const MIN_PX_PER_BAR = ZOOM_STEPS[0];
 export const MAX_PX_PER_BAR = ZOOM_STEPS[ZOOM_STEPS.length - 1];
 /** Largest scale of a song that scrolls (so one short block cannot make long ones huge). */
@@ -61,9 +83,19 @@ export function clampRepeats(r: number): number {
   return Number.isFinite(r) ? Math.min(MAX_REPEATS, Math.max(1, Math.round(r))) : 1;
 }
 
+/** The narrowest a block may be at `pxPerBar` (compact at the overview steps). */
+export function minBlockWidth(pxPerBar: number): number {
+  return pxPerBar < OVERVIEW_BELOW ? COMPACT_BLOCK_WIDTH : MIN_BLOCK_WIDTH;
+}
+
+/** Free room after the last block at `pxPerBar`: one block width (drops at the end, the last block's edge). */
+export function tailRoom(pxPerBar: number): number {
+  return minBlockWidth(pxPerBar);
+}
+
 /** Width of a block of `totalBars` at `pxPerBar` (a skipped block gets the minimum). */
 export function blockWidth(totalBars: number, pxPerBar: number): number {
-  return Math.floor(Math.max(MIN_BLOCK_WIDTH, totalBars * pxPerBar));
+  return Math.floor(Math.max(minBlockWidth(pxPerBar), totalBars * pxPerBar));
 }
 
 function widthAt(totals: readonly number[], ppb: number): number {
@@ -72,20 +104,56 @@ function widthAt(totals: readonly number[], ppb: number): number {
   return w;
 }
 
-/** The largest zoom step at which every block fits in `room`, or null when none does. */
-function fitScale(totals: readonly number[], room: number): number | null {
-  for (let i = ZOOM_STEPS.length - 1; i >= 0; i--) if (widthAt(totals, ZOOM_STEPS[i]) <= room) return ZOOM_STEPS[i];
+/**
+ * The largest zoom step at which every block and the room after them fit in
+ * `room`, or null when none does (`readableOnly`: no overview step).
+ */
+function fitScale(totals: readonly number[], room: number, readableOnly = false): number | null {
+  for (let i = ZOOM_STEPS.length - 1; i >= 0; i--) {
+    const s = ZOOM_STEPS[i];
+    if (readableOnly && s < OVERVIEW_BELOW) break;
+    if (widthAt(totals, s) + tailRoom(s) <= room) return s;
+  }
   return null;
 }
 
-/** Scale of a song that does not fit: about the step where its shortest block is the minimum width. */
+/**
+ * A song with at least this many blocks opens at an overview step (compact
+ * blocks) when that is the only way to show it whole; a shorter one opens
+ * readable and scrolls (Fit song still shows it whole).
+ */
+export const OVERVIEW_MIN_BLOCKS = 10;
+
+/** The scale the lane opens at (and fits again at on a window resize). */
+function openScale(totals: readonly number[], available: number): number {
+  const room = Math.max(0, available);
+  return fitScale(totals, room, true) ?? (totals.length >= OVERVIEW_MIN_BLOCKS ? fitScale(totals, room) : null) ?? scrollScale(totals);
+}
+
+/** Scale of a song that does not fit: about the step where its shortest block is the minimum width (never an overview step). */
 function scrollScale(totals: readonly number[]): number {
   const shortest = Math.min(...totals.filter((t) => t > 0));
-  if (!Number.isFinite(shortest)) return MIN_PX_PER_BAR;
+  const steps = ZOOM_STEPS.filter((s) => s >= OVERVIEW_BELOW);
+  if (!Number.isFinite(shortest)) return steps[0];
   const want = Math.min(SCROLL_MAX_PX_PER_BAR, MIN_BLOCK_WIDTH / shortest);
-  let step: number = MIN_PX_PER_BAR;
-  for (const s of ZOOM_STEPS) if (s <= want) step = s;
+  let step: number = steps[0];
+  for (const s of steps) if (s <= want) step = s;
   return step;
+}
+
+function totalsOf(inputs: readonly LaneBlockInput[]): number[] {
+  return inputs.map((b) => (b.bars > 0 ? b.bars * clampRepeats(b.repeats) : 0));
+}
+
+/**
+ * What Fit song does in `available` px: the largest step at which the whole
+ * song fits (`fits`), else the smallest step, which shows as much of it as
+ * the lane can (`fits` false: the rest scrolls). It never picks a scale at
+ * which a song that is cut off would grow.
+ */
+export function fitSong(inputs: readonly LaneBlockInput[], available: number): { pxPerBar: number; fits: boolean } {
+  const ppb = fitScale(totalsOf(inputs), Math.max(0, available));
+  return ppb === null ? { pxPerBar: MIN_PX_PER_BAR, fits: false } : { pxPerBar: ppb, fits: true };
 }
 
 /**
@@ -94,9 +162,9 @@ function scrollScale(totals: readonly number[]): number {
  * progress so nothing rescales under the pointer).
  */
 export function layoutSong(inputs: readonly LaneBlockInput[], available: number, opts: { pxPerBar?: number } = {}): SongLayout {
-  const totals = inputs.map((b) => (b.bars > 0 ? b.bars * clampRepeats(b.repeats) : 0));
+  const totals = totalsOf(inputs);
   const totalBars = totals.reduce((a, b) => a + b, 0);
-  const ppb = opts.pxPerBar ?? fitScale(totals, Math.max(0, available)) ?? scrollScale(totals);
+  const ppb = opts.pxPerBar ?? openScale(totals, available);
   const blocks: LaneBlock[] = [];
   let x = 0;
   let bar = 0;
@@ -106,7 +174,7 @@ export function layoutSong(inputs: readonly LaneBlockInput[], available: number,
     x += width;
     bar += totals[index];
   });
-  return { blocks, totalBars, pxPerBar: ppb, contentWidth: x };
+  return { blocks, totalBars, pxPerBar: ppb, contentWidth: x, room: tailRoom(ppb) };
 }
 
 /** Horizontal position of a bar line (0-based bar, may be fractional) on the lane. */
@@ -254,4 +322,33 @@ export function gapX(layout: SongLayout, gap: number): number {
   if (!b.length || gap <= 0) return 0;
   if (gap >= b.length) return layout.contentWidth;
   return b[gap].x;
+}
+
+/* ------------------------------------------------------------------ */
+/* Part rows: they grow with the free height                           */
+/* ------------------------------------------------------------------ */
+
+/** Part rows never get shorter than this (px)… */
+export const ROW_MIN_PX = 18;
+/** …nor taller than this. */
+export const ROW_MAX_PX = 32;
+/** Room the Performances panel keeps below the song when it lists takes (its header and about two takes). */
+export const PERF_ROOM_PX = 180;
+
+/** The row height that shares `free` px out among `rows` part rows, within ROW_MIN_PX..ROW_MAX_PX. */
+export function fitRowHeight(free: number, rows: number): number {
+  if (!(rows > 0) || !Number.isFinite(free)) return ROW_MIN_PX;
+  return Math.max(ROW_MIN_PX, Math.min(ROW_MAX_PX, Math.floor(free / rows)));
+}
+
+/**
+ * How the lane fills `free` px of height: the part rows grow first (up to
+ * ROW_MAX_PX); what is left once they are as tall as they get (`extra`) goes
+ * to the lane itself, below the blocks, so a tall window has no empty band
+ * under the song.
+ */
+export function fitLaneHeight(free: number, rows: number): { row: number; extra: number } {
+  const row = fitRowHeight(free, rows);
+  if (!(rows > 0) || !Number.isFinite(free)) return { row, extra: 0 };
+  return { row, extra: Math.max(0, Math.floor(free - rows * row)) };
 }

@@ -24,8 +24,8 @@ Run in the cloud container (Linux, 4 CPUs, Chromium 141 via Playwright 1.56.1, N
 | Suite | Files | Tests | Result |
 |-------|-------|-------|--------|
 | Typecheck (`tsc --noEmit`, app + tests) | — | — | clean |
-| Unit (`tests/unit`, Node) | 45 | 1008 | all pass |
-| Browser (`tests/browser`, real Chromium) | 73 | 999 | all pass, none skipped |
+| Unit (`tests/unit`, Node) | 49 | 1106 | all pass |
+| Browser (`tests/browser`, real Chromium) | 85 | 1085 | all pass, none skipped |
 | End-to-end (`e2e`, production build) | 8 | 25 | all pass |
 
 Two timing-sensitive tests (`omni-input-audio` early stop, `variation` "stays fast") each failed
@@ -112,6 +112,23 @@ normal speed: 13 late of 1208 frames before, 0 of 1110 after. The drop of a bloc
 long frame of about 90–140 ms at 4× (React commit + style/layout); at normal speed it stays under
 about 70 ms. These are machine measurements, not a listening or feel test.
 
+### Rounds 2 and 3 (still 2.1, before merging)
+
+| Feature | Status | Evidence |
+|---|---|---|
+| Loop a section: Loop button (names its target), a band on the ruler (drag across the bar numbers, drag its ends), block-menu items; seamless repeats; Play song starts at the loop; edits, pause/resume and undo/redo keep the loop right; "looping" is said only while it repeats | ✅ | unit `song-loop`, `song-loop-history`, `song-live-fuzz` (random loop set/clear among live edits); browser `song-loop`, `song-lane-loop`, `song-live-session` |
+| Build up / Strip down / Breakdown, one undo step each, never changing the song's length (refused with a reason when clips would not line up); on the playing block they play what the lane shows | ✅ | unit `song-blocks`, `song-live-helpers`; browser `song-lane-loop`, `song-lane-polish` |
+| Touch: rest a finger to pick up a block or scene card, swipe to scroll | ✅ | browser `song-lane-touch` (real touch via CDP) |
+| One Play per screen: in Arrange the transport Play/Space, Stop and Export act on the song; export of the looped section; playback carries on through an export | ✅ | browser `omni-play-song-key`, `export-dialog`, `export-range`, `export-while-playing`; unit/browser `offline` (range render sample-exact against the full song) |
+| No empty undo steps from gestures that end where they started; no Undo offered for them | ✅ | unit `store`; browser `song-lane-polish` |
+| Lane polish: Fit song never zooms in, compact headers for long songs, rows that use the free height, collapsed empty Performances, Follow that never turns the page under the pointer, edge drags that scroll only past the lane edge, focus kept after undo, calmer "Off" cells, visible edge grips and loop grips, plain words | ✅ | unit `song-lane`, `song-lane-loop`; browser `song-lane-polish`, `song-lane-layout`, `arrange` |
+| App polish: toggles keep their "on" look under the pointer (≥ 4.5:1 text), menus never cover their trigger (a second click closes, no double-click activation, Ctrl+Z works in menus), tooltips wait for pointer movement, Undo/Redo always on the top bar, Simple · Advanced on the bar from 1366 px, readable pad names, no layout shift from Mute/Solo, scene buttons say "4 parts" | ✅ | browser `omni-fix-toggles`, `clipmenu-popover`, `tooltip-still-pointer`, `wp1-transport`, `wp1-transport-history`, `omni-fix-play-pads`, `ui` |
+
+Drop of a song block, 24 blocks, 4× CPU slowdown, built app (machine measurement, not a feel test):
+the long frame went from 90–140 ms (first version) to a median of 57–75 ms; release to drop drawn
+from ~150 ms to 72–107 ms. A replan deferred past the paint was tried and measured worse overall,
+so the replan stays in the edit's own task.
+
 ## Audio measurements (automated, not listening)
 
 ### Timing
@@ -176,9 +193,11 @@ mastering changes nothing). Short, synthesized material only: no user recordings
 - Input monitoring goes through its own limiter, not through the mastering chain.
 - On a window blur, live sampler one-shots are cut (held notes are released on blur); a replay or
   export of a take plays them through.
-- Song lane: a horizontal finger swipe on a block drags it (scroll by finger on the ruler, the strip
-  under the blocks or the scrollbar); touch was tested with emulated touch input, not on a device.
-  A quick double-click on one part cell leaves an undo step that changes nothing.
+- Song lane touch was tested with real touch events sent to Chromium, not on a physical device
+  (rest a finger to pick up; a swipe scrolls).
+- Exporting while playing: playback is scheduled further ahead while the export starts; a very busy
+  computer (over about 2 s of blocking) can still stop playback, and the message then says so.
+- In Advanced at 1366 px a narrow playing block's header can shorten "Playing" to "Play…".
 - After a split or join in a block whose clips have lengths that do not divide each other (e.g. 3
   bars), the continued block keeps the loop phases that were sounding (nothing audible changes);
   playing that block again from its start can sound slightly different until the next block.

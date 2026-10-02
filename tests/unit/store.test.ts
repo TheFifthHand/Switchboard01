@@ -378,3 +378,53 @@ describe('a gesture that ends where it started', () => {
     expect(s.undoLabel()).toBe('Order');
   });
 });
+
+describe('what an edit tells its caller and the store’s listeners', () => {
+  it('a gesture back where it started reports that it left no undo step (a toast must not offer Undo)', () => {
+    const s = new ProjectStore(createProject({ now: 0 }));
+    // An older, unrelated step: Undo on the toast would undo this one.
+    s.apply('scene:Rename', (d) => void (d.scenes[0].name = 'Intro'));
+    const older = s.undoEntryId();
+    const before = s.getState().bpm;
+    // A part cell clicked off and on again (one gesture id for quick clicks).
+    expect(s.apply('song:Tempo', (d) => void (d.bpm = before + 5), { gesture: 'cell' })).toEqual({ changed: true });
+    const back = s.apply('song:Tempo', (d) => void (d.bpm = before), { gesture: 'cell' });
+    expect(back).toEqual({ changed: true, noStep: true });
+    expect(s.undoEntryId()).toBe(older);
+    // An edit that does leave a step says nothing more.
+    expect(s.apply('song:Tempo', (d) => void (d.bpm = before + 1), { gesture: 'other' })).toEqual({ changed: true });
+  });
+
+  it('commands pass it on: a part cell clicked off and on again in one gesture', async () => {
+    const cmd = await import('../../src/state/commands');
+    const p = createProject({ now: 0 });
+    p.arrangement = { tailSeconds: 1, blocks: [{ id: 'blk', sceneId: p.scenes[0].id, repeats: 1 }] };
+    const s = new ProjectStore(p);
+    expect(cmd.setBlockPart(s, 'blk', 't1', null, 'cell').noStep).toBeUndefined();
+    expect(cmd.setBlockPart(s, 'blk', 't1', undefined, 'cell')).toMatchObject({ changed: true, noStep: true });
+    expect(s.canUndo()).toBe(false);
+  });
+
+  it('listeners can read whether a change was an edit, an undo or a redo, and of which step', () => {
+    const s = new ProjectStore(createProject({ now: 0 }));
+    const seen: string[] = [];
+    s.subscribe(() => {
+      const c = s.lastChange();
+      seen.push(`${c.kind}:${c.entryId === null ? '-' : c.entryId === s.undoEntryId() || c.entryId === s.redoEntryId() ? 'top' : 'other'}`);
+    });
+    s.apply('scene:Rename', (d) => void (d.scenes[0].name = 'A'));
+    const a = s.undoEntryId();
+    s.apply('song:Tempo', (d) => void (d.bpm = 100), { gesture: 'g' });
+    s.apply('song:Tempo', (d) => void (d.bpm = 101), { gesture: 'g' });
+    s.undo();
+    expect(s.lastChange().kind).toBe('undo');
+    s.redo();
+    expect(s.lastChange()).toEqual({ kind: 'redo', entryId: s.undoEntryId() });
+    s.apply('scene:Rename', (d) => void (d.scenes[0].name = 'B'), { skipHistory: true });
+    expect(s.lastChange()).toEqual({ kind: 'other', entryId: null });
+    s.replace(createProject({ now: 0 }));
+    expect(s.lastChange()).toEqual({ kind: 'other', entryId: null });
+    expect(seen).toEqual(['edit:top', 'edit:top', 'edit:top', 'undo:top', 'redo:top', 'other:-', 'other:-']);
+    expect(a).not.toBeNull();
+  });
+});

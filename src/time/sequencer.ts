@@ -1382,6 +1382,13 @@ export class Sequencer {
    *   playing block's start or, when that block was deleted, from the start
    *   of the nearest block before it that is still in the song (with none,
    *   the block after it takes its place).
+   * - When the playing block became several blocks of its scene with other
+   *   parts (a song helper: Build up, Strip down, Breakdown, or undoing or
+   *   redoing one) and the block the edited lane puts under the playhead is
+   *   one this edit made or changed, playback continues in that block from
+   *   its start on the lane (a pass line of the block that played, so the
+   *   song keeps its phrase grid); its parts that differ from what sounds
+   *   switch at the edit point, in phase with that start.
    * - Otherwise a block that no longer reaches the playhead (shortened below
    *   it) or that was deleted sounds on to the next bar line, where the block
    *   after it takes over (for a deleted block: the first block that followed
@@ -1491,6 +1498,12 @@ export class Sequencer {
       kept = { ...anchor, phases: anchor.phases.filter((ph) => ph.tick < from) };
     } else {
       const sounding = partsBefore(anchor, from);
+      // A block this edit made or changed: not in the plan being played, or there with another length
+      // or other part choices.
+      const changedHere = (b: SongBlockPlan): boolean => {
+        const o = old.find((e) => e.blockId === b.blockId);
+        return !o || o.repeats !== b.repeats || o.bars !== b.bars || partsKey(o.parts) !== partsKey(b.parts);
+      };
       // The playhead's place on the edited lane (see above): the block laid out under it there, and its start.
       let under = successor;
       let start = anchor.startTick;
@@ -1514,6 +1527,17 @@ export class Sequencer {
         // it was shortened in): continue in it, nothing switches.
         const b = plan[under];
         kept = { ...b, startTick: start, endTick: start + length(b), phases: [{ tick: start, parts: partPlays(project, b) }] };
+      } else if (under < plan.length && sounding && under !== at && plan[under].row === anchor.row && changedHere(plan[under])) {
+        // The playing block became several blocks of its scene with other parts (Build up, Strip down,
+        // Breakdown, or undoing / redoing one): continue in the one this edit put under the playhead, from
+        // its start on the lane (a pass line of the block that played, so the song keeps its phrase grid);
+        // its parts that differ from what sounds switch now, in phase with that start.
+        const b = plan[under];
+        const end = start + length(b);
+        const parts = partPlays(project, b);
+        const phases = [{ tick: start, parts: sounding }];
+        if (from < end && !sameClips(project, sounding, parts)) phases.push({ tick: from, parts });
+        kept = { ...b, startTick: start, endTick: end, phases };
       } else if (at !== undefined) {
         // Shortened below the playhead: it ends at the next bar line (its changed parts switch now).
         kept = keepPlaying(project, anchor, plan[at], nextBarTick(pos), from);
@@ -1694,6 +1718,21 @@ export class Sequencer {
     while (i < song.blocks.length && song.blocks[i].index < 0) i++;
     const b = song.blocks[i];
     return b ? { index: b.index, blockId: b.blockId } : null;
+  }
+
+  /**
+   * The song plays (or is paused) inside its loop and will repeat it: the
+   * block the lane shows at `tick` (see `songBlockAt`) is one of the loop's
+   * blocks the plan repeats. False while it plays towards the loop (or a
+   * jump to it waits for its bar line), when it plays on to its end (no loop,
+   * a loop cleared, or started after the loop), and when the song is not
+   * playing or paused.
+   */
+  songLoopingAt(tick: number): boolean {
+    const cycle = this.song?.cycle;
+    if (!cycle?.length) return false;
+    const at = this.songBlockAt(tick);
+    return !!at && cycle.some((b) => b.blockId === at.blockId);
   }
 
   /**

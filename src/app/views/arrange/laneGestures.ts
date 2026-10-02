@@ -43,6 +43,7 @@ import {
   autoScrollVelocity,
   badgePlacement,
   cardTarget,
+  edgeDragVelocity,
   edgeStepPx,
   fullGap,
   ghostFlips,
@@ -56,8 +57,6 @@ import {
 import { blockWidth, type SongLayout } from './songLayout';
 import { EASE_SLIDE_CSS, EASE_SPRING_CSS, RESIZE_SLIDE_MS, SETTLE_MS, SLIDE_MS, ZOOM_MS, easeSlide, easeSpring, prefersReducedMotion } from './laneMotion';
 
-/** Room after the last block (px) for dropping at the end. */
-export const END_ROOM = 48;
 /** How far above or below the lane (px) a drop still counts. */
 export const DROP_MARGIN = 40;
 /**
@@ -120,8 +119,10 @@ export interface LaneHost {
   commitInsert(sceneId: Id, gap: number): Id | null;
   commitLayer(blockId: Id, sceneId: Id, mode: LayerMode): void;
   commitRepeats(id: Id, repeats: number): void;
-  /** Live label for the edge bubble ("3 passes · 12 bars"). */
+  /** Live label for the edge bubble ("3 times · 12 bars"). */
   resizeLabel(id: Id, repeats: number): string;
+  /** The block's length as its header shows it while its edge is dragged ("12 bars"). */
+  lengthLabel(id: Id, repeats: number): string;
   /** A finger held on block `id` and let go without moving: open its actions (or the part picker, on a cell). */
   holdMenu(id: Id, target: Element | null): void;
 }
@@ -323,7 +324,7 @@ export class LaneGestures {
       w.set(b.id, b.width);
       p.set(b.id, b.repeats);
     }
-    this.place(x, w, p, Math.max(minWidth, layout.contentWidth + END_ROOM), { animate, keepView });
+    this.place(x, w, p, Math.max(minWidth, layout.contentWidth + layout.room), { animate, keepView });
     this.hideSlot();
   }
 
@@ -480,7 +481,9 @@ export class LaneGestures {
     if (!this.canStart(e)) return;
     const t = e.target as Element | null;
     if (t?.closest('[data-no-drag], input, a, [role="menuitem"]')) return;
-    if (t?.closest('button') && !t.closest('[data-cell]')) return;
+    // A part cell, and with a mouse or pen the header's ▶ and ⋯ ([data-drag-ok]: on a compact block they
+    // cover most of the header), stay buttons for a click and move the block once the press becomes a drag.
+    if (t?.closest('button') && !t.closest('[data-cell]') && !(e.pointerType !== 'touch' && t.closest('[data-drag-ok]'))) return;
     this.begin({ ...this.origin(e), kind: 'press', captureEl: el, id, down: e });
   }
 
@@ -1068,7 +1071,7 @@ export class LaneGestures {
         x = packPositions(ids, widthOf, { at: gap, width: g.groupWidth });
         extra = g.groupWidth;
       } else x = packPositions(orderAfterMove(g.list, g.ids, fullGap(g.list, g.moving, gap)).map((b) => b.id), widthOf);
-      this.place(x, null, null, layout.contentWidth + extra + END_ROOM, { animate: true });
+      this.place(x, null, null, layout.contentWidth + extra + layout.room, { animate: true });
       this.moveClone(g, this.contentX(g) - g.grab);
       this.label(g);
       return;
@@ -1079,7 +1082,7 @@ export class LaneGestures {
       if (t.kind === 'insert') {
         const width = g.open ? g.slotWidth : 0;
         const x = packPositions(ids, widthOf, { at: t.gap, width });
-        this.place(x, null, null, layout.contentWidth + width + END_ROOM, { animate: true });
+        this.place(x, null, null, layout.contentWidth + width + layout.room, { animate: true });
         const left = t.gap < layout.blocks.length ? layout.blocks[t.gap].x : layout.contentWidth;
         if (slot) {
           slot.style.transform = translate(left);
@@ -1089,7 +1092,7 @@ export class LaneGestures {
           else slot.dataset.pending = '';
         }
       } else {
-        this.place(new Map(layout.blocks.map((b) => [b.id, b.x])), null, null, layout.contentWidth + END_ROOM, { animate: true });
+        this.place(new Map(layout.blocks.map((b) => [b.id, b.x])), null, null, layout.contentWidth + layout.room, { animate: true });
         this.hideSlot();
       }
       return;
@@ -1104,13 +1107,17 @@ export class LaneGestures {
     const x = packPositions(ids, (id) => w.get(id) ?? 0);
     let total = 0;
     for (const v of w.values()) total += v;
-    this.place(x, w, passes, total + END_ROOM, { animate: true, dur: RESIZE_SLIDE_MS });
+    this.place(x, w, passes, total + layout.room, { animate: true, dur: RESIZE_SLIDE_MS });
     const bubble = this.host.bubbleEl();
     if (bubble) {
       bubble.textContent = this.host.resizeLabel(g.id, g.r);
       bubble.style.transform = translate((x.get(g.id) ?? 0) + (w.get(g.id) ?? 0));
       bubble.dataset.on = '';
     }
+    // The header says the length the drop will give (an element React leaves empty while the edge is dragged).
+    const live = this.host.blockEl(g.id)?.querySelector<HTMLElement>('[data-live-len]');
+    const text = this.host.lengthLabel(g.id, g.r);
+    if (live && live.textContent !== text) live.textContent = text;
   }
 
   private hideSlot(): void {
@@ -1129,6 +1136,8 @@ export class LaneGestures {
     const g = this.g;
     if (!g || (g.kind !== 'move' && g.kind !== 'card' && g.kind !== 'resize')) return 0;
     if (g.clientY < g.lane.top - DROP_MARGIN || g.clientY > g.lane.bottom + DROP_MARGIN) return 0;
+    // An edge scrolls the lane only from its visible edge on: inside the lane the pointer never moves it.
+    if (g.kind === 'resize') return edgeDragVelocity(g.clientX, g.lane.left, g.lane.right);
     return autoScrollVelocity(g.clientX, g.lane.left, g.lane.right);
   }
 

@@ -30,12 +30,16 @@ import styles from './Hints.module.css';
 /**
  * Layouts tried in turn until one finds a free spot: one row (the suggestion
  * wrapping in its column when narrower), compact (without the second
- * sentence), and stacked (buttons beside the label, the suggestion below).
+ * sentence), stacked (buttons beside the label, the suggestion below), and
+ * last a narrow column (label, suggestion and buttons one under another) for
+ * a crowded view whose only free room is a narrow strip (Arrange at
+ * 1366 x 768: beside the song's last block).
  */
 interface Layout {
   maxW: number;
   compact: boolean;
   stack: boolean;
+  column?: boolean;
 }
 const LAYOUTS: readonly Layout[] = [
   { maxW: 700, compact: false, stack: false },
@@ -45,12 +49,15 @@ const LAYOUTS: readonly Layout[] = [
   { maxW: 440, compact: false, stack: true },
   { maxW: 440, compact: true, stack: true },
   { maxW: 340, compact: true, stack: true },
+  { maxW: 260, compact: true, stack: false, column: true },
+  { maxW: 210, compact: true, stack: false, column: true },
 ];
 
 function applyLayout(el: HTMLElement, layout: Layout, maxW: number): void {
   el.style.maxWidth = `${maxW}px`;
   el.toggleAttribute('data-compact', layout.compact);
   el.toggleAttribute('data-stack', layout.stack);
+  el.toggleAttribute('data-column', !!layout.column);
 }
 /** How long "Done" shows after a step is done. */
 const DONE_MS = 1800;

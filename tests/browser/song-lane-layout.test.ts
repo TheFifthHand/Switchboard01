@@ -2,8 +2,11 @@
  * The Arrange view in the running app (real Chromium, the app's fonts and
  * styles): the song lane fits at 1366 x 768, 1920 x 1080 and 960 x 540
  * (200 % zoom of 1920 x 1080) without the page scrolling sideways, part rows
- * stay 14–18 px, the Performances panel keeps room at laptop size, and the
- * lane scrolls on its own when the song is longer than it. With reduced
+ * grow with the free height (26–32 px at 1366 x 768 and 1920 x 1080, never
+ * under 18 px), the Performances panel is a one-line bar without takes and
+ * keeps room with them, the lane scrolls on its own when the song is longer
+ * than it, and the details read as they should (the edge grip on every block,
+ * a calm Off, loop grips above the bar numbers). With reduced
  * motion, blocks jump to their places (no slides) and everything else works
  * the same. axe-core finds no serious or critical issues in the Arrange view
  * (Simple and Advanced, playing, with a part off and a layered part).
@@ -24,6 +27,7 @@ import { getStarter } from '../../src/content/starters';
 import { deleteDb } from '../../src/persistence/db';
 import * as cmd from '../../src/state/commands';
 import { setGuideDone, setKeyboardCollapsed, setTipsEnabled, setUiMode, setView } from '../../src/state/uiStore';
+import { makeSnapshot } from '../../src/time/snapshot';
 import { actFrame, cleanup, key, mount, wait } from './ui-harness';
 
 let boot: BootInfo;
@@ -89,7 +93,7 @@ describe('Arrange layout', () => {
     [1920, 1080],
     [960, 540],
   ] as const) {
-    it(`at ${w} x ${hh}: the lane fits, rows grow with the height (15 px at 768, up to 24 at 1080), targets are big enough, the page never scrolls sideways`, async () => {
+    it(`at ${w} x ${hh}: the lane fits, rows grow with the free height (26–32 px, 18 at 200 %), targets are big enough, the page never scrolls sideways`, async () => {
       await openArrange(w, hh);
       const doc = document.scrollingElement!;
       expect(doc.scrollWidth, 'page scrolls sideways').toBeLessThanOrEqual(window.innerWidth);
@@ -100,7 +104,7 @@ describe('Arrange layout', () => {
       // Part rows: one cell per part, aligned with the part names; they grow with the window's height.
       const cells = [...blockEls()[1].querySelectorAll<HTMLElement>('[data-cell]')];
       expect(cells.length).toBe(8);
-      const [lo, hi] = hh >= 1080 ? [22, 24] : hh <= 768 ? [14.5, 16] : [15, 24];
+      const [lo, hi] = hh <= 540 ? [18, 19] : [26, 32];
       for (const c of cells) {
         const ch = c.getBoundingClientRect().height;
         expect(ch).toBeGreaterThanOrEqual(lo);
@@ -114,9 +118,22 @@ describe('Arrange layout', () => {
       const last = blockEls()[blockEls().length - 1];
       expect(scroller.scrollWidth).toBeGreaterThanOrEqual(Math.floor(last.getBoundingClientRect().right - scroller.getBoundingClientRect().left + scroller.scrollLeft) - 1);
       expect(scroller.getBoundingClientRect().right).toBeLessThanOrEqual(panel.right);
-      // Header buttons keep a usable size; on a block with room (Groove) they are 32 px.
-      const play = blockEls()[0].querySelector<HTMLElement>('[aria-label^="Play song from block 1"]')!;
-      expect(play.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
+      // Header buttons keep a usable size; on a block with room (Groove) they are 32 px. A compact block (an
+      // overview step: the whole song fits only that small) shows them on keyboard focus (and hover).
+      const b0 = blockEls()[0];
+      if (b0.getBoundingClientRect().width < 96) {
+        expect(b0.querySelector<HTMLElement>('[aria-haspopup="menu"]')!.getBoundingClientRect().height).toBe(0);
+        act(() => b0.focus());
+        await settle();
+        const more = b0.querySelector<HTMLElement>('[aria-haspopup="menu"]')!.getBoundingClientRect();
+        expect(more.height).toBeGreaterThanOrEqual(28);
+        expect(more.width).toBeGreaterThanOrEqual(24);
+        expect(more.right).toBeLessThanOrEqual(b0.getBoundingClientRect().right + 1);
+        act(() => b0.blur());
+      } else {
+        const play = b0.querySelector<HTMLElement>('[aria-label^="Play song from block 1"]')!;
+        expect(play.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
+      }
       const wide = blockEls()[1];
       if (wide.getBoundingClientRect().width >= 150) {
         for (const b of wide.querySelectorAll<HTMLElement>('[aria-label^="Play song from block 2"], [aria-haspopup="menu"][aria-label*="block actions"]')) {
@@ -136,11 +153,17 @@ describe('Arrange layout', () => {
         // At 200 % zoom the Arrange view scrolls down to the palette; at laptop and desktop size it is in view.
         if (hh >= 768) expect(r.bottom, name).toBeLessThanOrEqual(hh);
       }
-      if (w === 1366) {
-        // Laptop: the song panel stays compact so the Performances panel keeps real room below it.
-        expect(songPanel().getBoundingClientRect().height).toBeLessThanOrEqual(400);
-        expect(perfPanel().getBoundingClientRect().height).toBeGreaterThanOrEqual(150);
+      // No takes: Performances is one line, inside the window at laptop and desktop size.
+      expect(perfPanel().hasAttribute('data-collapsed')).toBe(true);
+      expect(perfPanel().getBoundingClientRect().height).toBeLessThanOrEqual(52);
+      if (hh >= 768) {
         expect(perfPanel().getBoundingClientRect().bottom).toBeLessThanOrEqual(hh);
+        // No empty band under the panels: what the rows (at most 32 px) cannot use is lane room under the blocks.
+        const view = perfPanel().parentElement!.getBoundingClientRect();
+        expect(view.bottom - perfPanel().getBoundingClientRect().bottom, 'empty band under the Arrange view').toBeLessThanOrEqual(14);
+        const lane = laneEl().getBoundingClientRect();
+        const lastCell = [...blockEls()[1].querySelectorAll<HTMLElement>('[data-cell]')].at(-1)!.getBoundingClientRect();
+        if (hh >= 1080) expect(lane.bottom - lastCell.bottom, 'the lane takes the room').toBeGreaterThan(150);
       }
       // Advanced adds detail but no width; the part picker arrows are 24 px wide.
       act(() => setUiMode('advanced'));
@@ -155,15 +178,80 @@ describe('Arrange layout', () => {
       const join = document.querySelector<HTMLElement>('[data-join]')!;
       expect(join.getBoundingClientRect().height).toBeGreaterThanOrEqual(24);
       expect(join.getBoundingClientRect().width).toBeGreaterThanOrEqual(24);
-      if (w === 1366) expect(perfPanel().getBoundingClientRect().bottom).toBeLessThanOrEqual(hh);
+      if (hh >= 768) expect(perfPanel().getBoundingClientRect().bottom).toBeLessThanOrEqual(hh);
     });
   }
 
+  it('with takes, the Performances panel keeps room at 1366 x 768 and the rows give way (never under 18 px)', async () => {
+    await openArrange(1366, 768);
+    const p = session.store.getState();
+    act(() => {
+      for (let i = 0; i < 3; i++) {
+        cmd.addPerformance(session.store, {
+          id: `perf-${i}`,
+          name: `Take ${i + 1}`,
+          createdAt: Date.now(),
+          startTick: 0,
+          endTick: 4 * 384,
+          snapshot: makeSnapshot(p, p.tracks.map((t) => ({ trackId: t.id, playing: null })), 0),
+          events: [],
+        });
+      }
+    });
+    await settle(300);
+    expect(perfPanel().hasAttribute('data-collapsed')).toBe(false);
+    const cell = blockEls()[1].querySelector<HTMLElement>('[data-cell]')!.getBoundingClientRect().height;
+    expect(cell).toBeGreaterThanOrEqual(18);
+    expect(cell).toBeLessThan(26);
+    expect(perfPanel().getBoundingClientRect().height).toBeGreaterThanOrEqual(140);
+    expect(perfPanel().getBoundingClientRect().bottom).toBeLessThanOrEqual(768);
+    expect(document.scrollingElement!.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+  });
+
+  it('details: an edge grip on every block, a calm Off (coral tick, grey word), loop grips (8 px drawn, 24 px target) above the bar numbers', async () => {
+    await openArrange(1366, 768);
+    const p = session.store.getState();
+    const [b0, b1] = p.arrangement.blocks;
+    act(() => {
+      cmd.setBlockPart(session.store, b1.id, p.tracks[0].id, null);
+      session.setSongLoop({ fromBlockId: b0.id, toBlockId: b1.id });
+    });
+    await settle(200);
+    // The right-edge grip shows on every block without hovering it.
+    for (const el of blockEls()) {
+      const grip = getComputedStyle(el.querySelector('[data-edge]')!, '::after');
+      expect(Number(grip.opacity)).toBeGreaterThan(0.2);
+      expect(parseFloat(grip.width)).toBeGreaterThanOrEqual(4);
+    }
+    // Off: the word, in grey, with a coral tick on its left (not a coral alarm box).
+    const off = blockEls()[1].querySelector<HTMLElement>(`[data-cell][data-track="${p.tracks[0].id}"]`)!;
+    expect(off.textContent).toBe('Off');
+    const cs = getComputedStyle(off);
+    const ink3 = getComputedStyle(document.documentElement).getPropertyValue('--ink-3').trim();
+    const probe = document.createElement('span');
+    probe.style.color = ink3;
+    document.body.appendChild(probe);
+    expect(cs.color).toBe(getComputedStyle(probe).color);
+    probe.remove();
+    expect(cs.boxShadow).toMatch(/^rgb\(220, 95, 71\) 2px 0px 0px 0px inset/);
+    expect(Number(cs.fontWeight)).toBeLessThan(600);
+    // Loop grips: drawn at least 8 px wide, a 24 px wide target, not over the bar numbers.
+    const nums = [...document.querySelectorAll<HTMLElement>('[data-testid="song-ruler"] [class*="markNum"]')].map((n) => n.getBoundingClientRect());
+    for (const id of ['loop-start', 'loop-end']) {
+      const end = document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+      const r = end.getBoundingClientRect();
+      expect(r.width).toBeGreaterThanOrEqual(24);
+      expect(parseFloat(getComputedStyle(end, '::after').width)).toBeGreaterThanOrEqual(8);
+      for (const n of nums) expect(r.bottom <= n.top + 0.5 || r.right <= n.left || r.left >= n.right, 'a loop grip covers a bar number').toBe(true);
+    }
+    act(() => session.setSongLoop(null));
+  });
+
   it('a long song scrolls inside the lane, and the lane follows keyboard focus', async () => {
     await openArrange(1366, 768);
-    // Twelve more blocks: far longer than the lane.
+    // Forty more blocks: too long to show whole even at the smallest zoom step.
     act(() => {
-      for (let i = 0; i < 12; i++) cmd.addBlock(session.store, session.store.getState().scenes[i % 4].id, undefined, 4);
+      for (let i = 0; i < 40; i++) cmd.addBlock(session.store, session.store.getState().scenes[i % 4].id, undefined, 4);
     });
     await settle(300);
     const scroller = laneEl().children[1] as HTMLElement;

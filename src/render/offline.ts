@@ -12,12 +12,19 @@ import type { AudioEngineApi } from '../audio/contracts';
 import { TICKS_PER_BAR, type Id, type LauncherSnapshotEntry, type PerformanceEvent, type Project } from '../project/types';
 import { TempoMap, clampBpm, ticksToSeconds } from '../time/clock';
 import type { StartOptions } from '../time/contracts';
-import { Sequencer, songLengthTicks } from '../time/sequencer';
+import { Sequencer, songBlocks, songLengthTicks } from '../time/sequencer';
+import { songLoopRange } from '../time/songLoop';
 import { projectFromSnapshot } from '../time/snapshot';
 import { EngineDispatcher } from '../time/transport';
 
 export type RenderSource =
   | { kind: 'song' }
+  /**
+   * Part of the song: the blocks from `fromBlockId` to `toBlockId`
+   * (inclusive, either way round, in the song's order) played once, as the
+   * song plays them there (a song loop's blocks, exported once).
+   */
+  | { kind: 'songRange'; fromBlockId: Id; toBlockId: Id }
   | { kind: 'performance'; performanceId: Id }
   | { kind: 'scene'; row: number; bars: number }
   | { kind: 'launcher'; launcher: LauncherSnapshotEntry[]; bars: number };
@@ -55,6 +62,14 @@ function clampBars(bars: number): number {
   return Number.isFinite(bars) ? Math.max(1, Math.min(256, Math.round(bars))) : 1;
 }
 
+/** Where a song range starts and ends on the song timeline, and the block it starts with. */
+function songRange(project: Project, source: { fromBlockId: Id; toBlockId: Id }): { startTick: number; endTick: number; fromBlock: number } {
+  const lane = songBlocks(project);
+  const r = songLoopRange(lane, { fromBlockId: source.fromBlockId, toBlockId: source.toBlockId });
+  if (!r) throw new Error('Those blocks are no longer in the song');
+  return { startTick: lane[r[0]].startTick, endTick: lane[r[1]].endTick, fromBlock: lane[r[0]].index };
+}
+
 function findPerformance(project: Project, id: Id) {
   const perf = project.performances.find((p) => p.id === id);
   if (!perf) throw new Error(`Performance "${id}" not found`);
@@ -73,6 +88,10 @@ export function computeRenderPlan(project: Project, source: RenderSource, tailSe
     case 'song':
       endTick = songLengthTicks(project);
       musicSeconds = ticksToSeconds(endTick, bpm);
+      break;
+    case 'songRange':
+      ({ startTick, endTick } = songRange(project, source));
+      musicSeconds = ticksToSeconds(endTick - startTick, bpm);
       break;
     case 'performance': {
       const perf = findPerformance(project, source.performanceId);
@@ -166,6 +185,11 @@ function startOptions(project: Project, source: RenderSource): { opts: StartOpti
   switch (source.kind) {
     case 'song':
       return { opts: { mode: { kind: 'song', fromBlock: 0 } }, endTick: null };
+    case 'songRange': {
+      // The song from the range's first block (every part as the song plays it there), ending with its last.
+      const r = songRange(project, source);
+      return { opts: { mode: { kind: 'song', fromBlock: r.fromBlock } }, endTick: r.endTick };
+    }
     case 'performance':
       return { opts: { mode: { kind: 'replay', performanceId: source.performanceId } }, endTick: null };
     case 'scene': {
@@ -180,7 +204,7 @@ function startOptions(project: Project, source: RenderSource): { opts: StartOpti
   }
 }
 
-/** Render a song, performance, scene or launcher state to a stereo AudioBuffer. */
+/** Render a song (or part of it), performance, scene or launcher state to a stereo AudioBuffer. */
 export async function renderOffline(req: RenderRequest): Promise<AudioBuffer> {
   const { project, source, signal } = req;
   if (signal?.aborted) throw abortError();

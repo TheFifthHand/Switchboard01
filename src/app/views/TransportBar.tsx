@@ -8,7 +8,7 @@
  * squeezing the always-visible ones.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { Button, Icon, IconButton, Knob, Meter, NumberField, SegmentedControl, Tooltip, useRafLoop } from '../../ui/components';
+import { Button, Icon, Knob, Meter, NumberField, SegmentedControl, Tooltip, useRafLoop } from '../../ui/components';
 import { BPM_SPEC, MASTER_VOLUME_SPEC, SWING_SPEC } from '../../project/params';
 import { setTipsEnabled, setUiMode, setView, type UiMode, type View } from '../../state/uiStore';
 import { session, useAutosave, useHistory, useProject, useUi } from '../instance';
@@ -106,33 +106,56 @@ function Position() {
   );
 }
 
-/** One key: ▶ Play when stopped or paused, ❚❚ Pause while playing. */
+/**
+ * One key: ▶ Play when stopped or paused, ❚❚ Pause while playing. In Arrange
+ * (with blocks in the song) it plays the song, from the loop when one is set;
+ * after a pause it continues whatever was playing.
+ */
 function PlayPauseButton() {
   const playing = useRuntime((s) => s.playing);
   const paused = useRuntime((s) => s.paused);
   const mode = useRuntime((s) => s.mode);
   const take = useRuntime((s) => s.recording === 'performance');
+  const looping = useRuntime((s) => s.songLoop !== null);
+  const arrange = useUi((s) => s.view === 'arrange');
+  const hasSong = useProject((p) => p.arrangement.blocks.length > 0);
   const blocked = playing && take;
+  // Play here starts the song (not the pads): its name and tip say so.
+  const song = arrange && hasSong && !playing && !paused;
   const tip = blocked
     ? PAUSE_UNAVAILABLE_MESSAGE
     : playing
       ? `Pause: hold the position${mode === 'song' ? ' in the song' : ''}. Play continues from exactly here, in time.`
       : paused
-        ? 'Continue from where you paused, in time.'
-        : 'Start the lit clips from bar 1.';
+        ? `Continue ${mode === 'song' ? 'the song ' : ''}from where you paused, in time.`
+        : song
+          ? `Play song: the blocks below in order, ${looping ? 'starting at the loop' : 'from the first one'}.`
+          : 'Start the lit clips from bar 1.';
   return (
     <Button
       variant="transport"
       icon={playing ? 'pause' : 'play'}
       lit={playing}
       aria-disabled={blocked || undefined}
-      onClick={() => (blocked ? notify(PAUSE_UNAVAILABLE_MESSAGE, 'warn') : void session.togglePlay())}
+      aria-label={song ? 'Play song' : undefined}
+      onClick={() => (blocked ? notify(PAUSE_UNAVAILABLE_MESSAGE, 'warn') : void session.togglePlay({ song: arrange }))}
       tip={tip}
-      detail="Space plays and pauses. Shift+Space stops."
+      detail={song ? 'Space plays the song in Arrange and pauses it. Shift+Space stops.' : 'Space plays and pauses. Shift+Space stops.'}
       aria-keyshortcuts="Space"
       className={styles.play}
+      data-song={song || undefined}
     >
-      {playing ? 'Pause' : 'Play'}
+      {song ? (
+        <span className={styles.playWord}>
+          Play
+          {/* The leading space keeps the words apart for screen readers and copy; on screen they stack. */}
+          <span className={styles.playSong}> song</span>
+        </span>
+      ) : playing ? (
+        'Pause'
+      ) : (
+        'Play'
+      )}
     </Button>
   );
 }
@@ -141,6 +164,7 @@ function StopButton() {
   const playing = useRuntime((s) => s.playing);
   const paused = useRuntime((s) => s.paused);
   const take = useRuntime((s) => s.recording === 'performance');
+  const song = useRuntime((s) => s.mode === 'song');
   const idle = !playing && !paused;
   return (
     <Button
@@ -153,7 +177,9 @@ function StopButton() {
           ? 'Stopped at bar 1.'
           : take
             ? 'Stop playback and the performance recording (the take is kept). Back to bar 1.'
-            : 'Stop and go back to bar 1. The clips that were playing stay lit and start again from the top on Play.'
+            : song
+              ? 'Stop the song and go back to its start. Play (or Space) in Arrange plays it again.'
+              : 'Stop and go back to bar 1. The clips that were playing stay lit and start again from the top on Play.'
       }
       detail="Shift+Space also stops."
       aria-keyshortcuts="Shift+Space"
@@ -317,10 +343,10 @@ function RecordGroup() {
 
 /**
  * The More menu: Tips, and whatever the strip has no room for at this width
- * (Undo and Redo below 1600 px, Projects, Export below 1280 px, the Simple ·
- * Advanced switch, the offline state and the Update action, which the key
- * marks when one waits). It always lists all of them, so each is one place to
- * look whatever the width.
+ * (the Simple · Advanced switch and Export below 1366 px, Projects and the
+ * offline state below 1440 px, MIDI & audio, and the Update action below
+ * 1600 px, which the key marks with a coral dot). It always lists all of them,
+ * with Undo and Redo, so each is one place to look whatever the width.
  */
 function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; onOpenDevices(): void; projectName: string }) {
   const [open, setOpen] = useState(false);
@@ -436,6 +462,61 @@ function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; onOpenDe
   );
 }
 
+/**
+ * Undo and Redo, always on the strip: an icon and the word where there is
+ * room (from 1600 px), the icon alone (its name still "Undo …", its tooltip
+ * naming the step) narrower or where a waiting update, a failed save or the
+ * MIDI & audio key needs the room.
+ * Unavailable, they stay focusable and their tip says why ("Nothing to
+ * undo", or the take lock); available, the tip names the step ("Undo: Move
+ * block").
+ */
+function HistoryKey(props: { kind: 'undo' | 'redo' }) {
+  const { kind } = props;
+  const history = useHistory();
+  const undo = kind === 'undo';
+  const can = undo ? history.canUndo : history.canRedo;
+  const what = undo ? history.undoLabel : history.redoLabel;
+  const word = undo ? 'Undo' : 'Redo';
+  const tip = can
+    ? `${word}: ${what ?? 'the last change'}.`
+    : what && history.lock
+      ? `${word} waits: ${history.lock}`
+      : undo
+        ? 'Nothing to undo yet.'
+        : 'Nothing to redo: Redo brings back a step you undid.';
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      icon={kind}
+      aria-disabled={!can || undefined}
+      aria-label={can && what ? `${word} ${what}` : word}
+      aria-keyshortcuts={undo ? `${MOD_ARIA}+Z` : `${MOD_ARIA}+Shift+Z ${MOD_ARIA}+Y`}
+      onClick={() => {
+        if (!can) return;
+        if (undo) session.undo();
+        else session.redo();
+      }}
+      tip={tip}
+      detail={undo ? `${MOD_KEY}Z` : `${MOD_KEY}Shift+Z or ${MOD_KEY}Y`}
+      className={styles.historyKey}
+      data-history={kind}
+    >
+      <span className={styles.historyWord}>{word}</span>
+    </Button>
+  );
+}
+
+function HistoryKeys() {
+  return (
+    <div className={styles.history} role="group" aria-label="Undo and redo">
+      <HistoryKey kind="undo" />
+      <HistoryKey kind="redo" />
+    </div>
+  );
+}
+
 export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): void }) {
   const view = useUi((s) => s.view);
   const uiMode = useUi((s) => s.uiMode);
@@ -445,7 +526,6 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
   const projectName = useProject((p) => p.name);
   const muteAll = useRuntime((s) => s.muteAll);
   const takeRecording = useRuntime((s) => s.recording === 'performance');
-  const history = useHistory();
   const advanced = uiMode === 'advanced';
   const [devicesOpen, setDevicesOpen] = useState(false);
   // MIDI devices reconnect by themselves on a later visit, but only if the browser already allows them.
@@ -536,26 +616,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           className={styles.modeSwitch}
         />
         <SaveStatus />
-        <IconButton
-          icon="undo"
-          label={history.undoLabel ? `Undo ${history.undoLabel}` : 'Undo'}
-          disabled={!history.canUndo}
-          onClick={() => session.undo()}
-          size="sm"
-          variant="ghost"
-          aria-keyshortcuts="Control+Z"
-          className={styles.historyKey}
-        />
-        <IconButton
-          icon="redo"
-          label={history.redoLabel ? `Redo ${history.redoLabel}` : 'Redo'}
-          disabled={!history.canRedo}
-          onClick={() => session.redo()}
-          size="sm"
-          variant="ghost"
-          aria-keyshortcuts="Control+Shift+Z"
-          className={styles.historyKey}
-        />
+        <HistoryKeys />
         <Button
           variant="ghost"
           size="sm"
@@ -572,7 +633,7 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           size="sm"
           icon="download"
           onClick={props.onOpenExport}
-          tip="Export a WAV file: your song, a scene or a recorded performance."
+          tip={view === 'arrange' ? 'Export the song as a WAV file (a scene or a recorded performance can be chosen instead).' : 'Export a WAV file: your song, a scene or a recorded performance.'}
           className={styles.exportKey}
         >
           Export
