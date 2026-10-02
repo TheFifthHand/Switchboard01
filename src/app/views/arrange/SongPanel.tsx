@@ -7,15 +7,20 @@
  *
  * One Play per screen: the transport's Play (and Space) plays the song here,
  * and its Export starts from the song; ▶ on a block and a click on the bar
- * numbers play from there. The mode box says what plays and how to play.
+ * numbers play from there. The mode box says what plays and how to play;
+ * while the pads play (say, straight after Jump In) it offers an amber
+ * "▶ Play the song" key, so the song is one press away without changing what
+ * Space and the transport do. While Record Notes writes into a clip it says
+ * which ("Recording notes into Chords · Stabs (Groove)"), and when the block
+ * playing does not play that clip, says so.
  *
  * The lane itself (blocks, gestures, keyboard, menus, the Loop button) is
  * SongLane. Edits apply live while the song plays or is paused: playback
  * re-plans from the block playing now (see Sequencer.replanSong), so the lane
  * is always what plays.
  */
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Led, NumberField, Tooltip, useRafLoop } from '../../../ui/components';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Button, Led, NumberField, Tooltip, useRafLoop } from '../../../ui/components';
 import { TICKS_PER_BAR, type ArrangementBlock, type Id, type Project } from '../../../project/types';
 import { clampBpm, ticksToSeconds } from '../../../time/clock';
 import { sceneBars, songLengthTicks } from '../../../time/sequencer';
@@ -30,7 +35,7 @@ import type { SceneSummary } from './BlockMenu';
 import { loopName, loopSpan } from './laneLoop';
 import { SongLane } from './SongLane';
 import { blockView, viewKey, type BlockView } from './songModel';
-import { getSongPlan, useSongPlan } from './songPlan';
+import { getSongPlan, startSong, useSongPlan } from './songPlan';
 import styles from './SongPanel.module.css';
 
 /* ------------------------------------------------------------------ */
@@ -108,7 +113,7 @@ function useHandover(views: readonly BlockView[], songOn: boolean, playingId: Id
   const [sounding, setSounding] = useState<Id | null>(null);
   const soundingRef = useRef<Id | null>(null);
   const watch = songOn && !!plan && plan.some((b) => !ids.has(b.blockId));
-  useRafLoop(() => {
+  const look = useCallback(() => {
     const t = session.transport;
     const p = getSongPlan();
     let found: Id | null = null;
@@ -121,7 +126,13 @@ function useHandover(views: readonly BlockView[], songOn: boolean, playingId: Id
       soundingRef.current = found;
       setSounding(found);
     }
-  }, watch);
+  }, []);
+  // At once when a block that plays goes away (before the next paint: the next block says Next in the same frame),
+  // then every frame until the bar line hands over.
+  useLayoutEffect(() => {
+    if (watch) look();
+  }, [watch, plan, ids, look]);
+  useRafLoop(look, watch);
   const removed = (watch ? sounding : null) ?? (songOn && playingId && !ids.has(playingId) ? playingId : null);
   if (!removed || !plan) return null;
   const i = plan.findIndex((b) => b.blockId === removed);
@@ -170,6 +181,22 @@ function capitalize(text: string): string {
  * loop ("looping Groove (block 2)" only while playback is inside the loop and
  * will repeat it, else "loop set: …"), and a line on how to play.
  */
+/** The clip Record Notes writes into, in words: "Chords · Stabs (Groove)". */
+function recordTargetWords(p: Project, target: { trackId: Id; slot: number } | null): string {
+  if (!target) return '';
+  const t = p.tracks.find((x) => x.id === target.trackId);
+  const clip = t?.clips[target.slot];
+  const scene = p.scenes[target.slot]?.name ?? `row ${target.slot + 1}`;
+  return `${t?.name ?? 'a part'} · ${clip?.name ?? 'a new clip'} (${scene})`;
+}
+
+/** Switch from the pads to the song (one press; Space and the transport keep their meaning). */
+function playTheSong(): void {
+  void startSong().then(() => {
+    if (session.store.getState().arrangement.blocks.length) notify('Switched to the song');
+  });
+}
+
 function ModeIndicator(props: { current: BlockView | null; next: BlockView | null; removed: boolean; blockCount: number; loop: string | null }) {
   const { current, next, removed, blockCount, loop } = props;
   const mode = useRuntime((s) => s.mode);
@@ -178,6 +205,9 @@ function ModeIndicator(props: { current: BlockView | null; next: BlockView | nul
   const replayId = useRuntime((s) => s.replayId);
   const songLooping = useRuntime((s) => s.songLooping);
   const recordingTake = useRuntime((s) => s.recording === 'performance');
+  const recordTarget = useRuntime((s) => (s.recording === 'notes' ? s.recordTarget : null));
+  const targetAudible = useRuntime((s) => s.recordTargetAudible !== false);
+  const recordingInto = useProject((p) => recordTargetWords(p, recordTarget));
   const replayName = useProject((p) => (replayId ? (p.performances.find((x) => x.id === replayId)?.name ?? 'a take') : ''));
   const songOn = (playing || paused) && mode === 'song';
   const loopText = loop ? (songOn && songLooping ? `looping ${loop}` : `loop set: ${loop}`) : '';
@@ -221,16 +251,46 @@ function ModeIndicator(props: { current: BlockView | null; next: BlockView | nul
       ? `Play (or Space) plays the song from ${loop ? 'the loop' : 'the first block'}. ▶ on a block, or a click on the bar numbers, plays it from there.`
       : 'Add scenes below to build a song, then press Play.';
   }
+  // Record Notes writes into a clip: say which (and, in the song, whether the block playing plays it).
+  const notesIn = !!recordTarget && !recordingTake;
+  let recLine: string | null = null;
+  if (notesIn) {
+    recLine = `Recording notes into ${recordingInto}`;
+    if (songOn && !targetAudible) caption = `This block does not play it. ${caption}`;
+  }
+  // The pads play in Arrange: one press switches to the song (Space and the transport key are unchanged).
+  const offerSong = !recordingTake && !notesIn && (playing || paused) && mode === 'live' && blockCount > 0;
+  if (offerSong) caption = 'Your Loops pads decide what plays. ▶ Play the song switches to the song; ▶ on a block, or a click on the bar numbers, plays it from there.';
   const on = playing || paused;
   return (
-    <div className={styles.mode} data-mode={on ? mode : 'stopped'} data-recording={recordingTake || undefined} role="status" aria-live="polite" data-testid="playback-mode">
-      <div className={styles.modeLine}>
-        <Led on={playing || recordingTake} tone={recordingTake ? 'coral' : playing ? 'amber' : 'neutral'} label={recordingTake ? 'Recording' : playing ? 'Playing' : paused ? 'Paused' : 'Stopped'} hideLabel size="sm" />
-        {label && <span className={styles.modeLabel}>{label}</span>}
-        <strong className={styles.modeValue}>{value}</strong>
-        {where && <span className={styles.modeWhere}>{where}</span>}
+    <div className={styles.mode} data-mode={on ? mode : 'stopped'} data-recording={recordingTake || notesIn || undefined} role="status" aria-live="polite" data-testid="playback-mode">
+      <div className={styles.modeText}>
+        <div className={styles.modeLine}>
+          <Led on={playing || recordingTake || notesIn} tone={recordingTake || notesIn ? 'coral' : playing ? 'amber' : 'neutral'} label={recordingTake || notesIn ? 'Recording' : playing ? 'Playing' : paused ? 'Paused' : 'Stopped'} hideLabel size="sm" />
+          {recLine ? (
+            <>
+              <span className={styles.modeLabel}>Recording notes into</span>
+              <strong className={`${styles.modeValue} ${styles.modeRec}`} data-testid="recording-into">
+                {recordingInto}
+              </strong>
+            </>
+          ) : (
+            <>
+              {label && <span className={styles.modeLabel}>{label}</span>}
+              <strong className={styles.modeValue}>{value}</strong>
+            </>
+          )}
+          {where && <span className={styles.modeWhere}>{where}</span>}
+        </div>
+        <p className={styles.modeCaption} data-hint-avoid="" data-testid="mode-caption">
+          {caption}
+        </p>
       </div>
-      <p className={styles.modeCaption}>{caption}</p>
+      {offerSong && (
+        <Button className={styles.playSong} variant="secondary" icon="play" onClick={playTheSong} data-testid="play-the-song" tip="Switch from your pads to the song: it plays from the loop, or from the first block." detail="Space and the transport’s Play still pause and resume what plays now.">
+          Play the song
+        </Button>
+      )}
     </div>
   );
 }
@@ -249,8 +309,8 @@ function SongTotals() {
     <div className={styles.totals}>
       <Tooltip tip="How long the song plays: every block's length, added up." detail={`Estimated at ${Math.round(bpm)} BPM. Exports add the echo tail on top so echoes and reverb can ring out.`}>
         <div className={styles.readout} tabIndex={0} role="group" aria-label={`Song length: ${barsLabel(bars)}, about ${formatSeconds(secs)} at ${Math.round(bpm)} BPM`}>
-          <span className={styles.readoutLabel}>LENGTH</span>
-          <span className={`${styles.readoutValue} mono`} data-testid="song-length">
+          <span className={styles.readoutLabel}>Length</span>
+          <span className={styles.readoutValue} data-testid="song-length">
             {barsLabel(bars)} · {formatSeconds(secs)}
           </span>
         </div>
@@ -276,7 +336,8 @@ function SongTotals() {
 /* Panel                                                               */
 /* ------------------------------------------------------------------ */
 
-export function SongPanel() {
+export function SongPanel(props: { folded?: boolean; onUnfold?(): void } = {}) {
+  const { folded = false, onUnfold } = props;
   const views = useBlockViews();
   const scenes = useSceneSummaries();
   const mode = useRuntime((s) => s.mode);
@@ -304,7 +365,7 @@ export function SongPanel() {
   const [loopSlot, setLoopSlot] = useState<HTMLDivElement | null>(null);
 
   return (
-    <section className={styles.panel} aria-labelledby="song-title">
+    <section className={styles.panel} aria-labelledby="song-title" data-folded={folded || undefined}>
       <header className={styles.head}>
         <div className={styles.titleBlock}>
           <h2 id="song-title" className={styles.title}>
@@ -315,6 +376,11 @@ export function SongPanel() {
         <div className={styles.headRight}>
           <SongTotals />
           <div ref={setLoopSlot} className={styles.buttons} />
+          {folded && (
+            <Button variant="secondary" icon="chevronDown" onClick={onUnfold} data-testid="show-song" tip="Close the take’s events and show the song lane again.">
+              Show the song
+            </Button>
+          )}
         </div>
       </header>
 

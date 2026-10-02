@@ -1,17 +1,26 @@
 /**
  * Performances: recorded takes as a list (newest first) with Replay, Export,
- * Delete and inline rename, and each take's editable event list.
+ * Make song blocks, Delete and inline rename, and each take's editable events.
  *
+ * - The panel folds to one line, with takes too ("2 takes ▸", the newest take
+ *   and its Replay), so the song keeps the room; the choice is remembered.
+ *   Until it is chosen, the panel is open only where the window has height to
+ *   spare (the Arrange view decides).
+ * - A take's events open in a tall side drawer beside the take list, with a
+ *   sticky header (Replay, Export, Make song blocks, close); the song folds to
+ *   its header row meanwhile. The drawer and the list keep the "Try this"
+ *   chip off them (data-hint-avoid).
  * - Replay uses the take's snapshot and events (session.replayPerformance);
  *   the replaying row shows its real progress read from the transport.
- * - The event list shows bar.beat.step from the start of the take, the kind
- *   of action and what it did in words. Every edit is an undoable command:
- *   delete an event (a note's press and release go together), change the
- *   value of a knob, macro, tempo, swing or volume change, or end the take
+ * - The event list shows the music's bar.beat.step (where the transport was,
+ *   so a launch on a downbeat reads "5.1.1"), the kind of action and what it
+ *   did in words. Every edit is an undoable command: delete an event (a
+ *   note's press and release go together), change the value of a knob,
+ *   macro, tempo, swing or volume change, start the take later or end it
  *   earlier (at a row, or at a typed position).
+ * - Make song blocks turns the take's scene and pad launches into blocks after
+ *   the song (one Undo); the toast says what was rounded and left out.
  * - Long takes render the first rows and grow on "Show more".
- * - With no takes the panel is one line (the song gets the room); a click
- *   opens how to record one.
  */
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Button, Icon, Led, Tooltip, parseParamInput, useRafLoop } from '../../../ui/components';
@@ -23,6 +32,7 @@ import { session, useProject } from '../../instance';
 import { notify, useRuntime } from '../../runtime';
 import { formatSeconds } from '../../session';
 import { eventCounts, formatPosition, parsePosition, performanceRows, performanceSeconds, takeTempoMap, type EventKind, type EventRow } from './perfEvents';
+import * as act from './songActions';
 import styles from './PerformancesPanel.module.css';
 
 /** Rows shown when a take is opened, and how many more each "Show more" adds. */
@@ -291,36 +301,64 @@ function trimTake(perf: Performance, rows: readonly EventRow[], endTick: number,
   return true;
 }
 
-/** Where the take ends, with an entry to end it earlier. */
-function TakeEnd(props: { perf: Performance; rows: readonly EventRow[] }) {
+/** Start a take later, at `tick` (one undo step); what happened before becomes its starting state. */
+function startTakeAt(perf: Performance, rows: readonly EventRow[], tick: number, at: string): boolean {
+  const before = rows.filter((r) => r.tick < tick).length;
+  if (!session.accepted(cmd.trimTakeStart(session.store, perf.id, tick))) return false;
+  notify(`${perf.name} now starts at ${at}${before ? `; the ${actionsText(before)} before it became its starting state` : ''}.`, 'info', 'undo');
+  return true;
+}
+
+/** Where the take starts and ends (the music's bar.beat.step), with entries to start it later and end it earlier. */
+function TakeBounds(props: { perf: Performance; rows: readonly EventRow[] }) {
   const { perf, rows } = props;
-  const [editing, setEditing] = useState(false);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const endText = formatPosition(perf.endTick - perf.startTick);
-  const close = (refocus: boolean) => {
-    setEditing(false);
-    if (refocus) requestAnimationFrame(() => buttonRef.current?.focus({ preventScroll: true }));
+  const [editing, setEditing] = useState<'start' | 'end' | null>(null);
+  const startRef = useRef<HTMLButtonElement>(null);
+  const endRef = useRef<HTMLButtonElement>(null);
+  const startText = formatPosition(perf.startTick);
+  const endText = formatPosition(perf.endTick);
+  const close = (which: 'start' | 'end') => (refocus: boolean) => {
+    setEditing(null);
+    if (refocus) requestAnimationFrame(() => (which === 'start' ? startRef : endRef).current?.focus({ preventScroll: true }));
   };
-  const apply = (text: string): string | null => {
-    const rel = parsePosition(text);
-    const help = `Type a bar.beat.step position after 1.1.1 and before ${endText}.`;
-    if (rel === null) return help;
-    if (rel <= 0 || perf.startTick + rel >= perf.endTick) return help;
-    trimTake(perf, rows, perf.startTick + rel, formatPosition(rel));
+  const help = `Type a bar.beat.step after ${startText} and before ${endText}.`;
+  const applyEnd = (text: string): string | null => {
+    const tick = parsePosition(text);
+    if (tick === null || tick <= perf.startTick || tick >= perf.endTick) return help;
+    trimTake(perf, rows, tick, formatPosition(tick));
+    return null;
+  };
+  const applyStart = (text: string): string | null => {
+    const tick = parsePosition(text);
+    if (tick === null || tick <= perf.startTick || tick >= perf.endTick) return help;
+    startTakeAt(perf, rows, tick, formatPosition(tick));
     return null;
   };
   return (
-    <div className={styles.endLine}>
+    <div className={styles.endLine} data-testid="take-bounds">
+      <span className={styles.endText}>
+        Starts at <span className="mono">{startText}</span>
+      </span>
+      {editing === 'start' ? (
+        <>
+          <InlineEntry label={`New start of ${perf.name}, as bar.beat.step`} initial={startText} chars={8} onApply={applyStart} onClose={close('start')} />
+          <span className={styles.endHint}>Enter starts the take there; what happened before becomes its starting state. Esc cancels.</span>
+        </>
+      ) : (
+        <Button ref={startRef} size="sm" variant="ghost" icon="chevronRight" data-take-start="" onClick={() => setEditing('start')} tip="Start the take later: type where it should begin. What happened before (pads playing, knob positions) becomes its starting state; Undo brings it back.">
+          Start later…
+        </Button>
+      )}
       <span className={styles.endText}>
         Ends at <span className="mono">{endText}</span>
       </span>
-      {editing ? (
+      {editing === 'end' ? (
         <>
-          <InlineEntry label={`New end of ${perf.name}, as bar.beat.step`} initial={endText} chars={8} onApply={apply} onClose={close} />
+          <InlineEntry label={`New end of ${perf.name}, as bar.beat.step`} initial={endText} chars={8} onApply={applyEnd} onClose={close('end')} />
           <span className={styles.endHint}>Enter shortens the take; actions from that point on are removed. Esc cancels.</span>
         </>
       ) : (
-        <Button ref={buttonRef} size="sm" variant="ghost" icon="stop" data-take-end="" onClick={() => setEditing(true)} tip="End the take earlier: type where it should stop. Actions from that point on are removed; Undo brings them back.">
+        <Button ref={endRef} size="sm" variant="ghost" icon="stop" data-take-end="" onClick={() => setEditing('end')} tip="End the take earlier: type where it should stop. Actions from that point on are removed; Undo brings them back.">
           End earlier…
         </Button>
       )}
@@ -433,7 +471,7 @@ function EventList(props: { perf: Performance; replaying: boolean; listId: strin
   return (
     <div ref={listRef} id={listId} className={styles.events}>
       <p className={styles.eventsHint}>
-        Times are <span className="mono">bar.beat.step</span> from the start of the take. Click a knob, macro, tempo, swing or volume value to change it.{notes ? ' Deleting a note removes its press and release together.' : ''} Undo brings back anything you change.
+        Times are the music’s <span className="mono">bar.beat.step</span>. Click a knob, macro, tempo, swing or volume value to change it.{notes ? ' Deleting a note removes its press and release together.' : ''} Undo brings back anything you change.
         {replaying && <strong className={styles.replayNote}> Edits apply the next time you replay this take.</strong>}
       </p>
       {rows.length === 0 ? (
@@ -535,7 +573,7 @@ function EventList(props: { perf: Performance; replaying: boolean; listId: strin
           </Button>
         </div>
       )}
-      <TakeEnd perf={perf} rows={rows} />
+      <TakeBounds perf={perf} rows={rows} />
     </div>
   );
 }
@@ -544,22 +582,80 @@ function EventList(props: { perf: Performance; replaying: boolean; listId: strin
 /* Rows                                                                */
 /* ------------------------------------------------------------------ */
 
-const TakeRow = memo(function TakeRow(props: { perf: Performance; expanded: boolean; replaying: boolean; onToggle(id: Id): void }) {
-  const { perf, expanded, replaying, onToggle } = props;
+/** How many song blocks Make song blocks would add from a take (0: it makes none). */
+function useTakeBlockCount(perf: Performance): number {
+  return useProject((p) => (p.performances.some((x) => x.id === perf.id) ? (cmd.takeToBlocks(p, perf.id)?.blocks.length ?? 0) : 0));
+}
+
+/** Make song blocks from a take; the lane selects them (it is told by an event, as it may be folded away). */
+function makeSongBlocks(perf: Performance): boolean {
+  const r = act.songFromTake(perf.id);
+  if (!r) return false;
+  window.dispatchEvent(new CustomEvent('omni:song-blocks', { detail: { ids: r.ids } }));
+  return true;
+}
+
+function MakeBlocksButton(props: { perf: Performance; compact?: boolean; onDone?(): void }) {
+  const { perf, compact, onDone } = props;
+  const n = useTakeBlockCount(perf);
+  const locked = useRuntime((s) => s.recording === 'performance');
+  const why = locked ? 'The song is locked while a take records.' : n === 0 ? 'Nothing in this take plays a scene long enough to fill a block.' : null;
+  return (
+    <Button
+      size="sm"
+      variant="secondary"
+      icon="plus"
+      aria-disabled={why !== null || undefined}
+      aria-label={`Make song blocks from ${perf.name}`}
+      data-make-blocks=""
+      onClick={() => {
+        if (why) {
+          notify(why, 'warn');
+          return;
+        }
+        if (makeSongBlocks(perf)) onDone?.();
+      }}
+      tip={why ?? `Adds ${n === 1 ? '1 block' : `${n} blocks`} after the song: one for each stretch between the take’s scene and pad launches.`}
+      detail="Rounded to whole passes of each scene. Played notes and knob moves stay in the take: blocks hold only scenes and parts."
+    >
+      {compact ? 'Song blocks' : 'Make song blocks'}
+    </Button>
+  );
+}
+
+function ReplayButton(props: { perf: Performance; replaying: boolean }) {
+  const { perf, replaying } = props;
+  return replaying ? (
+    <Button size="sm" variant="secondary" icon="stop" pressed onClick={() => session.stop()} aria-label={`Stop replaying ${perf.name}`} tip="Stop the replay. Your pads take over again on the next Play.">
+      Stop
+    </Button>
+  ) : (
+    <Button size="sm" variant="secondary" icon="play" onClick={() => void session.replayPerformance(perf.id)} aria-label={`Replay ${perf.name}`} tip="Play the take back exactly as recorded: launches, notes and knob moves." detail="Uses the sounds and routing captured when the take started. Pads and keys are ignored while it replays. Starting a replay ends a take that is recording.">
+      Replay
+    </Button>
+  );
+}
+
+function ExportButton({ perf }: { perf: Performance }) {
+  return (
+    <Button
+      size="sm"
+      variant="secondary"
+      icon="download"
+      onClick={() => window.dispatchEvent(new CustomEvent('sb:open-export', { detail: { source: `perf:${perf.id}` } }))}
+      aria-label={`Export ${perf.name} as WAV`}
+      tip="Render this take to a WAV file with the same sounds and timing."
+    >
+      Export
+    </Button>
+  );
+}
+
+const TakeRow = memo(function TakeRow(props: { perf: Performance; open: boolean; compact: boolean; replaying: boolean; onToggle(id: Id): void }) {
+  const { perf, open, compact, replaying, onToggle } = props;
   const seconds = useMemo(() => performanceSeconds(perf), [perf]);
   const counts = useMemo(() => eventCounts(perf), [perf]);
-  const listId = useId();
   const countsText = counts.length ? counts.map((c) => c.text).join(' · ') : 'No recorded actions';
-  const itemRef = useRef<HTMLLIElement>(null);
-
-  // Opening a take brings its events into view (the list scrolls, the page does not).
-  useEffect(() => {
-    const li = itemRef.current;
-    const list = li?.closest<HTMLElement>('[data-scroll-body]');
-    if (!expanded || !li || !list || list.scrollHeight <= list.clientHeight) return;
-    // The scroll body is positioned, so offsetTop is measured from its top.
-    list.scrollTo({ top: Math.max(0, li.offsetTop - 8), behavior: 'smooth' });
-  }, [expanded]);
 
   const del = () => {
     if (replaying) session.stop();
@@ -567,17 +663,16 @@ const TakeRow = memo(function TakeRow(props: { perf: Performance; expanded: bool
   };
 
   return (
-    <li ref={itemRef} className={styles.take} data-replaying={replaying || undefined} data-expanded={expanded || undefined}>
+    <li className={styles.take} data-replaying={replaying || undefined} data-expanded={open || undefined} data-compact={compact || undefined}>
       <div className={styles.takeHead}>
         <button
           type="button"
           className={styles.expand}
-          aria-expanded={expanded}
-          aria-controls={expanded ? listId : undefined}
-          aria-label={`${expanded ? 'Hide' : 'Show'} the events of ${perf.name}`}
+          aria-expanded={open}
+          aria-label={`${open ? 'Hide' : 'Show'} the events of ${perf.name}`}
           onClick={() => onToggle(perf.id)}
         >
-          <Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={14} />
+          <Icon name={open ? 'chevronLeft' : 'chevronRight'} size={14} />
         </button>
         <div className={styles.identity}>
           <TakeName perf={perf} />
@@ -589,36 +684,22 @@ const TakeRow = memo(function TakeRow(props: { perf: Performance; expanded: bool
             </span>
           </span>
         </div>
-        <div className={styles.counts} title={countsText}>
-          {replaying ? (
-            <span className={styles.replaying}>
-              <Led on tone="amber" label="Replaying" size="sm" />
-              <ReplayProgress perf={perf} seconds={seconds} />
-            </span>
-          ) : (
-            <span className={styles.countsText}>{countsText}</span>
-          )}
-        </div>
+        {!compact && (
+          <div className={styles.counts} title={countsText}>
+            {replaying ? (
+              <span className={styles.replaying}>
+                <Led on tone="amber" label="Replaying" size="sm" />
+                <ReplayProgress perf={perf} seconds={seconds} />
+              </span>
+            ) : (
+              <span className={styles.countsText}>{countsText}</span>
+            )}
+          </div>
+        )}
         <div className={styles.actions}>
-          {replaying ? (
-            <Button size="sm" variant="secondary" icon="stop" pressed onClick={() => session.stop()} aria-label={`Stop replaying ${perf.name}`} tip="Stop the replay. Your pads take over again on the next Play.">
-              Stop
-            </Button>
-          ) : (
-            <Button size="sm" variant="secondary" icon="play" onClick={() => void session.replayPerformance(perf.id)} aria-label={`Replay ${perf.name}`} tip="Play the take back exactly as recorded: launches, notes and knob moves." detail="Uses the sounds and routing captured when the take started. Pads and keys are ignored while it replays. Starting a replay ends a take that is recording.">
-              Replay
-            </Button>
-          )}
-          <Button
-            size="sm"
-            variant="secondary"
-            icon="download"
-            onClick={() => window.dispatchEvent(new CustomEvent('sb:open-export', { detail: { source: `perf:${perf.id}` } }))}
-            aria-label={`Export ${perf.name} as WAV`}
-            tip="Render this take to a WAV file with the same sounds and timing."
-          >
-            Export
-          </Button>
+          {(!compact || replaying) && <ReplayButton perf={perf} replaying={replaying} />}
+          {!compact && <ExportButton perf={perf} />}
+          {!compact && <MakeBlocksButton perf={perf} />}
           <Tooltip name="Delete take" tip="Remove this performance from the project. Undo brings it back.">
             <button type="button" className={styles.remove} aria-label={`Delete ${perf.name}`} onClick={del}>
               <Icon name="trash" size={14} />
@@ -626,38 +707,110 @@ const TakeRow = memo(function TakeRow(props: { perf: Performance; expanded: bool
           </Tooltip>
         </div>
       </div>
-      {expanded && <EventList perf={perf} replaying={replaying} listId={listId} />}
     </li>
   );
 });
 
 /* ------------------------------------------------------------------ */
+/* The take drawer                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A take's events in a tall side drawer: its header stays at the top
+ * (Replay, Export, Make song blocks, close) while the events scroll under it.
+ */
+function TakeDrawer(props: { perf: Performance; replaying: boolean; onClose(): void }) {
+  const { perf, replaying, onClose } = props;
+  const listId = useId();
+  const seconds = useMemo(() => performanceSeconds(perf), [perf]);
+  const counts = useMemo(() => eventCounts(perf), [perf]);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  // Opening the drawer puts keyboard focus in it (on its close key), so the keys reach the events.
+  useLayoutEffect(() => {
+    closeRef.current?.focus({ preventScroll: true });
+  }, [perf.id]);
+  return (
+    <aside className={styles.drawer} aria-label={`Events of ${perf.name}`} data-hint-avoid="" data-testid="take-drawer" onKeyDown={(e) => {
+      if (e.key === 'Escape' && !(e.target as HTMLElement).closest('input')) {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    }}>
+      <header className={styles.drawerHead} data-replaying={replaying || undefined}>
+        <div className={styles.drawerTitle}>
+          <h3 className={styles.drawerName}>{perf.name}</h3>
+          <span className={styles.meta}>
+            <span>{formatCreated(perf.createdAt)}</span>
+            <span aria-hidden="true">·</span>
+            <span className="mono">{lengthText(seconds)}</span>
+            {counts.length > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{counts.map((c) => c.text).join(' · ')}</span>
+              </>
+            )}
+          </span>
+          {replaying && (
+            <span className={styles.replaying}>
+              <Led on tone="amber" label="Replaying" size="sm" />
+              <ReplayProgress perf={perf} seconds={seconds} />
+            </span>
+          )}
+        </div>
+        <div className={styles.actions}>
+          <ReplayButton perf={perf} replaying={replaying} />
+          <ExportButton perf={perf} />
+          <MakeBlocksButton perf={perf} onDone={onClose} />
+          <Tooltip name="Close" tip="Close the events and show the song again (Esc).">
+            <button ref={closeRef} type="button" className={styles.remove} aria-label={`Close the events of ${perf.name} and show the song`} onClick={onClose}>
+              <Icon name="close" size={14} />
+            </button>
+          </Tooltip>
+        </div>
+      </header>
+      <div className={styles.drawerBody}>
+        <EventList perf={perf} replaying={replaying} listId={listId} />
+      </div>
+    </aside>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Panel                                                               */
 /* ------------------------------------------------------------------ */
 
-export function PerformancesPanel() {
+export interface PerformancesPanelProps {
+  /** The take list is shown (true) or the panel is its one-line bar (false). */
+  open?: boolean;
+  onOpenChange?(open: boolean): void;
+  /** The take whose events are open in the side drawer, or null. */
+  openTake?: Id | null;
+  onOpenTake?(id: Id | null): void;
+}
+
+export function PerformancesPanel(props: PerformancesPanelProps = {}) {
   const performances = useProject((p) => p.performances);
   const recording = useRuntime((s) => s.recording === 'performance');
   const replayId = useRuntime((s) => (s.playing && s.mode === 'replay' ? s.replayId : null));
-  const [expanded, setExpanded] = useState<Id | null>(null);
-  // With no takes the panel is a one-line bar until it is opened (it closes again when the last take goes).
-  const [openEmpty, setOpenEmpty] = useState(false);
+  // Standalone (a test mounts the panel alone): it keeps its own open state.
+  const [ownOpen, setOwnOpen] = useState<boolean>(() => performances.length > 0);
+  const [ownTake, setOwnTake] = useState<Id | null>(null);
+  const open = props.open ?? ownOpen;
+  const setOpen = props.onOpenChange ?? setOwnOpen;
+  const openTake = props.openTake !== undefined ? props.openTake : ownTake;
+  const setOpenTake = props.onOpenTake ?? setOwnTake;
   const ordered = useMemo(() => [...performances].reverse(), [performances]);
   const bodyId = useId();
   const none = performances.length === 0;
-  const collapsed = none && !openEmpty;
+  const take = openTake ? performances.find((p) => p.id === openTake) ?? null : null;
 
   // A take that no longer exists cannot stay open.
   useEffect(() => {
-    if (expanded && !performances.some((p) => p.id === expanded)) setExpanded(null);
-  }, [expanded, performances]);
-  const hadTakes = useRef(!none);
-  useEffect(() => {
-    if (hadTakes.current && none) setOpenEmpty(false);
-    hadTakes.current = !none;
-  }, [none]);
+    if (openTake && !performances.some((p) => p.id === openTake)) setOpenTake(null);
+  }, [openTake, performances, setOpenTake]);
 
-  const onToggle = useCallback((id: Id) => setExpanded((cur) => (cur === id ? null : id)), []);
+  const onToggle = useCallback((id: Id) => setOpenTake(openTake === id ? null : id), [openTake, setOpenTake]);
 
   const recordingChip = recording && (
     <span className={styles.recording} role="status">
@@ -666,22 +819,39 @@ export function PerformancesPanel() {
     </span>
   );
 
-  if (collapsed) {
+  if (!open && !take) {
+    const newest = ordered[0];
     return (
       <section className={styles.panel} data-collapsed="" aria-labelledby="perf-title" data-testid="performances">
         <header className={styles.bar}>
           <h2 id="perf-title" className={styles.title}>
             Performances
           </h2>
-          <button type="button" className={styles.barButton} aria-expanded={false} onClick={() => setOpenEmpty(true)}>
-            <span className={styles.barText}>
-              No takes yet. <b>Performance</b> in the transport records one: launches, notes and knob moves, replayed exactly.
-            </span>
-            <span className={styles.barMore}>
-              How
-              <Icon name="chevronDown" size={14} />
-            </span>
-          </button>
+          {none ? (
+            <button type="button" className={styles.barButton} aria-expanded={false} onClick={() => setOpen(true)}>
+              <span className={styles.barText}>
+                No takes yet. <b>Performance</b> in the transport records one: launches, notes and knob moves, replayed exactly.
+              </span>
+              <span className={styles.barMore}>
+                How
+                <Icon name="chevronDown" size={14} />
+              </span>
+            </button>
+          ) : (
+            <>
+              <button type="button" className={`${styles.barButton} ${styles.barTakes}`} aria-expanded={false} aria-controls={bodyId} onClick={() => setOpen(true)} data-testid="takes-open">
+                <span className={styles.barCount}>{performances.length === 1 ? '1 take' : `${performances.length} takes`}</span>
+                <Icon name="chevronRight" size={14} />
+              </button>
+              {newest && (
+                <span className={styles.barNewest} data-hint-avoid="">
+                  <span className={styles.barNewestName}>Newest: {newest.name}</span>
+                  <span className="mono">{lengthText(performanceSeconds(newest))}</span>
+                  <ReplayButton perf={newest} replaying={replayId === newest.id} />
+                </span>
+              )}
+            </>
+          )}
           {recordingChip}
         </header>
       </section>
@@ -689,7 +859,7 @@ export function PerformancesPanel() {
   }
 
   return (
-    <section className={styles.panel} aria-labelledby="perf-title" data-testid="performances">
+    <section className={styles.panel} aria-labelledby="perf-title" data-testid="performances" data-drawer={take ? '' : undefined}>
       <header className={styles.head}>
         <h2 id="perf-title" className={styles.title}>
           Performances
@@ -697,36 +867,47 @@ export function PerformancesPanel() {
         </h2>
         <p className={styles.explain}>Record Performance captures clip launches, notes and knob moves, and replays them exactly. Takes are saved with the project.</p>
         {recordingChip}
-        {none && (
-          <button type="button" className={styles.barButton} aria-expanded aria-controls={bodyId} onClick={() => setOpenEmpty(false)}>
-            <span className={styles.barMore}>
-              Hide
-              <Icon name="chevronUp" size={14} />
-            </span>
-          </button>
-        )}
+        <button
+          type="button"
+          className={styles.barButton}
+          aria-expanded
+          aria-controls={bodyId}
+          onClick={() => {
+            setOpenTake(null);
+            setOpen(false);
+          }}
+          data-testid="takes-fold"
+        >
+          <span className={styles.barMore}>
+            Fold
+            <Icon name="chevronUp" size={14} />
+          </span>
+        </button>
       </header>
-      <div id={bodyId} className={styles.body} data-scroll-body>
-        {ordered.length === 0 ? (
-          <div className={styles.empty}>
-            <Icon name="recordPerformance" size={22} />
-            <div className={styles.emptyText}>
-              <strong>No performances yet.</strong>
-              <span>
-                Press <b>Performance</b> in the transport’s Record group, play pads, keys and knobs, then press it again to keep the take. It shows up here to replay, edit and export.
-              </span>
+      <div className={styles.split}>
+        <div id={bodyId} className={styles.body} data-scroll-body data-hint-avoid="">
+          {ordered.length === 0 ? (
+            <div className={styles.empty}>
+              <Icon name="recordPerformance" size={22} />
+              <div className={styles.emptyText}>
+                <strong>No performances yet.</strong>
+                <span>
+                  Press <b>Performance</b> in the transport’s Record group, play pads, keys and knobs, then press it again to keep the take. It shows up here to replay, edit, export or turn into song blocks.
+                </span>
+              </div>
+              <Button size="sm" icon="chevronRight" onClick={() => setView('play')} tip="Go to the pads and keyboard to play something to record.">
+                Go to Play
+              </Button>
             </div>
-            <Button size="sm" icon="chevronRight" onClick={() => setView('play')} tip="Go to the pads and keyboard to play something to record.">
-              Go to Play
-            </Button>
-          </div>
-        ) : (
-          <ul className={styles.list} aria-label="Recorded performances, newest first">
-            {ordered.map((p) => (
-              <TakeRow key={p.id} perf={p} expanded={expanded === p.id} replaying={replayId === p.id} onToggle={onToggle} />
-            ))}
-          </ul>
-        )}
+          ) : (
+            <ul className={styles.list} aria-label="Recorded performances, newest first" data-testid="take-list">
+              {ordered.map((p) => (
+                <TakeRow key={p.id} perf={p} open={openTake === p.id} compact={!!take} replaying={replayId === p.id} onToggle={onToggle} />
+              ))}
+            </ul>
+          )}
+        </div>
+        {take && <TakeDrawer key={take.id} perf={take} replaying={replayId === take.id} onClose={() => setOpenTake(null)} />}
       </div>
     </section>
   );

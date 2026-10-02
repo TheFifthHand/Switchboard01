@@ -34,6 +34,8 @@ let boot: BootInfo;
 
 beforeEach(async () => {
   await deleteDb();
+  // The lane's remembered settings (the Performances panel open or folded) start fresh.
+  localStorage.removeItem('switchboard01.songLane');
   act(() => {
     setGuideDone(true);
     setTipsEnabled(true);
@@ -93,7 +95,7 @@ describe('Arrange layout', () => {
     [1920, 1080],
     [960, 540],
   ] as const) {
-    it(`at ${w} x ${hh}: the lane fits, rows grow with the free height (26–32 px, 18 at 200 %), targets are big enough, the page never scrolls sideways`, async () => {
+    it(`at ${w} x ${hh}: the lane fits, rows grow with the free height (to 48 px on a tall window, 26 at 200 %), targets are big enough, the page never scrolls sideways`, async () => {
       await openArrange(w, hh);
       const doc = document.scrollingElement!;
       expect(doc.scrollWidth, 'page scrolls sideways').toBeLessThanOrEqual(window.innerWidth);
@@ -104,15 +106,17 @@ describe('Arrange layout', () => {
       // Part rows: one cell per part, aligned with the part names; they grow with the window's height.
       const cells = [...blockEls()[1].querySelectorAll<HTMLElement>('[data-cell]')];
       expect(cells.length).toBe(8);
-      const [lo, hi] = hh <= 540 ? [18, 19] : [26, 32];
+      const [lo, hi] = hh <= 540 ? [26, 32] : hh >= 1080 ? [48, 48] : [30, 40];
       for (const c of cells) {
         const ch = c.getBoundingClientRect().height;
         expect(ch).toBeGreaterThanOrEqual(lo);
         expect(ch).toBeLessThanOrEqual(hi);
       }
-      const names = [...laneEl().querySelectorAll<HTMLElement>('[aria-hidden="true"] > div')].filter((d) => d.textContent === 'Drums');
+      const names = [...laneEl().querySelectorAll<HTMLElement>('[data-name-row]')].filter((d) => d.querySelector('[class*="partNameText"]')?.textContent === 'Drums');
       expect(names.length).toBe(1);
       expect(Math.abs(names[0].getBoundingClientRect().top - cells[0].getBoundingClientRect().top)).toBeLessThan(2);
+      // Each part row has its Mute and Solo keys, 32 px wide.
+      for (const k of names[0].querySelectorAll<HTMLElement>('button[aria-pressed]')) expect(k.getBoundingClientRect().width).toBeGreaterThanOrEqual(32);
       // The blocks are inside the lane, which scrolls by itself when the song is longer than it.
       const scroller = blockEls()[0].closest<HTMLElement>('[data-testid="song-lane"] > div:nth-child(2)')!;
       const last = blockEls()[blockEls().length - 1];
@@ -121,13 +125,13 @@ describe('Arrange layout', () => {
       // Header buttons keep a usable size; on a block with room (Groove) they are 32 px. A compact block (an
       // overview step: the whole song fits only that small) shows them on keyboard focus (and hover).
       const b0 = blockEls()[0];
-      if (b0.getBoundingClientRect().width < 96) {
+      if (b0.getBoundingClientRect().width < 110) {
         expect(b0.querySelector<HTMLElement>('[aria-haspopup="menu"]')!.getBoundingClientRect().height).toBe(0);
         act(() => b0.focus());
         await settle();
         const more = b0.querySelector<HTMLElement>('[aria-haspopup="menu"]')!.getBoundingClientRect();
-        expect(more.height).toBeGreaterThanOrEqual(28);
-        expect(more.width).toBeGreaterThanOrEqual(24);
+        expect(more.height).toBeGreaterThanOrEqual(32);
+        expect(more.width).toBeGreaterThanOrEqual(32);
         expect(more.right).toBeLessThanOrEqual(b0.getBoundingClientRect().right + 1);
         act(() => b0.blur());
       } else {
@@ -135,35 +139,43 @@ describe('Arrange layout', () => {
         expect(play.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
       }
       const wide = blockEls()[1];
-      if (wide.getBoundingClientRect().width >= 150) {
+      if (wide.getBoundingClientRect().width >= 110) {
         for (const b of wide.querySelectorAll<HTMLElement>('[aria-label^="Play song from block 2"], [aria-haspopup="menu"][aria-label*="block actions"]')) {
           expect(b.getBoundingClientRect().width).toBeGreaterThanOrEqual(32);
           expect(b.getBoundingClientRect().height).toBeGreaterThanOrEqual(32);
         }
       }
-      // Scissors: a 24 px target.
+      // Scissors (shown with the block hovered or focused): a 24 px target.
+      act(() => wide.focus());
       const split = wide.querySelector<HTMLElement>('[aria-label^="Split Groove"]')!;
       expect(split.getBoundingClientRect().width).toBeGreaterThanOrEqual(24);
       expect(split.getBoundingClientRect().height).toBeGreaterThanOrEqual(24);
-      // The lane's view tools (Follow, zoom, Fit song) are on screen with the palette.
+      act(() => wide.blur());
+      // Out of the layout otherwise (nothing invisible to click, or for the hint chip to avoid).
+      expect(split.getBoundingClientRect().width).toBe(0);
+      // The lane's view tools (Follow, zoom, Fit song) are on screen, in the lane's corner.
       for (const name of ['Follow playhead', 'Zoom out', 'Zoom in', 'Fit song']) {
-        const b = [...document.querySelectorAll<HTMLElement>('[role="group"][aria-label="Song lane view"] button')].find((x) => (x.getAttribute('aria-label') ?? x.textContent) === name)!;
+        const b = [...document.querySelectorAll<HTMLElement>('[role="group"][aria-label="Song lane view"] button')].find((x) => (x.getAttribute('aria-label') ?? x.textContent ?? '').startsWith(name))!;
         const r = b.getBoundingClientRect();
         expect(r.right, name).toBeLessThanOrEqual(panel.right);
         // At 200 % zoom the Arrange view scrolls down to the palette; at laptop and desktop size it is in view.
         if (hh >= 768) expect(r.bottom, name).toBeLessThanOrEqual(hh);
       }
-      // No takes: Performances is one line, inside the window at laptop and desktop size.
-      expect(perfPanel().hasAttribute('data-collapsed')).toBe(true);
-      expect(perfPanel().getBoundingClientRect().height).toBeLessThanOrEqual(52);
+      // No takes: Performances is one line, inside the window at laptop size; a tall window has room for it
+      // open (how to record a take), so it opens by itself there.
+      if (hh >= 1080) expect(perfPanel().hasAttribute('data-collapsed')).toBe(false);
+      else {
+        expect(perfPanel().hasAttribute('data-collapsed')).toBe(true);
+        expect(perfPanel().getBoundingClientRect().height).toBeLessThanOrEqual(52);
+      }
       if (hh >= 768) {
         expect(perfPanel().getBoundingClientRect().bottom).toBeLessThanOrEqual(hh);
-        // No empty band under the panels: what the rows (at most 32 px) cannot use is lane room under the blocks.
+        // No empty band under the panels, and at most 120 px of empty lane under the blocks.
         const view = perfPanel().parentElement!.getBoundingClientRect();
         expect(view.bottom - perfPanel().getBoundingClientRect().bottom, 'empty band under the Arrange view').toBeLessThanOrEqual(14);
         const lane = laneEl().getBoundingClientRect();
         const lastCell = [...blockEls()[1].querySelectorAll<HTMLElement>('[data-cell]')].at(-1)!.getBoundingClientRect();
-        if (hh >= 1080) expect(lane.bottom - lastCell.bottom, 'the lane takes the room').toBeGreaterThan(150);
+        expect(lane.bottom - lastCell.bottom, 'empty lane under the blocks').toBeLessThanOrEqual(120);
       }
       // Advanced adds detail but no width; the part picker arrows are 24 px wide.
       act(() => setUiMode('advanced'));
@@ -182,7 +194,7 @@ describe('Arrange layout', () => {
     });
   }
 
-  it('with takes, the Performances panel keeps room at 1366 x 768 and the rows give way (never under 18 px)', async () => {
+  it('with takes, the Performances panel is one line at 1366 x 768 ("3 takes ▸"); opened, it keeps room and the rows give way (never under 18 px)', async () => {
     await openArrange(1366, 768);
     const p = session.store.getState();
     act(() => {
@@ -199,11 +211,17 @@ describe('Arrange layout', () => {
       }
     });
     await settle(300);
+    expect(perfPanel().hasAttribute('data-collapsed')).toBe(true);
+    expect(perfPanel().textContent).toContain('3 takes');
+    const folded = blockEls()[1].querySelector<HTMLElement>('[data-cell]')!.getBoundingClientRect().height;
+    expect(folded).toBeGreaterThanOrEqual(30);
+    act(() => document.querySelector<HTMLButtonElement>('[data-testid="takes-open"]')!.click());
+    await settle(300);
     expect(perfPanel().hasAttribute('data-collapsed')).toBe(false);
     const cell = blockEls()[1].querySelector<HTMLElement>('[data-cell]')!.getBoundingClientRect().height;
     expect(cell).toBeGreaterThanOrEqual(18);
-    expect(cell).toBeLessThan(26);
-    expect(perfPanel().getBoundingClientRect().height).toBeGreaterThanOrEqual(140);
+    expect(cell).toBeLessThan(folded);
+    expect(perfPanel().getBoundingClientRect().height).toBeGreaterThanOrEqual(130);
     expect(perfPanel().getBoundingClientRect().bottom).toBeLessThanOrEqual(768);
     expect(document.scrollingElement!.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
   });

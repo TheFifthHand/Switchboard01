@@ -6,15 +6,18 @@
  * it). The first level is short, with the actions used most on top (play from
  * here, rename, duplicate, split, join, one more time / one fewer, remove);
  * the rest are grouped in lists that open in place with a Back item: the
- * parts of the block, scenes and clips (change, layer, replace, edit clips),
- * the song helpers, the loop, and copy / cut / paste / move. Pairs of opposite
- * actions share a row. Every list keeps the menu's size and place (a longer
- * list scrolls inside it), so opening one never makes the menu jump, and the
- * menu fits a laptop screen above or below its button.
+ * parts of the block (of every selected block when it is in the selection),
+ * scenes and clips (make a scene from the block, change, layer, replace, edit
+ * clips), the song helpers and the song moves (fades, filter rise, echo
+ * throw), the loop, and copy / cut / paste / move. Pairs of opposite actions
+ * share a row. Every list keeps the menu's size and place (a longer list
+ * scrolls inside it), so opening one never makes the menu jump, and the menu
+ * fits a laptop screen above or below its button. Each action has its own
+ * icon; the trash is only for removing.
  */
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { Id, Project } from '../../../project/types';
-import { joinProblemDetail, shapeProblem, type LayerMode, type ShapeKind, type ShapeProblem } from '../../../state/commands';
+import { BLOCK_MOVE_KINDS, MAX_SCENES, type BlockMoveKind, type Id, type Project } from '../../../project/types';
+import { BLOCK_MOVE_NAMES, blocksWithLabel, joinProblemDetail, shapeProblem, type LayerMode, type ShapeKind, type ShapeProblem } from '../../../state/commands';
 import { shallowEqual } from '../../../state/store';
 import { useProject } from '../../instance';
 import { useRuntime } from '../../runtime';
@@ -22,6 +25,7 @@ import { MOD_KEY, MenuHeader, MenuItem, MenuSeparator, Popover, type MenuAnchor 
 import menuStyles from '../ClipMenu.module.css';
 import { LaneIcon, type LaneIconName } from './laneIcons';
 import { loopSpan, loopTarget, sameSpan } from './laneLoop';
+import { MOVE_SAYS } from './songActions';
 import { barsText, cellOn, cellState, lengthDetail, partChoices, type BlockView } from './songModel';
 import styles from './SongPanel.module.css';
 
@@ -59,6 +63,14 @@ export interface BlockMenuActions {
   stopLoop(): void;
   /** A song helper on one block: build up, strip down or breakdown (one undo step). */
   shape(id: Id, kind: ShapeKind): void;
+  /** One part in several blocks (the selection): off (null) or back on (undefined); one undo step. */
+  setParts(ids: Id[], trackId: Id, choice: null | undefined): void;
+  /** Add or take off a song move. */
+  toggleMove(id: Id, kind: BlockMoveKind): void;
+  /** A new scene holding what the block plays; the block then plays it. */
+  sceneFromBlock(id: Id): void;
+  /** Select every block with this block's name (a helper's numbered blocks count as one). */
+  selectNamed(id: Id): void;
 }
 
 export type BlockMenuView = 'main' | 'parts' | 'scenes' | 'scene' | 'layer' | 'replace' | 'shape' | 'loop' | 'clipboard';
@@ -67,15 +79,17 @@ export type BlockMenuView = 'main' | 'parts' | 'scenes' | 'scene' | 'layer' | 'r
 const PARENT: Record<BlockMenuView, BlockMenuView> = { main: 'main', parts: 'main', scenes: 'main', scene: 'scenes', layer: 'scenes', replace: 'scenes', shape: 'main', loop: 'main', clipboard: 'main' };
 
 /** A menu row with one of the lane's own icons (same look and keys as MenuItem). */
-function LaneMenuItem(props: { icon: LaneIconName; children: ReactNode; hint?: string; disabled?: boolean; disabledReason?: string; onSelect(): void }) {
-  const { icon, children, hint, disabled, disabledReason, onSelect } = props;
+export function LaneMenuItem(props: { icon: LaneIconName; children: ReactNode; hint?: string; disabled?: boolean; disabledReason?: string; role?: 'menuitem' | 'menuitemcheckbox'; checked?: boolean; onSelect(): void }) {
+  const { icon, children, hint, disabled, disabledReason, role = 'menuitem', checked, onSelect } = props;
   const shown = disabled && disabledReason ? disabledReason : hint;
   return (
     <button
       type="button"
-      role="menuitem"
+      role={role}
       tabIndex={-1}
       className={menuStyles.item}
+      aria-checked={role === 'menuitemcheckbox' ? !!checked : undefined}
+      data-checked={checked || undefined}
       aria-disabled={disabled || undefined}
       onClick={() => {
         if (!disabled) onSelect();
@@ -109,11 +123,16 @@ function sameProblem(a: ShapeProblem | null, b: ShapeProblem | null): boolean {
   return a === b || (!!a && !!b && a.short === b.short && a.text === b.text);
 }
 
+/** What each song move does, in a line under it. */
+const MOVES: { kind: BlockMoveKind; icon: LaneIconName }[] = BLOCK_MOVE_KINDS.map((kind) => ({ kind, icon: kind }));
+
 export function BlockMenu(props: {
   block: BlockView;
   count: number;
   /** The blocks group actions apply to (the selection when this block is in it). */
   targets: Id[];
+  /** Their views (song order), for the parts list across several blocks. */
+  targetViews?: readonly BlockView[];
   canPaste: boolean;
   scenes: SceneSummary[];
   anchor: MenuAnchor;
@@ -123,6 +142,11 @@ export function BlockMenu(props: {
   actions: BlockMenuActions;
 }) {
   const { block, count, targets, canPaste, scenes, anchor, returnFocus, onClose, actions } = props;
+  const targetViews = props.targetViews?.length ? props.targetViews : [block];
+  // Blocks named like this one (a helper's numbered blocks count as one): "Select blocks named …".
+  const named = useProject((p) => blocksWithLabel(p, block.name), shallowEqual);
+  const groupName = block.name.replace(/ \d+\/\d+$/, '');
+  const scenesFull = useProject((p) => p.scenes.length >= MAX_SCENES);
   const [view, setView] = useState<BlockMenuView>(props.initialView ?? 'main');
   const join = useProject((p) => joinProblemDetail(p, block.id), (a, b) => a === b || (!!a && !!b && shallowEqual(a, b)));
   // The loop: what this menu would loop (its blocks, first to last) and whether that is looping now.
@@ -186,7 +210,39 @@ export function BlockMenu(props: {
 
   let label = `Block ${block.index + 1}: ${block.name}`;
   let body: ReactNode;
-  if (view === 'parts') {
+  if (view === 'parts' && many) {
+    // Every selected block: a part is checked when it plays in all of them; choosing it switches it off in
+    // all of them, or (when it does not play in every one) back on in all of them.
+    label = `Parts in ${targets.length} blocks`;
+    body = (
+      <>
+        {back}
+        <MenuSeparator />
+        <div className={styles.menuLabel} role="presentation">
+          Parts in {targets.length} blocks (checked = plays in all)
+        </div>
+        {block.cells.map((c) => {
+          const on = targetViews.filter((v) => {
+            const x = v.cells.find((y) => y.trackId === c.trackId);
+            return !!x && cellOn(x);
+          }).length;
+          const all = on === targetViews.length;
+          return (
+            <MenuItem
+              key={c.trackId}
+              role="menuitemcheckbox"
+              checked={all}
+              icon={all ? 'check' : on ? 'minus' : undefined}
+              hint={all ? `plays in all ${targetViews.length}` : on ? `plays in ${on} of ${targetViews.length}` : 'plays in none'}
+              onSelect={() => actions.setParts(targets, c.trackId, all ? null : undefined)}
+            >
+              {c.partName}
+            </MenuItem>
+          );
+        })}
+      </>
+    );
+  } else if (view === 'parts') {
     label = `Parts in ${block.name}`;
     body = (
       <>
@@ -212,13 +268,17 @@ export function BlockMenu(props: {
       <>
         {back}
         <MenuSeparator />
-        <MenuItem icon="copy" hint={block.sceneName} onSelect={open('scene')}>
+        <MenuItem icon="plus" disabled={block.missing || scenesFull} disabledReason={block.missing ? 'Scene missing' : `Up to ${MAX_SCENES} scenes`} hint={block.changes ? 'keeps its parts' : undefined} onSelect={act(() => actions.sceneFromBlock(block.id))}>
+          Make a scene from this block
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem icon="scene" hint={block.sceneName} onSelect={open('scene')}>
           Change scene…
         </MenuItem>
-        <MenuItem icon="plus" disabled={block.missing} disabledReason="Scene missing" onSelect={open('layer')}>
+        <MenuItem icon="layers" disabled={block.missing} disabledReason="Scene missing" onSelect={open('layer')}>
           Layer a scene in…
         </MenuItem>
-        <MenuItem icon="copy" disabled={block.missing} disabledReason="Scene missing" onSelect={open('replace')}>
+        <MenuItem icon="layers" disabled={block.missing} disabledReason="Scene missing" onSelect={open('replace')}>
           Replace parts with a scene…
         </MenuItem>
         <MenuSeparator />
@@ -278,6 +338,23 @@ export function BlockMenu(props: {
             </div>
           </div>
         ))}
+        <MenuSeparator />
+        <div className={styles.menuLabel} role="presentation">
+          Moves (checked = on; heard in the song and in exports)
+        </div>
+        {MOVES.map((x) => {
+          const on = block.moves.includes(x.kind);
+          return (
+            <div key={x.kind} role="none" className={styles.shapeItem}>
+              <LaneMenuItem icon={x.icon} role="menuitemcheckbox" checked={on} hint={on ? 'On' : undefined} onSelect={() => actions.toggleMove(block.id, x.kind)}>
+                {BLOCK_MOVE_NAMES[x.kind]}
+              </LaneMenuItem>
+              <div className={styles.menuNote} role="presentation">
+                {MOVE_SAYS[x.kind][0].toUpperCase() + MOVE_SAYS[x.kind].slice(1)}.
+              </div>
+            </div>
+          );
+        })}
       </>
     );
   } else if (view === 'loop') {
@@ -307,7 +384,7 @@ export function BlockMenu(props: {
           <MenuItem icon="copy" hint={`${MOD_KEY}C`} keyShortcut="Control+C" onSelect={act(() => actions.copy(targets))}>
             Copy {what}
           </MenuItem>
-          <MenuItem icon="trash" hint={`${MOD_KEY}X`} keyShortcut="Control+X" onSelect={act(() => actions.cut(targets))}>
+          <MenuItem icon="scissors" hint={`${MOD_KEY}X`} keyShortcut="Control+X" onSelect={act(() => actions.cut(targets))}>
             Cut {what}
           </MenuItem>
         </MenuPair>
@@ -331,16 +408,21 @@ export function BlockMenu(props: {
         <MenuItem icon="play" disabled={block.missing} disabledReason="Scene missing" onSelect={act(() => actions.play(block.id))}>
           Play song from here
         </MenuItem>
-        <MenuItem icon="settings" hint="F2" keyShortcut="F2" onSelect={act(() => actions.rename(block.id))}>
+        <MenuItem icon="pencil" hint="F2" keyShortcut="F2" onSelect={act(() => actions.rename(block.id))}>
           Rename…
         </MenuItem>
         <MenuItem icon="duplicate" hint={`${MOD_KEY}D`} keyShortcut="Control+D" onSelect={act(() => actions.duplicate(targets))}>
           Duplicate {what}
         </MenuItem>
-        <MenuItem icon="duplicate" disabled={block.repeats < 2} disabledReason="Plays once" onSelect={act(() => actions.splitHalf(block.id))}>
+        {named.length > 1 && (
+          <MenuItem icon="check" hint={`${named.length} blocks`} onSelect={act(() => actions.selectNamed(block.id))}>
+            Select blocks named “{groupName}”
+          </MenuItem>
+        )}
+        <MenuItem icon="scissors" disabled={block.repeats < 2} disabledReason="Plays once" onSelect={act(() => actions.splitHalf(block.id))}>
           Split in half
         </MenuItem>
-        <MenuItem icon="link" disabled={join !== null} disabledReason={join?.short} onSelect={act(() => actions.join(block.id))}>
+        <MenuItem icon="join" disabled={join !== null} disabledReason={join?.short} onSelect={act(() => actions.join(block.id))}>
           Join with next
         </MenuItem>
         {join !== null && <JoinReason text={join.text} />}
@@ -353,13 +435,13 @@ export function BlockMenu(props: {
           </MenuItem>
         </MenuPair>
         <MenuSeparator />
-        <MenuItem icon="sliders" hint={block.changes ? `${block.changes} changed` : undefined} disabled={block.missing} disabledReason="Scene missing" onSelect={open('parts')}>
-          Parts in this block…
+        <MenuItem icon="sliders" hint={many ? undefined : block.changes ? `${block.changes} changed` : undefined} disabled={block.missing} disabledReason="Scene missing" onSelect={open('parts')}>
+          {many ? `Parts in ${targets.length} blocks…` : 'Parts in this block…'}
         </MenuItem>
-        <MenuItem icon="copy" hint={block.sceneName} onSelect={open('scenes')}>
+        <MenuItem icon="scene" hint={block.sceneName} onSelect={open('scenes')}>
           Scenes and clips…
         </MenuItem>
-        <LaneMenuItem icon="buildUp" hint="Build up, strip down" disabled={block.missing} disabledReason="Scene missing" onSelect={open('shape')}>
+        <LaneMenuItem icon="buildUp" hint={block.moves.length ? `${block.moves.length === 1 ? '1 move' : `${block.moves.length} moves`} on` : 'Build up, fades'} disabled={block.missing} disabledReason="Scene missing" onSelect={open('shape')}>
           Shape this block…
         </LaneMenuItem>
         <LaneMenuItem icon="loop" hint={loopsThese ? 'Loop is on' : looping ? 'Loop elsewhere' : undefined} onSelect={open('loop')}>

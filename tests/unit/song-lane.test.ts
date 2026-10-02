@@ -23,7 +23,9 @@ import {
   autoScrollVelocity,
   badgePlacement,
   cardEdge,
+  Dwell,
   cardTarget,
+  restingCardTarget,
   currentOthersGap,
   edgeDragVelocity,
   edgeStepPx,
@@ -42,11 +44,13 @@ import {
   targetGap,
   type CardBlock,
   type CardTarget,
+  type OpenSlot,
 } from '../../src/app/views/arrange/songDrag';
+import { SLOT_DELAY_MS } from '../../src/app/views/arrange/laneGestures';
 import {
   COMPACT_BLOCK_WIDTH,
   FOLLOW_LEAD,
-  MIN_BLOCK_WIDTH,
+  FULL_HEADER_WIDTH,
   MIN_PX_PER_BAR,
   OVERVIEW_BELOW,
   OVERVIEW_MIN_BLOCKS,
@@ -58,6 +62,7 @@ import {
   barToX,
   blockAtBar,
   fitLaneHeight,
+  LANE_EXTRA_MAX_PX,
   fitRowHeight,
   fitSong,
   followScroll,
@@ -89,7 +94,7 @@ describe('lane geometry', () => {
   it('places blocks edge to edge, proportional, at a zoom step that fits (with one block width of room after them)', () => {
     const l = layoutSong(song, 1000);
     expect(ZOOM_STEPS).toContain(l.pxPerBar);
-    expect(l.room).toBe(MIN_BLOCK_WIDTH);
+    expect(l.room).toBe(FULL_HEADER_WIDTH);
     expect(l.contentWidth + l.room).toBeLessThanOrEqual(1000);
     // The next step up would not fit.
     const bigger = ZOOM_STEPS.find((s) => s > l.pxPerBar)!;
@@ -113,14 +118,34 @@ describe('lane geometry', () => {
     expect(held.contentWidth).toBeGreaterThan(1000);
   });
 
-  it('widens a short block to the minimum and keeps the ruler on its edges', () => {
+  it('only a block under the 44 px floor is widened; the ruler stays on block edges and its numbers on a regular bar step', () => {
     const l = layoutSong([{ id: 'a', bars: 1, repeats: 1 }, ...song], 1000);
     expect(l.pxPerBar).toBeGreaterThanOrEqual(OVERVIEW_BELOW);
-    expect(l.blocks[0].width).toBe(MIN_BLOCK_WIDTH);
+    expect(l.blocks[0].width).toBe(Math.max(COMPACT_BLOCK_WIDTH, l.pxPerBar));
+    // Every other block is exactly to scale.
+    for (const b of l.blocks.slice(1)) expect(b.width).toBe(b.totalBars * l.pxPerBar);
     const starts = rulerMarks(l).filter((m) => m.blockStart);
     expect(starts.map((m) => m.bar)).toEqual([0, 1, 9, 25]);
     expect(starts.map((m) => m.x)).toEqual(l.blocks.map((b) => b.x));
-    expect(starts.every((m) => m.label)).toBe(true);
+    // Numbers sit at multiples of one step (bar 1, 1 + step, …), not at block starts.
+    const labelled = rulerMarks(l).filter((m) => m.label).map((m) => m.bar);
+    const step = labelled[1] - labelled[0];
+    expect(labelled[0]).toBe(0);
+    expect(labelled.every((b) => b % step === 0)).toBe(true);
+  });
+
+  it('is linear at 11 px per bar and up: widths proportional to bars, ruler numbers evenly spaced', () => {
+    const house = [8, 16, 16, 8, 16, 8, 4, 4, 4, 4].map((bars, i) => ({ id: String(i), bars: 4, repeats: bars / 4 }));
+    for (const s of ZOOM_STEPS.filter((z) => z >= OVERVIEW_BELOW)) {
+      const l = layoutSong(house, 1000, { pxPerBar: s });
+      for (const b of l.blocks) expect(Math.abs(b.width - b.totalBars * s)).toBeLessThanOrEqual(1);
+      const xs = rulerMarks(l).filter((m) => m.label).map((m) => m.x);
+      const gaps = xs.slice(1).map((x, i) => x - xs[i]);
+      for (const g of gaps) expect(Math.abs(g - gaps[0])).toBeLessThanOrEqual(1);
+      // The playhead's px per bar is the same in an 8-bar and a 4-bar block.
+      expect(barToX(l, 1) - barToX(l, 0)).toBeCloseTo(barToX(l, 81) - barToX(l, 80), 6);
+    }
+    expect(OVERVIEW_BELOW).toBe(11);
   });
 
   it('a long song fits whole at an overview step: compact blocks (never narrower than COMPACT_BLOCK_WIDTH)', () => {
@@ -131,18 +156,21 @@ describe('lane geometry', () => {
     expect(l.contentWidth + l.room).toBeLessThanOrEqual(1200);
     expect(l.room).toBe(COMPACT_BLOCK_WIDTH);
     for (const b of l.blocks) expect(b.width).toBe(Math.max(COMPACT_BLOCK_WIDTH, Math.floor(b.totalBars * l.pxPerBar)));
-    expect(minBlockWidth(OVERVIEW_BELOW)).toBe(MIN_BLOCK_WIDTH);
+    // The floor is the same at every scale; only the room after the song is smaller at an overview step.
+    expect(minBlockWidth(OVERVIEW_BELOW)).toBe(COMPACT_BLOCK_WIDTH);
     expect(minBlockWidth(OVERVIEW_BELOW - 1)).toBe(COMPACT_BLOCK_WIDTH);
+    expect(tailRoom(OVERVIEW_BELOW)).toBe(FULL_HEADER_WIDTH);
+    expect(tailRoom(OVERVIEW_BELOW - 1)).toBe(COMPACT_BLOCK_WIDTH);
   });
 
-  it('a song too long to fit at any step opens scrolling at a readable step (its shortest block about the minimum width)', () => {
+  it('a song too long to fit at any step opens scrolling at a readable step (its shortest block about a full header wide)', () => {
     const many = Array.from({ length: 40 }, (_, i) => ({ id: String(i), bars: 8, repeats: 1 }));
     const l = layoutSong(many, 1200);
     expect(l.contentWidth).toBeGreaterThan(1200);
     expect(ZOOM_STEPS).toContain(l.pxPerBar);
     expect(l.pxPerBar).toBeGreaterThanOrEqual(OVERVIEW_BELOW);
-    expect(8 * l.pxPerBar).toBeLessThanOrEqual(MIN_BLOCK_WIDTH);
-    for (const b of l.blocks) expect(b.width).toBe(Math.max(MIN_BLOCK_WIDTH, Math.floor(b.totalBars * l.pxPerBar)));
+    expect(8 * l.pxPerBar).toBeLessThanOrEqual(FULL_HEADER_WIDTH);
+    for (const b of l.blocks) expect(b.width).toBe(Math.max(COMPACT_BLOCK_WIDTH, Math.floor(b.totalBars * l.pxPerBar)));
   });
 
   it('Fit song never makes a song that is cut off bigger: 24 blocks fit at 1366 px; one that cannot fit goes to the smallest step and says it does not fit', () => {
@@ -183,19 +211,21 @@ describe('lane geometry', () => {
     expect(layoutSong(ten, 1218).pxPerBar).toBe(tenFit.pxPerBar);
   });
 
-  it('part rows share the free height out, 18 to 32 px', () => {
+  it('part rows share the free height out, 18 to 48 px', () => {
     expect(ROW_MIN_PX).toBe(18);
-    expect(ROW_MAX_PX).toBe(32);
+    expect(ROW_MAX_PX).toBe(48);
     expect(fitRowHeight(8 * 27 + 5, 8)).toBe(27);
-    expect(fitRowHeight(1000, 8)).toBe(32);
+    expect(fitRowHeight(1000, 8)).toBe(48);
     expect(fitRowHeight(40, 8)).toBe(18);
     expect(fitRowHeight(-50, 8)).toBe(18);
     expect(fitRowHeight(200, 0)).toBe(18);
   });
 
-  it('what the rows cannot use (they stop at 32 px) goes to the lane below the blocks', () => {
-    // A tall window: 8 rows at 32 px and the rest for the lane.
-    expect(fitLaneHeight(8 * 32 + 300, 8)).toEqual({ row: 32, extra: 300 });
+  it('what the rows cannot use (they stop at 48 px) goes to the lane below the blocks, up to a limit', () => {
+    // A tall window: 8 rows at 48 px, and some of the rest for the lane (never an empty band in it).
+    expect(fitLaneHeight(8 * 48 + 60, 8)).toEqual({ row: 48, extra: 60 });
+    expect(fitLaneHeight(8 * 48 + 300, 8)).toEqual({ row: 48, extra: LANE_EXTRA_MAX_PX });
+    expect(LANE_EXTRA_MAX_PX).toBeLessThanOrEqual(100);
     // Rows still growing: only the rounding is left over.
     expect(fitLaneHeight(8 * 27 + 5, 8)).toEqual({ row: 27, extra: 5 });
     // Too little room: the rows keep their minimum, nothing extra.
@@ -221,7 +251,7 @@ describe('lane geometry', () => {
 
   it('skips a block whose scene is missing on the ruler but keeps it on the lane', () => {
     const l = layoutSong([song[0], { id: 'gone', bars: 0, repeats: 2 }, song[2]], 1000);
-    expect(l.blocks[1].width).toBe(MIN_BLOCK_WIDTH);
+    expect(l.blocks[1].width).toBe(COMPACT_BLOCK_WIDTH);
     expect(l.blocks[1].totalBars).toBe(0);
     expect(l.totalBars).toBe(16);
     expect(xToBar(l, l.blocks[1].x + 4)).toBeNull();
@@ -530,55 +560,102 @@ describe('scene card target', () => {
   const blocks: CardBlock[] = [0, 200, 400].map((x) => ({ x, width: 200, layerable: true }));
   const S = 120;
   const e = cardEdge(200);
+  const open = (dir: -1 | 0 | 1): OpenSlot => ({ width: S, dir });
 
   it('the middle of a block layers into it; its ends insert next to it', () => {
-    expect(cardTarget(blocks, 100, NO_TARGET, S)).toEqual({ kind: 'layer', index: 0 });
-    expect(cardTarget(blocks, 5, NO_TARGET, S)).toEqual({ kind: 'insert', gap: 0 });
-    expect(cardTarget(blocks, 200 - 5, NO_TARGET, S)).toEqual({ kind: 'insert', gap: 1 });
-    expect(cardTarget(blocks, 200 + 5, NO_TARGET, S)).toEqual({ kind: 'insert', gap: 1 });
-    expect(cardTarget(blocks, 650, NO_TARGET, S)).toEqual({ kind: 'insert', gap: 3 });
-    expect(cardTarget([], 10, NO_TARGET, S)).toEqual({ kind: 'insert', gap: 0 });
+    expect(cardTarget(blocks, 100, NO_TARGET)).toEqual({ kind: 'layer', index: 0 });
+    expect(cardTarget(blocks, 5, NO_TARGET)).toEqual({ kind: 'insert', gap: 0 });
+    expect(cardTarget(blocks, 200 - 5, NO_TARGET)).toEqual({ kind: 'insert', gap: 1 });
+    expect(cardTarget(blocks, 200 + 5, NO_TARGET)).toEqual({ kind: 'insert', gap: 1 });
+    expect(cardTarget(blocks, 650, NO_TARGET)).toEqual({ kind: 'insert', gap: 3 });
+    expect(cardTarget([], 10, NO_TARGET)).toEqual({ kind: 'insert', gap: 0 });
+    expect(restingCardTarget(blocks, 300)).toEqual({ kind: 'layer', index: 1 });
   });
 
-  it('stays on an open slot across its whole width, so the slot opening never flips the target', () => {
-    let t: CardTarget = cardTarget(blocks, 200 + 5, NO_TARGET, S);
-    expect(t).toEqual({ kind: 'insert', gap: 1 });
-    // Walk right through the open slot (blocks after it are drawn 120 px further right).
-    for (let x = 205; x <= 200 + S + e; x += 7) {
-      t = cardTarget(blocks, x, t, S);
+  it('an open slot is sticky over the edge zones and the slot itself, so opening it never flips the target', () => {
+    let t: CardTarget = { kind: 'insert', gap: 1 };
+    // Resting on the boundary opened the slot; the pointer drifts about inside it (either way): still the slot.
+    for (const [x, moving] of [[200 - e + 1, -1], [205, 1], [200 + S - 1, -1], [260, -1], [200 + e, 1]] as const) {
+      t = cardTarget(blocks, x, t, open(1), moving);
       expect(t).toEqual({ kind: 'insert', gap: 1 });
     }
-    // Past the slot and the edge of the shifted block: the target comes from the resting layout again.
-    t = cardTarget(blocks, 200 + S + e + 10, t, S);
-    expect(t.kind).not.toBe('none');
-    // Going back left passes each target once, in order, never alternating between two.
-    const runs: string[] = [];
-    for (let x = 360; x >= 150; x -= 3) {
-      t = cardTarget(blocks, x, t, S);
-      const k = JSON.stringify(t);
-      if (runs[runs.length - 1] !== k) runs.push(k);
-    }
-    expect(new Set(runs).size).toBe(runs.length);
-    expect(runs.map((r) => JSON.parse(r) as CardTarget)).toEqual([
-      { kind: 'insert', gap: 2 },
-      { kind: 'layer', index: 1 },
-      { kind: 'insert', gap: 1 },
-      { kind: 'layer', index: 0 },
-    ]);
+    // With no known direction the slot holds across its whole width.
+    expect(cardTarget(blocks, 200 + S, { kind: 'insert', gap: 1 }, open(0), 1)).toEqual({ kind: 'insert', gap: 1 });
+    // Past the slot (and the edge zones): the resting layout decides again.
+    expect(cardTarget(blocks, 200 + S + 2, { kind: 'insert', gap: 1 }, open(0), 0)).toEqual({ kind: 'layer', index: 1 });
+  });
+
+  it('going on the way it came past the next block’s resting edge zone closes the slot: the middle of that block layers', () => {
+    // Came from the left, rested on the boundary of block 1 (the slot opened), then kept going right.
+    expect(cardTarget(blocks, 200 + e + 1, { kind: 'insert', gap: 1 }, open(1), 1)).toEqual({ kind: 'layer', index: 1 });
+    // Going back towards the boundary instead keeps the slot.
+    expect(cardTarget(blocks, 200 + e + 1, { kind: 'insert', gap: 1 }, open(1), -1)).toEqual({ kind: 'insert', gap: 1 });
+    // From the right, the same to the left: past block 0's resting edge zone it layers into block 0.
+    expect(cardTarget(blocks, 200 - e - 1, { kind: 'insert', gap: 1 }, open(-1), -1)).toEqual({ kind: 'layer', index: 0 });
+    expect(cardTarget(blocks, 200 - e + 1, { kind: 'insert', gap: 1 }, open(-1), -1)).toEqual({ kind: 'insert', gap: 1 });
   });
 
   it('keeps layering while the pointer stays in the middle of the target', () => {
     let t: CardTarget = { kind: 'layer', index: 1 };
     for (const x of [200 + e + 1, 300, 400 - e - 1]) {
-      t = cardTarget(blocks, x, t, S);
+      t = cardTarget(blocks, x, t);
       expect(t).toEqual({ kind: 'layer', index: 1 });
     }
   });
 
   it('a block whose scene is missing cannot be layered into', () => {
     const b = blocks.map((x, i) => ({ ...x, layerable: i !== 1 }));
-    expect(cardTarget(b, 290, NO_TARGET, S)).toEqual({ kind: 'insert', gap: 1 });
-    expect(cardTarget(b, 310, NO_TARGET, S)).toEqual({ kind: 'insert', gap: 2 });
+    expect(cardTarget(b, 290, NO_TARGET)).toEqual({ kind: 'insert', gap: 1 });
+    expect(cardTarget(b, 310, NO_TARGET)).toEqual({ kind: 'insert', gap: 2 });
+  });
+});
+
+describe('resting on a boundary (Dwell)', () => {
+  it('a smooth pass never counts as a rest, however slow; a still pointer does', () => {
+    // 60 Hz samples of a 1.4 s, 450 px drag with an ease-in-out speed profile.
+    const d = new Dwell();
+    let longest = 0;
+    let since = 0;
+    for (let i = 0; i <= 84; i++) {
+      const t = i * (1000 / 60);
+      const k = i / 84;
+      const x = 450 * (k * k * (3 - 2 * k));
+      if (d.sample(x, 0, t)) since = t;
+      longest = Math.max(longest, t - since);
+    }
+    // Only the very start and end of the ease are slow enough to rest, never for the slot's delay in the middle.
+    const mid = new Dwell();
+    let restMid = 0;
+    let start = 0;
+    for (let i = 10; i <= 74; i++) {
+      const t = i * (1000 / 60);
+      const k = i / 84;
+      if (mid.sample(450 * (k * k * (3 - 2 * k)), 0, t)) start = t;
+      restMid = Math.max(restMid, t - start);
+    }
+    expect(restMid).toBeLessThan(SLOT_DELAY_MS);
+    expect(longest).toBeLessThan(400);
+    // Still (or jittering under 3 px) the rest goes on.
+    const still = new Dwell();
+    still.sample(100, 50, 0);
+    expect(still.sample(101, 51, 100)).toBe(false);
+    expect(still.sample(102, 49, 260)).toBe(false);
+    expect(still.since).toBe(0);
+    // A move of more than 3 px, or a quick small step, starts it again.
+    expect(still.sample(106, 50, 300)).toBe(true);
+    expect(still.sample(107, 50, 302)).toBe(true);
+    expect(still.since).toBe(302);
+  });
+
+  it('knows which way the pointer goes', () => {
+    const d = new Dwell();
+    d.sample(0, 0, 0);
+    d.sample(10, 0, 10);
+    expect(d.dir).toBe(1);
+    d.sample(9, 0, 20);
+    expect(d.dir).toBe(1);
+    d.sample(4, 0, 40);
+    expect(d.dir).toBe(-1);
   });
 });
 
