@@ -164,6 +164,25 @@ export class InstrumentModule implements ModuleNode {
     }
   }
 
+  /**
+   * Stop: the ramp is over. The last point before `time` still reaches the
+   * notes sounding until then; everything else is dropped, and the engine's
+   * following setParams brings the project's values back.
+   */
+  endAutomation(time: number): void {
+    const t = Number.isFinite(time) ? time : this.env.ctx.currentTime;
+    let last: { time: number; params: ParamValues } | undefined;
+    for (const p of this.pendingAuto) if (p.time < t) last = p;
+    this.pendingAuto = last ? [last] : [];
+    this.advance(t);
+    this.pendingAuto = [];
+    this.autoValues = null;
+    if (this.autoTimer !== null) {
+      this.env.clearTimer(this.autoTimer);
+      this.autoTimer = null;
+    }
+  }
+
   private swap(instrument: Instrument, time: number): void {
     const ctx = this.env.ctx;
     let engine: InstrumentEngine;

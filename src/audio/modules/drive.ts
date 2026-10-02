@@ -27,8 +27,19 @@
  * match' worklet (src/audio/worklets/fx.ts) finishes the job: it compares
  * the wet sound with the part's own sound before the drive (refGate carries
  * the same wet share, so both read alike) over 0.4 s and corrects the wet
- * level by at most ±6 dB. Drive 0 gates both to silence, so the dry signal
- * passes untouched.
+ * level by at most ±6 dB, with block-wise averages (a few operations per
+ * sample).
+ *
+ * The wet path (pre, shapers, trims, level match, tone) is only in the
+ * graph while the Drive can be heard: Amount above 0, or a cable on its
+ * Amount input (the engine reports patched inputs through setModulated; a
+ * Drive used outside the engine must be told too). At Drive 0 it is
+ * disconnected, so an idle Drive costs one latency-matching shaper and a
+ * few gains, no worklet. Switching in is silent (the wet gate is 0 at Drive 0 and the knob
+ * glides up from there); switching out waits until the glide down has ended
+ * (live: a timer; an offline render keeps the path once it was needed, so it
+ * never depends on wall-clock timing). The level match is created the first
+ * time it is needed and starts afresh each time the path is switched in.
  *
  * The oversampled WaveShaper delays its output (128 frames in Chromium), so
  * the dry path runs through an identity shaper with the same oversampling:
@@ -56,8 +67,6 @@ import {
   makeControlCurve,
   makeDriveCurve,
   shaperNode,
-  workletParam,
-  WorkletFlush,
   type Curve,
 } from './fxutil';
 import { LEVEL_MATCH_PROCESSOR_NAME } from '../worklets/fx';
@@ -111,6 +120,9 @@ export function driveToneHz(tone: number): number {
   return 1500 * Math.pow(12, t);
 }
 
+/** Seconds after Drive reaches 0 before the idle wet path leaves the graph (the knob glide has ended by then). */
+export const DRIVE_IDLE_DELAY = 0.25;
+
 export class DriveModule extends EffectModule {
   readonly type = 'drive' as const;
   private readonly ctl: ControlBus;
@@ -118,7 +130,18 @@ export class DriveModule extends EffectModule {
   private readonly mixDry: GainNode;
   private readonly mixWet: GainNode;
   private readonly tone: BiquadFilterNode;
-  private readonly flusher: WorkletFlush | null = null;
+  private readonly src: AudioNode;
+  private readonly pre: GainNode;
+  private readonly wetGate: GainNode;
+  private readonly refGate: GainNode;
+  private match: AudioWorkletNode | null = null;
+  private matchTried = false;
+  /** Whether the wet path is in the graph. */
+  private wetOn = false;
+  private amount: number;
+  /** Whether a cable drives Amount (reported by the engine after each rewiring). */
+  private modulated = false;
+  private idleTimer: number | null = null;
 
   constructor(env: ModuleEnv, id: Id, params: ParamValues) {
     super(env, id);
@@ -127,7 +150,9 @@ export class DriveModule extends EffectModule {
     const character = readParam(DRIVE_PARAMS, params, 'character');
     const tone = readParam(DRIVE_PARAMS, params, 'tone');
     const mix = readParam(DRIVE_PARAMS, params, 'mix');
+    this.amount = amount;
     const input = this.bypass.input;
+    this.src = input;
 
     const out = this.own(new GainNode(ctx));
     out.connect(this.bypass.processed);
@@ -147,33 +172,142 @@ export class DriveModule extends EffectModule {
     this.ctl = new ControlBus(ctx, amount, 1, this.own);
     this.registerMod('amount', this.ctl.modInput);
 
-    // Wet path.
-    const pre = this.own(new GainNode(ctx, { gain: 0 }));
+    // Wet path (wired in by setWet while the Drive can be heard).
+    this.pre = this.own(new GainNode(ctx, { gain: 0 }));
     const shaped = this.own(new GainNode(ctx));
-    const wetGate = this.own(new GainNode(ctx, { gain: 0 }));
+    this.wetGate = this.own(new GainNode(ctx, { gain: 0 }));
     this.tone = this.own(new BiquadFilterNode(ctx, { type: 'lowpass', frequency: driveToneHz(tone), Q: BUTTERWORTH_Q_DB }));
-    input.connect(pre);
     for (let c = 0; c < DRIVE_CHARACTERS; c++) {
       const shaper = this.own(shaperNode(ctx, k.shapers[c], { oversample: '2x' }));
       const sel = this.own(new GainNode(ctx, { gain: c === character ? 1 : 0 }));
       const trim = this.own(new GainNode(ctx, { gain: 0 }));
       // Gate before the shaper so idle characters receive silence and the
       // browser can skip their oversampling.
-      pre.connect(sel);
+      this.pre.connect(sel);
       sel.connect(shaper);
       shaper.connect(trim);
       trim.connect(shaped);
       this.ctl.map(k.trims[c], trim.gain);
       this.sels.push(sel);
     }
-    shaped.connect(wetGate);
-    // Level match: wet against the part's own sound at the same wet share.
-    const refGate = this.own(new GainNode(ctx, { gain: 0 }));
-    input.connect(refGate);
-    let match: AudioWorkletNode | null = null;
+    shaped.connect(this.wetGate);
+    // Level match reference: the part's own sound at the same wet share.
+    this.refGate = this.own(new GainNode(ctx, { gain: 0 }));
+    this.tone.connect(out);
+
+    this.ctl.map(k.pre, this.pre.gain);
+    const fade = this.ctl.shape(k.fade);
+    this.mixWet = this.own(new GainNode(ctx, { gain: mix, channelCount: 1, channelCountMode: 'explicit' }));
+    fade.connect(this.mixWet);
+    this.mixWet.connect(this.wetGate.gain);
+    this.mixWet.connect(this.refGate.gain);
+    this.mixDry = this.own(new GainNode(ctx, { gain: mix, channelCount: 1, channelCountMode: 'explicit' }));
+    const dryNeg = this.own(new GainNode(ctx, { gain: -SHAPER_DOMAIN, channelCount: 1, channelCountMode: 'explicit' }));
+    fade.connect(this.mixDry);
+    this.mixDry.connect(dryNeg);
+    dryNeg.connect(dryGate.gain);
+    this.updateWet(ctx.currentTime);
+  }
+
+  /** Whether the wet path (shapers, level match) is currently in the graph. */
+  get wetActive(): boolean {
+    return this.wetOn;
+  }
+
+  setParams(params: ParamValues, time: number): void {
+    if (this.disposed) return;
+    const t = this.at(time);
+    const character = readParam(DRIVE_PARAMS, params, 'character');
+    const mix = readParam(DRIVE_PARAMS, params, 'mix');
+    this.amount = readParam(DRIVE_PARAMS, params, 'amount');
+    // Switched in before the knob moves up from 0 (silently: the wet gate is still 0).
+    this.updateWet(t);
+    this.smooth(this.ctl.base.offset, this.amount, t);
+    this.smooth(this.mixWet.gain, mix, t);
+    this.smooth(this.mixDry.gain, mix, t);
+    this.smooth(this.tone.frequency, driveToneHz(readParam(DRIVE_PARAMS, params, 'tone')), t);
+    for (let c = 0; c < this.sels.length; c++) this.smooth(this.sels[c].gain, c === character ? 1 : 0, t, SWITCH_TAU);
+  }
+
+  /** A cable on Amount keeps the wet path in the graph even at Amount 0. */
+  setModulated(ports: ReadonlySet<string>, time: number): void {
+    if (this.disposed) return;
+    this.modulated = ports.has('amount');
+    this.updateWet(this.at(time));
+  }
+
+  private get needed(): boolean {
+    return this.amount > 0 || this.modulated;
+  }
+
+  /**
+   * Wire the wet path in when the Drive can be heard; take it out once it
+   * cannot, after the glide to 0 has ended at `time` + DRIVE_IDLE_DELAY
+   * (live only).
+   */
+  private updateWet(time: number): void {
+    if (this.needed) {
+      if (this.idleTimer !== null) {
+        this.stopTimer(this.idleTimer);
+        this.idleTimer = null;
+      }
+      this.setWet(true);
+      return;
+    }
+    if (!this.wetOn || this.idleTimer !== null || this.env.offline) return;
+    const ms = Math.max(0, time - this.ctx.currentTime) * 1000 + DRIVE_IDLE_DELAY * 1000;
+    this.idleTimer = this.startTimer(() => {
+      this.idleTimer = null;
+      if (!this.needed) this.setWet(false);
+    }, ms);
+  }
+
+  private setWet(on: boolean): void {
+    if (on === this.wetOn) return;
+    this.wetOn = on;
+    if (on) {
+      if (!this.matchTried) {
+        this.matchTried = true;
+        this.match = this.createMatch();
+      } else {
+        // Switched in again (live only: an offline render never switches out): fresh measurements.
+        this.match?.port.postMessage('reset');
+      }
+      this.src.connect(this.pre);
+      if (this.match) {
+        this.src.connect(this.refGate);
+        this.wetGate.connect(this.match, 0, 0);
+        this.refGate.connect(this.match, 0, 1);
+        this.match.connect(this.tone);
+      } else {
+        this.wetGate.connect(this.tone);
+      }
+      return;
+    }
+    const cut = (from: AudioNode, to: AudioNode, input?: number) => {
+      try {
+        if (input === undefined) from.disconnect(to);
+        else from.disconnect(to, 0, input);
+      } catch {
+        // Not connected.
+      }
+    };
+    cut(this.src, this.pre);
+    if (this.match) {
+      cut(this.src, this.refGate);
+      cut(this.wetGate, this.match, 0);
+      cut(this.refGate, this.match, 1);
+      cut(this.match, this.tone);
+    } else {
+      cut(this.wetGate, this.tone);
+    }
+  }
+
+  private createMatch(): AudioWorkletNode | null {
+    let match: AudioWorkletNode;
     try {
       match = this.ownWorklet(
-        new AudioWorkletNode(ctx, LEVEL_MATCH_PROCESSOR_NAME, {
+        new AudioWorkletNode(this.ctx, LEVEL_MATCH_PROCESSOR_NAME, {
           numberOfInputs: 2,
           numberOfOutputs: 1,
           outputChannelCount: [2],
@@ -184,45 +318,13 @@ export class DriveModule extends EffectModule {
       );
     } catch {
       // Worklets not loaded (a bare test context): the fixed trims alone compensate.
-      match = null;
+      return null;
     }
-    if (match) {
-      this.flusher = new WorkletFlush(workletParam(match, 'flush', 'Drive level match'));
-      wetGate.connect(match, 0, 0);
-      refGate.connect(match, 0, 1);
-      match.connect(this.tone);
-    } else {
-      wetGate.connect(this.tone);
-    }
-    this.tone.connect(out);
-
-    this.ctl.map(k.pre, pre.gain);
-    const fade = this.ctl.shape(k.fade);
-    this.mixWet = this.own(new GainNode(ctx, { gain: mix, channelCount: 1, channelCountMode: 'explicit' }));
-    fade.connect(this.mixWet);
-    this.mixWet.connect(wetGate.gain);
-    this.mixWet.connect(refGate.gain);
-    this.mixDry = this.own(new GainNode(ctx, { gain: mix, channelCount: 1, channelCountMode: 'explicit' }));
-    const dryNeg = this.own(new GainNode(ctx, { gain: -SHAPER_DOMAIN, channelCount: 1, channelCountMode: 'explicit' }));
-    fade.connect(this.mixDry);
-    this.mixDry.connect(dryNeg);
-    dryNeg.connect(dryGate.gain);
-  }
-
-  setParams(params: ParamValues, time: number): void {
-    if (this.disposed) return;
-    const t = this.at(time);
-    const character = readParam(DRIVE_PARAMS, params, 'character');
-    const mix = readParam(DRIVE_PARAMS, params, 'mix');
-    this.smooth(this.ctl.base.offset, readParam(DRIVE_PARAMS, params, 'amount'), t);
-    this.smooth(this.mixWet.gain, mix, t);
-    this.smooth(this.mixDry.gain, mix, t);
-    this.smooth(this.tone.frequency, driveToneHz(readParam(DRIVE_PARAMS, params, 'tone')), t);
-    for (let c = 0; c < this.sels.length; c++) this.smooth(this.sels[c].gain, c === character ? 1 : 0, t, SWITCH_TAU);
+    return match;
   }
 
   /** Mute All: the level match forgets what it measured. */
   flush(): void {
-    if (!this.disposed) this.flusher?.fire(this.ctx.currentTime);
+    if (!this.disposed) this.match?.port.postMessage('reset');
   }
 }

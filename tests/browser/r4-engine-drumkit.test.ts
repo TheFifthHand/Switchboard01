@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { AudioEngine } from '../../src/audio/engine';
 import type { MeterFrame, NoteTrigger, VoiceHandle } from '../../src/audio/contracts';
 import { SampleBank } from '../../src/audio/instruments/sampleBank';
-import { drumVoiceCacheStats, peekDrumVoice, quantizeDrumDecay } from '../../src/audio/instruments/drumSynth';
+import { clearDrumVoiceCache, drumVoiceCacheStats, peekDrumVoice, quantizeDrumDecay } from '../../src/audio/instruments/drumSynth';
 import { HOUSE } from '../../src/content/starters/house';
 import { DRUM_KIT_PARAMS, readParam } from '../../src/project/params';
 import type { DrumsInstrument, Project } from '../../src/project/types';
@@ -109,24 +109,52 @@ describe('drum kit changes while the groove plays', () => {
   }, 60_000);
 
   it('offline (export) a kit change renders in place: the new kit plays from its first hit', async () => {
-    const ctx = new OfflineAudioContext(2, 48000, 48000);
-    const project = HOUSE.build();
-    const engine = await AudioEngine.create(ctx, { samples: new SampleBank(48000), seed: project.seed, meters: false });
-    engine.setProject(project);
-    engine.scheduleNote('t1', { pitch: 0, velocity: 1, time: 0.1 });
-    const changed = withKit(project, 'iron-forge');
-    void ctx.suspend(0.2).then(() => {
-      engine.setProject(changed);
-      engine.scheduleNote('t1', { pitch: 0, velocity: 1, time: 0.5 });
-      void ctx.resume();
-    });
+    // Nothing cached: the new kit's kick has to be rendered during the render, at the change.
+    clearDrumVoiceCache();
+    const base = HOUSE.build();
+    // The drums alone, no mastering: the hits mix linearly.
+    const solo: Project = { ...base, mastering: { enabled: false, params: base.mastering?.params ?? {} }, tracks: base.tracks.map((t) => ({ ...t, solo: t.id === 't1' })) };
+    const render = async (startKit: string, hits: [time: number, kit: string | null][]): Promise<Float32Array> => {
+      const ctx = new OfflineAudioContext(2, 2 * 48000, 48000);
+      const engine = await AudioEngine.create(ctx, { samples: new SampleBank(48000), seed: solo.seed, meters: false });
+      engine.setProject(withKit(solo, startKit));
+      for (const [time, kit] of hits) {
+        const at = Math.round((time - 0.2) * 48000 / 128) * 128 / 48000;
+        void ctx.suspend(at).then(() => {
+          if (kit) engine.setProject(withKit(solo, kit));
+          engine.scheduleNote('t1', { pitch: 0, velocity: 0.6, time });
+          void ctx.resume();
+        });
+      }
+      const buf = await ctx.startRendering();
+      engine.dispose();
+      return buf.getChannelData(0).slice();
+    };
     const before = drumVoiceCacheStats().renders;
-    await ctx.startRendering();
-    const inst = changed.tracks[0].instrument as DrumsInstrument;
-    const dm = quantizeDrumDecay(readParam(DRUM_KIT_PARAMS, inst.params, 'decay') * (inst.voices[0]?.decay ?? 1));
-    // The new kit's kick was rendered (or already cached) for that hit, not replaced by the old one.
-    expect(peekDrumVoice('iron-forge', 0, 48000, dm)).not.toBeNull();
-    expect(drumVoiceCacheStats().renders).toBeGreaterThanOrEqual(before);
-    engine.dispose();
+    // The House kit's kick at 0.3 s, then the kit changes to Iron Forge and the kick plays at 1.1 s.
+    const changed = await render('round-machine', [
+      [0.3, null],
+      [1.1, 'iron-forge'],
+    ]);
+    const rendered = drumVoiceCacheStats().renders - before;
+    // References: Iron Forge's kick alone at 1.1 s, and the old kit's kick alone at 1.1 s.
+    const fresh = await render('iron-forge', [[1.1, null]]);
+    const old = await render('round-machine', [[1.1, null]]);
+    const corr = (a: Float32Array, b: Float32Array) => {
+      let ab = 0;
+      let aa = 0;
+      let bb = 0;
+      for (let i = Math.round(1.1 * 48000); i < Math.round(1.6 * 48000); i++) {
+        ab += a[i] * b[i];
+        aa += a[i] * a[i];
+        bb += b[i] * b[i];
+      }
+      return ab / Math.sqrt(aa * bb + 1e-30);
+    };
+    console.info(`[drumkit] offline change: voices rendered during the render ${rendered}; the hit after the change vs the new kit's kick ${corr(changed, fresh).toFixed(4)}, vs the old kit's ${corr(changed, old).toFixed(4)}`);
+    expect(rendered).toBeGreaterThanOrEqual(1);
+    // The hit after the change is the new kit's kick (the old one has long decayed by 1.1 s).
+    expect(corr(changed, fresh)).toBeGreaterThan(0.99);
+    expect(corr(changed, old)).toBeLessThan(0.9);
   });
 });

@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { AudioEngine } from '../../src/audio/engine';
 import type { SampleProvider } from '../../src/audio/contracts';
+import { SampleBank } from '../../src/audio/instruments/sampleBank';
 import { createProject } from '../../src/project/factory';
 import { estimateFundamental } from '../../src/render/analysis';
 
@@ -120,5 +121,30 @@ describe('sampler notes with their own recordings', () => {
     await e3.preloadSamples(['p', 'q']);
     expect(asked).toEqual(['p', 'q']);
     for (const e of [engine, e2, e3]) e.dispose();
+  });
+
+  it('a SampleBank fetches an imported recording through its loader on preload, and the note then plays it', async () => {
+    const fetched: string[] = [];
+    const recordings: Record<string, AudioBuffer> = { 'rec-1': toneBuffer([[440, 0.4]]) };
+    const bank = new SampleBank(SR, async (id) => {
+      fetched.push(id);
+      await new Promise((r) => setTimeout(r, 5));
+      return recordings[id] ?? null;
+    });
+    bank.add('own', toneBuffer([[220, 0.4]]));
+    // Not loaded yet: get() does not fetch.
+    expect(bank.get('rec-1')).toBeNull();
+    const ctx = new OfflineAudioContext(2, SR, SR);
+    const engine = await AudioEngine.create(ctx, { samples: bank, seed: 1, meters: false });
+    // Concurrent preloads fetch once; an unknown id resolves without a buffer.
+    await Promise.all([engine.preloadSamples(['rec-1', 'nope']), engine.preloadSamples(['rec-1'])]);
+    expect(fetched.filter((id) => id === 'rec-1')).toHaveLength(1);
+    expect(bank.get('rec-1')).toBe(recordings['rec-1']);
+    expect(bank.get('nope')).toBeNull();
+    engine.dispose();
+    const { out, engine: e2 } = await renderNotes(bank, [{ pitch: 60, velocity: 0.9, time: 0.05, duration: 0.3, sample: { id: 'rec-1', start: 0, end: 1, rootNote: 60 } }], 1);
+    expect(Math.abs(estimateFundamental(slice(out, 0.15, 0.4), SR) - 440)).toBeLessThan(3);
+    expect(e2.getStats().skippedSampleNotes ?? 0).toBe(0);
+    e2.dispose();
   });
 });

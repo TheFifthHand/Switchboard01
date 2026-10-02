@@ -2,13 +2,16 @@
  * The Mix spectrum's band map (perf-04): the bins and weights of every band
  * are computed once per (FFT size, sample rate, bands), and a frame costs one
  * exp per bin. Wide bands read what the previous per-frame computation read;
- * narrow low bands now integrate the interpolated density instead of
- * counting whole bins (the previous reading of pink noise was up to 5 dB
- * high there). The 4096-point FFT now used reads pink noise within 0.5 dB of
- * the 8192-point one from 60 Hz, and within 1 dB below.
+ * narrow low bands integrate the interpolated density instead of counting
+ * whole bins (the previous reading of pink noise was up to 5 dB high there).
+ * The engine reads two resolutions: 8192 points above SPECTRUM_SPLIT_HZ and
+ * 16384 points below, so a bass note is not smeared over several narrow
+ * bands: sines read their level within about 1 dB down to 50 Hz and pink
+ * noise stays flat.
  */
 import { describe, expect, it } from 'vitest';
-import { SPECTRUM_CAL_DB, SPECTRUM_HIGH_HZ, SPECTRUM_LOW_HZ, spectrumBandMap, spectrumBands } from '../../src/audio/spectrum';
+import { SPECTRUM_CAL_DB, SPECTRUM_HIGH_HZ, SPECTRUM_LOW_HZ, spectrumBandMap, spectrumBands, spectrumBandsBelow, spectrumBandsLastBin } from '../../src/audio/spectrum';
+import { SPECTRUM_FFT, SPECTRUM_LOW_FFT, SPECTRUM_SPLIT_HZ } from '../../src/audio/engine';
 import { fft } from '../../src/render/analysis';
 import { Rng } from '../../src/project/rng';
 
@@ -133,39 +136,70 @@ describe('spectrum band map', () => {
     expect(Array.from(out).every((v) => v === -140)).toBe(true);
   });
 
-  it('a 4096-point FFT reads pink noise within 0.5 dB of the previous 8192-point reading (1 dB below 60 Hz), and flat down to 20 Hz', () => {
+  it('reads only the bands asked for, from the bins they need', () => {
+    const map = spectrumBandMap(SPECTRUM_LOW_FFT, SR, BANDS);
+    const split = spectrumBandsBelow(BANDS, SPECTRUM_SPLIT_HZ);
+    expect(split).toBeGreaterThan(10);
+    expect(SPECTRUM_LOW_HZ * Math.pow(1000, split / BANDS)).toBeLessThanOrEqual(SPECTRUM_SPLIT_HZ * 1.000001);
+    expect(SPECTRUM_LOW_HZ * Math.pow(1000, (split + 1) / BANDS)).toBeGreaterThan(SPECTRUM_SPLIT_HZ);
+    const need = spectrumBandsLastBin(map, split) + 1;
+    expect(need * (SR / SPECTRUM_LOW_FFT)).toBeLessThan(SPECTRUM_SPLIT_HZ + 3 * (SR / SPECTRUM_LOW_FFT));
+    const out = new Float32Array(BANDS).fill(7);
+    spectrumBands(map, new Float32Array(need).fill(-60), out, new Float64Array(SPECTRUM_LOW_FFT / 2), 0, split);
+    for (let b = 0; b < BANDS; b++) {
+      if (b < split) expect(out[b]).toBeLessThan(0);
+      else expect(out[b]).toBe(7);
+    }
+  });
+
+  /** The engine's reading: SPECTRUM_LOW_FFT bins below the split, SPECTRUM_FFT above. */
+  function engineBands(x: Float32Array): Float32Array {
+    const low = analyserDb(x, SPECTRUM_LOW_FFT);
+    const main = analyserDb(x, SPECTRUM_FFT);
+    const split = spectrumBandsBelow(BANDS, SPECTRUM_SPLIT_HZ);
+    const out = new Float32Array(BANDS);
+    const power = new Float64Array(SPECTRUM_LOW_FFT / 2);
+    spectrumBands(spectrumBandMap(SPECTRUM_LOW_FFT, SR, BANDS), low, out, power, 0, split);
+    spectrumBands(spectrumBandMap(SPECTRUM_FFT, SR, BANDS), main, out, power, split, BANDS);
+    return out;
+  }
+
+  it('reads pink noise flat down to 20 Hz, and as the previous 8192-point reading where its bands were wide', () => {
     const x = pinkNoise(1 << 20);
+    const now = engineBands(x);
     const db8192 = analyserDb(x, 8192);
-    const db4096 = analyserDb(x, 4096);
     const old = new Float32Array(BANDS);
     previousBands(db8192, 8192, SR, old);
-    const now = new Float32Array(BANDS);
-    spectrumBands(spectrumBandMap(4096, SR, BANDS), db4096, now, new Float64Array(2048));
-    const now8192 = new Float32Array(BANDS);
-    spectrumBands(spectrumBandMap(8192, SR, BANDS), db8192, now8192, new Float64Array(4096));
     const binHz8192 = SR / 8192;
     let worstVsOld = 0;
     let worstOldLow = 0;
-    let worstSizes = 0;
-    let worstLowest = 0;
     for (let b = 0; b < BANDS; b++) {
       const width = (SPECTRUM_LOW_HZ * Math.pow(1000, (b + 1) / BANDS) - SPECTRUM_LOW_HZ * Math.pow(1000, b / BANDS)) / binHz8192;
-      const lowHz = SPECTRUM_LOW_HZ * Math.pow(1000, b / BANDS);
-      // Below 60 Hz the 4096-point window main lobe (±35 Hz) lets the stronger lows leak in a little.
-      if (lowHz < 60) worstLowest = Math.max(worstLowest, Math.abs(now[b] - now8192[b]));
-      else worstSizes = Math.max(worstSizes, Math.abs(now[b] - now8192[b]));
-      // Where the previous computation summed several whole bins it read pink noise correctly: match it there.
       if (width >= 4) worstVsOld = Math.max(worstVsOld, Math.abs(now[b] - old[b]));
-      else worstOldLow = Math.max(worstOldLow, Math.abs(old[b] - now8192[b]));
+      else worstOldLow = Math.max(worstOldLow, Math.abs(old[b] - now[b]));
     }
-    console.info(
-      `[spectrum] pink noise: 4096 vs previous 8192 (bands of 4+ bins) ${worstVsOld.toFixed(2)} dB; 4096 vs 8192 (same map) ${worstSizes.toFixed(2)} dB from 60 Hz, ${worstLowest.toFixed(2)} dB below; previous computation's error in the narrow low bands up to ${worstOldLow.toFixed(2)} dB`,
-    );
-    expect(worstVsOld).toBeLessThanOrEqual(0.5);
-    expect(worstSizes).toBeLessThanOrEqual(0.5);
-    expect(worstLowest).toBeLessThanOrEqual(1);
-    // Pink noise reads flat across the whole range (the Kellet filter is pink within about ±0.5 dB).
     const mean = now.reduce((a, v) => a + v, 0) / BANDS;
+    const flat = Math.max(...Array.from(now, (v) => Math.abs(v - mean)));
+    console.info(`[spectrum] pink noise: vs previous 8192 (bands of 4+ bins) ${worstVsOld.toFixed(2)} dB; previous computation off by up to ${worstOldLow.toFixed(2)} dB in the narrow low bands; flatness ±${flat.toFixed(2)} dB`);
+    // Within 0.6 dB (the old sum counted whole edge bins; the bass bands now come from the finer FFT).
+    expect(worstVsOld).toBeLessThanOrEqual(0.6);
+    // Pink noise reads flat across the whole range (the Kellet filter is pink within about ±0.5 dB).
     for (let b = 0; b < BANDS; b++) expect(Math.abs(now[b] - mean), `band ${b}`).toBeLessThan(1.5);
+  });
+
+  it('a bass sine peaks in its band at least as high as the previous 8192-point reading less 1 dB, never above its level', () => {
+    for (const hz of [50, 70, 100, 140, 1000]) {
+      const n = 1 << 18;
+      const x = new Float32Array(n);
+      for (let i = 0; i < n; i++) x[i] = 0.5 * Math.sin((2 * Math.PI * hz * i) / SR);
+      const peak = Math.max(...engineBands(x));
+      const old = new Float32Array(BANDS);
+      previousBands(analyserDb(x, 8192), 8192, SR, old);
+      const oldPeak = Math.max(...old);
+      // A sine of amplitude 0.5 is −6.0 dB re. a full-scale sine.
+      console.info(`[spectrum] ${hz} Hz sine at −6 dB peaks at ${peak.toFixed(2)} dB (previous 8192-point reading ${oldPeak.toFixed(2)} dB)`);
+      expect(peak, `${hz} Hz`).toBeGreaterThan(oldPeak - 1);
+      expect(peak, `${hz} Hz`).toBeLessThan(-5.5);
+    }
   });
 });

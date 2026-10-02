@@ -36,7 +36,7 @@ import { DRUM_VOICES, type DrumVoiceSettings, type DrumsInstrument, type Instrum
 import type { InstrumentContext, InstrumentEngine, NoteTrigger, PrepareOptions, VoiceHandle } from '../contracts';
 import { PARAM_SMOOTHING } from '../modules/types';
 import { runWhenIdle } from '../idle';
-import { drumVoiceKey, getDrumVoice, peekDrumVoice, quantizeDrumDecay } from './drumSynth';
+import { drumVoiceJob, drumVoiceKey, getDrumVoice, peekDrumVoice, quantizeDrumDecay, type DrumVoiceJob } from './drumSynth';
 import { DEFAULT_KIT_ID, getKitRecipe, resolveKitId } from './kits';
 
 /** Maximum simultaneously sounding hits per kit. */
@@ -228,6 +228,8 @@ export class DrumKitEngine implements InstrumentEngine {
   /** Slots waiting for an idle render, in order. */
   private pending: number[] = [];
   private idleJob: Promise<void> | null = null;
+  /** The voice being rendered step by step in idle time. */
+  private job: { slot: number; job: DrumVoiceJob } | null = null;
 
   constructor(ictx: InstrumentContext, instrument: DrumsInstrument) {
     const ctx = ictx.ctx;
@@ -346,14 +348,29 @@ export class DrumKitEngine implements InstrumentEngine {
     return this.idleJob;
   }
 
-  /** One idle unit: render the next queued slot (at the settings in force now). */
+  /**
+   * One idle unit: one step of the next queued slot's voice (at the settings
+   * in force now; a long voice takes several steps, see drumVoiceJob), or,
+   * once it is rendered, wrapping it in the slot's AudioBuffer.
+   */
   private renderNext(): boolean {
     if (this.disposed) {
       this.pending = [];
+      this.job = null;
       return false;
     }
-    const slot = this.pending.shift();
-    if (slot !== undefined) this.bufferFor(slot);
+    const slot = this.pending[0];
+    if (slot === undefined) return false;
+    const sr = this.ctx.sampleRate;
+    const dm = this.slotDecay(slot);
+    const key = drumVoiceKey(this.kitId, slot, sr, dm);
+    if (this.slotBuffers[slot]?.key !== key) {
+      if (!this.job || this.job.slot !== slot || this.job.job.key !== key) this.job = { slot, job: drumVoiceJob(this.kitId, slot, sr, dm) };
+      if (this.job.job.step()) return true;
+      this.bufferFor(slot);
+    }
+    this.job = null;
+    this.pending.shift();
     return this.pending.length > 0;
   }
 
