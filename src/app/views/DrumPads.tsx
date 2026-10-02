@@ -2,8 +2,11 @@
  * Drums mode: a 4x4 performance pad layout for the selected part's drum kit.
  *
  * Pad index 0 is bottom-left and rows run bottom-to-top, matching the
- * computer keys (Z X C V / A S D F / Q W E R / 1 2 3 4). A pad plays its kit
- * voice through the session (so Record Notes and Record Performance capture
+ * computer keys (Z X C V / A S D F / Q W E R / 1 2 3 4). The keyboard strip
+ * uses the same table (kitKeyLabels, useComputerKeyboard's 'drums' layout)
+ * for a kit in every pad mode, so one key always plays one kit sound; here
+ * the pads take the keys, and a struck key also selects its sound. A pad
+ * plays its kit voice through the session (so Record Notes and Record Performance capture
  * it) with a velocity from where it is struck, lights while it is held
  * (runtime `held`), and selects its voice for step editing (teal ring).
  *
@@ -20,7 +23,7 @@ import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type Foc
 import { Button, Notice, Pad, Tooltip, drumKeyHint, useComputerKeyboard, useKeyCapLabels, type PadPressEvent } from '../../ui/components';
 import { getKitVoiceNames } from '../../audio/instruments/kits';
 import { kitInfo } from '../../content/catalog';
-import type { Id, InstrumentKind, Project } from '../../project/types';
+import { DRUM_VOICES, type Id, type InstrumentKind, type Project } from '../../project/types';
 import { setSolo } from '../../state/commands';
 import { drumVoiceFor, selectDrumVoice, selectTrack, setPadMode } from '../../state/uiStore';
 import { session, useProject, useUi } from '../instance';
@@ -79,6 +82,20 @@ export function padGridKeyDown(prefix: string) {
     const next = e.currentTarget.querySelector<HTMLElement>(`#${prefix}${r * 4 + c}`);
     next?.focus();
   };
+}
+
+/**
+ * The computer key of each kit sound, as MiniKeyboard key legends (`base + sound` -> letter):
+ * the drum-pad layout (Z–V / A–F / Q–R / 1–4, useComputerKeyboard's 'drums' table), so the
+ * Drums pads and the keyboard strip's kit keys show and play the same keys.
+ */
+export function kitKeyLabels(base: number, capLabels?: ReadonlyMap<string, string> | null): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (let v = 0; v < DRUM_VOICES; v++) {
+    const k = drumKeyHint(v, capLabels);
+    if (k) out[base + v] = k;
+  }
+  return out;
 }
 
 /** Marks a pad grid, so focus can be moved into it (e.g. after the chooser). */
