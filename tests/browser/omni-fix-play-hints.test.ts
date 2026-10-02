@@ -270,7 +270,8 @@ describe('the chip never covers a heading or a status line', () => {
         expect(heading, 'the Shape heading').toBeTruthy();
         expect(coveredKeyText(), `${w} ${mode} shape: covers`).toEqual([]);
         expect(coveredControls(), `${w} ${mode} shape: covers`).toEqual([]);
-        // Arrange while the pads play: "Playback follows: Live pads" and its longer explanation.
+        // Arrange while the pads play: "Now playing: your pads" and its longer explanation (worded either way the Arrange
+        // view puts it: the pads decide what plays, or the pads play now and Play the song switches).
         for (const step of ['pad', 'record', 'song-repeats'] as HintId[]) {
           act(() => {
             patchRuntime({ playing: true, mode: 'live' });
@@ -279,7 +280,7 @@ describe('the chip never covers a heading or a status line', () => {
           showStep(step);
           await settle();
           await chipPlaced();
-          expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toMatch(/Loops pads decide what plays\./);
+          expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toMatch(/Loops pads decide what plays\.|Your pads play now\./);
           // The Song header's words too ("Export tail", "Length"): the chip finds room elsewhere.
           expect(coveredKeyText({ headers: true }), `${w} ${mode} arrange ${step}: covers`).toEqual([]);
           expect(coveredControls(), `${w} ${mode} arrange ${step}: covers`).toEqual([]);
