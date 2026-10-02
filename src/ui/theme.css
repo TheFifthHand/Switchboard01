@@ -127,9 +127,11 @@
   --key-max-w: 44px;
 
   /*
-   * Live layout measures (set by the views, read by fixed layers such as toasts):
-   * --keyboard-h: height of the on-screen keyboard strip at the bottom (KeyboardStrip; 0 when hidden);
-   * --transport-h: height of the transport bar at the top (TransportBar).
+   * Live layout measures, read by fixed layers such as toasts (which render into body). Views
+   * write them on document.documentElement, never on an element of their own:
+   * --keyboard-h: the height the on-screen keyboard strip covers at the bottom of the window
+   *   (KeyboardStrip; 0 when it is hidden or not docked there, e.g. when the page scrolls);
+   * --transport-h: the height of the transport bar at the top (TransportBar).
    */
   --keyboard-h: 0px;
   --transport-h: 56px;

@@ -2,15 +2,16 @@
  * Pads for big screens and running loops, in real Chromium layout: a content sketch in the empty
  * middle of pads at least 100 px tall (hidden on smaller pads), a 3 px loop-progress bar driven by
  * --loop-progress written through a ref (no React render), an even wash for a playing pad (no
- * radial glow), a name that fades out instead of an ellipsis and carries a title, and the larger
- * name on large pads. ClipSketch draws notes by pitch and hits by kit sound, and redraws only when
- * its notes change.
+ * radial glow), a name that fades out instead of an ellipsis (with the whole name as the pad's
+ * title only while it is cut, measured under a real mouse), and the larger name on large pads.
+ * ClipSketch draws notes by pitch and hits by kit sound, and redraws only when its notes change.
  */
 import { act, createElement as h, useRef, useState, type RefObject } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import '../../src/ui/theme.css';
 import { ClipSketch, Pad, type SketchNote } from '../../src/ui/components';
 import { cleanup, mount, nextFrame } from './ui-harness';
+import { centre, mouse } from './r4-uikit-input';
 
 afterEach(cleanup);
 
@@ -39,6 +40,12 @@ function pad(w: number, hgt: number, props: Record<string, unknown> = {}) {
   const m = mount(h(Host));
   const button = m.container.querySelector<HTMLButtonElement>('button')!;
   return { m, button, ref: () => ref, renders: () => renders };
+}
+
+/** A real mouse comes over the element from outside it. */
+async function hover(el: Element) {
+  await mouse('mouseMoved', { x: window.innerWidth - 2, y: window.innerHeight - 2 });
+  await mouse('mouseMoved', centre(el));
 }
 
 const visible = (el: Element | null) => !!el && getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0;
@@ -104,14 +111,45 @@ describe('the look of a playing pad and its name', () => {
     expect([r.left, r.top, r.width, r.height].map(Math.round)).toEqual([b.left, b.top, b.width, b.height].map(Math.round));
   });
 
-  it('a long name fades out at its end (no ellipsis) and the pad carries it as its title', () => {
+  it('a long name fades out at its end (no ellipsis); with the mouse over it, the pad has the whole name as its title', async () => {
     const { button } = pad(103, 71, { label: 'Walking Bass Line Long Name' });
     const name = [...button.querySelectorAll<HTMLElement>('span')].find((x) => x.textContent === 'Walking Bass Line Long Name' && x.children.length === 0)!;
     const cs = getComputedStyle(name);
     expect(cs.textOverflow).not.toBe('ellipsis');
     expect(cs.maskImage || cs.webkitMaskImage).toContain('linear-gradient');
     expect(name.scrollWidth).toBeGreaterThan(name.clientWidth);
+    await hover(button);
     expect(button.title).toBe('Walking Bass Line Long Name');
+  });
+
+  it('a name that fits gives the pad no title (no second tooltip); a caller can still set one or turn it off', async () => {
+    const short = pad(172, 155, { label: 'Hats' }).button;
+    await hover(short);
+    expect(short.hasAttribute('title')).toBe(false);
+    cleanup();
+    const asked = pad(172, 155, { label: 'Hats', title: 'Steady hats, 1 bar' }).button;
+    expect(asked.title).toBe('Steady hats, 1 bar');
+    cleanup();
+    const never = pad(103, 71, { label: 'Walking Bass Line Long Name', title: null }).button;
+    await hover(never);
+    expect(never.hasAttribute('title')).toBe(false);
+  });
+
+  it('when the name changes under the mouse, the title follows: gone once the new name fits', async () => {
+    let rename: (s: string) => void = () => {};
+    function Host() {
+      const [label, setLabel] = useState('Walking Bass Line Long Name');
+      rename = setLabel;
+      return h('div', { style: { width: '103px', height: '71px', display: 'flex' } }, h(Pad, { state: 'playing', label, labelSize: 'lg', onPress: () => {} }));
+    }
+    const m = mount(h(Host));
+    const button = m.container.querySelector<HTMLButtonElement>('button')!;
+    await hover(button);
+    expect(button.title).toBe('Walking Bass Line Long Name');
+    act(() => rename('Bass'));
+    expect(button.hasAttribute('title')).toBe(false);
+    act(() => rename('Another Very Long Clip Name'));
+    expect(button.title).toBe('Another Very Long Clip Name');
   });
 
   it('large pads (a big screen) show a larger name', () => {

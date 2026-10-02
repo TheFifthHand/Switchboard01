@@ -50,23 +50,32 @@
   height: auto;
 }
 
+/*
+ * The clip lamp: its own cap beyond the bar (a gap apart), drawn as an outlined lamp, never as a
+ * segment. When the signal has reached full scale it lights white-hot inside a coral ring, unlike
+ * the flat coral of the top segments; aria-valuetext says "clipping" too.
+ */
 .clip {
   position: relative;
   flex: none;
-  border-radius: 1px;
-  background: var(--seg-off);
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px #a2a9b0;
 }
 
 .meter[data-orientation='horizontal'] .clip {
   width: calc(var(--thickness) * 1.4);
+  margin-left: 1px;
 }
 
 .meter[data-orientation='vertical'] .clip {
   height: calc(var(--thickness) * 1.2);
+  margin-bottom: 1px;
 }
 
 .clip[data-on='1'] {
-  background: var(--coral);
+  background: radial-gradient(circle at 50% 50%, #ffffff 0 30%, #ffe3db 55%, var(--coral-hi) 100%);
+  box-shadow: inset 0 0 0 1.5px var(--coral-key);
 }
 
 /* ---------- with the peak-hold number ---------- */
