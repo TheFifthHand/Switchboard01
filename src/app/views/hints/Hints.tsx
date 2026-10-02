@@ -89,6 +89,8 @@ const FREE = 0.5;
  * Keyboard presses always work.
  */
 export const HINT_CLICK_GUARD_MS = 450;
+/** ... and for this many painted frames at least (a busy machine paints late: a click cannot be aimed at what was not painted yet). */
+const CLICK_GUARD_FRAMES = 3;
 
 /** True when the transport shows its Export key at this width (otherwise Export is in its ⋯ menu). */
 function exportOnStrip(): boolean {
@@ -220,8 +222,21 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
   const chipRef = useRef<HTMLElement>(null);
   /** Where the chip is (and its size), and what it covered there counting the quick check's obstacles only. */
   const spot = useRef<(Spot & { w: number; h: number; vw: number; vh: number; controls: number }) | null>(null);
-  /** Pointer clicks on the chip before this time (performance.now()) are ignored (see HINT_CLICK_GUARD_MS). */
+  /** Pointer clicks on the chip before this time (performance.now()), or before this many more frames, are ignored (see HINT_CLICK_GUARD_MS). */
   const clickGuardUntil = useRef(0);
+  const clickGuardFrames = useRef(0);
+  const guardRaf = useRef(0);
+  const armClickGuard = () => {
+    clickGuardUntil.current = performance.now() + HINT_CLICK_GUARD_MS;
+    clickGuardFrames.current = CLICK_GUARD_FRAMES;
+    if (guardRaf.current) return;
+    const tick = () => {
+      clickGuardFrames.current -= 1;
+      guardRaf.current = clickGuardFrames.current > 0 ? requestAnimationFrame(tick) : 0;
+    };
+    guardRaf.current = requestAnimationFrame(tick);
+  };
+  useEffect(() => () => cancelAnimationFrame(guardRaf.current), []);
   /** Measured size of each layout for the current words and window width (measuring forces a layout, so once is enough). */
   const sizes = useRef<{ key: string; map: Map<string, { w: number; h: number }> }>({ key: '', map: new Map() });
   /** A placement found a stale measure and asked for one more (only once in a row). */
@@ -306,7 +321,7 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     h = el.offsetHeight;
     const prev = spot.current;
     // Appeared, moved or changed size: its buttons are somewhere new, so a click meant for what was there before is ignored.
-    if (!prev || prev.x !== best.x || prev.y !== best.y || prev.w !== w || prev.h !== h || !el.hasAttribute('data-ready')) clickGuardUntil.current = performance.now() + HINT_CLICK_GUARD_MS;
+    if (!prev || prev.x !== best.x || prev.y !== best.y || prev.w !== w || prev.h !== h || !el.hasAttribute('data-ready')) armClickGuard();
     const controls = spotCost(best.x, best.y, { w, h }, readObstacles(el, vw, vh, { text: false }));
     spot.current = { ...best, w, h, vw, vh, controls };
     el.setAttribute('data-ready', '');
@@ -343,7 +358,7 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
       spot.current = null;
     }
     // New words (or a new view) change the chip's size and its buttons' places at once: a click meant for what was there is ignored.
-    clickGuardUntil.current = performance.now() + HINT_CLICK_GUARD_MS;
+    armClickGuard();
     placeSoon();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wordsKey, layoutKey]);
@@ -425,7 +440,8 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
 
   /** Ignore pointer clicks right after the chip appeared or moved (keyboard presses have detail 0 and always count). */
   const guardClicks = (e: MouseEvent) => {
-    if (e.detail > 0 && performance.now() < clickGuardUntil.current) {
+    // The click's own time (when the press happened, even if handled late on a busy machine).
+    if (e.detail > 0 && (e.timeStamp < clickGuardUntil.current || clickGuardFrames.current > 0)) {
       e.preventDefault();
       e.stopPropagation();
     }
