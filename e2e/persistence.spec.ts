@@ -11,6 +11,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import { jumpIn, openFresh, pageErrors } from './helpers';
 
+/** Stop playback; on a busy machine it may have stopped by itself already (these tests are about storage). */
+async function stopPlayback(page: Page): Promise<void> {
+  const stop = page.getByRole('button', { name: 'Stop', exact: true });
+  if (await stop.isEnabled()) await stop.click({ timeout: 5000 }).catch(() => undefined);
+}
+
 /** Build a 1-second 16-bit WAV of a decaying 330 Hz tone inside the page and import it onto the Vocal (sampler) part. */
 async function importToneSample(page: Page): Promise<string> {
   return page.evaluate(async () => {
@@ -70,7 +76,7 @@ test('a project with an imported sample survives export and import into a fresh 
   const page1 = await ctx1.newPage();
   await openFresh(page1);
   await jumpIn(page1);
-  await page1.getByRole('button', { name: 'Stop', exact: true }).click();
+  await stopPlayback(page1);
   const sampleId = await importToneSample(page1);
   expect(sampleId).toMatch(/^smp_|^sample|^s_/);
   // Make sure the Vocal part has a clip in the Break row that plays the recording.
@@ -107,7 +113,7 @@ test('a project with an imported sample survives export and import into a fresh 
   // Start audio in this profile (a user gesture) and render again.
   await page2.getByRole('button', { name: 'Just look around' }).click();
   await page2.getByRole('button', { name: 'Play', exact: true }).click();
-  await page2.getByRole('button', { name: 'Stop', exact: true }).click();
+  await stopPlayback(page2);
   const after = await renderFingerprint(page2);
   expect(after.rms).toBeGreaterThan(0.005);
   expect(Math.abs(after.rms - before.rms) / before.rms).toBeLessThan(0.01);
@@ -119,7 +125,7 @@ test('a project with an imported sample survives export and import into a fresh 
 test('autosave reopens the last project after a reload', async ({ page }) => {
   await openFresh(page);
   await jumpIn(page);
-  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await stopPlayback(page);
   await page.evaluate(() => {
     const sb = (window as any).__switchboard;
     sb.session.setBpm(97);
@@ -151,7 +157,7 @@ test('the preview from "Just look around" is stored on its first change and reop
 test('a storage failure shows "Not saved" with Try again and Export project file', async ({ page }) => {
   await openFresh(page);
   await jumpIn(page);
-  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await stopPlayback(page);
   // Simulate a full disk: every IndexedDB write now fails with a quota error.
   await page.evaluate(() => {
     const orig = IDBObjectStore.prototype.put;

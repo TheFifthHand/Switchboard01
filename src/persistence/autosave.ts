@@ -23,7 +23,9 @@
  *   (rescue.ts); it is cleared once that project saves.
  * - Versions: after about ten minutes of active editing (time between
  *   saves, idle gaps not counted) a version is kept automatically;
- *   snapshotBefore() keeps one before a bulk edit.
+ *   snapshotBefore() keeps one before a bulk edit (at most one per project
+ *   and kind of edit every SNAPSHOT_EVERY_MS). When storage is full, versions
+ *   pause for VERSION_BACKOFF_MS; saving the project itself is never held up.
  */
 import type { Id, Project } from '../project/types';
 import type { Listener, ReadableStore } from '../state/store';
@@ -118,6 +120,10 @@ export const CONFLICT_SAVE_MESSAGE =
 
 /** Active editing time between automatic versions. */
 export const AUTO_VERSION_MS = 10 * 60 * 1000;
+/** At most one version before a given kind of bulk edit per project in this time (a burst of Variation presses keeps one). */
+export const SNAPSHOT_EVERY_MS = 3 * 60 * 1000;
+/** After storage was full when keeping a version, versions pause this long. */
+export const VERSION_BACKOFF_MS = 10 * 60 * 1000;
 /** A longer pause between saves is not counted as editing. */
 const ACTIVE_GAP_MS = 2 * 60 * 1000;
 /** Longest wait for an answer about the lock before writing anyway (the stored-version check still guards). */
@@ -136,6 +142,8 @@ export function saveErrorMessage(kind: StorageErrorKind, detail?: string): strin
       return 'Saving failed because the project storage changed. Try again, or export the project file to keep a copy.';
     case 'conflict':
       return CONFLICT_SAVE_MESSAGE;
+    case 'open-elsewhere':
+      return OTHER_TAB_MESSAGE;
     default:
       return `Saving failed${detail ? ` (${detail})` : ''}. Try again, or export the project file to keep a copy.`;
   }
@@ -198,6 +206,10 @@ export function createAutosaver(opts: AutosaveOptions): Autosaver {
   const conflicts = new Set<Id>();
   /** Active editing time per project since its last automatic version. */
   const activity = new Map<Id, { active: number; last: number }>();
+  /** When a version before each kind of bulk edit was last kept, per project. */
+  const lastSnapshot = new Map<string, number>();
+  /** Versions pause until then (storage was full). */
+  let versionsPausedUntil = 0;
   let writing: Project | null = null;
   let phase: AutosaveStatus = 'idle';
   let writeError: AutosaveState['lastError'] = null;
@@ -320,9 +332,19 @@ export function createAutosaver(opts: AutosaveOptions): Autosaver {
     const gap = t - a.last;
     if (gap > 0 && gap <= ACTIVE_GAP_MS) a.active += gap;
     a.last = t;
-    if (a.active >= autoVersionMs) {
+    if (a.active >= autoVersionMs && t >= versionsPausedUntil) {
       a.active = 0;
-      void versions.save(p, { reason: 'auto' }).catch(() => undefined);
+      void keepVersion(p, 'auto');
+    }
+  }
+
+  /** Keep a version; a full storage pauses versions for a while. Never rejects. */
+  async function keepVersion(p: Project, reason: string): Promise<void> {
+    if (!versions) return;
+    try {
+      await versions.save(p, { reason });
+    } catch (e) {
+      if (toStorageError(e).kind === 'quota') versionsPausedUntil = now() + VERSION_BACKOFF_MS;
     }
   }
 
@@ -497,6 +519,12 @@ export function createAutosaver(opts: AutosaveOptions): Autosaver {
     },
     async snapshotBefore(project: Project, reason: string) {
       if (disposed || !versions) return;
+      const t = now();
+      if (t < versionsPausedUntil) return;
+      const kind = reasonBefore(reason);
+      const key = `${project.id}\n${kind}`;
+      const last = lastSnapshot.get(key);
+      if (last !== undefined && t - last < SNAPSHOT_EVERY_MS && t >= last) return;
       let a = access(project.id, false);
       if (a === 'wait') {
         const l = locks.get(project.id);
@@ -504,11 +532,9 @@ export function createAutosaver(opts: AutosaveOptions): Autosaver {
         a = access(project.id, false);
       }
       if (a !== 'write') return;
-      try {
-        await versions.save(project, { reason: reasonBefore(reason) });
-      } catch {
-        // A safety net only: the edit itself goes ahead.
-      }
+      lastSnapshot.set(key, t);
+      // A safety net only: the edit itself goes ahead whatever happens here.
+      await keepVersion(project, kind);
     },
     dispose() {
       if (disposed) return Promise.resolve();

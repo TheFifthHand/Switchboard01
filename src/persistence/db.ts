@@ -7,8 +7,11 @@
  *  - meta:     key -> value (lastProjectId, dbId)
  *  - trash:    {id, deletedAt, record: ProjectRecord, versions?}  (recoverable deletes;
  *              a trashed project carries its versions with it)
- *  - versions: {id, projectId, createdAt, name?, reason, summary, data: Project}
- *              (version 2; indexes projectId and createdAt)
+ *  - versions: {id, projectId, createdAt, name?, reason, summary, projectName,
+ *              projectUpdatedAt}: what lists show (version 2; indexes projectId
+ *              and createdAt)
+ *  - versionData: {id, data: Project}: the saved project of each version (version 2),
+ *              read only to restore one or to collect garbage
  *
  * Every failure surfaces as a StorageError with a kind the UI can explain
  * (quota full, storage unavailable, blocked by another tab, not found, or a
@@ -20,6 +23,7 @@ import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import { uid } from '../project/factory';
 import type { Id, Project, SampleMeta } from '../project/types';
 import { validateProject } from '../project/validate';
+import { uniqueName } from './names';
 import { projectShape } from './summary';
 
 export const DB_NAME = 'switchboard01';
@@ -85,7 +89,7 @@ export interface TrashSummary {
   updatedAt: number;
 }
 
-/** A version without its project data (for lists). */
+/** A version without its project data (what the versions store holds, and what lists show). */
 export interface VersionSummary {
   id: Id;
   projectId: Id;
@@ -103,14 +107,19 @@ interface SwitchboardDB extends DBSchema {
   samples: { key: string; value: SampleRecord };
   meta: { key: string; value: unknown };
   trash: { key: string; value: TrashRecord };
-  versions: { key: string; value: VersionRecord; indexes: { projectId: string; createdAt: number } };
+  versions: { key: string; value: VersionSummary; indexes: { projectId: string; createdAt: number } };
+  versionData: { key: string; value: { id: Id; data: Project } };
 }
 
 /* ------------------------------------------------------------------ */
 /* Errors                                                              */
 /* ------------------------------------------------------------------ */
 
-export type StorageErrorKind = 'quota' | 'unavailable' | 'blocked' | 'not-found' | 'conflict' | 'unknown';
+/**
+ * 'conflict': the stored copy is newer than the one this tab works on.
+ * 'open-elsewhere': another tab has the project open, so this tab does not change it.
+ */
+export type StorageErrorKind = 'quota' | 'unavailable' | 'blocked' | 'not-found' | 'conflict' | 'open-elsewhere' | 'unknown';
 
 export class StorageError extends Error {
   readonly kind: StorageErrorKind;
@@ -176,6 +185,7 @@ function open(): Promise<IDBPDatabase<SwitchboardDB>> {
           const versions = db.createObjectStore('versions', { keyPath: 'id' });
           versions.createIndex('projectId', 'projectId');
           versions.createIndex('createdAt', 'createdAt');
+          db.createObjectStore('versionData', { keyPath: 'id' });
           void tx.objectStore('meta').put(uid('db'), META_DB_ID);
         }
       },
@@ -370,6 +380,32 @@ export function saveProject(project: Project, opts: SaveProjectOptions = {}): Pr
   });
 }
 
+/**
+ * Store a new project under `base` or, when another stored or trashed
+ * project has that name, the next free one ("House Starter 2"). The names
+ * are read and the project written in one transaction, so two tabs adding
+ * projects at the same moment never pick the same name. Returns the project
+ * as stored (with its name).
+ */
+export function addProjectWithFreeName(project: Project, base: string): Promise<Project> {
+  return guard('Saving the project', async (db) => {
+    const tx = db.transaction(['projects', 'trash'], 'readwrite');
+    let named: Project;
+    try {
+      const [projects, trash] = await Promise.all([tx.objectStore('projects').getAll(), tx.objectStore('trash').getAll()]);
+      const taken = [...projects.filter((r) => r.id !== project.id).map((r) => r.name), ...trash.map((t) => t.record?.name ?? '')];
+      named = { ...project, name: uniqueName(base, taken) };
+      await tx.objectStore('projects').put(recordOf(named));
+      await tx.done;
+    } catch (e) {
+      abandon(tx);
+      throw e;
+    }
+    editorBase.set(named.id, named.updatedAt);
+    return named;
+  });
+}
+
 /** True when the stored copy of `id` is newer than the version this tab's editor is based on. */
 export function storedIsNewer(id: Id): Promise<boolean> {
   const base = editorBase.get(id);
@@ -417,15 +453,23 @@ export function listProjectNames(): Promise<string[]> {
 /** Move a project to the trash (recoverable), with its versions. */
 export function deleteProjectToTrash(id: Id, now: number = Date.now()): Promise<void> {
   return guard('Deleting the project', async (db) => {
-    const tx = db.transaction(['projects', 'trash', 'versions'], 'readwrite');
+    const tx = db.transaction(['projects', 'trash', 'versions', 'versionData'], 'readwrite');
     try {
       const rec = await tx.objectStore('projects').get(id);
       if (!rec) throw new StorageError('not-found', 'That project is no longer in this browser.');
-      const versions = await tx.objectStore('versions').index('projectId').getAll(id);
+      const metas = await tx.objectStore('versions').index('projectId').getAll(id);
+      const versions: VersionRecord[] = [];
+      for (const m of metas) {
+        const d = await tx.objectStore('versionData').get(m.id);
+        if (d) versions.push(recordFromParts(m, d.data));
+      }
       const entry: TrashRecord = { id, deletedAt: now, record: rec };
       if (versions.length) entry.versions = versions;
       await tx.objectStore('trash').put(entry);
-      for (const v of versions) await tx.objectStore('versions').delete(v.id);
+      for (const m of metas) {
+        await tx.objectStore('versions').delete(m.id);
+        await tx.objectStore('versionData').delete(m.id);
+      }
       await tx.objectStore('projects').delete(id);
       await tx.done;
     } catch (e) {
@@ -442,7 +486,7 @@ export function deleteProjectToTrash(id: Id, now: number = Date.now()): Promise<
  */
 export function restoreFromTrash(id: Id): Promise<ProjectSummary> {
   return guard('Restoring the project', async (db) => {
-    const tx = db.transaction(['projects', 'trash', 'versions'], 'readwrite');
+    const tx = db.transaction(['projects', 'trash', 'versions', 'versionData'], 'readwrite');
     try {
       const t = await tx.objectStore('trash').get(id);
       if (!t) throw new StorageError('not-found', 'That project is no longer in the trash.');
@@ -452,7 +496,10 @@ export function restoreFromTrash(id: Id): Promise<ProjectSummary> {
         record = { ...record, id: newId, data: { ...record.data, id: newId } };
       }
       await tx.objectStore('projects').put(record);
-      for (const v of t.versions ?? []) await tx.objectStore('versions').put({ ...v, projectId: record.id });
+      for (const v of t.versions ?? []) {
+        await tx.objectStore('versions').put(versionSummaryOf({ ...v, projectId: record.id }));
+        await tx.objectStore('versionData').put({ id: v.id, data: v.data });
+      }
       await tx.objectStore('trash').delete(id);
       await tx.done;
       return summaryOf(record);
@@ -511,26 +558,40 @@ function versionSummaryOf(v: VersionRecord): VersionSummary {
   return s;
 }
 
+function recordFromParts(m: VersionSummary, data: Project): VersionRecord {
+  const v: VersionRecord = { id: m.id, projectId: m.projectId, createdAt: m.createdAt, reason: m.reason, summary: m.summary, data };
+  if (m.name) v.name = m.name;
+  return v;
+}
+
+/** Store a version: its summary (for lists) and its project data, together. */
 export function putVersion(v: VersionRecord): Promise<void> {
   return guard('Saving a version', async (db) => {
-    await db.put('versions', v);
+    const tx = db.transaction(['versions', 'versionData'], 'readwrite');
+    try {
+      await tx.objectStore('versionData').put({ id: v.id, data: v.data });
+      await tx.objectStore('versions').put(versionSummaryOf(v));
+      await tx.done;
+    } catch (e) {
+      abandon(tx);
+      throw e;
+    }
   });
 }
 
 export function getVersion(id: Id): Promise<VersionRecord | null> {
-  return guard('Loading the version', async (db) => (await db.get('versions', id)) ?? null);
+  return guard('Loading the version', async (db) => {
+    const tx = db.transaction(['versions', 'versionData']);
+    const [m, d] = await Promise.all([tx.objectStore('versions').get(id), tx.objectStore('versionData').get(id)]);
+    return m && d ? recordFromParts(m, d.data) : null;
+  });
 }
 
-/** A project's versions without their data, newest first. */
+/** A project's versions without their data, newest first (reads only the small summaries). */
 export function listVersionSummaries(projectId: Id): Promise<VersionSummary[]> {
   return guard('Listing versions', async (db) => {
-    const out: VersionSummary[] = [];
-    let cursor = await db.transaction('versions').store.index('projectId').openCursor(IDBKeyRange.only(projectId));
-    while (cursor) {
-      out.push(versionSummaryOf(cursor.value));
-      cursor = await cursor.continue();
-    }
-    return out.sort((a, b) => b.createdAt - a.createdAt);
+    const all = await db.getAllFromIndex('versions', 'projectId', projectId);
+    return all.sort((a, b) => b.createdAt - a.createdAt);
   });
 }
 
@@ -538,8 +599,11 @@ export function deleteVersions(ids: Iterable<Id>): Promise<void> {
   const list = [...ids];
   if (!list.length) return Promise.resolve();
   return guard('Deleting versions', async (db) => {
-    const tx = db.transaction('versions', 'readwrite');
-    for (const id of list) await tx.store.delete(id);
+    const tx = db.transaction(['versions', 'versionData'], 'readwrite');
+    for (const id of list) {
+      await tx.objectStore('versions').delete(id);
+      await tx.objectStore('versionData').delete(id);
+    }
     await tx.done;
   });
 }
@@ -619,13 +683,22 @@ export function garbageCollectSamples(opts: { graceMs?: number; now?: number; ke
       for (const id of sampleIdsOf(t.record?.data)) used.add(id);
       for (const v of t.versions ?? []) for (const id of sampleIdsOf(v.data)) used.add(id);
     }
-    const vtx = db.transaction('versions', 'readwrite');
-    let vc = await vtx.store.openCursor();
+    const vtx = db.transaction(['versions', 'versionData'], 'readwrite');
+    const kept = new Set<Id>();
+    let vc = await vtx.objectStore('versions').openCursor();
     while (vc) {
       const v = vc.value;
-      if (!live.has(v.projectId) && now - v.createdAt >= grace) await vc.delete();
-      else for (const id of sampleIdsOf(v.data)) used.add(id);
+      if (!live.has(v.projectId) && now - v.createdAt >= grace) {
+        await vtx.objectStore('versionData').delete(v.id);
+        await vc.delete();
+      } else kept.add(v.id);
       vc = await vc.continue();
+    }
+    let dc = await vtx.objectStore('versionData').openCursor();
+    while (dc) {
+      if (kept.has(dc.value.id)) for (const id of sampleIdsOf(dc.value.data)) used.add(id);
+      else await dc.delete();
+      dc = await dc.continue();
     }
     await vtx.done;
     const tx = db.transaction('samples', 'readwrite');

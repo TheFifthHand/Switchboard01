@@ -49,12 +49,21 @@ export interface TabCoordinator {
   acquire(id: Id): ProjectLock;
   /** True when this tab holds the lock for `id`. */
   holds(id: Id): boolean;
+  /** This tab's lock state for `id`, or null when it has not asked for it. */
+  stateOf(id: Id): TabLockState | null;
+  /**
+   * Whether another tab has `id` open (holds its lock). Asks without taking
+   * the lock (Web Locks query(), or a channel query that waits QUERY_MS), so
+   * a tab opening the project at the same moment is never turned away.
+   */
+  heldElsewhere(id: Id): Promise<boolean>;
   dispose(): void;
 }
 
 /** The parts of the Web Locks API used here (tests pass a fake). */
 export interface LockManagerLike {
   request(name: string, options: { ifAvailable?: boolean; steal?: boolean; signal?: AbortSignal }, callback: (lock: unknown) => unknown): Promise<unknown>;
+  query?(): Promise<{ held?: { name?: string }[] }>;
 }
 
 /** The parts of BroadcastChannel used here. */
@@ -127,6 +136,8 @@ export function createTabCoordinator(opts: TabCoordinatorOptions): TabCoordinato
   const entries = new Map<Id, Entry>();
   /** Locks this tab let go of whose release the browser has not finished yet. */
   const releasing = new Map<Id, Promise<void>>();
+  /** Fallback: projects being asked about by heldElsewhere(), and whether a holder answered. */
+  const probes = new Map<Id, { heard: boolean }>();
 
   function set(e: Entry, s: TabLockState): void {
     if (e.state === s) return;
@@ -253,6 +264,8 @@ export function createTabCoordinator(opts: TabCoordinatorOptions): TabCoordinato
   const onMessage = (ev: { data: unknown }) => {
     const m = ev.data;
     if (!isMessage(m) || m.tab === tabId) return;
+    const probe = probes.get(m.id);
+    if (probe && (m.type === 'claim' || m.type === 'takeover')) probe.heard = true;
     const e = entries.get(m.id);
     if (!e) return;
     const epoch = typeof m.epoch === 'number' ? m.epoch : 0;
@@ -342,6 +355,32 @@ export function createTabCoordinator(opts: TabCoordinatorOptions): TabCoordinato
       };
     },
     holds: (id) => entries.get(id)?.state === 'held',
+    stateOf: (id) => entries.get(id)?.state ?? null,
+    async heldElsewhere(id) {
+      const e = entries.get(id);
+      if (e?.state === 'held') return false;
+      if (e?.state === 'other-tab') return true;
+      if (releasing.has(id)) return false;
+      if (locks) {
+        if (typeof locks.query === 'function') {
+          try {
+            const snapshot = await locks.query();
+            return (snapshot.held ?? []).some((l) => l.name === LOCK_PREFIX + id);
+          } catch {
+            return false;
+          }
+        }
+        return false;
+      }
+      if (!channel) return false;
+      // Ask who has it and listen for an answer (a holder answers queries, and repeats its claim).
+      const probe = { heard: false };
+      probes.set(id, probe);
+      post({ type: 'query', id });
+      await new Promise<void>((r) => setTimer(r, QUERY_MS));
+      if (probes.get(id) === probe) probes.delete(id);
+      return probe.heard;
+    },
     dispose() {
       for (const e of [...entries.values()]) letGo(e);
       channel?.removeEventListener('message', onMessage);
@@ -363,6 +402,20 @@ function pageLocks(): LockManagerLike | null {
 }
 
 let shared: TabCoordinator | null | undefined;
+
+/** This page's coordinator if it has been created (by an autosaver), without creating one. */
+export function existingTabCoordinator(): TabCoordinator | null {
+  return shared ?? null;
+}
+
+/** Use another coordinator as this page's (tests). Returns a function that puts the previous one back. */
+export function useTabCoordinator(c: TabCoordinator | null): () => void {
+  const previous = shared;
+  shared = c;
+  return () => {
+    shared = previous;
+  };
+}
 
 /**
  * The coordinator for this page: Web Locks, plus BroadcastChannel for Take

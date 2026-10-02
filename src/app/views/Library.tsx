@@ -77,7 +77,9 @@ type RowMode =
   | { kind: 'rename'; id: string }
   | { kind: 'delete'; id: string }
   | { kind: 'delete-open'; id: string }
-  | { kind: 'purge'; id: string };
+  | { kind: 'purge'; id: string }
+  /** Opening this project would drop edits of the open one that this tab may not save. */
+  | { kind: 'open-confirm'; id: string };
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -97,6 +99,8 @@ export function storageMessage(e: unknown, action: string): string {
         return `${e.message} The list has been refreshed.`;
       case 'conflict':
         return `${action} failed: this project was changed in another tab meanwhile. The list has been refreshed; try again.`;
+      case 'open-elsewhere':
+        return e.message;
       default:
         return e.message;
     }
@@ -187,7 +191,11 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
   const [revision, setRevision] = useState(0);
   const [usage, setUsage] = useState<{ usage: number; quota: number } | null>(null);
   // The open project's latest edits could not be stored (e.g. storage full).
-  const saveFailing = useAutosave().status === 'error';
+  const autosave = useAutosave();
+  const saveFailing = autosave.status === 'error';
+  /** This tab does not save the open project (another tab has it, or changed it): its edits cannot be kept here. */
+  const readOnly = autosave.readonly ?? null;
+  const unsavable = readOnly !== null && autosave.dirty;
   const preview = useRuntime((s) => s.preview);
   const alive = useRef(true);
   const busyRef = useRef(false);
@@ -336,6 +344,25 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
 
   /* ---------- project rows ---------- */
 
+  /** Open a project, first asking when the open project's edits cannot be saved by this tab (they would be dropped). */
+  const askOpen = (p: ProjectSummary) => {
+    if (unsavable) {
+      setMessage(null);
+      setRow({ kind: 'open-confirm', id: p.id });
+    } else void openProject(p);
+  };
+
+  /** Keep the edits on screen as a new project, then open `p`. */
+  const keepCopyThenOpen = (p: ProjectSummary) =>
+    run(`open:${p.id}`, `Opening ${quote(p.name)}`, async () => {
+      const copy = await library.saveCopy(session.store.getState());
+      await session.openProject(p.id);
+      if (!alive.current) return;
+      setRow(null);
+      notify(`Opened ${quote(session.store.getState().name)}. Your changes are kept in My projects as ${quote(copy.name)}.`);
+      onLoaded('open');
+    });
+
   const openProject = (p: Pick<ProjectSummary, 'id' | 'name'>) =>
     run(`open:${p.id}`, `Opening ${quote(p.name)}`, async () => {
       const before = lastNoticeId();
@@ -390,7 +417,12 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
     });
 
   /** Open another project so the (formerly) open one can be deleted, then ask to delete it. */
-  const openOtherThenDelete = (other: ProjectSummary, target: ProjectSummary) =>
+  const openOtherThenDelete = (other: ProjectSummary, target: ProjectSummary) => {
+    if (unsavable) return askOpen(other);
+    return openOtherAndAskDelete(other, target);
+  };
+
+  const openOtherAndAskDelete = (other: ProjectSummary, target: ProjectSummary) =>
     run(`open:${other.id}`, `Opening ${quote(other.name)}`, async () => {
       await session.openProject(other.id);
       if (!alive.current) return;
@@ -402,6 +434,17 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
     const name = cleanName(raw);
     let ok = false;
     return run(`rename:${p.id}`, 'Renaming the project', async () => {
+      if (p.id === session.store.getState().id && readOnly) {
+        // This tab does not save it: a rename here would only live in this tab, or write over the other tab's work.
+        setMessage({
+          tone: 'error',
+          text:
+            readOnly === 'other-tab'
+              ? `${quote(p.name)} is open in another tab, so it can't be renamed here. Rename it in that tab.`
+              : `${quote(p.name)} was changed in another tab, so it can't be renamed here until you open it again.`,
+        });
+        return;
+      }
       if (p.id === session.store.getState().id) {
         // The open project: rename through the store so the editor, undo and autosave agree.
         const r = renameProjectCmd(session.store, name);
@@ -424,7 +467,8 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
     run(`duplicate:${p.id}`, 'Duplicating the project', async () => {
       // The stored copy of the open project must include its latest edits.
       await session.autosaver?.flush();
-      const copy = await library.duplicateProject(p.id);
+      // A tab that does not save the open project copies what it shows (its stored copy is another tab's).
+      const copy = p.id === session.store.getState().id && readOnly ? await library.saveCopy(session.store.getState()) : await library.duplicateProject(p.id);
       if (alive.current) setMessage({ tone: 'success', text: `Made a copy: ${quote(copy.name)}.` });
     });
 
@@ -475,7 +519,7 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
     if (row) {
       e.preventDefault();
       e.stopPropagation();
-      const back = row.kind === 'rename' ? `lib-rename-${row.id}` : row.kind === 'purge' ? `lib-purge-${row.id}` : `lib-delete-${row.id}`;
+      const back = row.kind === 'rename' ? `lib-rename-${row.id}` : row.kind === 'purge' ? `lib-purge-${row.id}` : row.kind === 'open-confirm' ? `lib-open-${row.id}` : `lib-delete-${row.id}`;
       cancelRow(back);
     } else if (confirmStart) {
       e.preventDefault();
@@ -619,7 +663,10 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
                         mode={row && row.id === p.id ? row.kind : null}
                         busy={busy}
                         nextToOpen={others[0] ?? null}
-                        onOpen={() => void openProject(p)}
+                        onOpen={() => askOpen(p)}
+                        currentName={currentName}
+                        onOpenConfirm={() => void openProject(p)}
+                        onKeepCopyThenOpen={() => void keepCopyThenOpen(p)}
                         onRenameStart={() => {
                           setMessage(null);
                           setRow({ kind: 'rename', id: p.id });
@@ -828,6 +875,10 @@ function ProjectRow(props: {
   onOpenOther(other: ProjectSummary): void;
   onGoToStarters(): void;
   onCancel(returnFocusTo?: string): void;
+  /** Name of the project open now (for the open confirmation). */
+  currentName: string;
+  onOpenConfirm(): void;
+  onKeepCopyThenOpen(): void;
   versionsOpen: boolean;
   /** Changes after every library action: the version list is read again. */
   revision: number;
@@ -842,7 +893,7 @@ function ProjectRow(props: {
   const nameId = `lib-name-${id}`;
   const keepRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (mode === 'delete' || mode === 'delete-open') keepRef.current?.focus();
+    if (mode === 'delete' || mode === 'delete-open' || mode === 'open-confirm') keepRef.current?.focus();
   }, [mode]);
 
   return (
@@ -869,7 +920,17 @@ function ProjectRow(props: {
         {mode !== 'rename' && (
           <div className={styles.rowActions}>
             {!isOpen && (
-              <Button size="sm" variant="secondary" icon="folder" onClick={props.onOpen} disabled={disabled} aria-label={`Open ${displayName}`} aria-busy={busy === `open:${id}` || undefined}>
+              <Button
+                id={`lib-open-${id}`}
+                size="sm"
+                variant="secondary"
+                icon="folder"
+                onClick={props.onOpen}
+                disabled={disabled}
+                aria-label={`Open ${displayName}`}
+                aria-busy={busy === `open:${id}` || undefined}
+                aria-expanded={mode === 'open-confirm' ? true : undefined}
+              >
                 {busy === `open:${id}` ? 'Opening…' : 'Open'}
               </Button>
             )}
@@ -912,6 +973,25 @@ function ProjectRow(props: {
           onRestore={props.onRestoreVersion}
           onDelete={props.onDeleteVersion}
         />
+      )}
+
+      {mode === 'open-confirm' && (
+        <div className={styles.confirm} role="group" aria-label={`Open ${displayName}?`}>
+          <p className={styles.confirmText}>
+            Open {quote(displayName)}? The changes made here to {quote(props.currentName)} are not saved, because it is open in another tab (or was changed there). Keep them as a copy if you want them.
+          </p>
+          <div className={styles.confirmActions}>
+            <Button ref={keepRef} size="sm" variant="ghost" onClick={() => props.onCancel(`lib-open-${id}`)}>
+              Cancel
+            </Button>
+            <Button size="sm" icon="duplicate" onClick={props.onKeepCopyThenOpen} disabled={disabled}>
+              Keep them as a copy and open
+            </Button>
+            <Button size="sm" variant="danger" onClick={props.onOpenConfirm} disabled={disabled} aria-busy={busy === `open:${id}` || undefined}>
+              Open without them
+            </Button>
+          </div>
+        </div>
       )}
 
       {mode === 'delete' && (

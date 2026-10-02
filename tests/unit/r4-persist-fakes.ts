@@ -23,6 +23,11 @@ export class FakeLocks implements LockManagerLike {
     return this.holders.has(name);
   }
 
+  /** Like LockManager.query(): the names held now. */
+  async query(): Promise<{ held: { name: string }[] }> {
+    return { held: [...this.holders.keys()].map((name) => ({ name })) };
+  }
+
   private grant(name: string, cb: (lock: unknown) => unknown, resolve: (v: unknown) => void, reject: (e: unknown) => void): void {
     const h: Holder = { stolen: false, reject };
     this.holders.set(name, h);

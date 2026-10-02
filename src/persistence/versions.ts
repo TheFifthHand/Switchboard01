@@ -6,7 +6,11 @@
  *   snapshotBefore) and on request ("Save version…", optionally named).
  * - Thinning: named versions are kept until deleted. Unnamed ones keep
  *   everything from the last hour, then the newest of each hour for a day,
- *   then the newest of each day, at most 30 per project.
+ *   then the newest of each day, at most 30 per project. Within the 30 the
+ *   hourly and daily ones come first, so a burst of versions in a few
+ *   minutes never pushes the older history out. Thinning runs before a new
+ *   version is written; when storage is full it thins harder and tries once
+ *   more.
  * - A version holds the whole project; recordings are shared by id (garbage
  *   collection keeps the ones versions use), never copied.
  * - A trashed project carries its versions; deleting it forever removes them.
@@ -15,8 +19,8 @@ import { duplicateProject as duplicateData } from '../project/clone';
 import { uid } from '../project/factory';
 import type { Id, Project } from '../project/types';
 import { validateProject } from '../project/validate';
-import { StorageError, deleteVersions, getVersion, listProjectNames, listVersionSummaries, putVersion, saveProject, type VersionRecord, type VersionSummary } from './db';
-import { cleanName, uniqueName } from './names';
+import { StorageError, addProjectWithFreeName, deleteVersions, getVersion, listVersionSummaries, putVersion, toStorageError, type VersionRecord, type VersionSummary } from './db';
+import { cleanName } from './names';
 import { projectShape, songLine } from './summary';
 
 export type { VersionSummary };
@@ -25,6 +29,8 @@ const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 /** Unnamed versions kept per project at most. */
 export const MAX_UNNAMED_VERSIONS = 30;
+/** Unnamed versions kept per project when browser storage is full. */
+export const MAX_UNNAMED_VERSIONS_WHEN_FULL = 10;
 
 export interface SaveVersionOptions {
   /** A name keeps the version until it is deleted. */
@@ -76,32 +82,42 @@ export function restoredName(projectName: string, createdAt: number, now: number
 }
 
 /**
- * Which versions thinning removes (ids). Named versions stay. Unnamed ones,
- * newest first: all from the last hour; then the newest in each clock hour
- * up to a day old; then the newest of each day; at most `maxUnnamed`.
+ * Which versions thinning removes (ids). Named versions stay. Unnamed ones:
+ * all from the last hour; then the newest in each clock hour up to a day
+ * old; then the newest of each day. Of those at most `maxUnnamed` stay: the
+ * newest one, then the hourly and daily ones (newest first), then the rest
+ * of the last hour (newest first). So a burst of versions within minutes
+ * cannot push out the older history.
  */
 export function versionsToThin(list: readonly { id: Id; createdAt: number; name?: string }[], now: number, maxUnnamed = MAX_UNNAMED_VERSIONS): Id[] {
   const unnamed = list.filter((v) => !v.name).sort((a, b) => b.createdAt - a.createdAt);
   const hours = new Set<number>();
   const days = new Set<string>();
+  const recent: Id[] = [];
+  const spread: Id[] = [];
   const drop: Id[] = [];
-  let kept = 0;
   for (const v of unnamed) {
     const age = now - v.createdAt;
-    let keep: boolean;
-    if (age < HOUR) keep = true;
+    if (age < HOUR) recent.push(v.id);
     else if (age < DAY) {
       const k = Math.floor(v.createdAt / HOUR);
-      keep = !hours.has(k);
-      hours.add(k);
+      if (hours.has(k)) drop.push(v.id);
+      else {
+        hours.add(k);
+        spread.push(v.id);
+      }
     } else {
       const k = localDay(v.createdAt);
-      keep = !days.has(k);
-      days.add(k);
+      if (days.has(k)) drop.push(v.id);
+      else {
+        days.add(k);
+        spread.push(v.id);
+      }
     }
-    if (keep && kept < maxUnnamed) kept += 1;
-    else drop.push(v.id);
   }
+  const order = [...recent.slice(0, 1), ...spread, ...recent.slice(1)];
+  const keep = new Set(order.slice(0, Math.max(0, maxUnnamed)));
+  for (const id of order) if (!keep.has(id)) drop.push(id);
   return drop;
 }
 
@@ -112,9 +128,12 @@ function summaryOf(v: VersionRecord): VersionSummary {
 }
 
 /**
- * Keep a version of `project`, then thin out its older unnamed versions.
- * An unnamed version of a state that is already kept adds nothing: the
- * existing version is returned instead.
+ * Keep a version of `project`, thinning its older unnamed versions first
+ * (so the space is free before the new one is written). An unnamed version
+ * of a state that is already kept adds nothing: the existing version is
+ * returned instead. When storage is full it thins harder
+ * (MAX_UNNAMED_VERSIONS_WHEN_FULL) and tries once more, then rejects with
+ * the quota error.
  */
 export async function saveVersion(project: Project, opts: SaveVersionOptions = {}): Promise<VersionSummary> {
   const now = opts.now ?? Date.now();
@@ -133,9 +152,16 @@ export async function saveVersion(project: Project, opts: SaveVersionOptions = {
     data: project,
   };
   if (name) rec.name = name;
-  await putVersion(rec);
   const summary = summaryOf(rec);
-  await deleteVersions(versionsToThin([summary, ...existing], now));
+  const all = [summary, ...existing];
+  await deleteVersions(versionsToThin(all, now).filter((id) => id !== rec.id));
+  try {
+    await putVersion(rec);
+  } catch (e) {
+    if (toStorageError(e).kind !== 'quota') throw e;
+    await deleteVersions(versionsToThin(all, now, MAX_UNNAMED_VERSIONS_WHEN_FULL).filter((id) => id !== rec.id));
+    await putVersion(rec);
+  }
   return summary;
 }
 
@@ -155,10 +181,8 @@ export async function restoreVersionAsCopy(versionId: Id, opts: { now?: number }
   if (!v) throw new StorageError('not-found', 'That version is no longer in this browser.');
   const checked = validateProject(v.data);
   if (!checked.ok) throw new StorageError('unknown', `This version could not be opened: ${checked.errors[0]}`, { cause: checked.errors });
-  const name = uniqueName(restoredName(checked.project.name, v.createdAt, now), await listProjectNames());
-  const copy = duplicateData(checked.project, name, now);
-  await saveProject(copy);
-  return copy;
+  const name = restoredName(checked.project.name, v.createdAt, now);
+  return addProjectWithFreeName(duplicateData(checked.project, name, now), name);
 }
 
 export function deleteVersion(id: Id): Promise<void> {

@@ -84,9 +84,11 @@ describe('database upgrade', () => {
     expect((await library.listVersions(old.id)).map((v) => v.name)).toEqual(['After the upgrade']);
     expect((await library.restoreProject(trashed.id)).name).toBe('Trashed');
     const raw = await openDB(DB_NAME);
-    expect(raw.version).toBe(2);
-    expect([...raw.objectStoreNames].sort()).toEqual(['meta', 'projects', 'samples', 'trash', 'versions']);
+    const version = raw.version;
+    const stores = [...raw.objectStoreNames].sort();
     raw.close();
+    expect(version).toBe(2);
+    expect(stores).toEqual(['meta', 'projects', 'samples', 'trash', 'versionData', 'versions']);
   });
 
   it('a new database gets a new identity', async () => {
