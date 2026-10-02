@@ -44,7 +44,7 @@ import { ChannelModule, type ChannelMeterReading } from './modules/channel';
 import { LfoModule } from './modules/lfo';
 import { measureFeedbackCycleLatency } from './modules/delay';
 import { MasterModule, scheduleClickVoice, stopClickVoice, type ClickVoice } from './modules/master';
-import { PARAM_SMOOTHING, REWIRE_RAMP, type ModuleEnv, type ModuleNode } from './modules/types';
+import { PARAM_SMOOTHING, REWIRE_RAMP, type AutomationMode, type ModuleEnv, type ModuleNode } from './modules/types';
 import { LIMITER_PROCESSOR_NAME, LIMITER_WORKLET_SOURCE, limiterLatencyFrames, limiterProcessorOptions, safetyClipperCurve } from './worklets/limiter';
 import { CRUSHER_WORKLET_SOURCE } from './worklets/crusher';
 import { DYNAMICS_WORKLET_SOURCE } from './worklets/dynamics';
@@ -57,7 +57,7 @@ import { DELAY_ID, REVERB_ID, moduleId as trackModuleId } from '../project/facto
 import { DRIVE_LATENCY_FRAMES } from './modules/drive';
 import { CompressorModule } from './modules/compressor';
 import { GateModule } from './modules/gate';
-import { SPECTRUM_HIGH_HZ as BAND_HIGH_HZ, SPECTRUM_LOW_HZ as BAND_LOW_HZ, spectrumBandMap, spectrumBands } from './spectrum';
+import { SPECTRUM_HIGH_HZ as BAND_HIGH_HZ, SPECTRUM_LOW_HZ as BAND_LOW_HZ, spectrumBandMap, spectrumBands, spectrumBandsBelow, spectrumBandsLastBin } from './spectrum';
 
 /** Mute All fade-out. */
 export const MUTE_RAMP = 0.008;
@@ -71,13 +71,19 @@ const TIMER_MARGIN_MS = 40;
 const NOISE_SECONDS = 2;
 const MASTER_METER_FFT = 1024;
 /**
- * Spectrum analyser size (11.7 Hz bins at 48 kHz; bands narrower than a bin
- * read their share of the interpolated density, src/audio/spectrum.ts). Half
- * the cost of the 8192-point FFT it replaced; on pink noise its bands read
- * within 0.5 dB of the 8192-point ones from 60 Hz, within 1 dB below
- * (tests/unit/r4-engine-spectrum).
+ * Spectrum analysis in two resolutions: SPECTRUM_FFT (5.9 Hz bins at
+ * 48 kHz, a 170 ms window) for the bands above SPECTRUM_SPLIT_HZ, and
+ * SPECTRUM_LOW_FFT (2.9 Hz bins) for the bands below it, where log bands
+ * are narrower than a bin and a single-size FFT would smear a bass note
+ * over several bands. Bands read the energy they contain
+ * (src/audio/spectrum.ts): pink noise reads flat (within about 1.5 dB from
+ * 20 Hz) and a sine reads its level within about 1 dB down to 50 Hz at 96
+ * bands.
  */
-export const SPECTRUM_FFT = 4096;
+export const SPECTRUM_FFT = 8192;
+export const SPECTRUM_LOW_FFT = 16384;
+/** Bands whose upper edge is at or below this read the finer (SPECTRUM_LOW_FFT) analyser (Hz). */
+export const SPECTRUM_SPLIT_HZ = 160;
 /** Lowest and highest edge of the readSpectrum bands. */
 export const SPECTRUM_LOW_HZ = BAND_LOW_HZ;
 export const SPECTRUM_HIGH_HZ = BAND_HIGH_HZ;
@@ -89,8 +95,10 @@ export const SONG_GAIN_STEP = 0.005;
 export const SONG_GAIN_MAX = 4;
 /** Return to unity of the song gain when a new playback starts (seconds). */
 const SONG_GAIN_RESET = 0.02;
-/** Macro ramps on curved mappings are set in steps at most this far apart (seconds). */
+/** Macro ramps on curved mappings move linearly between points at most this far apart (seconds). */
 export const MACRO_RAMP_STEP = 0.01;
+/** A ramp that starts away from where its param is (late, or after a cancel) glides onto its line over this long (seconds). */
+export const MACRO_RAMP_JOIN = 0.02;
 /** Level-matched A/B: the comparison never shifts levels by more than this (dB). */
 export const COMPARE_MAX_DB = 12;
 /** Level-matched A/B: the boost may add at most this much limiter gain reduction (dB). */
@@ -245,12 +253,23 @@ interface ParamRamp {
   valueAt(time: number): number;
 }
 
-/** One segment of the song gain: v0 at t0, moving linearly to v1 at t1 (t1 = t0 for a step). */
-interface GainSegment {
-  t0: number;
-  v0: number;
-  t1: number;
-  v1: number;
+/**
+ * One point of the song gain schedule, mirroring the AudioParam events: the
+ * gain is `v` at `t`; with `ramp` it moves linearly there from the point
+ * before (else it is set at `t`). Before the first point the gain is 1.
+ */
+interface GainPoint {
+  t: number;
+  v: number;
+  ramp: boolean;
+}
+
+/** The latest song-gain step: a ramp starting at the same time starts from its value. */
+interface GainStep {
+  t: number;
+  /** Value in force just before the step (its glide starts there). */
+  pre: number;
+  v: number;
 }
 
 /** Peak/RMS taps after a shared return's output. */
@@ -287,7 +306,8 @@ export class AudioEngine implements AudioEngineApi {
   private readonly volume: GainNode;
   /** Song automation stage (fades): unity unless scheduleSongGain is used. */
   private readonly songGain: GainNode;
-  private songSegs: GainSegment[] = [];
+  private songPts: GainPoint[] = [];
+  private songStep: GainStep | null = null;
   private readonly mastering: MasteringChain;
   private readonly muteGain: GainNode;
   private readonly limiter: AudioWorkletNode;
@@ -302,6 +322,8 @@ export class AudioEngine implements AudioEngineApi {
   private readonly loudnessNode: AudioWorkletNode | null = null;
   private readonly loudness: LoudnessReading = { momentary: -Infinity, shortTerm: -Infinity, integrated: -Infinity, truePeakDb: -Infinity };
   private readonly spectrum: AnalyserNode | null = null;
+  private readonly spectrumLow: AnalyserNode | null = null;
+  private spectrumLowBuf: Float32Array<ArrayBuffer> | null = null;
   private readonly spectrumBuf: Float32Array<ArrayBuffer> | null = null;
   private readonly spectrumPower: Float64Array | null = null;
   /** Loudness of the mastering input (level-matched A/B), connected only while mastering is on. */
@@ -315,6 +337,8 @@ export class AudioEngine implements AudioEngineApi {
   private masteringListen = false;
   /** Meter taps after the shared returns, by return. */
   private readonly returnTaps = new Map<'reverb' | 'delay', ReturnTap>();
+  /** Bypassed returns fed only by sends: their outgoing cables are silenced (see bypassedReturns). */
+  private mutedReturns: ReadonlySet<Id> = new Set();
   private returnBuf: Float32Array<ArrayBuffer> | null = null;
   private readonly returnReading: LevelReading = { peak: 0, rms: 0 };
   /** Sampler notes skipped because their recording was not loaded. */
@@ -454,9 +478,13 @@ export class AudioEngine implements AudioEngineApi {
       this.spectrum = ctx.createAnalyser();
       this.spectrum.fftSize = SPECTRUM_FFT;
       this.spectrum.smoothingTimeConstant = 0.75;
+      this.spectrumLow = ctx.createAnalyser();
+      this.spectrumLow.fftSize = SPECTRUM_LOW_FFT;
+      this.spectrumLow.smoothingTimeConstant = 0.75;
       this.spectrumBuf = new Float32Array(SPECTRUM_FFT / 2);
-      this.spectrumPower = new Float64Array(SPECTRUM_FFT / 2);
+      this.spectrumPower = new Float64Array(SPECTRUM_LOW_FFT / 2);
       this.safety.connect(this.spectrum);
+      this.safety.connect(this.spectrumLow);
 
       // Loudness of the mastering input, for the level-matched A/B (connected while mastering is on).
       this.preLoudnessNode = new AudioWorkletNode(ctx, LOUDNESS_PROCESSOR_NAME, {
@@ -916,6 +944,7 @@ export class AudioEngine implements AudioEngineApi {
 
   private reconcileConnections(project: Project, now: number, immediate: boolean): void {
     const mutedReturns = this.bypassedReturns(project);
+    this.mutedReturns = mutedReturns;
     // A bypassed LFO stops moving its targets: its cables glide to 0 and stay
     // patched. Silencing the cables (not the LFO's Depth) keeps recorded or
     // macro-driven Depth changes from switching the movement back on.
@@ -969,6 +998,17 @@ export class AudioEngine implements AudioEngineApi {
       gain.connect(d.toAudio);
       this.conns.set(id, { id, kind: d.kind, fromAudio: d.fromAudio, toAudio: d.toAudio, gain, target: d.target });
     }
+    // Modules learn which of their mod inputs are patched (see ModuleNode.setModulated).
+    const modulated = new Map<Id, Set<string>>();
+    for (const c of project.patch.connections) {
+      const d = c && desired.get(c.id);
+      if (!d || d.kind !== 'mod' || d.target === 0) continue;
+      let ports = modulated.get(c.to.module);
+      if (!ports) modulated.set(c.to.module, (ports = new Set()));
+      ports.add(c.to.port);
+    }
+    const none: ReadonlySet<string> = new Set();
+    for (const rec of this.mods.values()) rec.node.setModulated?.(modulated.get(rec.id) ?? none, now);
   }
 
   private dropConnection(rec: ConnRec, now: number): void {
@@ -1231,10 +1271,14 @@ export class AudioEngine implements AudioEngineApi {
    * (at t1), through its macroMap to every target param. Targets mapped
    * linearly (and not in dB) ramp exactly with linearRampToValueAtTime
    * (piecewise at the corners of a macroFrom/macroTo window); other curves
-   * are set in steps at most MACRO_RAMP_STEP apart. A ramp that has already
-   * started joins at the value it has now reached. The ramp owns its params
-   * until t1 (project edits and smoothing leave them alone); afterwards the
-   * end value holds like other automation.
+   * move linearly between points at most MACRO_RAMP_STEP apart (enum params
+   * step; instruments take the points as settings). A ramp that has already
+   * started joins at the value it has now reached; where its params are not
+   * at the ramp's start value (it starts late, or after a cancel held them
+   * elsewhere) they glide onto the ramp over MACRO_RAMP_JOIN. The ramp owns
+   * its params until t1 (project edits and smoothing leave them alone);
+   * afterwards the end value holds until a project change of the param, a
+   * cancel or Stop.
    */
   scheduleMacroRamp(trackId: Id, macro: MacroId, from: number, to: number, t0: number, t1: number): void {
     if (this.disposed || !Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(t0) || !Number.isFinite(t1)) return;
@@ -1272,38 +1316,60 @@ export class AudioEngine implements AudioEngineApi {
       }
       const owned = list.filter((target) => specs.has(target.param));
       if (owned.length === 0) continue;
+      const lineAt = (target: MacroTarget, t: number): number => clampParam(specs.get(target.param)!, macroTargetValue(target, macroAt(t)));
+      // Where each param is at the start, if not on the ramp's line: it glides onto the line until `join`.
+      const from0 = new Map<string, number>();
+      for (const target of owned) {
+        const spec = specs.get(target.param)!;
+        if (spec.curve === 'enum') continue;
+        const cur = this.automatedValueAt(moduleIdStr, rec, target.param, start);
+        const want = lineAt(target, start);
+        if (cur !== undefined && Math.abs(cur - want) > 1e-6 * Math.max(1, Math.abs(spec.max - spec.min))) from0.set(target.param, cur);
+      }
+      const join = from0.size ? Math.min(end, start + MACRO_RAMP_JOIN) : start;
+      const paramAt = (target: MacroTarget, t: number): number => {
+        const c = from0.get(target.param);
+        if (c === undefined || t >= join) return lineAt(target, t);
+        const k = (t - start) / (join - start);
+        return clampParam(specs.get(target.param)!, c + (lineAt(target, join) - c) * Math.max(0, k));
+      };
       const valuesAt = (t: number): ParamValues => {
-        const m = macroAt(t);
         const out: ParamValues = {};
-        for (const target of owned) out[target.param] = clampParam(specs.get(target.param)!, macroTargetValue(target, m));
+        for (const target of owned) out[target.param] = paramAt(target, t);
         return out;
       };
       const base = this.withOverlay(moduleIdStr, rec.projParams);
       // Exact linear ramps on AudioParams; instruments take their settings in steps (see InstrumentModule.automate).
       const exact = !!rec.node.automate && !(rec.node instanceof InstrumentModule);
-      const linear = exact && owned.every((target) => target.curve === 'lin' && specs.get(target.param)!.unit !== 'dB' && specs.get(target.param)!.curve !== 'enum');
-      // Times of the points after the start: window corners and the end (linear), or a step grid.
+      const stepped = !exact || owned.some((target) => specs.get(target.param)!.curve === 'enum');
+      const linear = !stepped && owned.every((target) => target.curve === 'lin' && specs.get(target.param)!.unit !== 'dB');
+      const mode: AutomationMode = stepped ? 'step' : 'ramp';
+      // Times of the points after the start: window corners and the end (linear), or a grid.
       const times: number[] = [];
       if (linear) {
         for (const target of owned) {
           for (const corner of [target.macroFrom ?? 0, target.macroTo ?? 1]) {
             if (m1 === m0) continue;
             const t = t0 + ((corner - m0) / (m1 - m0)) * span;
-            if (t > start + 1e-6 && t < end - 1e-6) times.push(t);
+            if (t > join + 1e-6 && t < end - 1e-6) times.push(t);
           }
         }
         times.push(end);
-        times.sort((a, b) => a - b);
       } else {
         const steps = Math.max(1, Math.ceil((end - start) / MACRO_RAMP_STEP));
-        for (let k = 1; k <= steps; k++) times.push(start + ((end - start) * k) / steps);
+        for (let k = 1; k <= steps; k++) {
+          const t = start + ((end - start) * k) / steps;
+          if (t > join + 1e-6 || t >= end) times.push(t);
+        }
       }
+      if (join > start && join < end) times.push(join);
+      times.sort((a, b) => a - b);
       const node = rec.node;
       if (node.automate) {
         node.automate({ ...base, ...valuesAt(start) }, start, 'anchor');
-        for (const t of times) node.automate({ ...base, ...valuesAt(t) }, t, linear ? 'ramp' : 'step');
+        for (const t of times) node.automate({ ...base, ...valuesAt(t) }, t, mode);
       } else {
-        // No automation hook: smoothed points on the step grid.
+        // No automation hook: smoothed points on the grid.
         node.setParams({ ...base, ...valuesAt(start) }, start);
         for (const t of times) node.setParams({ ...base, ...valuesAt(t) }, t);
       }
@@ -1315,20 +1381,39 @@ export class AudioEngine implements AudioEngineApi {
       let ramps = this.ramps.get(moduleIdStr);
       if (!ramps) this.ramps.set(moduleIdStr, (ramps = new Map()));
       for (const target of owned) {
-        const spec = specs.get(target.param)!;
         const points = (ov.get(target.param) ?? []).filter((p) => p.time < start);
-        points.push({ time: start, value: valuesAt(start)[target.param] }, { time: end, value: final[target.param] });
+        points.push({ time: start, value: paramAt(target, start) }, { time: end, value: final[target.param] });
         ov.set(target.param, points);
-        ramps.set(target.param, { t0: start, t1: end, valueAt: (t) => clampParam(spec, macroTargetValue(target, macroAt(t))) });
+        ramps.set(target.param, { t0: start, t1: end, valueAt: (t) => paramAt(target, Math.min(end, Math.max(start, t))) });
       }
     }
   }
 
   /**
+   * The value song automation (or the project) gives `param` at `time`: a
+   * ramp's line (held at its end), else the latest automation point, else
+   * the project's value.
+   */
+  private automatedValueAt(moduleIdStr: Id, rec: ModRec, param: string, time: number): number | undefined {
+    let last: { time: number; value: number } | undefined;
+    for (const p of this.overlay.get(moduleIdStr)?.get(param) ?? []) if (p.time <= time + 1e-9) last = p;
+    const ramp = this.ramps.get(moduleIdStr)?.get(param);
+    // The ramp's line, unless a later automation point took over after it ended.
+    if (ramp && time >= ramp.t0 && (!last || last.time <= ramp.t1 + 1e-9)) return ramp.valueAt(Math.min(time, ramp.t1));
+    if (last) return last.value;
+    const pv = rec.projParams[param];
+    if (typeof pv === 'number' && Number.isFinite(pv)) return pv;
+    return this.specFor(rec, param)?.default;
+  }
+
+  /**
    * Song gain (linear, 1 = unity): reach `value` at `time` with a short
-   * glide, or with `rampEndTime` move linearly from the value in force at
-   * `time` to `value` at `rampEndTime`. Later segments scheduled before are
-   * replaced.
+   * glide, or with `rampEndTime` move linearly to `value` at `rampEndTime`
+   * from the value in force at `time`. A ramp starting at the same time as a
+   * step scheduled before it starts from that step's value: "0 at t, then 1
+   * from t to t1" is a fade-in from silence (the step's 5 ms glide still
+   * applies, so the gain never jumps). Moves scheduled before at/after
+   * `time` are replaced.
    */
   scheduleSongGain(value: number, time: number, rampEndTime?: number): void {
     if (this.disposed || !Number.isFinite(value) || !Number.isFinite(time)) return;
@@ -1336,64 +1421,87 @@ export class AudioEngine implements AudioEngineApi {
     const v = clamp(value, 0, SONG_GAIN_MAX);
     const t0 = Math.max(time, now);
     const ramp = rampEndTime !== undefined && Number.isFinite(rampEndTime) && rampEndTime > t0;
-    const t1 = ramp ? (rampEndTime as number) : t0 + SONG_GAIN_STEP;
-    const v0 = this.songGainAt(t0);
-    this.songSegs = this.songSegs.filter((sg) => sg.t1 <= t0 || sg.t0 < t0);
-    // A segment still running at t0 ends there, at the value it has reached.
-    const last = this.songSegs[this.songSegs.length - 1];
-    if (last && last.t1 > t0) {
-      last.v1 = v0;
-      last.t1 = t0;
-    }
+    const step = this.songStep && Math.abs(this.songStep.t - t0) < 1e-6 ? this.songStep : null;
+    // The value the gain has at t0 before anything scheduled from t0 on.
+    const pre = step ? step.pre : this.songGainAt(t0);
+    this.truncateSongGain(t0, pre);
     const g = this.songGain.gain;
     g.cancelAndHoldAtTime(t0);
-    g.setValueAtTime(v0, t0);
-    g.linearRampToValueAtTime(v, t1);
-    this.songSegs.push({ t0, v0, t1, v1: v });
-    this.pruneSongSegs(now);
-  }
-
-  /** The song gain the schedule gives at `time`. */
-  private songGainAt(time: number): number {
-    let value = 1;
-    for (const sg of this.songSegs) {
-      if (sg.t0 > time) break;
-      if (time >= sg.t1) value = sg.v1;
-      else value = sg.v0 + ((sg.v1 - sg.v0) * (time - sg.t0)) / Math.max(1e-9, sg.t1 - sg.t0);
+    g.setValueAtTime(pre, t0);
+    if (!ramp) {
+      g.linearRampToValueAtTime(v, t0 + SONG_GAIN_STEP);
+      this.songPts.push({ t: t0 + SONG_GAIN_STEP, v, ramp: true });
+      this.songStep = { t: t0, pre, v };
+    } else {
+      const t1 = rampEndTime as number;
+      const vs = step ? step.v : pre;
+      // From a step's value: glide onto the ramp's own line over the step's glide time.
+      const join = t0 + SONG_GAIN_STEP;
+      if (vs !== pre && join < t1) {
+        const vj = vs + ((v - vs) * (join - t0)) / (t1 - t0);
+        g.linearRampToValueAtTime(vj, join);
+        this.songPts.push({ t: join, v: vj, ramp: true });
+      }
+      g.linearRampToValueAtTime(v, t1);
+      this.songPts.push({ t: t1, v, ramp: true });
+      if (!step) this.songStep = null;
     }
-    return value;
+    this.pruneSongGain(now);
   }
 
-  private pruneSongSegs(now: number): void {
+  /** The song gain the schedule gives at `time` (the schedule is continuous: every move starts where the last one is). */
+  private songGainAt(time: number): number {
+    const pts = this.songPts;
+    let i = -1;
+    while (i + 1 < pts.length && pts[i + 1].t <= time) i++;
+    if (i < 0) return 1;
+    const p = pts[i];
+    const next = pts[i + 1];
+    // A ramp running through `time` has reached its value there.
+    if (next?.ramp && next.t > p.t) return p.v + ((next.v - p.v) * (time - p.t)) / (next.t - p.t);
+    return p.v;
+  }
+
+  /** Drop points at/after `t`; the schedule then ends at `t` on `value` (a ramp under way is cut there). */
+  private truncateSongGain(t: number, value: number): void {
+    this.songPts = this.songPts.filter((p) => p.t < t - 1e-9);
+    this.songPts.push({ t, v: value, ramp: true });
+    // A step later than `t` is gone; one at `t` stays (a ramp from `t` starts from its value).
+    if (this.songStep && this.songStep.t > t + 1e-6) this.songStep = null;
+  }
+
+  private pruneSongGain(now: number): void {
     let first = 0;
-    while (first + 1 < this.songSegs.length && this.songSegs[first + 1].t0 <= now) first++;
-    if (first > 0) this.songSegs = this.songSegs.slice(first);
+    while (first + 1 < this.songPts.length && this.songPts[first + 1].t <= now) first++;
+    if (first > 0) this.songPts = this.songPts.slice(first);
   }
 
   /** Cancel song-gain moves at/after `t`, holding the value reached at `t`. */
   private cancelSongGainAfter(t: number): void {
-    if (this.songSegs.length === 0) return;
+    if (this.songPts.length === 0) return;
     const v = this.songGainAt(t);
-    this.songSegs = this.songSegs.filter((sg) => sg.t0 < t);
-    const last = this.songSegs[this.songSegs.length - 1];
-    if (last && last.t1 > t) {
-      last.v1 = v;
-      last.t1 = t;
-    }
+    this.truncateSongGain(t, v);
+    this.songStep = null;
     const g = this.songGain.gain;
     g.cancelAndHoldAtTime(t);
     g.setValueAtTime(v, t);
-    if (!last || last.t1 <= t) this.songSegs.push({ t0: t, v0: v, t1: t, v1: v });
   }
 
-  /** Back to unity from `t` (a short glide); the schedule is cleared. */
+  /** Back to unity from `t` (a short glide, kept in the schedule so moves at `t` start from what is heard). */
   private resetSongGain(t: number): void {
     const v = this.songGainAt(t);
+    this.songStep = null;
     const g = this.songGain.gain;
     g.cancelAndHoldAtTime(t);
+    if (v === 1) {
+      this.songPts = [];
+      g.setValueAtTime(1, t);
+      return;
+    }
+    this.truncateSongGain(t, v);
     g.setValueAtTime(v, t);
     g.linearRampToValueAtTime(1, t + SONG_GAIN_RESET);
-    this.songSegs = [];
+    this.songPts.push({ t: t + SONG_GAIN_RESET, v: 1, ramp: true });
   }
 
   /**
@@ -1410,18 +1518,22 @@ export class AudioEngine implements AudioEngineApi {
     this.cancelClicksAfter(t);
     this.cancelMuteAndMasterAfter(t, false);
     this.cancelSongGainAfter(t);
-    // Macro ramps: one under way at `t` holds the value it has reached; later ones are dropped.
+    // Macro ramps: one under way at `t` holds the value it has reached (it is cut there, so a
+    // re-scheduled ramp joins from what is heard); later ones are dropped.
     const holding = new Set<Id>();
     const held = new Map<Id, Map<string, number>>();
     for (const [moduleId, ramps] of [...this.ramps]) {
       for (const [param, ramp] of [...ramps]) {
         if (ramp.t1 < t) continue;
-        ramps.delete(param);
         if (ramp.t0 < t) {
           holding.add(moduleId);
           let m = held.get(moduleId);
           if (!m) held.set(moduleId, (m = new Map()));
           m.set(param, ramp.valueAt(t));
+          const line = ramp.valueAt;
+          ramps.set(param, { t0: ramp.t0, t1: t, valueAt: (x) => line(Math.min(x, t)) });
+        } else {
+          ramps.delete(param);
         }
       }
       if (ramps.size === 0) this.ramps.delete(moduleId);
@@ -1474,7 +1586,7 @@ export class AudioEngine implements AudioEngineApi {
     this.transport = [{ time, tick, bpm: b }];
     for (const rec of this.mods.values()) rec.node.transportStarted?.(time, tick, b);
     // A new playback starts at unity song gain (what a song's fade left behind is over).
-    if (this.songSegs.length) this.resetSongGain(t);
+    if (this.songPts.length) this.resetSongGain(t);
     // Integrated loudness counts from the start of playback (a resume from Pause keeps counting).
     if (tick <= 0) this.resetLoudness();
   }
@@ -1487,7 +1599,6 @@ export class AudioEngine implements AudioEngineApi {
     // Ramps under way stop where they are (no jump back), then glide to the project's values.
     const ramped = new Set([...this.ramps.entries()].filter(([, r]) => [...r.values()].some((x) => x.t0 < t)).map(([id]) => id));
     this.ramps.clear();
-    for (const [id, rec] of this.mods) if (rec.node instanceof ChannelModule) rec.node.cancelAfter(t, ramped.has(id));
     // The song gain holds where it is (a fade-out's tail stays faded); the next start returns to unity.
     this.cancelSongGainAfter(t);
     // Tempo-synced movement (LFOs, Auto Pan) runs on freely from its phase.
@@ -1497,12 +1608,15 @@ export class AudioEngine implements AudioEngineApi {
     this.cancelClicksAfter(t);
     // Mutes and master moves belonged to the take that was playing.
     this.cancelMuteAndMasterAfter(t, true);
-    // Automation belongs to the take that was playing; the project's own values return.
-    for (const moduleId of [...this.overlay.keys()]) {
-      this.overlay.delete(moduleId);
-      const rec = this.mods.get(moduleId);
-      if (!rec) continue;
-      if (!(rec.node instanceof ChannelModule)) rec.node.cancelAfter?.(t, ramped.has(moduleId));
+    // Automation belongs to the take that was playing; the project's own values return, also
+    // where a ramp was heading to them (every value is written again; a ramp under way glides back
+    // from where it stopped). Channel strips always: their pump amount is read beat by beat.
+    const automated = new Set(this.overlay.keys());
+    this.overlay.clear();
+    for (const [id, rec] of this.mods) {
+      if (!automated.has(id) && !(rec.node instanceof ChannelModule)) continue;
+      rec.node.cancelAfter?.(t, ramped.has(id));
+      rec.node.endAutomation?.(t);
       rec.applied = rec.projParams;
       rec.node.setParams(rec.projParams, t);
     }
@@ -1640,7 +1754,8 @@ export class AudioEngine implements AudioEngineApi {
   readMeters(out: MeterFrame): void {
     out.limiterReductionDb = this.disposed ? 0 : this.limiterReductionDb;
     out.glueReductionDb = this.disposed || !this.mastering.isEnabled ? 0 : this.glueReductionDb;
-    out.compareTrimDb = this.disposed || !this.masteringListen ? 0 : this.compareTrimDb;
+    // The trim only applies while the comparison is on and the project has mastering on.
+    out.compareTrimDb = this.disposed || !this.masteringListen || !this.mastering.isOn ? 0 : this.compareTrimDb;
     if (!this.meterL || !this.meterR || !this.meterBuf || this.disposed) {
       out.masterPeakL = 0;
       out.masterPeakR = 0;
@@ -1696,7 +1811,11 @@ export class AudioEngine implements AudioEngineApi {
     if (map) for (const id of Object.keys(map)) if (!this.mods.has(id)) delete map[id];
   }
 
-  /** Peak and RMS after the shared Reverb and Echo returns (0 for a return switched off). */
+  /**
+   * Peak and RMS after the shared Reverb and Echo returns: what each passes
+   * on. A return switched off that only sends feed is silenced (0); one that
+   * also has a direct feed passes that on dry, and reads it.
+   */
   private readReturns(out: MeterFrame): void {
     const buf = this.returnBuf;
     if (!buf) return;
@@ -1704,8 +1823,9 @@ export class AudioEngine implements AudioEngineApi {
     for (const key of ['reverb', 'delay'] as const) {
       const tap = this.returnTaps.get(key);
       const slot = r[key];
-      const rec = this.mods.get(key === 'reverb' ? REVERB_ID : DELAY_ID);
-      if (!tap || !rec || rec.bypass) {
+      const id = key === 'reverb' ? REVERB_ID : DELAY_ID;
+      const rec = this.mods.get(id);
+      if (!tap || !rec || this.mutedReturns.has(id)) {
         slot.peak = 0;
         slot.rms = 0;
         continue;
@@ -1726,9 +1846,10 @@ export class AudioEngine implements AudioEngineApi {
   /**
    * Spectrum of the final output in `out.length` log-spaced bands from 20 Hz
    * to 20 kHz: the energy in each band in dB (a full-scale sine reads about
-   * 0 dB in its band, pink noise reads flat; silence −140). Bands narrower
-   * than an FFT bin are interpolated between bins. The band map is computed
-   * once per band count (src/audio/spectrum.ts).
+   * 0 dB in its band, pink noise reads flat; silence −140). Bands up to
+   * SPECTRUM_SPLIT_HZ come from the finer analyser; bands narrower than a
+   * bin read their share of the density interpolated between bins. The band
+   * maps are computed once per band count (src/audio/spectrum.ts).
    * Live engines with meters only; otherwise every band reads −140.
    */
   readSpectrum(out: Float32Array): void {
@@ -1741,18 +1862,35 @@ export class AudioEngine implements AudioEngineApi {
       out.fill(-140);
       return;
     }
-    an.getFloatFrequencyData(buf);
-    spectrumBands(spectrumBandMap(SPECTRUM_FFT, this.ctx.sampleRate, n), buf, out, power);
+    const sr = this.ctx.sampleRate;
+    const split = this.spectrumLow ? spectrumBandsBelow(n, SPECTRUM_SPLIT_HZ) : 0;
+    if (split > 0 && this.spectrumLow) {
+      // Only the low bins are converted (the analyser fills as many as the array holds).
+      const lowMap = spectrumBandMap(SPECTRUM_LOW_FFT, sr, n);
+      const need = spectrumBandsLastBin(lowMap, split) + 1;
+      if (!this.spectrumLowBuf || this.spectrumLowBuf.length !== need) this.spectrumLowBuf = new Float32Array(Math.max(1, need));
+      this.spectrumLow.getFloatFrequencyData(this.spectrumLowBuf);
+      spectrumBands(lowMap, this.spectrumLowBuf, out, power, 0, split);
+    }
+    if (split < n) {
+      an.getFloatFrequencyData(buf);
+      spectrumBands(spectrumBandMap(SPECTRUM_FFT, sr, n), buf, out, power, split, n);
+    }
   }
 
   /**
    * A/B listening without the mastering chain (never touches the project or
-   * exports). Level-matched: turning the comparison on measures the
-   * short-term loudness after (post) and before (pre) mastering and plays
-   * the un-mastered sound with a glided gain of post − pre (at most ±12 dB,
+   * exports). Level-matched: turning the comparison on reads the short-term
+   * loudness (its 3 s window) after (post) and before (pre) mastering and
+   * plays the un-mastered sound with a gain of post − pre (at most ±12 dB,
    * and a boost only as far as it adds at most 1.5 dB of limiter gain
-   * reduction on its recent peaks), so the comparison is about tone and
-   * punch, not volume. MeterFrame.compareTrimDb reports the gain.
+   * reduction on its recent peaks), in place as the comparison fades in, so
+   * the comparison is about tone and punch, not volume. The gain is measured
+   * once per comparison: mastering changes made while comparing are not
+   * re-measured (turn the comparison off and on, after about 3 s of music,
+   * to match again); with mastering switched off meanwhile no gain applies.
+   * Below COMPARE_MIN_LUFS (or in the first moments of playback) the gain is
+   * 0 dB. MeterFrame.compareTrimDb reports the gain in force.
    * `matchLevels: false` compares at the levels as they are.
    */
   setMasteringBypass(on: boolean, opts: { matchLevels?: boolean } = {}): void {
@@ -1902,8 +2040,9 @@ export class AudioEngine implements AudioEngineApi {
     for (const tap of this.returnTaps.values()) tap.split.disconnect();
     this.returnTaps.clear();
     this.ramps.clear();
-    this.songSegs = [];
-    for (const n of [this.volume, this.songGain, this.muteGain, this.limiter, this.safety, this.meterSplit, this.meterL, this.meterR, this.loudnessNode, this.preLoudnessNode, this.spectrum]) n?.disconnect();
+    this.songPts = [];
+    this.songStep = null;
+    for (const n of [this.volume, this.songGain, this.muteGain, this.limiter, this.safety, this.meterSplit, this.meterL, this.meterR, this.loudnessNode, this.preLoudnessNode, this.spectrum, this.spectrumLow]) n?.disconnect();
     this.bends.clear();
     this.preparedKits.clear();
     this.project = null;

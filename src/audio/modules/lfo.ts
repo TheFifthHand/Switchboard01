@@ -128,6 +128,9 @@ export class LfoModule implements ModuleNode {
   private wave: number;
   private division: number;
   private depth: number;
+  /** Song automation: time of the previous point, and when Depth was last written by it. */
+  private autoPrev = 0;
+  private autoLast = -Infinity;
   private disposed = false;
 
   constructor(
@@ -357,9 +360,14 @@ export class LfoModule implements ModuleNode {
     if (this.disposed) return;
     const t = Math.max(Number.isFinite(time) ? time : 0, this.ctx.currentTime);
     const depth = readParam(LFO_PARAMS, params, 'depth');
+    const prevPoint = this.autoPrev;
+    this.autoPrev = t;
     if (mode === 'anchor' || depth !== this.depth) {
+      // Held unchanged over the points before (a flat stretch): the move starts at the previous point.
+      if (mode === 'ramp' && Number.isFinite(this.depth) && this.autoLast < prevPoint - 1e-9 && prevPoint < t) this.out.gain.setValueAtTime(this.depth, prevPoint);
       if (mode === 'ramp') this.out.gain.linearRampToValueAtTime(depth, t);
       else this.out.gain.setValueAtTime(depth, t);
+      this.autoLast = t;
     }
     this.depth = depth;
     this.setParams(params, t);
@@ -428,6 +436,12 @@ export class LfoModule implements ModuleNode {
     }
     this.out.gain.cancelScheduledValues(t);
     if (Number.isFinite(this.depth)) this.out.gain.setTargetAtTime(this.depth, t, PARAM_SMOOTHING);
+  }
+
+  /** Stop: the next setParams writes Depth again even if the automation ended on the project's value. */
+  endAutomation(_time: number): void {
+    this.depth = Number.NaN;
+    this.autoLast = -Infinity;
   }
 
   /** Number of sources alive (current + fading), for resource checks. */

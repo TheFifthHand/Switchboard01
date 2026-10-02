@@ -26,8 +26,10 @@
  * With processorOptions { report: true } (live engines) each processor posts
  * its gain reduction in dB (the most of the last report period, >= 0) at
  * DYNAMICS_REPORT_HZ, for the meters: the compressor's computed reduction
- * (before make-up and Mix), the gate's attenuation. A processor that has
- * nothing to reduce posts one 0 and then stays quiet until it does.
+ * (before make-up and Mix), the gate's attenuation of input above
+ * GATE_REPORT_FLOOR_DB (a closed gate in silence reports 0: it is reducing
+ * nothing). A processor that has nothing to reduce posts one 0 and then
+ * stays quiet until it does.
  */
 import { FLUSH_PARAM_JS, WORKLET_COMMON_JS } from './common';
 
@@ -44,6 +46,8 @@ export const GATE_HOLD_MS = 15;
 export const GATE_DETECTOR_DECAY = 0.005;
 /** Gain-reduction reports per second (live engines). */
 export const DYNAMICS_REPORT_HZ = 30;
+/** The gate reports attenuation only of input above this level (dBFS). */
+export const GATE_REPORT_FLOOR_DB = -90;
 
 export interface DynamicsProcessorOptions {
   /** Post gain-reduction readings to the main thread. */
@@ -54,6 +58,7 @@ export const DYNAMICS_WORKLET_SOURCE = /* js */ `
 ${WORKLET_COMMON_JS}
 const SB_COMP_KNEE = ${COMPRESSOR_KNEE_DB};
 const SB_DYN_REPORT_HZ = ${DYNAMICS_REPORT_HZ};
+const SB_GATE_REPORT_FLOOR = Math.pow(10, ${GATE_REPORT_FLOOR_DB} / 20);
 
 /** Gain-reduction reporting shared by the dynamics processors. */
 class SbReporter {
@@ -241,7 +246,8 @@ class SbGateProcessor extends AudioWorkletProcessor {
       }
       const target = open ? 1 : floor;
       g = target > g ? target + (g - target) * aA : target + (g - target) * aR;
-      if (g < gMin) gMin = g;
+      // Only attenuation of something audible counts (a closed gate in silence reduces nothing).
+      if (g < gMin && env > SB_GATE_REPORT_FLOOR) gMin = g;
       oL[i] = l * g;
       if (oR) oR[i] = r * g;
     }

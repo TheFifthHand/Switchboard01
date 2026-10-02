@@ -97,6 +97,15 @@ export class ChannelModule implements ModuleNode {
   private pumpAuto: { time: number; value: number; ramp: boolean }[] = [];
   /** Per AudioParam: end of the song automation that owns it (another ramp's anchor leaves it alone until then). */
   private readonly autoUntil = new Map<AudioParam, number>();
+  /**
+   * After a cancel, the next setParams writes every value: automation keeps
+   * its values in the fields above, so a project value equal to where a
+   * ramp was heading would otherwise never be written back.
+   */
+  private rewrite = false;
+  /** Time of the previous automation point, and per AudioParam the time automation last wrote it. */
+  private autoPrev = 0;
+  private readonly autoLast = new Map<AudioParam, number>();
 
   private meterSplit: ChannelSplitterNode | null = null;
   private meterL: AnalyserNode | null = null;
@@ -207,11 +216,13 @@ export class ChannelModule implements ModuleNode {
     if (this.disposed) return;
     const t = this.at(time);
     const prev = { level: this.level, pan: this.pan, sendA: this.sendA, sendB: this.sendB, pump: this.pumpAmount };
+    const all = this.rewrite;
+    this.rewrite = false;
     this.readParams(params);
-    if (prev.level !== this.level) this.fader.gain.setTargetAtTime(this.faderTarget(), t, PARAM_SMOOTHING);
-    if (prev.pan !== this.pan) this.panner.pan.setTargetAtTime(this.pan, t, PARAM_SMOOTHING);
-    if (prev.sendA !== this.sendA) this.sendAGain.gain.setTargetAtTime(this.sendA, t, PARAM_SMOOTHING);
-    if (prev.sendB !== this.sendB) this.sendBGain.gain.setTargetAtTime(this.sendB, t, PARAM_SMOOTHING);
+    if (all || prev.level !== this.level) this.fader.gain.setTargetAtTime(this.faderTarget(), t, PARAM_SMOOTHING);
+    if (all || prev.pan !== this.pan) this.panner.pan.setTargetAtTime(this.pan, t, PARAM_SMOOTHING);
+    if (all || prev.sendA !== this.sendA) this.sendAGain.gain.setTargetAtTime(this.sendA, t, PARAM_SMOOTHING);
+    if (all || prev.sendB !== this.sendB) this.sendBGain.gain.setTargetAtTime(this.sendB, t, PARAM_SMOOTHING);
     // pump / pumpDiv take effect at the next scheduled beat. A new pump amount
     // replaces automated amounts from `t` on (the automation's own end value
     // coming back through the engine's overlay changes nothing).
@@ -229,22 +240,29 @@ export class ChannelModule implements ModuleNode {
     if (this.disposed) return;
     const t = this.at(time);
     const prev = { level: this.level, pan: this.pan, sendA: this.sendA, sendB: this.sendB, pump: this.pumpAmount };
+    const prevPoint = this.autoPrev;
+    this.autoPrev = t;
     this.readParams(params);
-    const write = (param: AudioParam, value: number, changed: boolean) => {
+    const write = (param: AudioParam, value: number, before: number) => {
       if (mode === 'anchor') {
         // Every value starts here, except params another ramp still owns.
         if ((this.autoUntil.get(param) ?? -Infinity) > t) return;
-      } else if (!changed) {
+      } else if (before === value) {
         return;
+      } else if (mode === 'ramp') {
+        // Held unchanged over the points before (a flat stretch): the move starts at the previous point.
+        const last = this.autoLast.get(param);
+        if (last !== undefined && last < prevPoint - 1e-9 && prevPoint < t) param.setValueAtTime(before, prevPoint);
       }
       if (mode === 'ramp') param.linearRampToValueAtTime(value, t);
       else param.setValueAtTime(value, t);
+      this.autoLast.set(param, t);
       if (mode !== 'anchor') this.autoUntil.set(param, t);
     };
-    write(this.fader.gain, this.faderTarget(), prev.level !== this.level);
-    write(this.panner.pan, this.pan, prev.pan !== this.pan);
-    write(this.sendAGain.gain, this.sendA, prev.sendA !== this.sendA);
-    write(this.sendBGain.gain, this.sendB, prev.sendB !== this.sendB);
+    write(this.fader.gain, this.faderTarget(), dbToGain(prev.level));
+    write(this.panner.pan, this.pan, prev.pan);
+    write(this.sendAGain.gain, this.sendA, prev.sendA);
+    write(this.sendBGain.gain, this.sendB, prev.sendB);
     // Pump amount: an anchor leaves alone a pump ramp that still has points ahead.
     const pumpOwned = this.pumpAuto.length > 0 && this.pumpAuto[this.pumpAuto.length - 1].time > t;
     if (mode === 'anchor' ? !pumpOwned : prev.pump !== this.pumpAmount) {
@@ -410,7 +428,9 @@ export class ChannelModule implements ModuleNode {
       param.cancelScheduledValues(t);
       param.setTargetAtTime(value, t, PARAM_SMOOTHING);
     }
-    // Pump automation: drop later steps; with `hold`, the amount in force at `t` stays.
+    this.rewrite = true;
+    // Pump automation: drop later steps; with `hold`, the amount in force at `t` stays
+    // (until a project change of the amount, or Stop: endAutomation).
     if (this.pumpAuto.length) {
       const held = this.pumpAmountAt(t);
       this.pumpAuto = this.pumpAuto.filter((p) => p.time < t);
@@ -418,6 +438,14 @@ export class ChannelModule implements ModuleNode {
       else this.pumpAuto = [];
     }
     this.cancelPumpAfter(t);
+  }
+
+  /** Stop: no automated pump amount carries over, and the next setParams writes every value (see ModuleNode.endAutomation). */
+  endAutomation(_time: number): void {
+    this.pumpAuto = [];
+    this.autoUntil.clear();
+    this.autoLast.clear();
+    this.rewrite = true;
   }
 
   /**
