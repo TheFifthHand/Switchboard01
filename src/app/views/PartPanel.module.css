@@ -24,7 +24,8 @@
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: var(--teal);
+  /* The darker key teal: its white number reads at 5:1. */
+  background: var(--teal-key);
   color: #fff;
   font-size: var(--fs-md);
   font-weight: 600;
@@ -199,11 +200,153 @@
   flex-wrap: wrap;
 }
 
+/* Variation as a split key: the main press (Subtle) and a narrow key for its menu (Subtle, Bold, Back to original). */
+.split {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+}
+.split > :first-child .splitMain,
+.split > .splitMain {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.splitMore {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  min-height: 40px;
+  height: 100%;
+  margin-left: -1px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  background: linear-gradient(180deg, #fdfdfc, #eef0f1);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink-2);
+}
+.splitMore:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.splitMore[aria-expanded='true'] {
+  border-color: var(--teal);
+  color: var(--teal-ink);
+  box-shadow: var(--shadow-pressed);
+}
+.splitMore:disabled {
+  color: var(--ink-3);
+  opacity: 0.6;
+}
+.splitMore:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.split > span:has(> .splitMore) {
+  display: inline-flex;
+}
+
+/*
+ * The selected clip's picture fills the room left at the bottom (a big screen); on a short panel
+ * there is none, and it shows nothing.
+ */
+.clipView {
+  flex: 1 1 0;
+  min-height: 0;
+  /* No gap of its own when it shows nothing (its card brings the gap). */
+  margin-top: -8px;
+  container-type: size;
+}
+.clipCard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: calc(100% - 8px);
+  margin-top: 8px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface-lo);
+  color: var(--ink-3);
+}
+.clipHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.clipName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-md);
+  font-weight: 650;
+  color: var(--ink);
+}
+.clipWhere {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+.clipSketch {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.clipSketch > * {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+@container (max-height: 95px) {
+  .clipCard {
+    display: none;
+  }
+}
+
+/* The panel and, over its bottom edge, a fade shown while more of it is below (it never scrolls with it). */
+.frame {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+}
+.fade {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  bottom: 1px;
+  height: 36px;
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--surface-hi) 0%, transparent), var(--surface-hi) 85%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.frame[data-fade] .fade {
+  opacity: 1;
+}
+
+/*
+ * Big knobs on a big panel: a little more air between them. Their value key's whole 32 px line is
+ * laid out (--knob-value-h), so the value never runs into the caption under it.
+ */
+.panel[data-xl] .macros {
+  --knob-value-h: 32px;
+  gap: 10px 4px;
+  padding-bottom: 12px;
+}
+
 /* Below 1024 px the part panel sits under the pads at full width: one row of six macros. */
 @media (max-width: 1023px) {
   .panel {
     height: auto;
     overflow: visible;
+  }
+  .frame {
+    height: auto;
+  }
+  .fade {
+    display: none;
   }
   .macros {
     grid-template-columns: repeat(6, minmax(0, 1fr));

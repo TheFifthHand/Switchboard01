@@ -8,7 +8,12 @@
  * from. Below the trigger (or above it) when it fits there, else beside it,
  * so it never covers the key that opened it. A press on that key (the open
  * popup's trigger, or the `ignore` element) is not an outside press: the
- * key's own click closes it again. For a moment after it opens, a click that
+ * key's own click closes it again. A menu closed by an outside press takes
+ * that press: nothing under the pointer starts (a pad, Stop, a knob) and its
+ * click is swallowed (once; keys are never affected). While any popover is
+ * open, body carries data-popover-open (counted, so nested or overlapping
+ * popovers keep it until the last one closes): toasts move to the top, clear
+ * of the menu. For a moment after it opens, a click that
  * comes without the pointer moving (the second half of a double-click on the
  * trigger) does nothing. Rows light up under the pointer only once it moves
  * over the menu (keyboard focus always shows); then the row under the
@@ -19,18 +24,20 @@
  * settings panel) it is not modal: keys other than Escape pass through, so
  * the computer keyboard still plays notes.
  *
- * Clip actions (rename, length, duplicate, copy/paste, clear, delete, new
- * clip) are all undoable project commands; destructive ones show a toast with
- * Undo. The same actions back the pad keyboard shortcuts (Delete, Ctrl+C,
- * Ctrl+V, F2) handled by the grid.
+ * Clip actions (rename, length, double, repeat, duplicate, copy/paste,
+ * clear, delete, new clip) are all undoable project commands; destructive
+ * ones show a toast with Undo, a new clip's toast offers Edit steps. The same
+ * actions back the pad keyboard shortcuts (Delete, Ctrl+C, Ctrl+V, F2)
+ * handled by the grid. While a performance take records, the editing rows
+ * are unavailable and say why (Copy and Edit steps stay).
  */
 import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Button, Icon, type IconName } from '../../ui/components';
-import { SCENE_ROWS, type ClipBars, type Id } from '../../project/types';
+import { Button, Icon, Tooltip, useToasts, type IconName, type ToastApi } from '../../ui/components';
+import { CLIP_BAR_CHOICES, MAX_CLIP_BARS, type ClipBars, type Id } from '../../project/types';
 import * as cmd from '../../state/commands';
 import { selectSlot, selectTrack, setClipboard, setPadMode, uiStore } from '../../state/uiStore';
-import { shallowEqual } from '../../state/store';
+import { shallowEqual, useStore } from '../../state/store';
 import { session, useProject, useUi } from '../instance';
 import { notify } from '../runtime';
 import { barsLabel } from '../labels';
@@ -177,6 +184,70 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
+/** How many popovers are open now: body[data-popover-open] stays while any is. */
+let openPopovers = 0;
+function popoverOpened(): () => void {
+  openPopovers += 1;
+  document.body.dataset.popoverOpen = '';
+  let closed = false;
+  return () => {
+    if (closed) return;
+    closed = true;
+    openPopovers = Math.max(0, openPopovers - 1);
+    if (openPopovers === 0) delete document.body.dataset.popoverOpen;
+  };
+}
+
+/** A click that follows a swallowed press is swallowed this long after the pointer comes up (a touch's click comes a little later). */
+const SWALLOW_AFTER_UP_MS = 400;
+/** And never later than this after the press (a press whose release never comes). */
+const SWALLOW_MAX_MS = 3000;
+
+/**
+ * An outside press that closes a menu does nothing else: nothing below sees
+ * the press (a pad would start on its release, a knob would grab), and the
+ * click it makes is swallowed once, in the capture phase, before anything
+ * can act on it. Only pointer clicks: a key's click (detail 0) always counts.
+ * Right and middle presses pass (a right-click elsewhere opens its own menu).
+ */
+function consumePress(e: PointerEvent): void {
+  if (e.button !== 0 || !e.isPrimary) return;
+  e.stopPropagation();
+  const id = e.pointerId;
+  let afterUp = 0;
+  const done = () => {
+    window.clearTimeout(afterUp);
+    window.clearTimeout(cap);
+    window.removeEventListener('click', onClick, true);
+    window.removeEventListener('pointerup', onUp, true);
+    window.removeEventListener('pointercancel', onCancel, true);
+    window.removeEventListener('pointerdown', onNextDown, true);
+  };
+  const onClick = (ev: globalThis.MouseEvent) => {
+    if (ev.detail === 0) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    done();
+  };
+  const onUp = (ev: PointerEvent) => {
+    if (ev.pointerId !== id) return;
+    window.clearTimeout(afterUp);
+    afterUp = window.setTimeout(done, SWALLOW_AFTER_UP_MS);
+  };
+  const onCancel = (ev: PointerEvent) => {
+    if (ev.pointerId === id) done();
+  };
+  // A new press starts something new: the old one's click is not coming.
+  const onNextDown = (ev: PointerEvent) => {
+    if (ev !== e) done();
+  };
+  const cap = window.setTimeout(done, SWALLOW_MAX_MS);
+  window.addEventListener('click', onClick, true);
+  window.addEventListener('pointerup', onUp, true);
+  window.addEventListener('pointercancel', onCancel, true);
+  window.addEventListener('pointerdown', onNextDown, true);
+}
+
 export function Popover({ anchor, label, role = 'menu', placement = 'below', align = 'start', onClose, returnFocus, ignore, className, id, children }: PopoverProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
@@ -188,6 +259,11 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
   const restoreTo = useRef<HTMLElement | null>(null);
   /** Set while unmounting, so giving focus back does not count as "focus left the popover". */
   const unmounting = useRef(false);
+  const roleRef = useRef(role);
+  roleRef.current = role;
+
+  // Toasts step aside (to the top) while any popover is open.
+  useLayoutEffect(() => popoverOpened(), []);
 
   // Position next to the anchor, inside the viewport; follow size changes (e.g. switching to a rename field).
   useLayoutEffect(() => {
@@ -254,12 +330,14 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
 
   // Outside presses and window changes close it. A press on the open popup's own trigger is not outside:
   // the trigger's click closes it (pressing it again toggles), instead of closing here and reopening there.
+  // A menu closed this way takes the press (see consumePress); a non-modal panel lets it through.
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node | null;
       if (!t || ref.current?.contains(t) || (ignore && ignore.contains(t))) return;
       if (t instanceof Element && t.closest('[aria-haspopup][aria-expanded="true"]')) return;
       focusInside.current = false;
+      if (roleRef.current === 'menu') consumePress(e);
       onCloseRef.current();
     };
     const onResize = () => onCloseRef.current();
@@ -417,7 +495,11 @@ export function MenuSeparator() {
 export interface MenuItemProps {
   icon?: IconName;
   children: ReactNode;
-  /** Right-aligned hint: a shortcut or the current value. */
+  /**
+   * Right-aligned hint: a shortcut or the current value. With `keyShortcut`
+   * it is the shortcut, drawn as key caps ("Ctrl+V" → [Ctrl] [V]); otherwise
+   * words in the UI font.
+   */
   hint?: string;
   onSelect(): void;
   disabled?: boolean;
@@ -429,9 +511,25 @@ export interface MenuItemProps {
   keyShortcut?: string;
 }
 
+/** A shortcut drawn as key caps: "Ctrl+Shift+Z" → [Ctrl] [Shift] [Z]; "⌘C" stays one cap. (aria-keyshortcuts says it to screen readers.) */
+export function KeyCaps({ keys, className }: { keys: string; className?: string }) {
+  const parts = keys.length > 1 ? keys.split('+').filter(Boolean) : [keys];
+  return (
+    <span className={[styles.caps, className].filter(Boolean).join(' ')} aria-hidden="true">
+      {parts.map((k, i) => (
+        <kbd key={i} className={styles.cap}>
+          {k}
+        </kbd>
+      ))}
+    </span>
+  );
+}
+
 /** A menu row. Disabled rows stay focusable (so they can be discovered) but do nothing. */
 export function MenuItem({ icon, children, hint, onSelect, disabled, disabledReason, tone, role = 'menuitem', checked, keyShortcut }: MenuItemProps) {
-  const shownHint = disabled && disabledReason ? disabledReason : hint;
+  const reason = disabled && disabledReason ? disabledReason : null;
+  const shownHint = reason ?? hint;
+  const caps = !reason && !!keyShortcut && !!hint;
   return (
     <button
       type="button"
@@ -450,12 +548,12 @@ export function MenuItem({ icon, children, hint, onSelect, disabled, disabledRea
         {icon && <Icon name={icon} size={14} />}
       </span>
       <span className={styles.itemText}>{children}</span>
-      {shownHint && <span className={styles.itemHint}>{shownHint}</span>}
+      {caps ? <KeyCaps keys={hint!} className={styles.itemKeys} /> : shownHint && <span className={styles.itemHint}>{shownHint}</span>}
     </button>
   );
 }
 
-/** A row of small keys inside a menu (e.g. clip length 1-4); Left/Right move along it. */
+/** A row of small keys inside a menu (e.g. clip length 1-8); Left/Right move along it. */
 export function MenuKeyRow<T extends string | number>(props: {
   label: string;
   unit?: string;
@@ -464,14 +562,26 @@ export function MenuKeyRow<T extends string | number>(props: {
   value?: T | null;
   onSelect(value: T): void;
   disabled?: boolean;
+  /** Why the keys do nothing now (their description). */
+  disabledReason?: string;
+  /** What the keys do, in a sentence (the row's description, also shown as a tooltip on its label). */
+  tip?: string;
 }) {
-  const { label, unit, row, options, value, onSelect, disabled } = props;
+  const { label, unit, row, options, value, onSelect, disabled, disabledReason, tip } = props;
   const labelId = useId();
+  const tipId = useId();
+  const described = (disabled && disabledReason) || tip;
   return (
-    <div className={styles.keyRow} role="group" aria-labelledby={labelId}>
+    <div className={styles.keyRow} role="group" aria-labelledby={labelId} aria-describedby={described ? tipId : undefined}>
       <span id={labelId} className={styles.keyRowLabel}>
         {label}
       </span>
+      {described && (
+        <span id={tipId} hidden>
+          {described}
+        </span>
+      )}
+      <Tooltip tip={described || undefined} disabled={!described}>
       <span className={styles.keys}>
         {options.map((o) => (
           <button
@@ -483,6 +593,7 @@ export function MenuKeyRow<T extends string | number>(props: {
             aria-checked={value === o.value}
             aria-label={o.ariaLabel}
             aria-disabled={disabled || undefined}
+            aria-describedby={described ? tipId : undefined}
             className={styles.key}
             data-on={value === o.value || undefined}
             onClick={() => {
@@ -493,6 +604,7 @@ export function MenuKeyRow<T extends string | number>(props: {
           </button>
         ))}
       </span>
+      </Tooltip>
       {unit && (
         <span className={styles.keyRowUnit} aria-hidden="true">
           {unit}
@@ -584,6 +696,34 @@ export const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.tes
 export const MOD_ARIA = MOD_KEY === '⌘' ? 'Meta' : 'Control';
 
 /* ------------------------------------------------------------------ */
+/* The take lock                                                        */
+/* ------------------------------------------------------------------ */
+
+/** Said where an edit would be: clips, scenes and parts are locked while a performance take records. */
+export const LOCKED_TEXT = 'Locked while a performance records';
+/** The short reason a menu row shows (and reads out) while locked. */
+export const LOCKED_REASON = 'Locked while recording';
+/** The one-line notice for a key that would edit while locked. */
+const LOCKED_NOTICE = 'Locked while a performance records. Stop the take to change clips and scenes.';
+
+/** The project refuses edits now (a performance take records): views show it instead of offering what would be refused. */
+export function isEditLocked(): boolean {
+  return session.store.info.getState().lock !== null;
+}
+export function useEditLocked(): boolean {
+  return useStore(session.store.info, (s) => s.lock !== null);
+}
+
+/** The app's toasts; null where no ToastProvider is mounted (a view rendered on its own). */
+export function useToastsIfAny(): ToastApi | null {
+  try {
+    return useToasts();
+  } catch {
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Clip actions (menu items and pad shortcuts)                          */
 /* ------------------------------------------------------------------ */
 
@@ -593,31 +733,51 @@ function trackAndClip(trackId: Id, slot: number) {
   return { p, track, clip: track?.clips[slot] ?? null, scene: p.scenes[slot]?.name ?? `Row ${slot + 1}` };
 }
 
-/** Next empty slot after `slot` on the same part (wrapping), or null. */
+/** Next empty slot after `slot` on the same part (wrapping over its rows, one per scene), or null. */
 export function nextEmptySlot(clips: readonly unknown[], slot: number): number | null {
-  for (let k = 1; k < SCENE_ROWS; k++) {
-    const s = (slot + k) % SCENE_ROWS;
+  const rows = clips.length;
+  for (let k = 1; k < rows; k++) {
+    const s = (slot + k) % rows;
     if (!clips[s]) return s;
   }
   return null;
 }
 
+/** Refused at once (one line) while a take records, instead of the store's long refusal. */
+function lockedNow(): boolean {
+  if (!isEditLocked()) return false;
+  notify(LOCKED_NOTICE, 'warn');
+  return true;
+}
+
+/** Where the selected pad's "Edit steps" key is (the pad action bar under the grid). */
+export const EDIT_STEPS_SELECTOR = '[data-pad-actions] [data-edit-steps]';
+
 export const clipActions = {
-  create(trackId: Id, slot: number, bars: ClipBars): boolean {
+  /**
+   * A new empty clip. With the app's toasts, the toast offers "Edit steps"
+   * (the view rendered alone falls back to the notice with Undo).
+   */
+  create(trackId: Id, slot: number, bars: ClipBars, toasts?: ToastApi | null): boolean {
+    if (lockedNow()) return false;
     const r = cmd.createClip(session.store, trackId, slot, bars);
     if (!session.accepted(r)) return false;
     selectTrack(trackId);
     selectSlot(trackId, slot);
     const { track, clip } = trackAndClip(trackId, slot);
-    notify(`New ${barsLabel(bars)} clip "${clip?.name ?? ''}" on ${track?.name ?? 'this part'}. Add notes in Steps or with Record Notes.`, 'info', 'undo');
+    const text = `New ${bars}-bar clip "${clip?.name ?? ''}" on ${track?.name ?? 'this part'}. Add notes in Steps or with Record Notes.`;
+    if (toasts) toasts.show({ id: 'notice', tone: 'info', message: text, action: { label: 'Edit steps', onAction: () => clipActions.editSteps(trackId, slot) } });
+    else notify(text, 'info', 'undo');
     return true;
   },
 
   rename(trackId: Id, slot: number, name: string): boolean {
+    if (lockedNow()) return false;
     return session.accepted(cmd.renameClip(session.store, trackId, slot, name));
   },
 
   setBars(trackId: Id, slot: number, bars: ClipBars): boolean {
+    if (lockedNow()) return false;
     const before = trackAndClip(trackId, slot).clip?.notes.length ?? 0;
     if (!session.accepted(cmd.setClipBars(session.store, trackId, slot, bars))) return false;
     const after = trackAndClip(trackId, slot).clip?.notes.length ?? 0;
@@ -625,7 +785,29 @@ export const clipActions = {
     return true;
   },
 
+  /** Double the clip by repeating it (1 → 2, 2 → 4, 4 → 8 bars; longer ones fill up to 8). */
+  double(trackId: Id, slot: number): boolean {
+    if (lockedNow()) return false;
+    const { clip } = trackAndClip(trackId, slot);
+    if (!clip) return false;
+    if (!session.accepted(cmd.duplicateClipContent(session.store, trackId, slot))) return false;
+    const now = trackAndClip(trackId, slot).clip;
+    notify(`Doubled "${clip.name}" to ${barsLabel(now?.bars ?? clip.bars)}: it plays its pattern twice.`, 'info', 'undo');
+    return true;
+  },
+
+  /** Repeat the clip's bars until it is `bars` long (a 3-bar clip made 8 bars plays 1 2 3 1 2 3 1 2). */
+  repeatTo(trackId: Id, slot: number, bars: ClipBars): boolean {
+    if (lockedNow()) return false;
+    const { clip } = trackAndClip(trackId, slot);
+    if (!clip) return false;
+    if (!session.accepted(cmd.repeatClipToBars(session.store, trackId, slot, bars))) return false;
+    notify(`"${clip.name}" now repeats to fill ${barsLabel(bars)}.`, 'info', 'undo');
+    return true;
+  },
+
   duplicate(trackId: Id, slot: number): boolean {
+    if (lockedNow()) return false;
     const { track, clip } = trackAndClip(trackId, slot);
     if (!track || !clip) return false;
     const to = nextEmptySlot(track.clips, slot);
@@ -656,6 +838,7 @@ export const clipActions = {
       notify(`Copy a clip first (${MOD_KEY}C on a pad, or Copy in its menu).`, 'warn');
       return false;
     }
+    if (lockedNow()) return false;
     const { track, clip: replaced, scene } = trackAndClip(trackId, slot);
     const r = cmd.pasteClip(session.store, trackId, slot, clipboard);
     if (!session.accepted(r)) return false;
@@ -669,6 +852,7 @@ export const clipActions = {
   clear(trackId: Id, slot: number): boolean {
     const { clip } = trackAndClip(trackId, slot);
     if (!clip || clip.notes.length === 0) return false;
+    if (lockedNow()) return false;
     if (!session.accepted(cmd.clearClip(session.store, trackId, slot))) return false;
     notify(`Cleared the notes of "${clip.name}". The empty clip stays in its slot.`, 'info', 'undo');
     return true;
@@ -677,6 +861,7 @@ export const clipActions = {
   remove(trackId: Id, slot: number): boolean {
     const { track, clip } = trackAndClip(trackId, slot);
     if (!clip) return false;
+    if (lockedNow()) return false;
     if (!session.accepted(cmd.deleteClip(session.store, trackId, slot))) return false;
     notify(`Deleted "${clip.name}" from ${track?.name ?? 'this part'}.`, 'info', 'undo');
     return true;
@@ -693,8 +878,11 @@ export const clipActions = {
 /* Clip menu                                                           */
 /* ------------------------------------------------------------------ */
 
-const LENGTH_OPTIONS = ([1, 2, 3, 4] as const).map((b) => ({ value: b as ClipBars, label: String(b), ariaLabel: `Length ${barsLabel(b)}` }));
-const NEW_OPTIONS = ([1, 2, 4] as const).map((b) => ({ value: b as ClipBars, label: barsLabel(b), ariaLabel: `New clip, ${barsLabel(b)}` }));
+const LENGTH_OPTIONS = CLIP_BAR_CHOICES.map((b) => ({ value: b, label: String(b), ariaLabel: `Length ${barsLabel(b)}` }));
+const NEW_OPTIONS = CLIP_BAR_CHOICES.map((b) => ({ value: b, label: String(b), ariaLabel: `New clip, ${barsLabel(b)}` }));
+/** Length's tooltip: what changing it does to the notes. */
+export const LENGTH_TIP = 'How many bars the clip loops over. Longer: the new bars start empty (Double or Repeat to 8 bars fill them with the pattern). Shorter: notes past the new end are removed; Undo brings them back.';
+const LONGEST: ClipBars = MAX_CLIP_BARS as ClipBars;
 
 export interface ClipMenuProps {
   trackId: Id;
@@ -714,20 +902,23 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
     (p) => {
       const t = p.tracks.find((x) => x.id === trackId);
       const clip = t?.clips[slot] ?? null;
+      const to = t && clip ? nextEmptySlot(t.clips, slot) : null;
       return {
         trackName: t?.name ?? '',
         scene: p.scenes[slot]?.name ?? `Row ${slot + 1}`,
         clipName: clip?.name ?? null,
         bars: clip?.bars ?? null,
         notes: clip?.notes.length ?? 0,
-        duplicateTo: t && clip ? nextEmptySlot(t.clips, slot) : null,
-        duplicateScene: t && clip ? (p.scenes[nextEmptySlot(t.clips, slot) ?? -1]?.name ?? null) : null,
+        duplicateTo: to,
+        duplicateScene: to === null ? null : (p.scenes[to]?.name ?? null),
       };
     },
     shallowEqual,
   );
   const clipboardName = useUi((s) => s.clipboard?.name ?? null);
-  const [renaming, setRenaming] = useState(!!startInRename && info.clipName !== null);
+  const locked = useEditLocked();
+  const toasts = useToastsIfAny();
+  const [renaming, setRenaming] = useState(!!startInRename && info.clipName !== null && !locked);
 
   const act = (fn: () => unknown) => {
     fn();
@@ -756,15 +947,31 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
   if (info.clipName === null) {
     return (
       <Popover anchor={anchor} label={`Empty slot: ${info.trackName}, ${info.scene}`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
-        <MenuHeader eyebrow={`${info.trackName} · ${info.scene}`} title="Empty slot" />
-        <MenuKeyRow label="New clip" row="new" options={NEW_OPTIONS} onSelect={(b) => act(() => clipActions.create(trackId, slot, b))} />
+        <MenuHeader eyebrow={`${info.trackName} · ${info.scene}`} title="Empty slot">
+          {locked && <div className={styles.meta}>{LOCKED_TEXT}.</div>}
+        </MenuHeader>
+        <MenuKeyRow
+          label="New clip"
+          unit="bars"
+          row="new"
+          options={NEW_OPTIONS}
+          disabled={locked}
+          disabledReason={LOCKED_TEXT}
+          tip="An empty clip of that many bars, ready for notes: Edit steps opens it."
+          onSelect={(b) => {
+            const made = clipActions.create(trackId, slot, b, toasts);
+            onClose();
+            // The next step is to fill it: focus goes to the pad actions' Edit steps (after the menu gives focus back).
+            if (made) requestAnimationFrame(() => document.querySelector<HTMLElement>(EDIT_STEPS_SELECTOR)?.focus());
+          }}
+        />
         <MenuSeparator />
         <MenuItem
           icon="paste"
           hint={`${MOD_KEY}V`}
           keyShortcut={`${MOD_ARIA}+V`}
-          disabled={!clipboardName}
-          disabledReason="Copy a clip first"
+          disabled={!clipboardName || locked}
+          disabledReason={locked ? LOCKED_REASON : 'Copy a clip first'}
           onSelect={() => act(() => clipActions.paste(trackId, slot))}
         >
           {clipboardName ? `Paste “${clipboardName}”` : 'Paste'}
@@ -773,25 +980,55 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
     );
   }
 
+  const bars = info.bars ?? 1;
   return (
     <Popover anchor={anchor} label={`Clip ${info.clipName}: ${info.trackName}, ${info.scene}`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
       <MenuHeader eyebrow={`${info.trackName} · ${info.scene}`} title={info.clipName}>
         <div className={styles.meta}>
-          {barsLabel(info.bars ?? 1)} · {info.notes === 0 ? 'no notes yet' : `${info.notes} note${info.notes === 1 ? '' : 's'}`}
+          {barsLabel(bars)} · {info.notes === 0 ? 'no notes yet' : `${info.notes} note${info.notes === 1 ? '' : 's'}`}
+          {locked ? ` · ${LOCKED_TEXT}` : ''}
         </div>
       </MenuHeader>
       <MenuItem icon="chevronRight" hint="Steps view" onSelect={() => act(() => clipActions.editSteps(trackId, slot))}>
         Edit steps
       </MenuItem>
-      <MenuItem hint="F2" keyShortcut="F2" onSelect={() => setRenaming(true)}>
+      <MenuItem icon="pencil" hint="F2" keyShortcut="F2" disabled={locked} disabledReason={LOCKED_REASON} onSelect={() => setRenaming(true)}>
         Rename…
       </MenuItem>
-      <MenuKeyRow label="Length" unit="bars" row="length" options={LENGTH_OPTIONS} value={info.bars} onSelect={(b) => act(() => clipActions.setBars(trackId, slot, b))} />
+      <MenuKeyRow
+        label="Length"
+        unit="bars"
+        row="length"
+        options={LENGTH_OPTIONS}
+        value={info.bars}
+        disabled={locked}
+        disabledReason={LOCKED_TEXT}
+        tip={LENGTH_TIP}
+        onSelect={(b) => act(() => clipActions.setBars(trackId, slot, b))}
+      />
+      <MenuItem
+        disabled={bars >= LONGEST || locked}
+        disabledReason={locked ? LOCKED_REASON : `Already ${LONGEST} bars`}
+        hint={`to ${barsLabel(Math.min(LONGEST, bars * 2))}`}
+        onSelect={() => act(() => clipActions.double(trackId, slot))}
+      >
+        Double (repeat)
+      </MenuItem>
+      <MenuItem
+        disabled={bars >= LONGEST || locked}
+        disabledReason={locked ? LOCKED_REASON : `Already ${LONGEST} bars`}
+        hint="plays the pattern again"
+        onSelect={() => act(() => clipActions.repeatTo(trackId, slot, LONGEST))}
+      >
+        Repeat to {LONGEST} bars
+      </MenuItem>
       <MenuSeparator />
       {onMove && (
         <MenuItem
           icon="drag"
           hint="or drag the pad"
+          disabled={locked}
+          disabledReason={LOCKED_REASON}
           onSelect={() => {
             onClose();
             onMove();
@@ -802,8 +1039,8 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
       )}
       <MenuItem
         icon="duplicate"
-        disabled={info.duplicateTo === null}
-        disabledReason="No empty slot"
+        disabled={info.duplicateTo === null || locked}
+        disabledReason={locked ? LOCKED_REASON : 'No empty slot'}
         hint={info.duplicateScene ? `to ${info.duplicateScene}` : undefined}
         onSelect={() => act(() => clipActions.duplicate(trackId, slot))}
       >
@@ -816,17 +1053,17 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
         icon="paste"
         hint={`${MOD_KEY}V`}
         keyShortcut={`${MOD_ARIA}+V`}
-        disabled={!clipboardName}
-        disabledReason="Copy a clip first"
+        disabled={!clipboardName || locked}
+        disabledReason={locked ? LOCKED_REASON : 'Copy a clip first'}
         onSelect={() => act(() => clipActions.paste(trackId, slot))}
       >
         {clipboardName ? `Paste “${clipboardName}” here` : 'Paste here'}
       </MenuItem>
       <MenuSeparator />
-      <MenuItem icon="close" disabled={info.notes === 0} disabledReason="Already empty" onSelect={() => act(() => clipActions.clear(trackId, slot))}>
+      <MenuItem icon="close" disabled={info.notes === 0 || locked} disabledReason={locked ? LOCKED_REASON : 'Already empty'} onSelect={() => act(() => clipActions.clear(trackId, slot))}>
         Clear notes
       </MenuItem>
-      <MenuItem icon="trash" tone="danger" hint="Del" keyShortcut="Delete" onSelect={() => act(() => clipActions.remove(trackId, slot))}>
+      <MenuItem icon="trash" tone="danger" hint="Del" keyShortcut="Delete" disabled={locked} disabledReason={LOCKED_REASON} onSelect={() => act(() => clipActions.remove(trackId, slot))}>
         Delete clip
       </MenuItem>
     </Popover>

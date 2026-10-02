@@ -156,7 +156,7 @@ describe('Sizes and visibility', () => {
           const r = el.getBoundingClientRect();
           return r.top >= box.top - 0.5 && r.bottom <= box.bottom + 0.5 && r.left >= box.left - 0.5 && r.right <= box.right + 0.5;
         };
-        for (const name of ['Mute', 'Solo', /^Change instrument/, 'Variation', 'Lock']) expect(inside(named(panel(), name)), `${mode}: ${String(name)}`).toBe(true);
+        for (const name of ['Mute', 'Solo', /^Change instrument/, 'Variation', 'More Variation choices', 'Keep pattern']) expect(inside(named(panel(), name)), `${mode}: ${String(name)}`).toBe(true);
         expect(inside(panel().querySelector('[role="slider"][aria-label^="Volume"]')), `${mode}: Volume`).toBe(true);
         const macros = panel().querySelectorAll('[role="group"][aria-label$="macros"] [role="slider"]');
         expect(macros.length).toBe(6);

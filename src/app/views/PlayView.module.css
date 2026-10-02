@@ -49,6 +49,13 @@
   min-width: 0;
 }
 
+/* A big screen: the part panel widens, so its big knobs can grow (three 'xl' knobs side by side). */
+@media (min-width: 1600px) {
+  .view {
+    grid-template-columns: minmax(0, 1fr) 360px;
+  }
+}
+
 @media (max-width: 1180px) {
   .view {
     grid-template-columns: minmax(0, 1fr) 272px;

@@ -6,9 +6,16 @@
  * is no undo step, Redo survives, the take lock does not apply, and saved
  * projects and exports always keep their mastering. Loading another project
  * ends the comparison.
+ *
+ * Level-matched: the engine plays the un-mastered sound at the loudness the
+ * mastered one had over the last 3 seconds (MeterFrame.compareTrimDb, measured
+ * once as the comparison starts), so the comparison is about tone and punch,
+ * not volume. The readings taken meanwhile are of the comparison, so its end
+ * restarts the loudness measurement.
  */
 import { createStore, useStore } from '../../../state/store';
 import { session } from '../../instance';
+import { loudnessChanged, stopMatch } from './loudnessMatch';
 
 export type CompareMode = 'off' | 'held' | 'latched';
 
@@ -37,6 +44,8 @@ function finish(): void {
   unwatch = null;
   session.setMasteringListen(false);
   set({ mode: 'off', waiting: false });
+  // What was measured meanwhile was the comparison: measure the mastered mix again.
+  loudnessChanged('compare');
 }
 
 /** Start hearing without mastering. False when there is nothing to compare (mastering is off). */
@@ -49,6 +58,7 @@ export function engageCompare(mode: Exclude<CompareMode, 'off'>): boolean {
   const p = session.store.getState();
   if (!p.mastering.enabled) return false;
   engagedIn = p.id;
+  stopMatch(null);
   session.setMasteringListen(true);
   // Another project, or mastering switched off meanwhile, ends the comparison.
   unwatch = session.store.subscribe((next) => {

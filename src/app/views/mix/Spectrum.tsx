@@ -1,19 +1,27 @@
 /**
  * Spectrum of the final output: how much of the music sits in the lows, the
  * mids and the highs, from the engine's readSpectrum (log-spaced bands,
- * 20 Hz–20 kHz, in dB). Drawn on a canvas from a requestAnimationFrame loop;
- * the region readouts (Lows / Mids / Highs in dB) are written to the DOM a
- * few times a second. Nothing here re-renders React per frame.
+ * 20 Hz–20 kHz, in dB). Drawn on a canvas from the meters' shared loop at
+ * most 30 times a second, only when the picture changed; the region readouts
+ * (Lows / Mids / Highs in dB) are written to the DOM a few times a second.
+ * Nothing here re-renders React per frame.
+ *
+ * Cheap when nothing moves: once the output is silent and the curve has
+ * fallen away (the transport stopped), it stops reading the engine and the
+ * shared loop can sleep; it also stops while it is scrolled out of view
+ * (IntersectionObserver). The canvas's backing store is capped at 1.5 device
+ * pixels per CSS pixel.
  *
  * When the engine has no spectrum yet (audio not started, or an engine
  * without it) or the output is silent, the display says what to do instead
  * of drawing anything made up.
  */
-import { useEffect, useRef, type CSSProperties } from 'react';
-import { useElementSize, useRafLoop } from '../../../ui/components';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { meterWake, useElementSize } from '../../../ui/components';
 import { session } from '../../instance';
 import { runtimeStore } from '../../runtime';
 import { mixFrameLive, readMixFrame } from './mixMeters';
+import { useMixTask } from './useMixTask';
 import styles from './Spectrum.module.css';
 
 export const SPECTRUM_BANDS = 96;
@@ -26,6 +34,8 @@ const TOP_DB = -10;
 const SILENT_DB = -110;
 const FALL_DB_PER_S = 36;
 const TEXT_INTERVAL_MS = 300;
+/** Backing-store pixels per CSS pixel, at most (a sharper picture costs more to draw and composite). */
+export const SPECTRUM_MAX_DPR = 1.5;
 
 export type SpectrumState = 'off' | 'unavailable' | 'silent' | 'live';
 
@@ -99,82 +109,115 @@ export function Spectrum() {
   const overlayRef = useRef<HTMLParagraphElement>(null);
   const regionRefs = useRef<(HTMLSpanElement | null)[]>([]);
   const size = useElementSize(wrapRef);
+  const [onScreen, setOnScreen] = useState(true);
   const state = useRef({
     raw: new Float32Array(SPECTRUM_BANDS),
     shown: new Float32Array(SPECTRUM_BANDS).fill(-Infinity),
-    textAt: 0,
+    textAt: -Infinity,
     playing: false,
     status: 'off' as SpectrumState,
+    overlayShown: false,
     dirty: true,
     colors: null as { line: string; fill: string; grid: string; tint: string } | null,
   });
 
-  // Canvas backing store follows the element size and the screen's pixel ratio.
+  // Canvas backing store follows the element size and the screen's pixel ratio (at most 1.5).
   useEffect(() => {
     const c = canvasRef.current;
     if (!c || size.width === 0 || size.height === 0) return;
-    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const dpr = Math.min(SPECTRUM_MAX_DPR, window.devicePixelRatio || 1);
     c.width = Math.round(size.width * dpr);
     c.height = Math.round(size.height * dpr);
     state.current.dirty = true;
+    state.current.textAt = -Infinity;
+    meterWake();
   }, [size.width, size.height]);
 
-  useRafLoop((dt) => {
-    const s = state.current;
-    const c = canvasRef.current;
-    if (!c || c.width === 0) return;
-    const ok = session.readSpectrum(s.raw);
-    let max = -Infinity;
-    if (ok) for (let i = 0; i < s.raw.length; i++) if (s.raw[i] > max) max = s.raw[i];
-    // Audio not started, an engine without a spectrum, silence, or a live picture.
-    readMixFrame();
-    const status: SpectrumState = !ok ? (mixFrameLive() ? 'unavailable' : 'off') : !(max > SILENT_DB) ? 'silent' : 'live';
-    const fall = FALL_DB_PER_S * Math.min(0.25, dt / 1000);
-    let moved = s.dirty;
-    for (let i = 0; i < SPECTRUM_BANDS; i++) {
-      const v = status === 'live' && Number.isFinite(s.raw[i]) ? s.raw[i] : -Infinity;
-      const cur = s.shown[i];
-      const next = v >= cur ? v : Math.max(v, cur - fall);
-      if (next !== cur && !(next < FLOOR_DB - 20 && cur < FLOOR_DB - 20)) moved = true;
-      s.shown[i] = next < FLOOR_DB - 20 ? -Infinity : next;
-    }
-    const playing = runtimeStore.getState().playing;
-    if (status !== s.status || playing !== s.playing) {
-      s.status = status;
-      s.playing = playing;
-      const el = overlayRef.current;
-      if (el) {
-        el.dataset.state = status;
-        const text = overlayText(status, playing);
-        if (el.textContent !== text) el.textContent = text;
-      }
-    }
-    if (moved) {
-      s.dirty = false;
-      draw(c, s.shown, (s.colors ??= {
-        line: cssVar('--amber', '#e39b2f'),
-        fill: cssVar('--amber-wash', 'rgba(242,166,52,0.16)'),
-        grid: cssVar('--line', '#c4c8cc'),
-        tint: cssVar('--surface-lo', '#d2d6da'),
-      }));
-    }
-    const now = performance.now();
-    if (now - s.textAt > TEXT_INTERVAL_MS) {
-      s.textAt = now;
-      SPECTRUM_REGIONS.forEach((r, i) => {
-        const el = regionRefs.current[i];
-        if (!el) return;
-        const db = status === 'live' ? regionLevel(s.raw, r.from, r.to) : -Infinity;
-        const rounded = Math.round(db);
-        const text = Number.isFinite(db) && db > SILENT_DB ? `${rounded < 0 ? '−' : ''}${Math.abs(rounded)} dB` : '—';
-        if (el.textContent !== text) el.textContent = text;
-      });
-    }
-  }, true);
+  // Scrolled out of view (200 % zoom, the Advanced column), it does nothing.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver((entries) => {
+      const e = entries[entries.length - 1];
+      if (e) setOnScreen(e.isIntersecting);
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  useEffect(() => {
+    if (onScreen) state.current.dirty = true;
+  }, [onScreen]);
+
+  useMixTask(
+    {
+      frame(_now, dtMs) {
+        const s = state.current;
+        const c = canvasRef.current;
+        if (!c || c.width === 0) return false;
+        const ok = session.readSpectrum(s.raw);
+        let max = -Infinity;
+        if (ok) for (let i = 0; i < s.raw.length; i++) if (s.raw[i] > max) max = s.raw[i];
+        // Audio not started, an engine without a spectrum, silence, or a live picture.
+        readMixFrame();
+        const status: SpectrumState = !ok ? (mixFrameLive() ? 'unavailable' : 'off') : !(max > SILENT_DB) ? 'silent' : 'live';
+        const fall = FALL_DB_PER_S * Math.min(0.25, dtMs / 1000);
+        let moved = s.dirty;
+        let showing = false;
+        for (let i = 0; i < SPECTRUM_BANDS; i++) {
+          const v = status === 'live' && Number.isFinite(s.raw[i]) ? s.raw[i] : -Infinity;
+          const cur = s.shown[i];
+          const next = v >= cur ? v : Math.max(v, cur - fall);
+          if (next !== cur && !(next < FLOOR_DB - 20 && cur < FLOOR_DB - 20)) moved = true;
+          s.shown[i] = next < FLOOR_DB - 20 ? -Infinity : next;
+          if (s.shown[i] > -Infinity) showing = true;
+        }
+        const playing = runtimeStore.getState().playing;
+        if (status !== s.status || playing !== s.playing || !s.overlayShown) {
+          s.status = status;
+          s.playing = playing;
+          const el = overlayRef.current;
+          if (el) {
+            el.dataset.state = status;
+            const text = overlayText(status, playing);
+            if (el.textContent !== text) el.textContent = text;
+            s.overlayShown = true;
+          }
+        }
+        if (moved) {
+          s.dirty = false;
+          draw(c, s.shown, (s.colors ??= {
+            line: cssVar('--amber', '#e39b2f'),
+            fill: cssVar('--amber-wash', 'rgba(242,166,52,0.16)'),
+            grid: cssVar('--line', '#c4c8cc'),
+            tint: cssVar('--surface-lo', '#d2d6da'),
+          }));
+        }
+        const now = performance.now();
+        let textBusy = false;
+        if (now - s.textAt > TEXT_INTERVAL_MS) {
+          s.textAt = now;
+          SPECTRUM_REGIONS.forEach((r, i) => {
+            const el = regionRefs.current[i];
+            if (!el) return;
+            const db = status === 'live' ? regionLevel(s.raw, r.from, r.to) : -Infinity;
+            const rounded = Math.round(db);
+            const text = Number.isFinite(db) && db > SILENT_DB ? `${rounded < 0 ? '−' : ''}${Math.abs(rounded)} dB` : '—';
+            if (el.textContent !== text) {
+              el.textContent = text;
+              textBusy = true;
+            }
+          });
+        }
+        // Busy while there is sound or a curve still falling away; once both are gone the loop may sleep.
+        return status === 'live' || showing || moved || textBusy;
+      },
+    },
+    onScreen,
+  );
 
   return (
     <div className={styles.spectrum}>
-      <div className={styles.regions} role="group" aria-label="Level of the lows, mids and highs">
+      <div className={styles.regions} role="group" aria-label="Level of the lows, mids and highs" data-hint-avoid="">
         {SPECTRUM_REGIONS.map((r, i) => (
           <span key={r.id} className={styles.region} style={{ '--x0': freqX(r.from), '--x1': freqX(r.to) } as CSSProperties}>
             <span className={styles.regionName}>{r.name}</span>
@@ -203,7 +246,7 @@ export function Spectrum() {
           {overlayText('off', false)}
         </p>
       </div>
-      <div className={styles.axis} aria-hidden="true">
+      <div className={styles.axis} aria-hidden="true" data-hint-avoid="">
         {FREQ_LABELS.map(([f, t]) => (
           <span key={f} className={`${styles.freq} mono`} style={{ '--x': freqX(f) } as CSSProperties}>
             {t}
