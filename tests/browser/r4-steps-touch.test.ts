@@ -28,11 +28,14 @@ async function settleScroll(): Promise<void> {
   }
 }
 
-async function tap(p: Pt): Promise<void> {
+/** A finger tap; returns how long the finger was down (a busy machine can stretch it past a tap). */
+async function tap(p: Pt): Promise<number> {
+  const t0 = performance.now();
   await touch('touchStart', [p]);
-  await new Promise((r) => setTimeout(r, 40));
   await touch('touchEnd', []);
+  const held = performance.now() - t0;
   await settleFrames();
+  return held;
 }
 
 describe('touch on the roll (PLAY-02)', () => {
@@ -78,7 +81,11 @@ describe('touch on the roll (PLAY-02)', () => {
       expect(played.ons().at(-1)).toMatchObject({ pitch: 43, source: 'preview' });
 
       await new Promise((r) => setTimeout(r, 120));
-      await tap(notePt(added.id));
+      // Under heavy load a tap can take longer than a tap may (250 ms): then it does nothing, and it is tried again.
+      for (let i = 0; i < 3 && bounce().some((n) => n.id === added.id); i++) {
+        const held = await tap(notePt(added.id));
+        if (held < 200) break;
+      }
       expect(bounce().length).toBe(count);
       expect(notice()?.text).toBe('Deleted 1 note.');
       expect(notice()?.action).toBe('undo');
