@@ -60,7 +60,7 @@
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   color: var(--ink-3);
-  transition: background 60ms linear, color 60ms linear;
+  /* No fade: the lit step changes at once (a half-faded number would read poorly). */
 }
 .num[data-beat] {
   color: var(--ink);

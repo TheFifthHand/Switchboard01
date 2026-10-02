@@ -224,7 +224,7 @@ function KeyChip({ text, short, label, tip, detail }: { text: string; short: str
   }, [text]);
   return (
     <Tooltip tip={tip} detail={detail}>
-      <span ref={ref} className={styles.keyInfo} tabIndex={0} aria-label={label} data-short={!fits || undefined}>
+      <span ref={ref} className={styles.keyInfo} role="note" tabIndex={0} aria-label={label} data-short={!fits || undefined}>
         <span ref={measure} className={styles.keyMeasure} aria-hidden="true">
           {text}
         </span>
