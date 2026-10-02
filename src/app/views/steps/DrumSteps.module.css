@@ -1,7 +1,7 @@
 .drums {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   height: 100%;
   min-height: 0;
 }
@@ -15,55 +15,73 @@
   padding-left: 6px;
 }
 
-/* ---------- overview: 16 sounds x 16 steps ---------- */
+/* ---------- overview: 16 sounds x 16 steps, a grid of hit targets ---------- */
+/*
+ * Rows are at least 20 px (24 px on windows 900 px tall or more) and grow with the room;
+ * every cell is the full row height (its box is drawn inset). The pad lane below gives way
+ * first on short windows. A finger scrolls up and down here; a sideways drag paints.
+ */
 .overview {
-  flex: 1 1 0;
-  min-height: 0;
-  max-height: calc(16 * 32px + 6px);
+  flex: 1 0 auto;
+  min-height: calc(16 * 20px + 4px);
+  max-height: calc(16 * 32px + 4px);
   display: grid;
-  grid-template-rows: repeat(16, minmax(11px, 1fr));
-  row-gap: 1px;
-  padding: 3px 0;
+  grid-template-rows: repeat(16, minmax(20px, 1fr));
+  padding: 2px 0;
   border-radius: var(--r-md);
   background: var(--surface-lo);
   box-shadow: inset 0 1px 2px rgba(20, 24, 28, 0.12);
+  touch-action: pan-y;
+}
+@media (min-height: 900px) {
+  .overview {
+    min-height: calc(16 * 24px + 4px);
+    grid-template-rows: repeat(16, minmax(24px, 1fr));
+  }
 }
 
 .voiceRow {
   align-items: stretch;
   min-height: 0;
   margin: 0 3px;
-  padding: 0;
-  border: 0;
   border-radius: 4px;
-  background: transparent;
   color: var(--ink-2);
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--t-fast) var(--ease);
-}
-.voiceRow:hover:not([data-selected]) {
-  background: rgba(255, 255, 255, 0.4);
 }
 .voiceRow[data-selected] {
   background: var(--teal-wash);
   box-shadow: inset 0 0 0 1px rgba(35, 149, 142, 0.55);
   color: var(--teal-ink);
 }
-.voiceRow:focus-visible {
-  box-shadow: 0 0 0 2px var(--teal);
-}
 
-.voiceName {
+.voiceHead {
   grid-column: 1;
+  display: grid;
+  min-width: 0;
+}
+.voiceName {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+  margin: 0;
   padding: 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   font-size: var(--fs-xs);
   font-weight: 500;
   line-height: 1;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+}
+.voiceName:hover {
+  background: rgba(255, 255, 255, 0.45);
+}
+.voiceName:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--teal);
 }
 .voiceRow[data-selected] .voiceName {
   font-weight: 700;
@@ -76,7 +94,7 @@
   color: var(--ink-3);
 }
 .voiceRow[data-selected] .voiceNum {
-  color: var(--teal);
+  color: var(--teal-ink);
 }
 .voiceText {
   overflow: hidden;
@@ -84,49 +102,80 @@
   white-space: nowrap;
 }
 
+/* A step cell: the whole row height is the target; the box inside shows the hit. */
+.cellWrap {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
 .cell {
-  align-self: center;
-  height: calc(100% - 4px);
-  max-height: 16px;
-  min-height: 6px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.5);
-  box-shadow: 0 0 0 0.5px rgba(20, 24, 28, 0.08);
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
 }
-.voiceRow[data-selected] .cell {
-  background: rgba(255, 255, 255, 0.72);
+.cellBox {
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 0.5px rgba(20, 24, 28, 0.1);
+  transition: background 80ms linear;
 }
-.cell[data-v='1'],
-.voiceRow[data-selected] .cell[data-v='1'] {
+.cell:hover .cellBox {
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(20, 24, 28, 0.22);
+}
+.voiceRow[data-selected] .cellBox {
+  background: rgba(255, 255, 255, 0.78);
+}
+.cell[data-v='1'] .cellBox {
   background: rgba(233, 164, 60, 0.5);
 }
-.cell[data-v='2'],
-.voiceRow[data-selected] .cell[data-v='2'] {
+.cell[data-v='2'] .cellBox {
   background: rgba(233, 164, 60, 0.85);
 }
-.cell[data-v='3'],
-.voiceRow[data-selected] .cell[data-v='3'] {
+.cell[data-v='3'] .cellBox {
   background: var(--amber);
   box-shadow: 0 0 5px var(--amber-glow);
+}
+.cell:focus-visible .cellBox {
+  box-shadow:
+    0 0 0 2px var(--shell-hi),
+    0 0 0 4px var(--teal);
+  z-index: 1;
 }
 
 /* ---------- step pads of the selected sound ---------- */
 .lane {
-  flex: none;
-  height: clamp(56px, calc(20vh - 90px), 124px);
+  flex: 0 1 auto;
+  height: clamp(40px, calc(20vh - 90px), 124px);
+  min-height: 40px;
 }
 .laneLabel {
   grid-column: 1;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 3px;
+  gap: 1px;
   min-width: 0;
-  padding: 0 8px 0 10px;
+  padding: 0 0 0 8px;
   border-left: 3px solid var(--teal);
   border-radius: 2px;
 }
+.laneHead {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
 .laneName {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: var(--fs-md);
   font-weight: 650;
   color: var(--ink);
@@ -134,15 +183,31 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The selected sound's actions (Clear, Fill, Shift). */
+.more {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: -6px 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink-2);
+}
+.more:hover,
+.more[aria-expanded='true'] {
+  background: rgba(20, 24, 28, 0.07);
+  color: var(--ink);
+}
 .laneMeta {
   font-size: var(--fs-xs);
   line-height: 1.3;
   color: var(--ink-3);
+  white-space: nowrap;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  text-overflow: ellipsis;
 }
 
 .step {
@@ -246,8 +311,11 @@
 }
 
 .velocity {
-  flex: none;
-  height: clamp(44px, calc(12vh - 42px), 96px);
+  flex: 0 1 auto;
+  height: clamp(36px, calc(12vh - 42px), 96px);
+}
+.drums .velocity {
+  min-height: 36px;
 }
 
 /* Short surfaces (high zoom): natural heights; the editor scrolls (see StepEditor.module.css). */
@@ -257,7 +325,8 @@
   }
   .overview {
     flex: none;
-    height: calc(16 * 16px + 6px);
+    height: calc(16 * 22px + 4px);
+    min-height: 0;
   }
   .lane {
     height: 60px;

@@ -37,19 +37,30 @@
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--shell-hi);
-  font-size: 11px;
+  font-size: var(--fs-sm);
   color: var(--ink-2);
 }
-/* A drum part has no octave to reset. */
-.reset:disabled {
-  opacity: 0.5;
-  cursor: default;
+.reset:hover {
+  background: #fbfaf7;
+}
+.reset:active {
+  box-shadow: var(--shadow-pressed);
+}
+.reset > span {
+  font-size: var(--fs-md);
 }
 
+/* A kit has no octave: a narrow box says what the keys are, so the 16 sound keys get the room. */
+.octave[data-kit] {
+  display: flex;
+  justify-content: center;
+  width: 72px;
+}
+
+/* The keys take the strip's free width; MiniKeyboard (fit) widens them up to their largest. */
 .keys {
   flex: 1;
   min-width: 320px;
-  max-width: 760px;
 }
 
 .assist {
@@ -126,4 +137,53 @@
 .keySummary strong {
   color: var(--ink);
   font-weight: 650;
+}
+
+/* ---------- key change: move the song too? ---------- */
+.movePopover {
+  width: min(360px, calc(100vw - 32px));
+}
+.move {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+}
+.moveText {
+  margin: 0;
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  color: var(--ink);
+}
+.moveSamplers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.moveLegend {
+  margin-bottom: 4px;
+  padding: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.moveCheck {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+}
+.moveCheck input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--teal);
+}
+.moveActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }

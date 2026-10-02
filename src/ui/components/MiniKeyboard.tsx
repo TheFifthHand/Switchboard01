@@ -24,9 +24,15 @@
  *
  * `fit`: the keyboard fills its container's width, its keys widening up to
  * `keyMaxWidth` (no extra keys appear). Kit variant: 16 sound keys (key n plays
- * `baseNote + n`), laid out as the drum pads and the computer keys are (pad 0
- * bottom-left, rows bottom to top), each with its sound's name (`kitNames`) and
- * letter; rows are at least 32 px tall.
+ * `baseNote + n`), each with its sound's name (`kitNames`) and letter. `kitLayout`
+ * 'grid' (default) lays them out as the drum pads and the computer keys are (pad 0
+ * bottom-left, rows bottom to top; rows at least 32 px tall); 'row' puts them in one
+ * row of four groups, one per row of computer keys (Z–V, A–F, Q–R, 1–4), for a
+ * strip only one key tall.
+ *
+ * `noteNames` spell the root on the rail (and in a legend) the way the key
+ * writes it: pass the key's 12 names by pitch class (keyNoteNames), e.g. 'B♭'
+ * in F major; without them, sharps.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { velocityFromPosition } from './Pad';
@@ -58,6 +64,10 @@ export interface MiniKeyboardProps {
   kitNames?: readonly string[];
   /** Where the note names of C keys and the root go (default 'legend'). */
   noteNames?: 'legend' | 'above' | 'none';
+  /** The 12 note names by pitch class (0 = C) used for the root's name, spelled by the key (default: sharps). */
+  pitchNames?: readonly string[];
+  /** Kit variant: 'grid' (default, 4 x 4 like the drum pads) or 'row' (one row of four groups of four). */
+  kitLayout?: 'grid' | 'row';
   /** Fill the container's width, keys widening up to `keyMaxWidth`. */
   fit?: boolean;
   /** Widest a white key gets in `fit` mode (px; default the --key-max-w token, 44). */
@@ -77,6 +87,8 @@ export const NOTE_RAIL_PX = 14;
 export const KIT_KEYS = 16;
 const KIT_COLS = 4;
 const KIT_MIN_HEIGHT = 148;
+/** Kit 'row': the space between groups of four keys, px (the keys' own gap is 3 px). */
+export const KIT_GROUP_GAP_PX = 8;
 
 /** "C4" for MIDI 60. */
 export function noteName(midi: number): string {
@@ -120,6 +132,13 @@ function kitCell(index: number): { col: number; row: number } {
   return { col: index % KIT_COLS, row: KIT_COLS - 1 - Math.floor(index / KIT_COLS) };
 }
 
+/** Kit 'row' key n: its grid column (four keys, a spacer track, four keys…). */
+function kitRowColumn(index: number): number {
+  return index + 1 + Math.floor(index / KIT_COLS);
+}
+
+const KIT_ROW_COLUMNS = `repeat(4, minmax(0, 1fr)) ${KIT_GROUP_GAP_PX - 6}px repeat(4, minmax(0, 1fr)) ${KIT_GROUP_GAP_PX - 6}px repeat(4, minmax(0, 1fr)) ${KIT_GROUP_GAP_PX - 6}px repeat(4, minmax(0, 1fr))`;
+
 export function MiniKeyboard({
   baseNote,
   onNoteOn,
@@ -135,11 +154,15 @@ export function MiniKeyboard({
   variant = 'piano',
   kitNames,
   noteNames = 'legend',
+  pitchNames,
+  kitLayout = 'grid',
   fit = false,
   keyMaxWidth,
   className,
 }: MiniKeyboardProps) {
   const kit = variant === 'kit';
+  const kitRow = kit && kitLayout === 'row';
+  const nameOf = (pc: number) => pitchNames?.[pc] ?? NOTE_NAMES[pc];
   const count = kit ? KIT_KEYS : keyCount;
   const { keys, whites } = useMemo(() => (kit ? { keys: [] as KeyGeom[], whites: KIT_COLS } : layoutKeys(baseNote, count)), [kit, baseNote, count]);
   const rail = !kit && noteNames === 'above';
@@ -214,6 +237,17 @@ export function MiniKeyboard({
     const x = (clientX - r.left) / r.width;
     const y = (clientY - r.top) / r.height;
     if (x < 0 || x >= 1 || y < 0 || y >= 1) return null;
+    if (kitRow) {
+      // One row of groups: the key under the point, or the nearest one across a gap (no dead strips).
+      let best: { midi: number; d: number; top: number; height: number } | null = null;
+      for (const key of el.querySelectorAll<HTMLElement>('[data-midi]')) {
+        const k = key.getBoundingClientRect();
+        const d = clientX < k.left ? k.left - clientX : clientX >= k.right ? clientX - k.right : 0;
+        if (!best || d < best.d) best = { midi: Number(key.dataset.midi), d, top: k.top, height: k.height };
+      }
+      if (!best) return null;
+      return { midi: best.midi, velocity: velocityFromPosition((clientY - best.top) / Math.max(1, best.height), 0.35) };
+    }
     if (kit) {
       const col = Math.min(KIT_COLS - 1, Math.floor(x * KIT_COLS));
       const row = Math.min(KIT_COLS - 1, Math.floor(y * KIT_COLS));
@@ -268,10 +302,11 @@ export function MiniKeyboard({
 
   const top = kit ? baseNote + KIT_KEYS - 1 : (keys[keys.length - 1]?.midi ?? baseNote);
   const name = label ?? (kit ? 'Drum kit keys' : `Keyboard, ${noteName(keys[0]?.midi ?? baseNote)} to ${noteName(top)}`);
-  const rootStyle: CSSProperties = { height: kit ? Math.max(height, KIT_MIN_HEIGHT) : height };
+  const rootStyle: CSSProperties = { height: kit && !kitRow ? Math.max(height, KIT_MIN_HEIGHT) : height };
   if (fit) {
     const unit = keyMaxWidth !== undefined ? `${keyMaxWidth}px` : 'var(--key-max-w, 44px)';
-    rootStyle.maxWidth = kit ? `calc(${KIT_COLS} * ${keyMaxWidth !== undefined ? `${keyMaxWidth}px` : 'var(--kit-key-max-w, 150px)'})` : `calc(${whites.toFixed(3)} * ${unit})`;
+    if (kitRow) rootStyle.maxWidth = `calc(${KIT_KEYS} * ${keyMaxWidth !== undefined ? `${keyMaxWidth}px` : 'var(--key-max-w, 44px)'} + ${3 * KIT_GROUP_GAP_PX}px)`;
+    else rootStyle.maxWidth = kit ? `calc(${KIT_COLS} * ${keyMaxWidth !== undefined ? `${keyMaxWidth}px` : 'var(--kit-key-max-w, 150px)'})` : `calc(${whites.toFixed(3)} * ${unit})`;
   }
 
   /** A name on the rail: C keys (with their octave) and the root (its letter name). */
@@ -279,7 +314,7 @@ export function MiniKeyboard({
     const pc = ((midi % 12) + 12) % 12;
     const root = rootPc !== undefined && ((rootPc % 12) + 12) % 12 === pc;
     if (pc === 0) return { text: noteName(midi), root };
-    if (root) return { text: NOTE_NAMES[pc], root };
+    if (root) return { text: nameOf(pc), root };
     return null;
   };
 
@@ -293,6 +328,7 @@ export function MiniKeyboard({
       aria-disabled={disabled || undefined}
       data-disabled={disabled || undefined}
       data-variant={kit ? 'kit' : undefined}
+      data-layout={kitRow ? 'row' : undefined}
       data-rail={rail || undefined}
       data-fit={fit || undefined}
       onPointerDown={onPointerDown}
@@ -318,7 +354,7 @@ export function MiniKeyboard({
           })}
         </div>
       )}
-      <div ref={bedRef} className={styles.bed}>
+      <div ref={bedRef} className={styles.bed} style={kitRow ? { gridTemplateColumns: KIT_ROW_COLUMNS } : undefined}>
         {kit
           ? Array.from({ length: KIT_KEYS }, (_, i) => {
               const midi = baseNote + i;
@@ -330,7 +366,7 @@ export function MiniKeyboard({
                 <div
                   key={i}
                   className={styles.pad}
-                  style={{ gridColumn: col + 1, gridRow: row + 1 }}
+                  style={kitRow ? { gridColumn: kitRowColumn(i), gridRow: 1 } : { gridColumn: col + 1, gridRow: row + 1 }}
                   data-midi={midi}
                   data-note={soundName}
                   data-lit={lit || undefined}
@@ -368,7 +404,7 @@ export function MiniKeyboard({
                   {inScale && <span className={styles.dot} />}
                   <span className={styles.legend}>
                     {keyLabel && <span className={styles.keycap}>{keyLabel}</span>}
-                    {showName && !k.black && <span className={styles.name}>{isRoot && pc !== 0 ? NOTE_NAMES[pc] : noteName(k.midi)}</span>}
+                    {showName && !k.black && <span className={styles.name}>{isRoot && pc !== 0 ? nameOf(pc) : noteName(k.midi)}</span>}
                   </span>
                 </div>
               );
