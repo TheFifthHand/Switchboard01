@@ -129,10 +129,10 @@ describe('moving across bars', () => {
       await mouse('mouseMoved', { x: grab.x + ((past.x - grab.x) * i) / 8, y: grab.y }, { buttons: 1 });
       await new Promise((r) => requestAnimationFrame(r));
     }
-    // Held at the edge: after 400 ms the page turns to bar 2.
+    // Held at the edge: after 400 ms the page turns to bar 2 (and on, a bar every 0.7 s, while it stays there).
     expect(page(CHORDS)).toBe(0);
-    await new Promise((r) => setTimeout(r, 650));
-    await settleFrames();
+    const held = performance.now();
+    while (page(CHORDS) === 0 && performance.now() - held < 3000) await new Promise((r) => requestAnimationFrame(r));
     expect(page(CHORDS)).toBe(1);
     // Into bar 2, cell 2 (the grab was in the note's first cell, 12 ticks in).
     const target = cellPt(1, 69, 0.5);
@@ -152,6 +152,47 @@ describe('moving across bars', () => {
     session.undo();
     expect(moved(a4.id).tick).toBe(72);
     expect(moved(f4.id).tick).toBe(72);
+  });
+});
+
+describe('moving a chord in key', () => {
+  it('a chord dragged two steps later and one row up moves each voice a step of the key, as one undo step', async () => {
+    await openSteps(CHORDS, 1);
+    const chord = chordAt(72);
+    expect(chord.map((n) => n.pitch)).toEqual([58, 62, 65, 69]);
+    await showRow(64);
+    // Select the chord with a box.
+    const a = cellPt(2, 70);
+    const b = cellPt(3, 57);
+    await mouse('mouseMoved', a);
+    await mouse('mousePressed', a, { modifiers: SHIFT });
+    await mouse('mouseMoved', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, { buttons: 1, modifiers: SHIFT });
+    await mouse('mouseMoved', b, { buttons: 1, modifiers: SHIFT });
+    await mouse('mouseReleased', b, { modifiers: SHIFT });
+    await settleFrames();
+    expect([...selected()].sort()).toEqual(chord.map((n) => n.id).sort());
+    // Drag the top note (A4) two cells right and one row up (B♭4).
+    const grab = notePt(chord[3].id);
+    const to = { x: grab.x + (cellPt(5, 69).x - cellPt(3, 69).x), y: cellPt(3, 70).y };
+    await mouse('mouseMoved', grab);
+    await mouse('mousePressed', grab);
+    for (let i = 1; i <= 6; i++) {
+      await mouse('mouseMoved', { x: grab.x + ((to.x - grab.x) * i) / 6, y: grab.y + ((to.y - grab.y) * i) / 6 }, { buttons: 1 });
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    await mouse('mouseReleased', to);
+    await settleFrames();
+    // G Dorian, a step up: B♭3 D4 F4 A4 -> C4 E4 G4 B♭4, all at tick 120.
+    const moved = chord.map((n) => stabs().find((x) => x.id === n.id)!);
+    expect(moved.map((n) => [n.tick, n.pitch])).toEqual([
+      [120, 60],
+      [120, 64],
+      [120, 67],
+      [120, 70],
+    ]);
+    expect(stabs().length).toBe(68);
+    session.undo();
+    expect(chord.map((n) => stabs().find((x) => x.id === n.id)!).map((n) => [n.tick, n.pitch])).toEqual(chord.map((n) => [72, n.pitch]));
   });
 });
 

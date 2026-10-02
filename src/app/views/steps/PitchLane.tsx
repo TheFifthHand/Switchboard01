@@ -79,6 +79,8 @@ const DRAG_PX = 4;
 const DOUBLE_MS = 400;
 /** Holding a dragged selection past the page edge this long (ms) turns the page. */
 export const EDGE_TURN_MS = 400;
+/** Still held there, the next bars follow at this pace (ms), slow enough to let go on the bar you want. */
+export const EDGE_REPEAT_MS = 700;
 /** The note drawn while the pointer is still down (added on release, as one undo step). */
 const DRAW_ID = '__draw';
 
@@ -124,6 +126,8 @@ type Drag =
       sound: Audition | null;
       edgeSide: number;
       edgeTimer: number;
+      /** Pages turned since the pointer reached the edge (the first waits EDGE_TURN_MS, the next EDGE_REPEAT_MS). */
+      edgeTurns: number;
     }
   | { kind: 'box'; pointerId: number; x0: number; y0: number; base: Id[]; moved: boolean }
   | { kind: 'key'; pointerId: number; sound: Audition }
@@ -559,6 +563,7 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
       sound: audition(c.trackId, note.pitch, note.velocity),
       edgeSide: 0,
       edgeTimer: 0,
+      edgeTurns: 0,
     };
   };
 
@@ -681,19 +686,25 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
       window.clearTimeout(d.edgeTimer);
       d.edgeTimer = 0;
       d.edgeSide = 0;
+      if (side === 0) d.edgeTurns = 0;
       return;
     }
     if (side === d.edgeSide && d.edgeTimer) return;
     window.clearTimeout(d.edgeTimer);
     d.edgeSide = side;
-    d.edgeTimer = window.setTimeout(() => {
-      d.edgeTimer = 0;
-      d.edgeSide = 0;
-      if (drag.current !== d) return;
-      const cc = cur.current;
-      const to = cc.page + side;
-      if (to >= 0 && to < cc.clip.bars) setStepPage(cc.trackId, to);
-    }, EDGE_TURN_MS);
+    d.edgeTimer = window.setTimeout(
+      () => {
+        d.edgeTimer = 0;
+        d.edgeSide = 0;
+        if (drag.current !== d) return;
+        const cc = cur.current;
+        const to = cc.page + side;
+        if (to < 0 || to >= cc.clip.bars) return;
+        d.edgeTurns++;
+        setStepPage(cc.trackId, to);
+      },
+      d.edgeTurns ? EDGE_REPEAT_MS : EDGE_TURN_MS,
+    );
   };
 
   // The page turned under a drag: the same pointer now points into the new bar.
