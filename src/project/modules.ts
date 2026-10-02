@@ -243,10 +243,29 @@ export function portDef(type: ModuleType, portId: string, direction: 'in' | 'out
 /** Effect types offered by the effects rack "Add effect" menu. */
 export const INSERTABLE_EFFECTS: ModuleType[] = (Object.keys(MODULE_DEFS) as ModuleType[]).filter((t) => MODULE_DEFS[t].insertable);
 
-/** Upper bounds that keep CPU and graph size sensible. */
+/** Insert effects per part, counting its default Drive and Filter (not its instrument or channel). */
+const EFFECTS_PER_TRACK = 8;
+/** LFOs a part can add besides its default one. */
+const EXTRA_LFOS_PER_TRACK = 3;
+/** Modules of a part's default patch: instrument, drive, filter, LFO, channel. */
+const DEFAULT_TRACK_MODULES = 5;
+/** Parts in a project (MAX_TRACKS in types.ts). */
+const TRACKS = 8;
+/** Shared modules: the Reverb and Echo returns and the master output. */
+const SHARED_MODULES = 3;
+
+/**
+ * Upper bounds that keep CPU and graph size sensible. The module limit fits
+ * every part at its fullest at once (its default modules, 8 effects and 3
+ * extra LFOs, counting the default Drive and Filter twice to leave room)
+ * plus the shared returns and the master; the cable limit fits that patch
+ * with an extra cable from every LFO.
+ */
 export const PATCH_LIMITS = {
-  maxModules: 72,
+  maxModules: TRACKS * (DEFAULT_TRACK_MODULES + EFFECTS_PER_TRACK + EXTRA_LFOS_PER_TRACK) + SHARED_MODULES,
   maxConnections: 160,
-  /** Insert effects per track (not counting its channel/instrument). */
-  maxEffectsPerTrack: 6,
+  /** Insert effects per track (not counting its channel/instrument; counting its default Drive and Filter). */
+  maxEffectsPerTrack: EFFECTS_PER_TRACK,
+  /** LFOs a part can add besides its default one. */
+  maxExtraLfosPerTrack: EXTRA_LFOS_PER_TRACK,
 } as const;

@@ -377,6 +377,9 @@ describe('song helpers', () => {
     expect(list()[0].id).toBe('blk_x');
     expect(r.blockIds).toEqual(list().map((b) => b.id));
     expect(new Set(r.blockIds).size).toBe(4);
+    // Named after the block and numbered, so the build-up reads (and selects) as one section.
+    expect(list().map((b) => b.label)).toEqual(['Intro · build 1/4', 'Intro · build 2/4', 'Intro · build 3/4', 'Intro · build 4/4']);
+    expect(cmd.blocksWithLabel(store.getState(), 'Intro · build 3/4')).toEqual(r.blockIds);
     // Every change is a per-part Off; the last pass plays the scene as it is.
     expect(list()[3].parts).toBeUndefined();
     expect(ticks(store)).toBe(length);
@@ -455,7 +458,7 @@ describe('song helpers', () => {
     const r = cmd.shapeBlock(store, 'blk_x', 'breakdown');
     expect(r.changed).toBe(true);
     expect(r.parts).toBe(2);
-    expect(list()).toEqual([{ id: 'blk_x', sceneId: store.getState().scenes[0].id, repeats: 4, parts: { [role('drums')]: null, [role('percussion')]: null } }]);
+    expect(list()).toEqual([{ id: 'blk_x', sceneId: store.getState().scenes[0].id, repeats: 4, label: 'Intro · breakdown', parts: { [role('drums')]: null, [role('percussion')]: null } }]);
     expect(ticks(store)).toBe(length);
     expect(store.historySize().undo).toBe(1);
   });

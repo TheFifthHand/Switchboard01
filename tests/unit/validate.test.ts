@@ -96,11 +96,19 @@ describe('validateProject rejects garbage without throwing', () => {
     ['tracks not an array', { ...valid(), tracks: 'eight' }],
     ['seven tracks', { ...valid(), tracks: (valid().tracks as unknown[]).slice(0, 7) }],
     ['nine tracks', { ...valid(), tracks: [...(valid().tracks as unknown[]), (valid().tracks as unknown[])[0]] }],
-    ['five scenes', { ...valid(), scenes: [...(valid().scenes as unknown[]), { id: 'x', name: 'x' }] }],
+    ['five scenes but four clip slots per part', { ...valid(), scenes: [...(valid().scenes as unknown[]), { id: 'x', name: 'x' }] }],
+    ['no scenes', (() => { const v = valid(); v.scenes = []; for (const t of v.tracks as { clips: unknown[] }[]) t.clips = []; return v; })()],
+    ['nine scenes', (() => {
+      const v = valid();
+      v.scenes = Array.from({ length: 9 }, (_, i) => ({ id: `s${i}`, name: `S${i}` }));
+      for (const t of v.tracks as { clips: unknown[] }[]) t.clips = Array.from({ length: 9 }, () => null);
+      return v;
+    })()],
     ['no patch', { ...valid(), patch: null }],
     ['no master', (() => { const v = valid(); (v.patch as { modules: { id: string }[] }).modules = (v.patch as { modules: { id: string }[] }).modules.filter((m) => m.id !== 'master'); return v; })()],
     ['three clip slots', (() => { const v = valid(); (v.tracks as { clips: unknown[] }[])[0].clips = [null, null, null]; return v; })()],
-    ['clip with 5 bars', (() => { const v = valid(); (v.tracks as { clips: unknown[] }[])[0].clips[0] = { id: 'c', name: 'x', bars: 5, notes: [] }; return v; })()],
+    ['clip with 9 bars', (() => { const v = valid(); (v.tracks as { clips: unknown[] }[])[0].clips[0] = { id: 'c', name: 'x', bars: 9, notes: [] }; return v; })()],
+    ['clip with 2.5 bars', (() => { const v = valid(); (v.tracks as { clips: unknown[] }[])[0].clips[0] = { id: 'c', name: 'x', bars: 2.5, notes: [] }; return v; })()],
     ['unknown instrument', (() => { const v = valid(); (v.tracks as { instrument: unknown }[])[1].instrument = { kind: 'theremin', params: {} }; return v; })()],
     ['duplicate track ids', (() => { const v = valid(); (v.tracks as { id: string }[])[1].id = 't1'; return v; })()],
     ['too many notes', (() => {

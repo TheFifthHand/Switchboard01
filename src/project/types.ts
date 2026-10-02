@@ -8,7 +8,7 @@
  */
 
 export const PROJECT_SCHEMA = 'switchboard01.project' as const;
-export const PROJECT_VERSION = 2 as const;
+export const PROJECT_VERSION = 3 as const;
 
 export type Id = string;
 
@@ -29,11 +29,30 @@ export const TICKS_PER_BAR = PPQ * BEATS_PER_BAR; // 384
 export const MIN_BPM = 40;
 export const MAX_BPM = 220;
 export const MAX_TRACKS = 8;
-/** Clip rows == scenes. */
-export const SCENE_ROWS = 4;
+/** Fewest and most scenes (clip rows) a project can have (schema v3). Every part has one clip slot per scene. */
+export const MIN_SCENES = 1;
+export const MAX_SCENES = 8;
+/** Scenes a new project starts with. */
+export const DEFAULT_SCENE_ROWS = 4;
+/**
+ * @deprecated The scene count is per project now: use `sceneCount(project)`
+ * (or `project.scenes.length`), MAX_SCENES for bounds, DEFAULT_SCENE_ROWS for
+ * new projects. Kept so older view code compiles until it reads the count.
+ */
+export const SCENE_ROWS = DEFAULT_SCENE_ROWS;
 export const DRUM_VOICES = 16;
 
-export type ClipBars = 1 | 2 | 3 | 4;
+/** Clip length in bars (schema v3: up to 8). */
+export type ClipBars = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+/** Longest clip, in bars. */
+export const MAX_CLIP_BARS = 8;
+/** The lengths offered when a clip is made or its length is picked. */
+export const CLIP_BAR_CHOICES: readonly ClipBars[] = [1, 2, 3, 4, 8];
+
+/** How many scenes (clip rows) a project has. */
+export function sceneCount(p: { readonly scenes: readonly unknown[] }): number {
+  return p.scenes.length;
+}
 
 /* ------------------------------------------------------------------ */
 /* Notes & clips                                                       */
@@ -58,12 +77,31 @@ export interface VariationInfo {
   generation: number;
 }
 
+/**
+ * The recording a sampler clip plays itself (schema v3), instead of its
+ * part's recording: a take or an import placed in its own clip. `start` and
+ * `end` are fractions of the file (0 <= start < end <= 1); `rootNote` is the
+ * key that plays it at its own pitch. Only sampler parts use it; on other
+ * parts it is kept (switching back to a sampler plays it again) but ignored.
+ * The part's other sampler settings (mode, pitch, tempo sync, fades, level)
+ * still apply.
+ */
+export interface ClipSample {
+  /** Project.samples[].id, or a built-in sample id beginning with "builtin:". */
+  id: Id;
+  start: number;
+  end: number;
+  rootNote: number;
+}
+
 export interface Clip {
   id: Id;
   name: string;
   bars: ClipBars;
   notes: Note[];
   variation?: VariationInfo;
+  /** Sampler parts: the clip's own recording (see ClipSample). Absent: it plays the part's recording. */
+  sample?: ClipSample;
 }
 
 /* ------------------------------------------------------------------ */
@@ -174,7 +212,7 @@ export interface Track {
   name: string;
   role: TrackRole;
   instrument: Instrument;
-  /** Exactly SCENE_ROWS entries; null = empty slot. Row index == scene index. */
+  /** One entry per scene (project.scenes.length); null = empty slot. Row index == scene index. */
   clips: (Clip | null)[];
   mute: boolean;
   solo: boolean;
@@ -183,6 +221,13 @@ export interface Track {
   arp: ArpSettings;
   macros: MacroValues;
   macroMap: MacroMap;
+  /**
+   * The macro positions the part's sound or starter was designed with (schema
+   * v3): where double-click or Delete on a big knob returns it. Written when a
+   * synth preset is chosen and by the starter builder; a macro not listed
+   * returns to its default (see macroHomeFor).
+   */
+  macroHome?: Partial<Record<MacroId, number>>;
 }
 
 /**
@@ -260,6 +305,32 @@ export const MAX_BLOCK_REPEATS = 16;
 /** Longest block label, in characters. */
 export const MAX_BLOCK_LABEL = 40;
 
+/** The song moves a block can carry (schema v3). */
+export const BLOCK_MOVE_KINDS = ['fadeIn', 'fadeOut', 'filterRise', 'echoThrow'] as const;
+export type BlockMoveKind = (typeof BLOCK_MOVE_KINDS)[number];
+
+/**
+ * A change of sound over one song block, played from the audio clock and
+ * rendered identically by exports. A block holds at most one move of each
+ * kind. What playback does:
+ * - fadeIn: the song's gain (after the master volume, before mastering) rises
+ *   from 0 to 1 across the whole block.
+ * - fadeOut: the song's gain falls from 1 to 0 across the whole block.
+ * - filterRise: the Tone big knob of each part it applies to rises from 0.15
+ *   to that part's own Tone value across the block, and is back at the part's
+ *   own value when the block ends.
+ * - echoThrow: the Echo big knob of each part it applies to goes to 0.85 over
+ *   the block's last beat and returns to the part's own value one bar later.
+ * `parts` lists the parts filterRise and echoThrow act on; without it they act
+ * on every melodic part (bass, chords, lead, pad, texture and sampler roles).
+ * Fades act on the whole song and never carry `parts`.
+ */
+export interface BlockMove {
+  id: Id;
+  kind: BlockMoveKind;
+  parts?: Id[];
+}
+
 /**
  * One section of the song: a scene played `repeats` times.
  *
@@ -278,6 +349,8 @@ export interface ArrangementBlock {
   label?: string;
   /** Per-part changes for this block: trackId → sceneId to play, or null for silent. */
   parts?: Record<Id, Id | null>;
+  /** Song moves over this block (schema v3; at most one per kind). */
+  moves?: BlockMove[];
 }
 
 export interface Arrangement {

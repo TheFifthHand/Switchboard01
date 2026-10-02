@@ -12,6 +12,10 @@
  * merges keep it), so a message about an edit ("Moved clip" [Undo]) can tell
  * whether its edit is still the newest step.
  *
+ * A label names the kind of edit ("track:Mute part"): the edit lock and the
+ * performance take's allow-list match it, so it never carries data. An edit
+ * may give the words Undo and Redo show instead (`display`, "Mute Lead").
+ *
  * The edit lock refuses routing edits (labels starting with "patch:") while a
  * performance take is recording, including undo/redo of such edits and of
  * undoable whole-project swaps (which replace the patch as well). A lock can
@@ -38,6 +42,13 @@ export interface ApplyOptions {
    * steps that edit notes of an array this change adds to or removes from).
    */
   skipHistory?: boolean;
+  /**
+   * What Undo and Redo call this step ("Bass level", "Mute Lead"), when it
+   * says more than the label's own words. The label still names the kind of
+   * edit for the edit lock. Ignored inside an undo group (the group's label
+   * names the step); a gesture keeps the words of its first edit.
+   */
+  display?: string;
 }
 
 export interface ApplyResult {
@@ -67,6 +78,8 @@ export interface HistoryEntry {
   /** Unique for the app's lifetime; kept when later edits merge into this step. */
   id: number;
   label: string;
+  /** Words for Undo/Redo instead of the label's (ApplyOptions.display). */
+  display?: string;
   gesture?: string;
   patches: ImmerPatch[];
   inverse: ImmerPatch[];
@@ -98,6 +111,11 @@ const nextEntryId = (): number => ++lastEntryId;
 export function displayLabel(label: string): string {
   const m = /^[a-z]+:(.*)$/.exec(label);
   return m ? m[1] : label;
+}
+
+/** The words Undo and Redo show for a step. */
+function entryText(entry: HistoryEntry): string {
+  return entry.display ?? displayLabel(entry.label);
 }
 
 function isPatchLabel(label: string): boolean {
@@ -178,8 +196,8 @@ export class ProjectStore implements ReadableStore<Project> {
   private redoStack: HistoryEntry[] = [];
   /** Gesture of the most recent recorded apply; cleared by anything that ends the gesture. */
   private openGesture: string | null = null;
-  /** Open undo group: its label, and its history entry once something was recorded. */
-  private group: { label: string; entry: HistoryEntry | null } | null = null;
+  /** Open undo group: its label, the state it began from, and its history entry once something was recorded. */
+  private group: { label: string; entry: HistoryEntry | null; base: Project } | null = null;
   private lock: string | null = null;
   /** While locked: which edits are still allowed (default: everything except routing edits). */
   private lockAllows: ((label: string) => boolean) | null = null;
@@ -247,6 +265,7 @@ export class ProjectStore implements ReadableStore<Project> {
       } else {
         if (top) delete top.base;
         const entry: HistoryEntry = { id: nextEntryId(), label: this.group?.label ?? label, gesture: opts.gesture, patches, inverse };
+        if (opts.display !== undefined && !this.group) entry.display = opts.display;
         if (opts.gesture !== undefined && !this.group) entry.base = base;
         this.undoStack.push(entry);
         if (this.group) this.group.entry = entry;
@@ -278,17 +297,34 @@ export class ProjectStore implements ReadableStore<Project> {
   /**
    * Open an undo group: until endGroup(), every recorded edit, whatever its
    * gesture, joins one undo step labelled `label` (a Record Notes pass with
-   * any knob moves made during it). An undo inside the group removes what was
-   * recorded so far; later edits start the group's step again.
+   * any knob moves made during it, or a whole sound-browser session). An undo
+   * inside the group removes what was recorded so far; later edits start the
+   * group's step again.
    */
   beginGroup(label: string): void {
-    this.group = { label, entry: null };
+    if (this.group) this.endGroup();
+    this.group = { label, entry: null, base: this.store.getState() };
     this.openGesture = null;
   }
 
-  endGroup(): void {
+  /**
+   * Close the undo group. A group whose edits ended where it began (sounds
+   * tried, then Cancel back to the original) leaves no step, so Undo stays
+   * on the edit before it. Returns whether the group left an undo step.
+   */
+  endGroup(): { step: boolean } {
+    const g = this.group;
     this.group = null;
     this.openGesture = null;
+    if (!g || !g.entry) return { step: false };
+    const top = this.undoStack[this.undoStack.length - 1];
+    if (top !== g.entry) return { step: false };
+    if (netUnchanged(top, g.base, this.store.getState())) {
+      this.undoStack.pop();
+      this.info.setState(this.computeInfo());
+      return { step: false };
+    }
+    return { step: true };
   }
 
   canUndo(): boolean {
@@ -301,15 +337,15 @@ export class ProjectStore implements ReadableStore<Project> {
     return !!top && !(this.lock !== null && this.entryLocked(top));
   }
 
-  /** Display text of the edit Undo would revert ("Connect cable"), or null. */
+  /** Display text of the edit Undo would revert ("Connect cable", "Bass level"), or null. */
   undoLabel(): string | null {
     const top = this.undoStack[this.undoStack.length - 1];
-    return top ? displayLabel(top.label) : null;
+    return top ? entryText(top) : null;
   }
 
   redoLabel(): string | null {
     const top = this.redoStack[this.redoStack.length - 1];
-    return top ? displayLabel(top.label) : null;
+    return top ? entryText(top) : null;
   }
 
   /** Id of the step Undo would revert (the newest edit), or null. */
