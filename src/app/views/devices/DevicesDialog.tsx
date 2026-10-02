@@ -45,7 +45,7 @@ function mappingText(m: MidiMapping): string {
   return `CC ${m.cc} · channel ${m.channel + 1} · ${m.inputName || 'MIDI input'}`;
 }
 
-function MidiSection(props: { headingId: string; headingRef: RefObject<HTMLHeadingElement | null> }) {
+function MidiSection(props: { headingId: string; headingRef: RefObject<HTMLHeadingElement | null>; actionRef: RefObject<HTMLButtonElement | null> }) {
   const st = useMidi((s) => ({ status: s.status, message: s.message, inputs: s.inputs, learning: s.learning, learned: s.learned, settings: s.settings }), shallowEqual);
   const parts = useProject((p) => p.tracks.map((t, i) => ({ id: t.id, name: `${i + 1} · ${t.name}` })), (a, b) => a.length === b.length && a.every((x, i) => x.id === b[i].id && x.name === b[i].name));
   const [targetKey, setTargetKey] = useState('macro:tone');
@@ -78,12 +78,13 @@ function MidiSection(props: { headingId: string; headingRef: RefObject<HTMLHeadi
       </div>
       <div className={styles.row}>
         {connected ? (
-          <Button size="sm" variant="ghost" onClick={() => midi.disconnect()} tip="Stop listening to MIDI devices. Notes held now are let go of, and MIDI does not reconnect by itself next time.">
+          <Button ref={props.actionRef} size="sm" variant="ghost" onClick={() => midi.disconnect()} tip="Stop listening to MIDI devices. Notes held now are let go of, and MIDI does not reconnect by itself next time.">
             Turn MIDI off
           </Button>
         ) : (
           <Button
-            variant="primary"
+            ref={props.actionRef}
+            variant="secondary"
             icon="midi"
             disabled={!!unavailable}
             aria-disabled={st.status === 'requesting' || undefined}
@@ -209,7 +210,7 @@ function LearnBlock(props: {
   );
 }
 
-function AudioSection(props: { headingId: string; headingRef: RefObject<HTMLHeadingElement | null> }) {
+function AudioSection(props: { headingId: string; headingRef: RefObject<HTMLHeadingElement | null>; actionRef: RefObject<HTMLButtonElement | null> }) {
   const st = useAudioInput(
     (s) => ({ status: s.status, message: s.message, devices: s.devices, deviceId: s.deviceId, deviceLabel: s.deviceLabel, channels: s.channels, monitor: s.monitor, offsetMs: s.offsetMs, recording: s.take !== null }),
     shallowEqual,
@@ -235,12 +236,13 @@ function AudioSection(props: { headingId: string; headingRef: RefObject<HTMLHead
       </div>
       <div className={styles.row}>
         {open ? (
-          <Button size="sm" variant="ghost" disabled={st.recording} onClick={() => audioInput.close()} tip="Close the input: the browser stops listening.">
+          <Button ref={st.recording ? undefined : props.actionRef} size="sm" variant="ghost" disabled={st.recording} onClick={() => audioInput.close()} tip="Close the input: the browser stops listening.">
             Turn input off
           </Button>
         ) : (
           <Button
-            variant="primary"
+            ref={props.actionRef}
+            variant="secondary"
             icon="mic"
             disabled={!!unavailable}
             aria-disabled={st.status === 'requesting' || undefined}
@@ -325,6 +327,20 @@ export function DevicesDialog({ open, onClose, focus = 'midi' }: DevicesDialogPr
   const audioId = useId();
   const midiHeading = useRef<HTMLHeadingElement>(null);
   const audioHeading = useRef<HTMLHeadingElement>(null);
+  // Each section's first action (Connect MIDI / Turn MIDI off, Use input / Turn input off): focus starts there.
+  const midiAction = useRef<HTMLButtonElement>(null);
+  const audioAction = useRef<HTMLButtonElement>(null);
+  /** Read when the dialog opens (after its sections mounted): the section's action, or its heading when the action is unavailable. */
+  const initialFocus = useMemo<RefObject<HTMLElement | null>>(
+    () => ({
+      get current() {
+        const action = focus === 'audio' ? audioAction.current : midiAction.current;
+        const heading = focus === 'audio' ? audioHeading.current : midiHeading.current;
+        return action && !action.disabled ? action : heading;
+      },
+    }),
+    [focus],
+  );
   // Opened for the audio input (from the sampler editor): show that section.
   useEffect(() => {
     if (!open || focus !== 'audio') return;
@@ -338,8 +354,9 @@ export function DevicesDialog({ open, onClose, focus = 'midi' }: DevicesDialogPr
       title="MIDI & audio"
       size="lg"
       description="Play from a MIDI keyboard or controller, and record from a microphone or instrument. These settings belong to this browser, not to the project."
-      // Focus starts on the section's heading (read out first; Tab then reaches its controls).
-      initialFocusRef={focus === 'audio' ? audioHeading : midiHeading}
+      // Focus starts on the section's first action (Connect MIDI, or Use input from the sampler editor); a
+      // section whose action is unavailable starts at its heading, which is read out first.
+      initialFocusRef={initialFocus}
       actions={
         <Button variant="primary" onClick={onClose}>
           Done
@@ -347,8 +364,8 @@ export function DevicesDialog({ open, onClose, focus = 'midi' }: DevicesDialogPr
       }
     >
       <div className={styles.body}>
-        <MidiSection headingId={midiId} headingRef={midiHeading} />
-        <AudioSection headingId={audioId} headingRef={audioHeading} />
+        <MidiSection headingId={midiId} headingRef={midiHeading} actionRef={midiAction} />
+        <AudioSection headingId={audioId} headingRef={audioHeading} actionRef={audioAction} />
       </div>
     </Dialog>
   );

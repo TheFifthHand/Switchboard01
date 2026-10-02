@@ -18,6 +18,15 @@ export async function jumpIn(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing), { timeout: 10_000 }).toBe(true);
 }
 
+/**
+ * Coming back (a stored project): the Welcome card's main key is Continue
+ * “<name>”; "Start a new groove" is the Jump In of a returning visit.
+ */
+export async function startNewGroove(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Start a new groove' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing), { timeout: 10_000 }).toBe(true);
+}
+
 /** Highest master peak seen over `ms` of real playback. */
 export async function masterPeakOver(page: Page, ms: number): Promise<{ peak: number; rms: number }> {
   return page.evaluate(async (ms) => {

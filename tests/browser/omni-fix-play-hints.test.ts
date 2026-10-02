@@ -118,6 +118,7 @@ async function openAt(w: number, hh: number, step: HintId | 'finished') {
   await settle();
 }
 
+/** The hints at `step`: the steps before it done; for a step of the basics, the song steps too (Arrange would put them first). */
 function showStep(step: HintId | 'finished') {
   act(() => {
     showHintsAgain();
@@ -125,6 +126,7 @@ function showStep(step: HintId | 'finished') {
       if (s === step) break;
       markHintDone(s);
     }
+    if (step !== 'finished' && !step.startsWith('song-')) for (const s of HINT_IDS) if (s.startsWith('song-')) markHintDone(s);
   });
 }
 
@@ -138,6 +140,9 @@ function coveredKeyText(opts: { headers?: boolean } = {}): string[] {
   const out: string[] = [];
   for (const el of document.querySelectorAll(`h1, h2, h3, h4, h5, h6, [role="heading"], [role="status"], [role="alert"]${opts.headers ? ', main header' : ''}`)) {
     if (chip()!.contains(el) || el.closest('header[aria-label="Transport"]')) continue;
+    // Visually hidden text (the view's h1 for screen readers, status messages) is not on screen.
+    const own = el.getBoundingClientRect();
+    if (own.width <= 2 || own.height <= 2) continue;
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       if (!n.nodeValue?.trim()) continue;
@@ -199,12 +204,15 @@ describe('the chip ignores a click meant for what was there before', () => {
       button('Skip guide')!.click();
     });
     expect(chip()).not.toBeNull();
+    // It finds its spot once the frame after it has painted; until a moment after that, clicks on it are ignored.
     // The second click of a double-click lands on Hide hints, or on Next hint: ignored.
     mouseClick(button('Hide hints', chip()!)!, 2);
     mouseClick(button('Next hint', chip()!)!, 2);
     expect(chip()?.dataset.hint).toBe('pad');
     expect(hintsStore.getState().hidden).toBe(false);
-    // A moment later a click counts.
+    // A moment after it appeared on screen, a click counts.
+    for (let i = 0; i < 50 && !chip()!.hasAttribute('data-ready'); i++) await settle(20);
+    expect(chip()!.hasAttribute('data-ready'), 'the chip is on screen').toBe(true);
     await settle(HINT_CLICK_GUARD_MS + 60);
     mouseClick(button('Next hint', chip()!)!);
     await act(async () => {
@@ -260,7 +268,7 @@ describe('the chip never covers a heading or a status line', () => {
         expect(coveredKeyText(), `${w} ${mode} shape: covers`).toEqual([]);
         expect(coveredControls(), `${w} ${mode} shape: covers`).toEqual([]);
         // Arrange while the pads play: "Playback follows: Live pads" and its longer explanation.
-        for (const step of ['pad', 'record'] as HintId[]) {
+        for (const step of ['pad', 'record', 'song-repeats'] as HintId[]) {
           act(() => {
             patchRuntime({ playing: true, mode: 'live' });
             setView('arrange');
@@ -333,12 +341,12 @@ describe('the closing line says where Export is', () => {
     await act(async () => {
       button(/^More:/)!.click();
     });
-    // Advanced at 1366 px keeps Export in the menu too.
+    // Advanced keeps Export on the strip from 1366 px too (Swing takes the bar.beat readout's room instead).
     await page.viewport(1366, 768);
     act(() => setUiMode('advanced'));
     await settle(900);
-    expect(exportKey()!.getBoundingClientRect().width).toBe(0);
-    expect(chip()!.textContent).toContain('in the ⋯ menu');
+    expect(exportKey()!.getBoundingClientRect().width).toBeGreaterThan(1);
+    expect(chip()!.textContent).toContain('Export, at the top right');
     act(() => setUiMode('simple'));
     await settle(900);
     expect(chip()!.textContent).toContain('Export, at the top right');

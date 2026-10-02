@@ -13,7 +13,7 @@ import { App } from '../../src/app/App';
 import { session } from '../../src/app/instance';
 import { patchRuntime } from '../../src/app/runtime';
 import type { BootInfo } from '../../src/app/session';
-import { HINTS_STORAGE_KEY, INITIAL_HINTS, hintsStore, markHintDone, showHintsAgain, type HintId } from '../../src/app/views/hints/hintsState';
+import { HINTS_STORAGE_KEY, HINT_IDS, INITIAL_HINTS, hintsStore, markHintDone, showHintsAgain, type HintId } from '../../src/app/views/hints/hintsState';
 import { findSpot } from '../../src/app/views/hints/placement';
 import { deleteDb } from '../../src/persistence/db';
 import { selectTrack, setGuideDone, setPadMode, setTipsEnabled, setUiMode, setView, type PadMode, type UiMode, type View } from '../../src/state/uiStore';
@@ -114,17 +114,18 @@ function expectInWindow(label: string) {
   expect(c.bottom, `${label}: bottom edge`).toBeLessThanOrEqual(window.innerHeight);
 }
 
-/** The step each view is mostly about (its text length changes the chip's size). */
-const STEP_FOR: Record<View, HintId> = { play: 'pad', shape: 'tone', mix: 'master', arrange: 'record' };
-const ORDER: HintId[] = ['pad', 'mute', 'drag', 'tone', 'instrument', 'master', 'record'];
+/** The steps each view is mostly about (their text length changes the chip's size). Arrange: the song track, and a basics step. */
+const STEPS_FOR: Record<View, HintId[]> = { play: ['pad', 'mute', 'master'], shape: ['tone'], mix: ['master'], arrange: ['song-play', 'record'] };
 
+/** The hints at `id`: the steps before it done; for a step of the basics, the song steps too (Arrange would put them first). */
 async function showStep(id: HintId) {
   act(() => {
     showHintsAgain();
-    for (const s of ORDER) {
+    for (const s of HINT_IDS) {
       if (s === id) break;
       markHintDone(s);
     }
+    if (!id.startsWith('song-')) for (const s of HINT_IDS) if (s.startsWith('song-')) markHintDone(s);
   });
   await settle();
 }
@@ -152,7 +153,7 @@ describe('where the hint chip sits', () => {
             setView(view);
             setPadMode(pad);
           });
-          for (const id of view === 'play' ? (['pad', 'mute', 'master'] as HintId[]) : [STEP_FOR[view]]) {
+          for (const id of STEPS_FOR[view]) {
             await showStep(id);
             const label = `${w}x${hh} ${mode} ${view}/${pad} "${chip().dataset.hint}"`;
             expect(chip().dataset.hint, label).toBe(id);
