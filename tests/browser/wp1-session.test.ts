@@ -131,6 +131,31 @@ describe('A failed audio start', () => {
   });
 });
 
+describe('A busy moment in a visible tab (perf-01)', () => {
+  it('playback skips the missed stretch and plays on; a performance take keeps recording through it and ends only on Stop', async () => {
+    const s = session();
+    await s.play();
+    await s.togglePerformance();
+    expect(rt().recording).toBe('performance');
+    await sleep(400);
+    const before = s.transport!.getStats().skips;
+    // The main thread busy for well over the scheduling margin, in a visible tab with audio running.
+    s.transport!.simulateStall(1400, { hidden: false });
+    await sleep(1700);
+    expect(s.transport!.getStats().skips).toBeGreaterThan(before);
+    expect(rt()).toMatchObject({ playing: true, stalled: null, recording: 'performance' });
+    // At most one quiet notice, and never the stop banner.
+    expect(rt().notice?.text ?? '').not.toMatch(/stopped/i);
+    await sleep(300);
+    s.stop();
+    const perf = s.store.getState().performances.at(-1)!;
+    expect(perf).toBeTruthy();
+    // The take covers the whole time it ran (2.4 s at the starter's tempo), skip included.
+    const seconds = ((perf.endTick - perf.startTick) / 96) * (60 / s.store.getState().bpm);
+    expect(seconds).toBeGreaterThan(2);
+  });
+});
+
 describe('Resume after a stall', () => {
   it('resumes the song from the block that was playing', async () => {
     const s = session();

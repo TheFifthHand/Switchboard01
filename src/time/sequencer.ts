@@ -33,17 +33,20 @@ import {
   TICKS_PER_BEAT,
   TICKS_PER_STEP,
   type Clip,
+  type ClipSample,
   type Id,
   type LauncherSnapshotEntry,
+  type MacroId,
   type Performance,
   type PerformanceEvent,
   type Project,
   type Track,
 } from '../project/types';
 import { blockBars, blockRowOverrides, clampRepeats } from '../project/arrangement';
-import type { LaunchResult, PlayMode, SeqEvent, SongLoop, StartOptions, TrackLaunchState } from './contracts';
+import type { ClipPhase, LaunchResult, PlayMode, SeqEvent, SongLoop, StartOptions, TrackLaunchState } from './contracts';
 import { MAX_SWING_TICKS, TempoMap, clampBpm, clampSwing, swingWarp } from './clock';
 import { EMPTY_LATCH, arpDivisionTicks, arpGateTicks, arpGridAtOrAfter, arpInput, arpNoteAt, updateLatch, type LatchState } from './arp';
+import { GAIN_KEY, hasMoves, restValue, segmentAt, timelineSegments, valueIn, type MoveSegment } from './moves';
 import { projectFromSnapshot } from './snapshot';
 import { sameSongLoop, songLoopRange } from './songLoop';
 
@@ -300,8 +303,10 @@ const KIND_ORDER: Record<SeqEvent['kind'], number> = {
   mute: 6,
   param: 7,
   macro: 8,
-  beat: 9,
-  note: 10,
+  songGain: 9,
+  macroRamp: 10,
+  beat: 11,
+  note: 12,
 };
 
 function compareEvents(a: SeqEvent, b: SeqEvent): number {
@@ -520,6 +525,8 @@ interface Candidate {
   velocity: number;
   source: NoteEvent['source'];
   clipId?: Id;
+  /** Sampler parts: the clip's own recording. */
+  sample?: ClipSample;
   swung: boolean;
   mono: boolean;
 }
@@ -655,6 +662,15 @@ export class Sequencer {
   /** A resumed replay's control values in effect at the pause point, sent again at the resume time. */
   private resumeEvents: SeqEvent[] = [];
   private resumeSent = true;
+  /**
+   * Song moves: where their state is sent again (the value every move has
+   * reached, the rest value of a target no move holds), because the engine's
+   * ramps were cut or reset there: the start or resume time, an
+   * invalidation, a skip. Null: nothing to send again.
+   */
+  private moveSync: number | null = null;
+  /** Move targets sent away from their rest value (see moves.ts) since playback started or resumed. */
+  private readonly moved = new Set<string>();
 
   // Free-running arpeggiator clock while the transport is stopped.
   private freeClock: TempoMap | null = null;
@@ -734,7 +750,12 @@ export class Sequencer {
    * time comes. Paused: where it paused. Stopped: the start (bar 1).
    */
   getPosition(time: number): SeqPosition {
-    return positionOf(this._playing ? Math.max(this.playheadFloor, this.clock.tickAt(time)) : this.stoppedTick);
+    return positionOf(this.playheadTick(time));
+  }
+
+  /** The tick of getPosition(time), without allocating. */
+  playheadTick(time: number): number {
+    return this._playing ? Math.max(this.playheadFloor, this.clock.tickAt(time)) : this.stoppedTick;
   }
 
   private rt(trackId: Id): TrackRt {
@@ -891,6 +912,8 @@ export class Sequencer {
     this.resumeFloor = -Infinity;
     this.resumeEvents = [];
     this.resumeSent = true;
+    this.moveSync = t0;
+    this.moved.clear();
 
     for (const id of [...this.tracks.keys()]) {
       if (!project.tracks.some((t) => t.id === id)) this.tracks.delete(id);
@@ -1047,6 +1070,9 @@ export class Sequencer {
     }
     this.resumeSent = this.resumeEvents.length === 0;
     this.resumeFloor = t0;
+    // The engine's song gain and automation were reset by the pause: song moves continue from here.
+    this.moveSync = t0;
+    this.moved.clear();
     this.playheadFloor = ps.tick;
     this.cursor = ps.cursor;
     this.clauses = [];
@@ -2154,6 +2180,9 @@ export class Sequencer {
       });
     }
 
+    if (this.song) this.moveEvents(a, b, project, out);
+    else this.moveSync = null;
+
     const cands: Candidate[] = [];
     const limit = this.endTick ?? Infinity;
     project.tracks.forEach((track, order) => {
@@ -2172,6 +2201,67 @@ export class Sequencer {
     for (const c of cands) this.emitNote(c, domain, out);
   }
 
+  /**
+   * Song moves for the window [a, b) (see moves.ts): each move segment of
+   * the plan's blocks that starts in it, the rest value of targets a move had
+   * moved where a block starts without one, and, once after a start, resume,
+   * invalidation or skip (`moveSync`), the state there: a move under way
+   * goes on from the value it has reached, a target no move holds rests.
+   */
+  private moveEvents(a: number, b: number, project: Project, out: SeqEvent[]): void {
+    const song = this.song!;
+    const sync = this.moveSync;
+    if (!this.moved.size && !hasMoves(project)) {
+      if (sync !== null && this.clock.timeAt(b) > sync) this.moveSync = null;
+      return;
+    }
+    // Blocks whose moves can act in the window: an echo throw returns a bar after its block; a block
+    // starting within a bar after the window may take a target over.
+    const near: SongEntry[] = [];
+    for (const e of song.blocks) if (e.startTick < b + TICKS_PER_BAR && e.endTick + TICKS_PER_BAR > a) near.push(e);
+    const segs = timelineSegments(project, near);
+    let from = a;
+    if (sync !== null) {
+      const at = Math.max(a, this.clock.tickAt(sync));
+      if (at < b) {
+        const time = Math.max(sync, this.clock.timeAt(at));
+        const keys = new Set(this.moved);
+        for (const s of segs) if (s.tick0 < at && at < s.tick1) keys.add(s.key);
+        for (const key of keys) {
+          const s = segmentAt(segs, key, at);
+          if (s && s.tick0 < at) this.pushMove(out, s, at, time, valueIn(s, at));
+          else if (!s) this.pushRest(out, project, key, at, time);
+        }
+        this.moveSync = null;
+        from = at;
+      }
+    }
+    for (const s of segs) if (s.tick0 >= from && s.tick0 < b) this.pushMove(out, s, s.tick0, this.clock.timeAt(s.tick0), s.v0);
+    if (!this.moved.size) return;
+    for (const e of near) {
+      if (e.startTick < from || e.startTick >= b) continue;
+      for (const key of [...this.moved]) if (!segmentAt(segs, key, e.startTick)) this.pushRest(out, project, key, e.startTick, this.clock.timeAt(e.startTick));
+    }
+  }
+
+  private pushMove(out: SeqEvent[], s: MoveSegment, tick: number, time: number, from: number): void {
+    const endTime = Math.max(time, this.clock.timeAt(s.tick1));
+    if (s.key === GAIN_KEY) this.push(out, { kind: 'songGain', tick, time, from, value: s.v1, endTick: s.tick1, endTime });
+    else this.push(out, { kind: 'macroRamp', tick, time, trackId: s.trackId!, macro: s.macro!, from, value: s.v1, endTick: s.tick1, endTime });
+    this.moved.add(s.key);
+  }
+
+  /** A target back at its rest value (song gain 1, a big knob at the part's own value) from `tick`. */
+  private pushRest(out: SeqEvent[], project: Project, key: string, tick: number, time: number): void {
+    const v = restValue(project, key);
+    if (key === GAIN_KEY) this.push(out, { kind: 'songGain', tick, time, from: v, value: v, endTick: tick, endTime: time });
+    else {
+      const sep = key.indexOf('\u0000');
+      this.push(out, { kind: 'macroRamp', tick, time, trackId: key.slice(0, sep), macro: key.slice(sep + 1) as MacroId, from: v, value: v, endTick: tick, endTime: time });
+    }
+    this.moved.delete(key);
+  }
+
   private clipCandidates(track: Track, order: number, p: Playing, a: number, b: number, switchTick: number, mono: boolean, cands: Candidate[]): void {
     const clip = track.clips[p.slot];
     if (!clip) return;
@@ -2179,6 +2269,8 @@ export class Sequencer {
     const prep = prepareClip(clip, mono);
     if (!prep.notes.length) return;
     const len = prep.length;
+    // A sampler clip with its own recording plays that one (other kinds keep the field but ignore it).
+    const sample = track.instrument.kind === 'sampler' ? clip.sample : undefined;
     const lo = Math.max(a, p.startTick, this.musicStartTick);
     if (lo >= b) return;
     for (let k = Math.max(0, Math.floor((lo - p.startTick) / len)); ; k++) {
@@ -2202,6 +2294,7 @@ export class Sequencer {
           velocity: n.velocity,
           source: 'clip',
           clipId: clip.id,
+          sample,
           swung: true,
           mono,
         });
@@ -2299,6 +2392,7 @@ export class Sequencer {
       source: c.source,
     };
     if (c.clipId !== undefined) event.clipId = c.clipId;
+    if (c.sample) event.sample = c.sample;
     out.push(event);
     rt.recent.push({
       event,
@@ -2399,6 +2493,108 @@ export class Sequencer {
     return false;
   }
 
+  /**
+   * Playing, the driver fell behind (the main thread was busy): move
+   * generation on to `time` without handing out what should already have
+   * sounded. The notes and beats of the missed stretch are dropped (never
+   * played late); every state change on the way applies in order as if it
+   * had played (clip launches, song blocks, a replayed take's controls, the
+   * end), so the launcher, the song position and each clip's loop phase stay
+   * where the audio clock is. Returns those changes (launch, block, end,
+   * control values) for the driver to pass on, in order. Song moves are sent
+   * again from `time` with the value they have reached (see moveEvents).
+   * Notes already handed out that the stretch would have ended are cut as
+   * usual (takeCuts). Like `skipIdleTo` for the idle arpeggiator.
+   */
+  skipTo(time: number): SeqEvent[] {
+    if (!this._playing || !Number.isFinite(time)) return [];
+    if (this.cursor >= this.clock.tickAt(time)) return [];
+    const project = this.activeProject();
+    let scratch: SeqEvent[] = [];
+    this.batch++;
+    this.inProcess = true;
+    this.dropped.clear();
+    try {
+      if (!this.resumeSent) {
+        this.resumeSent = true;
+        scratch.push(...this.resumeEvents);
+      }
+      this.runTransport(time, project, scratch);
+    } finally {
+      this.inProcess = false;
+    }
+    this.dropped.clear();
+    // The stretch's notes never sound: they end nothing later and no mono note glides from them.
+    for (const rt of this.tracks.values()) for (const e of rt.recent) if (e.batch === this.batch) e.dropped = true;
+    scratch = scratch.filter((e) => e.kind !== 'note' && e.kind !== 'beat' && e.kind !== 'songGain' && e.kind !== 'macroRamp');
+    scratch.sort(compareEvents);
+    this.moveSync = time;
+    this.prune();
+    return scratch;
+  }
+
+  /**
+   * The clip part `trackId` sounds at transport tick `tick` (looking back
+   * through the applied changes still in the history, HISTORY_TICKS), with
+   * its loop start and length, written into `out`; null when the part is
+   * silent there (stopped, or before the clip's first downbeat). While
+   * paused, the clip holding at the pause. Allocation-free.
+   */
+  clipPhaseAt(trackId: Id, tick: number, out: ClipPhase): ClipPhase | null {
+    const rt = this.tracks.get(trackId);
+    if (!rt || !Number.isFinite(tick)) return null;
+    let p = rt.playing;
+    for (let i = rt.history.length - 1; i >= 0 && rt.history[i].appliedTick > tick; i--) p = rt.history[i].prev;
+    if (!p || tick < p.startTick) return null;
+    const project = this.activeProject();
+    let clip: Clip | null = null;
+    for (const t of project.tracks) {
+      if (t.id !== trackId) continue;
+      clip = t.clips[p.slot] ?? null;
+      break;
+    }
+    if (!clip) return null;
+    out.slot = p.slot;
+    out.startTick = p.startTick;
+    out.lengthTicks = clipLength(clip);
+    return out;
+  }
+
+  /**
+   * The tick at which part `trackId`'s next change of clip lands, as heard
+   * at transport tick `tick`: a switch already generated ahead of it (in the
+   * history, not heard yet) or the first queued one (a pad launch, a stop,
+   * or the next song block switching the part to another clip or to
+   * silence). Song blocks that keep the part on the same clip do not count.
+   * Null when nothing is queued. Allocation-free.
+   */
+  queuedAtTick(trackId: Id, tick: number): number | null {
+    const rt = this.tracks.get(trackId);
+    if (!rt) return null;
+    const h = rt.history;
+    for (let i = 0; i < h.length; i++) {
+      if (h[i].appliedTick <= tick) continue;
+      const next = i + 1 < h.length ? h[i + 1].prev : rt.playing;
+      if ((h[i].prev?.slot ?? null) !== (next?.slot ?? null)) return h[i].appliedTick;
+    }
+    if (!rt.pending.length) return null;
+    let track: Track | null = null;
+    for (const t of this.activeProject().tracks) {
+      if (t.id !== trackId) continue;
+      track = t;
+      break;
+    }
+    let cur = rt.playing?.slot ?? null;
+    for (const tr of rt.pending) {
+      // Song changes become visible a bar ahead (see insertSongPhase), as in getTrackState.
+      if (tr.source !== 'live' && tr.requestTick > this.cursor) continue;
+      const slot = track ? this.slotFor(track, tr) : tr.slot;
+      if (slot !== cur) return tr.atTick;
+      cur = slot;
+    }
+    return null;
+  }
+
   /** Transport stopped and the idle arp clock fell behind (throttled tab): skip ahead without a backlog. */
   skipIdleTo(time: number): void {
     if (this._playing || !this.freeClock || !Number.isFinite(time)) return;
@@ -2420,6 +2616,8 @@ export class Sequencer {
     // Cuts on cancelled notes are void, and cancelled notes no longer sound.
     this.cuts = this.cuts.filter((c) => c.note.time < fromTime);
     for (const rt of this.tracks.values()) rt.recent = rt.recent.filter((e) => e.event.time < fromTime);
+    // The driver cancelled the engine's automation from `fromTime` (a move under way holds there): send the moves' state again.
+    if (this._playing) this.moveSync = this.moveSync === null ? fromTime : Math.min(this.moveSync, fromTime);
     if (this._playing) this.rewindTransport(fromTime);
     else if (this.freeClock) this.rewindFree(fromTime);
   }

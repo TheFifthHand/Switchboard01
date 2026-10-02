@@ -14,7 +14,6 @@
  */
 import type { AudioEngineApi, MeterFrame } from '../audio/contracts';
 import { AudioEngine } from '../audio/engine';
-import { engineLatencyFrames } from '../audio/worklets/limiter';
 import { SampleBank } from '../audio/instruments/sampleBank';
 import { BLANK_STARTER, JUMP_IN_SCENE_ROW, JUMP_IN_STARTER_ID, STARTERS, getStarter } from '../content/starters';
 import { snapToScale } from '../music/scales';
@@ -24,7 +23,7 @@ import { specsForModule } from '../project/resolve';
 import {
   MACRO_IDS,
   TICKS_PER_BAR,
-  TICKS_PER_STEP,
+  sceneCount,
   type ClipBars,
   type Id,
   type MacroId,
@@ -35,29 +34,34 @@ import {
   type SampleMeta,
   type Track,
 } from '../project/types';
-import { computeRenderPlan, renderOffline, type RenderSource } from '../render/offline';
+import { computeRenderPlan, measureExport, renderOffline, type ExportReport, type RenderSource } from '../render/offline';
 import { encodeWav } from '../render/wav';
 import * as cmd from '../state/commands';
 import { ProjectStore, type ApplyResult } from '../state/projectStore';
-import { selectSlot, selectTrack, setPadMode, setView, slotFor, uiStore } from '../state/uiStore';
+import { selectSlot, selectTrack, setPadMode, setView, slotFor, uiStore, type UiState } from '../state/uiStore';
 import { createAutosaver, type Autosaver } from '../persistence/autosave';
 import { decodeAudioFile, checkAudioFile } from '../persistence/audioImport';
 import { exportBundle, importBundle, bundleFileName } from '../persistence/bundle';
 import * as db from '../persistence/db';
 import * as library from '../persistence/library';
 import type { LaunchResult, SongLoop } from '../time/contracts';
+import { recordedNoteAt } from '../time/recordWindow';
 import { makeSnapshot, projectFromSnapshot } from '../time/snapshot';
 import { Sequencer, songBlocks, songSignature, type NoteEvent } from '../time/sequencer';
 import { SongLoopHistory, sameSongLoop, songLoopRange } from '../time/songLoop';
-import { RealtimeTransport } from '../time/transport';
+import { BRACE_AHEAD, BRACE_MS, RealtimeTransport, outputDelaySeconds } from '../time/transport';
+import { meterWake } from '../ui/components/meterScheduler';
 import { notify, patchRuntime, runtimeStore, setTrackRuntime, type PlayMode } from './runtime';
 
 /**
  * Where a live note comes from. 'preview' is an editor/browser audition: it
  * plays exactly the pitch given (no Musical Assist, no arpeggiator) and is
- * never recorded into clips or performance takes.
+ * never recorded into clips or performance takes. 'chord' is a chord pad:
+ * its notes are already the chord in the key (chordAt), so Musical Assist
+ * leaves them as they are (a pentatonic or blues key can hold a chord note
+ * outside its five notes), but they are recorded and arpeggiated like keys.
  */
-export type NoteSource = 'keyboard' | 'computer' | 'pad' | 'midi' | 'preview';
+export type NoteSource = 'keyboard' | 'computer' | 'pad' | 'midi' | 'preview' | 'chord';
 
 export interface BootInfo {
   /** The project that was reopened from storage, if any. */
@@ -82,6 +86,8 @@ export interface ExportOptions {
   sampleRate: 44100 | 48000;
   bitDepth: 16 | 24;
   tailSeconds: number;
+  /** False: render with the project's mastering off (the output limiter and its −1 dBFS ceiling stay). Default true. */
+  mastering?: boolean;
   signal?: AbortSignal;
   onProgress?: (fraction: number) => void;
 }
@@ -149,6 +155,15 @@ interface NoteRecording {
   /** Arpeggiator notes played and not written into the clip yet (ticks from the clip's loop start). */
   arpNotes: { tick: number; pitch: number; velocity: number; duration: number }[];
   arpFlush: ReturnType<typeof setTimeout> | null;
+  /**
+   * The target clip's latest loop start heard: in song playback a block that
+   * does not play it still records into it, counted from there.
+   */
+  lastLoopStart: number | null;
+  /** The "this block does not play it" notice was shown for this pass. */
+  inaudibleTold: boolean;
+  /** The tick recording started at when it had to wait for it (a launch at the next bar, a count-in), else null. */
+  startsAt: number | null;
 }
 
 /** Arpeggiator notes are written into the clip in batches (their ticks come from the audio clock). */
@@ -161,8 +176,23 @@ const ARP_RECORD_BATCH_MS = 200;
  * through it.
  */
 const EXPORT_LOOKAHEAD_S = 2;
-/** Shown when playback stopped because an export kept the computer too busy (never blame the browser for it). */
-export const EXPORT_STALL_MESSAGE = 'Playback stopped: the export kept this computer too busy to play on in time. Resume to continue.';
+/**
+ * Shown when playback stopped by itself: only a background (throttled) tab
+ * or a paused audio device stops it. In a visible tab a busy moment never
+ * stops playback (it skips ahead in time, see SKIP_NOTICE).
+ */
+export const STALL_MESSAGE = 'Playback stopped because the tab was in the background or the audio device paused. Press Play to continue.';
+/** A quiet notice, at most once a minute, when a busy moment made playback skip ahead to stay in time (no banner). */
+export const SKIP_NOTICE = 'Omni Song was busy for a moment, so a few notes were skipped to stay in time.';
+const SKIP_NOTICE_EVERY_MS = 60_000;
+/**
+ * Edits that change a lot at once: a version of the project is kept just
+ * before them (autosaver.snapshotBefore, at most once per kind of edit every
+ * SNAPSHOT_BEFORE_EVERY_MS here; persistence thins further). Matched on the
+ * undo step's words.
+ */
+const BULK_EDIT = /^(Variation|Subtle variation|Bold variation|Clear|Delete clip|Delete scene|Replace|Build up|Strip down|Breakdown|Make song blocks|Make a scene from a block|Change kit|Change sound|Change recording|Import|Move the song)/;
+const SNAPSHOT_BEFORE_EVERY_MS = 2 * 60 * 1000;
 
 export class Session {
   readonly store: ProjectStore;
@@ -201,10 +231,37 @@ export class Session {
   private readonly loopHistory = new SongLoopHistory();
   /** Exports preparing or rendering (live playback is scheduled further ahead meanwhile). */
   private exportsRunning = 0;
+  /** When the last "skipped ahead" notice was shown (performance.now). */
+  private lastSkipNotice = -Infinity;
+  /** readMetersShared: one engine read per animation frame. */
+  private readonly sharedFrame: MeterFrame = { masterPeakL: 0, masterPeakR: 0, masterRms: 0, limiterReductionDb: 0, tracks: [] };
+  private sharedFrameAt = -Infinity;
+  private sharedFrameKey: number | null = null;
+  private sharedFrameLive = false;
+  /** Clip recordings (Clip.sample ids) already handed to the engine to load ahead. */
+  private preloaded = new Set<Id>();
+  /** capability-06: when a version was last kept before each kind of bulk edit, and the step it was for. */
+  private readonly snapshotAt = new Map<string, number>();
+  private snapshotEntry: number | null = null;
+  private readonly uiUnsub: () => void;
 
   constructor(initial: Project) {
     this.store = new ProjectStore(initial);
     this.store.subscribe((p, prev) => this.onProjectChange(p, prev));
+    // Switching views and modes is the app's heaviest main-thread work: schedule further ahead first.
+    this.uiUnsub = uiStore.subscribe((s: UiState, prev: UiState) => {
+      if (s.view !== prev.view || s.padMode !== prev.padMode || s.uiMode !== prev.uiMode || s.cablesOpen !== prev.cablesOpen) this.brace();
+    });
+  }
+
+  /**
+   * Heavy main-thread work is about to happen (a view or mode switch, a
+   * dialog, opening a project): live playback is scheduled `seconds` ahead
+   * (default 1 s) for the next few seconds, so it plays on through it. Edits,
+   * launches, Pause and Stop still act at once. No-op before audio starts.
+   */
+  brace(seconds: number = BRACE_AHEAD): void {
+    this.transport?.brace(seconds, BRACE_MS);
   }
 
   /* ------------------------------------------------------------------ */
@@ -215,17 +272,19 @@ export class Session {
   async boot(): Promise<BootInfo> {
     const info: BootInfo = { lastProject: null, warnings: [], storageError: null };
     this.unstored = false;
+    /** A rescue copy that could not be stored yet: it opens as unsaved (autosave keeps trying). */
+    let unsaved: Project | null = null;
     try {
       const opened = await library.openLast();
       if (opened) {
-        this.store.replace(opened.project);
+        if (opened.unsaved) unsaved = opened.project;
+        else this.store.replace(opened.project);
         info.lastProject = { id: opened.project.id, name: opened.project.name };
         info.warnings = opened.warnings;
         this.setPreview(false);
       } else {
         this.loadPreview();
       }
-      void db.garbageCollectSamples({ keep: db.sampleIdsOf(this.store.getState()) }).catch(() => undefined);
     } catch (e) {
       // Stored projects that cannot be read are a problem with those projects, not with saving.
       if (library.isUnreadableLibrary(e)) info.warnings = [e.message];
@@ -233,6 +292,12 @@ export class Session {
       this.loadPreview();
     }
     this.startAutosave();
+    if (unsaved) {
+      // After the autosaver: it sees the project as an edit not stored yet, and adds it to the library once it can.
+      this.unstored = true;
+      this.store.replace(unsaved);
+    }
+    if (!info.storageError) void db.garbageCollectSamples({ keep: db.sampleIdsOf(this.store.getState()) }).catch(() => undefined);
     return info;
   }
 
@@ -284,11 +349,15 @@ export class Session {
     await this.autosaver?.flush();
     this.setPreview(false);
     this.unstored = !!opts.unsaved;
+    // The new project's graph is built right below (whatever plays meanwhile keeps playing in time).
+    this.brace();
     this.store.replace(project);
     if (!opts.unsaved) this.autosaver?.markSaved(project);
     this.resetRuntimeTracks();
     await this.loadProjectSamples(project);
-    this.engine?.prepareInstruments();
+    // Instruments warm up in idle slices (what the clips play first), never in one long task.
+    void this.engine?.prepareInstruments({ incremental: true });
+    this.preloadClipSamples(this.store.getState());
   }
 
   /**
@@ -315,7 +384,11 @@ export class Session {
     await this.play();
   }
 
-  /** Start a new project from a starter (current project is saved first; see StarterOptions). */
+  /**
+   * Start a new project from a starter (current project is saved first; see
+   * StarterOptions). The project it replaced on screen (it stays in the
+   * library) is in runtime `starterReplaced`.
+   */
   async newFromStarter(starterId: string, opts: StarterOptions = {}): Promise<void> {
     const def = starterId === 'blank' ? BLANK_STARTER : getStarter(starterId);
     if (!def) return;
@@ -341,13 +414,17 @@ export class Session {
     const current = this.previewOnly ? null : this.store.getState();
     let project = starter;
     let stored = true;
+    let replaced: { id: Id; name: string } | null = null;
     try {
-      ({ project } = await library.createFromStarter(starter, current));
+      ({ project, replaced } = await library.createFromStarter(starter, current));
     } catch (e) {
       stored = false;
+      replaced = current ? { id: current.id, name: current.name } : null;
       notify(`Could not save to browser storage: ${e instanceof Error ? e.message : String(e)}. You can keep playing; export the project file to keep a copy.`, 'warn');
     }
     await this.loadProject(project, { unsaved: !stored });
+    // The shell says which project the starter took the place of (it is still in My projects).
+    patchRuntime({ starterReplaced: replaced });
   }
 
   /** Continue the reopened project (audio starts from this gesture; nothing auto-plays). */
@@ -356,9 +433,11 @@ export class Session {
   }
 
   async openProject(id: Id): Promise<void> {
+    this.brace();
     await this.autosaver?.flush();
     const opened = await library.openProject(id);
-    await this.loadProject(opened.project);
+    // A rescue copy that could not be stored opens as unsaved: autosave keeps trying to store it.
+    await this.loadProject(opened.project, { unsaved: !!opened.unsaved });
     for (const w of opened.warnings) notify(w, 'warn');
   }
 
@@ -425,6 +504,8 @@ export class Session {
     patchRuntime({ audio: 'starting', audioMessage: null });
     this.audioPromise = (async () => {
       await resumed;
+      // The view change this click made (Welcome to Play) paints before the engine is built.
+      await nextFrame();
       const project = this.store.getState();
       this.bank = new SampleBank(ctx.sampleRate);
       await this.loadProjectSamples(project);
@@ -432,10 +513,13 @@ export class Session {
       this.engine = engine;
       engine.setMasterVolume(project.masterVolumeDb);
       engine.setProject(project);
-      engine.prepareInstruments();
       // Mute All pressed before audio started still holds; so does an A/B comparison.
       if (runtimeStore.getState().muteAll) engine.setMuteAll(true);
       if (this.masteringBypass) engine.setMasteringBypass(true);
+      // Warm up what the clips play first, in idle slices (the page keeps painting); the rest follows.
+      await engine.prepareInstruments({ incremental: true, scope: 'used' });
+      void engine.prepareInstruments({ incremental: true });
+      this.preloadClipSamples(this.store.getState());
       const sequencer = new Sequencer({ getProject: () => this.store.getState() });
       // A song loop set before audio started applies to the first song start.
       sequencer.setSongLoop(runtimeStore.getState().songLoop, 0);
@@ -443,6 +527,8 @@ export class Session {
       this.sequencer = sequencer;
       this.transport = transport;
       if (this.exportsRunning) transport.holdAhead(EXPORT_LOOKAHEAD_S);
+      // The first seconds after audio starts are busy (the rest of the warm-up, the first renders).
+      transport.brace();
       this.wireTransport(transport);
       ctx.onstatechange = () => this.updateAudioState();
       this.updateAudioState();
@@ -476,6 +562,7 @@ export class Session {
     this.ctx = null;
     this.loadedSampleIds.clear();
     this.sampleLoads.clear();
+    this.preloaded.clear();
   }
 
   /** "Resume audio" button: resume a suspended or interrupted context. */
@@ -507,7 +594,17 @@ export class Session {
         const cur = runtimeStore.getState().tracks[ev.trackId];
         const queued = cur?.queued && cur.queued.atTick > ev.tick ? cur.queued : null;
         setTrackRuntime(ev.trackId, { playingSlot: ev.slot, queued });
-        if (this.noteRec && ev.trackId === this.noteRec.trackId && ev.slot !== this.noteRec.slot) this.stopRecordNotes();
+        const rec = this.noteRec;
+        if (rec && ev.trackId === rec.trackId) {
+          if (ev.slot === rec.slot) {
+            // The clip being recorded into sounds (again): recording counts from its loop start.
+            rec.lastLoopStart = this.sequencer?.playingAt(ev.trackId, ev.tick)?.startTick ?? ev.tick;
+            rec.inaudibleTold = false;
+            patchRuntime({ recordStartsAtTick: null, recordTargetAudible: true });
+          } else if (runtimeStore.getState().mode === 'song') this.recordTargetSilent(rec);
+          // On the live pads another clip on the part ends the pass.
+          else this.stopRecordNotes();
+        }
       }),
       // Found by id: the block may have moved since its event was scheduled. One deleted meanwhile is
       // never named: the plan has the block taking over from it.
@@ -519,11 +616,14 @@ export class Session {
         this.syncSongLooping();
       }),
       t.on('beat', (ev) => {
-        const counting = runtimeStore.getState().countingIn;
-        if (counting !== ev.countIn) patchRuntime({ countingIn: ev.countIn });
+        const rt = runtimeStore.getState();
+        if (rt.countingIn !== ev.countIn) patchRuntime({ countingIn: ev.countIn });
+        // Record Notes waited for this downbeat (a count-in, or its clip at the next bar): it records now.
+        if (rt.recordStartsAtTick != null && ev.tick >= rt.recordStartsAtTick) patchRuntime({ recordStartsAtTick: null });
       }),
       t.on('end', () => this.stop()),
       t.on('arpNote', (ev) => this.recordArpNote(ev)),
+      // Only a background tab or a paused audio device stops playback by itself (see RealtimeTransport).
       t.on('stalled', (s) => {
         const rt = runtimeStore.getState();
         // The transport found the song block where the music stopped before the stop cleared the song.
@@ -540,14 +640,16 @@ export class Session {
           mode: 'live',
           songBlock: null, songBlockId: null, songLooping: false,
           countingIn: false,
-          stalled:
-            s.reason === 'suspended'
-              ? 'Playback stopped because the audio device paused.'
-              : this.exportsRunning
-                ? EXPORT_STALL_MESSAGE
-                : 'Playback paused because the browser slowed this tab down (it was in the background or busy).',
+          stalled: STALL_MESSAGE,
         });
         this.refreshLauncherRuntime();
+      }),
+      // A busy moment in a visible tab: playback skipped ahead in time and plays on (a take keeps recording).
+      t.on('skipped', () => {
+        const now = performance.now();
+        if (now - this.lastSkipNotice < SKIP_NOTICE_EVERY_MS) return;
+        this.lastSkipNotice = now;
+        notify(SKIP_NOTICE, 'info');
       }),
       t.on('state', () => this.updateAudioState()),
     );
@@ -558,9 +660,15 @@ export class Session {
   /* ------------------------------------------------------------------ */
 
   private onProjectChange(p: Project, prev: Project): void {
+    // A bulk edit (Variation, Clear, Delete scene …): keep a version of the state before it (capability-06).
+    this.keepVersionBefore(prev);
     // First the launcher follows clips that moved, so the regeneration below already plays them from their new pads.
     if (p.tracks !== prev.tracks) this.followMovedClips(p, prev);
+    // The edit and selected clips follow scene rows inserted, copied, deleted or moved (undo and redo too).
+    if (p.scenes !== prev.scenes || p.id !== prev.id) this.followScenes(p, prev);
     if (this.engine && !this.replayingId) {
+      // A new instrument builds nodes and warms up voices: schedule further ahead first.
+      if (this.transport && instrumentsChanged(p, prev)) this.brace();
       this.engine.setProject(p);
       if (p.masterVolumeDb !== prev.masterVolumeDb) this.engine.setMasterVolume(p.masterVolumeDb);
     }
@@ -583,13 +691,99 @@ export class Session {
       // task, so nothing ever reads a plan the edit made stale (measured: under a millisecond on a fast
       // computer, a few at 4x CPU slowdown; see docs/ARCHITECTURE.md). The replan also regenerates.
       const replanned = this.followSongEdits(p, prev, loop);
-      if (!replanned && musicChanged(p, prev)) this.transport.invalidate();
+      // Song moves (fades, filter rise, echo throw) edited while the song plays: re-sent from now, in phase.
+      if (!replanned && (musicChanged(p, prev) || movesChanged(p, prev))) this.transport.invalidate();
     }
     // Not replanned (stopped, live pads, a replay): the sequencer keeps the loop for the next song start.
     if (this.transport && this.sequencer && !sameSongLoop(this.sequencer.songLoop, loop)) this.transport.replanSong(loop);
     if (loop !== loopWas) patchRuntime({ songLoop: loop });
-    if (p.samples !== prev.samples) void this.loadProjectSamples(p);
+    if (p.samples !== prev.samples) void this.loadProjectSamples(p).then(() => this.preloadClipSamples(this.store.getState()));
+    else if (p.tracks !== prev.tracks) this.preloadClipSamples(p);
     if (p.tracks !== prev.tracks) this.stopPartsWithoutClip(p);
+  }
+
+  /**
+   * capability-06: just before a bulk edit (one that changes a lot at once,
+   * BULK_EDIT), keep a version of the project as it was, at most once per
+   * kind of edit every two minutes (persistence thins further). Undo and redo
+   * keep none, nor does a gesture going on (one step).
+   */
+  private keepVersionBefore(prev: Project): void {
+    const change = this.store.lastChange();
+    if (change.kind !== 'edit' || change.entryId === null || change.entryId === this.snapshotEntry) return;
+    this.snapshotEntry = change.entryId;
+    if (!this.autosaver || this.previewOnly || prev.id !== this.store.getState().id) return;
+    const label = this.store.undoLabel();
+    if (!label || !BULK_EDIT.test(label)) return;
+    const now = Date.now();
+    const last = this.snapshotAt.get(label);
+    if (last !== undefined && now - last < SNAPSHOT_BEFORE_EVERY_MS && now >= last) return;
+    this.snapshotAt.set(label, now);
+    void this.autosaver.snapshotBefore(prev, label);
+  }
+
+  /**
+   * Scene rows were inserted, copied, deleted or moved (or such a step undone
+   * or redone): each part's selected clip stays the same clip (an empty
+   * selected pad stays on its scene; one whose scene went goes to the row
+   * now there, within the scene count), and Record Notes keeps recording into
+   * its clip. Another project: selections beyond its scenes come back in range.
+   */
+  private followScenes(p: Project, prev: Project): void {
+    const ui = uiStore.getState();
+    const count = sceneCount(p);
+    const same = p.id === prev.id;
+    for (const t of p.tracks) {
+      const sel = ui.selectedSlot[t.id];
+      if (sel === undefined) continue;
+      let to = -1;
+      if (same) {
+        const clipId = prev.tracks.find((x) => x.id === t.id)?.clips[sel]?.id;
+        if (clipId) to = t.clips.findIndex((c) => c?.id === clipId);
+        const sceneId = prev.scenes[sel]?.id;
+        if (to < 0 && sceneId) to = p.scenes.findIndex((s) => s.id === sceneId);
+      }
+      if (to < 0) to = Math.max(0, Math.min(sel, count - 1));
+      if (to !== sel) selectSlot(t.id, to);
+    }
+    const rec = this.noteRec;
+    if (!rec || !same) return;
+    const clipId = prev.tracks.find((x) => x.id === rec.trackId)?.clips[rec.slot]?.id;
+    const at = clipId ? (p.tracks.find((x) => x.id === rec.trackId)?.clips.findIndex((c) => c?.id === clipId) ?? -1) : -1;
+    if (at >= 0 && at !== rec.slot) {
+      rec.slot = at;
+      patchRuntime({ recordTarget: { trackId: rec.trackId, slot: at } });
+    }
+  }
+
+  /** Load ahead the recordings clips play themselves (Clip.sample), once each, so no note waits for one. */
+  private preloadClipSamples(p: Project): void {
+    const engine = this.engine as (AudioEngine & { preloadSamples?: (ids: readonly string[]) => Promise<void> }) | null;
+    if (!engine?.preloadSamples) return;
+    const ids: Id[] = [];
+    for (const id of cmd.clipSampleIds(p)) {
+      if (this.preloaded.has(id)) continue;
+      // An imported recording must be decoded into the bank first (loadProjectSamples).
+      if (!id.startsWith('builtin:') && !this.loadedSampleIds.has(id)) continue;
+      this.preloaded.add(id);
+      ids.push(id);
+    }
+    if (ids.length) void engine.preloadSamples(ids);
+  }
+
+  /**
+   * Record Notes in the song: the song moved into a block that does not play
+   * the clip being recorded into. Notes still go into it (where its loop
+   * would be); the transport says so once.
+   */
+  private recordTargetSilent(rec: NoteRecording): void {
+    patchRuntime({ recordTargetAudible: false });
+    if (rec.inaudibleTold) return;
+    rec.inaudibleTold = true;
+    const p = this.store.getState();
+    const track = p.tracks.find((t) => t.id === rec.trackId);
+    const clip = track?.clips[rec.slot];
+    notify(`Recording into ${track?.name ?? 'the part'} · ${clip?.name ?? 'its clip'}, which this block does not play.`, 'warn');
   }
 
   /**
@@ -606,11 +800,13 @@ export class Session {
     const t = this.transport;
     if (!t) return;
     const song = this.sequencer?.mode.kind === 'song';
-    if (p.scenes !== prev.scenes) {
+    const rowsChanged = p.scenes !== prev.scenes && p.id === prev.id;
+    if (rowsChanged) {
+      // Scenes moved, inserted above, or deleted (-1: what played its row goes silent).
       const rows = new Map<number, number>();
       prev.scenes.forEach((s, i) => {
         const j = p.scenes.findIndex((x) => x.id === s.id);
-        if (j >= 0 && j !== i) rows.set(i, j);
+        if (j !== i) rows.set(i, j);
       });
       if (rows.size) t.relocateSongRows(rows);
     }
@@ -626,8 +822,9 @@ export class Session {
         const to = tr.clips.findIndex((x) => x?.id === c.id);
         if (to >= 0) slots.set(s, to);
         // Song mode: the part's slot is empty now, so it is silent at once; stopping it here as well
-        // would put it outside the song's plan, and an Undo could not bring it back.
-        else if (partOf.has(c.id) && !song) slots.set(s, null);
+        // would put it outside the song's plan, and an Undo could not bring it back. A clip deleted with its
+        // scene row (another clip has its slot now) stops like one that left the part.
+        else if ((partOf.has(c.id) || (rowsChanged && tr.clips[s])) && !song) slots.set(s, null);
       });
       if (!slots.size) continue;
       t.relocateSlots(tr.id, slots);
@@ -770,6 +967,7 @@ export class Session {
     this.stallResume = null;
     patchRuntime({ playing: true, paused: false, mode: 'live', stalled: null, songBlock: null, songBlockId: null, songLooping: false });
     this.refreshLauncherRuntime();
+    meterWake();
   }
 
   stop(): void {
@@ -780,7 +978,7 @@ export class Session {
     if (this.transport) this.transport.stop();
     if (this.replayingId) this.endReplay();
     this.stallResume = null;
-    patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, songLooping: false, countingIn: false });
+    patchRuntime({ playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, songLooping: false, countingIn: false, recordStartsAtTick: null });
     this.refreshLauncherRuntime();
   }
 
@@ -818,6 +1016,7 @@ export class Session {
     patchRuntime({ playing: true, paused: false, stalled: null });
     this.syncSongLooping();
     this.refreshLauncherRuntime();
+    meterWake();
   }
 
   /**
@@ -899,6 +1098,7 @@ export class Session {
     patchRuntime({ playing: true, paused: false, mode: 'song', songBlock: first ? first.index : block, songBlockId: first?.blockId ?? null, stalled: null });
     this.syncSongLooping();
     this.refreshLauncherRuntime();
+    meterWake();
   }
 
   /**
@@ -923,7 +1123,9 @@ export class Session {
 
   /** Point every part's edit slot at the row just launched (Steps, Record Notes, Variation follow it). */
   private selectRow(row: number): void {
-    for (const t of this.store.getState().tracks) if (t.clips[row]) selectSlot(t.id, row);
+    const p = this.store.getState();
+    if (!Number.isInteger(row) || row < 0 || row >= sceneCount(p)) return;
+    for (const t of p.tracks) if (t.clips[row]) selectSlot(t.id, row);
   }
 
   /**
@@ -1024,7 +1226,10 @@ export class Session {
 
   async launchScene(row: number): Promise<void> {
     if (this.replayingId) return;
+    // Scenes are the project's rows (1 to 8 of them).
+    if (!Number.isInteger(row) || row < 0 || row >= sceneCount(this.store.getState())) return;
     if (!(await this.startAudio())) return;
+    if (row >= sceneCount(this.store.getState())) return;
     const wasPlaying = this.transport!.playing;
     const results = this.transport!.launchScene(row);
     this.selectRow(row);
@@ -1131,21 +1336,13 @@ export class Session {
       return false;
     }
     const before = this.store.getState();
+    const count = sceneCount(before);
+    if (!Number.isInteger(fromRow) || !Number.isInteger(toRow) || fromRow < 0 || toRow < 0 || fromRow >= count || toRow >= count) return false;
     const scene = before.scenes[fromRow];
     if (!scene) return false;
+    // Each part's chosen clip stays the same clip (followScenes, also on undo and redo).
     const r = cmd.moveScene(this.store, fromRow, toRow);
     if (!this.accepted(r)) return false;
-    // Each part's chosen clip stays the same clip.
-    const ui = uiStore.getState();
-    for (const t of before.tracks) {
-      const sel = ui.selectedSlot[t.id];
-      if (sel === undefined) continue;
-      const id = t.clips[sel]?.id;
-      const now = this.store.getState().tracks.find((x) => x.id === t.id);
-      const at = id && now ? now.clips.findIndex((c) => c?.id === id) : -1;
-      if (at >= 0) selectSlot(t.id, at);
-      else if (sel === fromRow) selectSlot(t.id, toRow);
-    }
     notify(`Moved the scene “${scene.name}” to row ${toRow + 1}; its clips moved with it.`, 'info', 'undo', this.store.undoEntryId());
     return true;
   }
@@ -1269,8 +1466,9 @@ export class Session {
   /**
    * Play a note on a part. `rawPitch` is the key pressed (MIDI, or drum pad
    * index); Musical Assist snaps synth notes into the project scale. Drums,
-   * samplers (a recording keeps its pitch unless its own Pitch is changed)
-   * and previews play exactly the key given.
+   * samplers (a recording keeps its pitch unless its own Pitch is changed),
+   * chord pads (their chord is already in the key) and previews play exactly
+   * the key given.
    */
   noteOn(trackId: Id, rawPitch: number, velocity: number, source: NoteSource): void {
     if (this.replayingId) return;
@@ -1293,9 +1491,12 @@ export class Session {
     const track = p.tracks.find((t) => t.id === trackId);
     if (!track) return;
     if (this.held.has(key)) this.noteOff(trackId, rawPitch, source);
+    // A fade-out that Stop is still bringing back up: a live note is heard at its level.
+    this.transport?.restoreSongGain();
+    meterWake();
     const kind = track.instrument.kind;
     const preview = source === 'preview';
-    const exact = preview || kind === 'drums' || kind === 'sampler';
+    const exact = preview || source === 'chord' || kind === 'drums' || kind === 'sampler';
     const pitch = !exact && p.assist ? snapToScale(rawPitch, p.root, p.scale) : rawPitch;
     const v = Math.max(0.05, Math.min(1, velocity));
     const viaArp = track.arp.enabled && kind !== 'drums' && !preview;
@@ -1303,12 +1504,10 @@ export class Session {
     // Record Notes keeps a played key as a note. With the arpeggiator on, the
     // notes it plays are recorded instead (recordArpNote), not the key held.
     if (!preview && !viaArp && this.noteRec && this.noteRec.trackId === trackId && this.transport?.playing) {
-      const pos = this.recordingTick();
-      const rt = this.sequencer?.getTrackState(trackId);
-      // From about the clip's first downbeat on (up to half a step early, like a pushed beat), so not during the count-in.
-      if (rt?.playing && rt.playing.slot === this.noteRec.slot && pos >= rt.playing.startTick - TICKS_PER_STEP / 2) {
-        note.recTick = pos;
-        note.recClipStart = rt.playing.startTick;
+      const at = this.recordWindow(this.noteRec, this.recordingTick());
+      if (at) {
+        note.recTick = at.tick;
+        note.recClipStart = at.loopStart;
       }
     }
     this.held.set(key, note);
@@ -1343,6 +1542,8 @@ export class Session {
   audition(trackId: Id, pitch: number, velocity = 0.8, ms = 320): void {
     const play = () => {
       if (!this.engine) return;
+      this.transport?.restoreSongGain();
+      meterWake();
       this.auditionCounter += 1;
       const key = `audition:${trackId}:${pitch}:${this.auditionCounter}`;
       this.engine.liveNoteOn(trackId, pitch, Math.max(0.05, Math.min(1, velocity)), key);
@@ -1439,12 +1640,35 @@ export class Session {
     return this.noteRec !== null;
   }
 
-  /** Musical position the player meant: compensate for output latency. */
+  /**
+   * Musical position the player meant: what they heard when they played,
+   * so the output delay (outputDelaySeconds: the device's and the engine's
+   * latency, as for every visual playhead) is taken off the audio clock.
+   */
   private recordingTick(): number {
     const ctx = this.ctx!;
-    const latency = (ctx.outputLatency || 0) + (ctx.baseLatency || 0) + engineLatencyFrames(ctx.sampleRate) / ctx.sampleRate;
     const seq = this.sequencer!;
-    return seq.tickAt(ctx.currentTime - latency);
+    return seq.tickAt(ctx.currentTime - outputDelaySeconds(ctx, this.engine as AudioEngine & { outputLatencyFrames?: () => number }));
+  }
+
+  /**
+   * Where Record Notes writes a note played at `tick` (see recordedNoteAt):
+   * while its clip sounds, from the clip's loop start; up to an 8th before the
+   * recording starts, on its downbeat; in the song, a block that does not
+   * play the clip still records into it. Null: not recorded.
+   */
+  private recordWindow(rec: NoteRecording, tick: number): { tick: number; loopStart: number } | null {
+    const seq = this.sequencer;
+    if (!seq) return null;
+    const song = runtimeStore.getState().mode === 'song';
+    return recordedNoteAt({
+      tick,
+      playing: seq.playingAt(rec.trackId, tick),
+      slot: rec.slot,
+      // Kept after the downbeat: a note heard a moment before it (latency) still lands on it.
+      startsAt: rec.startsAt,
+      lastLoopStart: song ? rec.lastLoopStart : null,
+    });
   }
 
   /**
@@ -1484,22 +1708,34 @@ export class Session {
       cmd.createClip(this.store, trackId, slot, bars, 'Take');
     }
     selectSlot(trackId, slot);
-    this.noteRec = { trackId, slot, gesture: uid('rec'), added: 0, arpNotes: [], arpFlush: null };
-    patchRuntime({ recording: 'notes', recordTarget: { trackId, slot } });
-    const seqState = this.sequencer!.getTrackState(trackId);
+    const seq = this.sequencer!;
+    // The clip heard now (the scheduler may already be past a switch that is not heard yet).
+    const heard = this.transport!.playing ? seq.playingAt(trackId, this.transport!.audibleTick()) : null;
+    const rec: NoteRecording = { trackId, slot, gesture: uid('rec'), added: 0, arpNotes: [], arpFlush: null, lastLoopStart: heard?.slot === slot ? heard.startTick : null, inaudibleTold: false, startsAt: null };
+    this.noteRec = rec;
+    patchRuntime({ recording: 'notes', recordTarget: { trackId, slot }, recordTargetAudible: true, recordStartsAtTick: null });
+    const seqState = seq.getTrackState(trackId);
+    // Where recording starts when it waits for it: the clip's launch at the next bar, or bar 1 after a count-in.
+    let startsAt: number | null = null;
     if (this.transport!.paused) {
       // Paused: playback continues from the pause (no count-in); another clip starts at the next bar.
-      if (seqState.playing?.slot !== slot) this.transport!.launchClip(trackId, slot);
+      if (seqState.playing?.slot !== slot) startsAt = this.transport!.launchClip(trackId, slot).atTick;
       this.resumeFromPause();
     } else if (!this.transport!.playing) {
       if (seqState.playing?.slot !== slot) this.transport!.launchClip(trackId, slot);
       const countIn = p.settings.countIn ? 1 : 0;
       this.transport!.start({ mode: { kind: 'live' }, countInBars: countIn });
+      if (countIn > 0) startsAt = 0;
       patchRuntime({ playing: true, paused: false, mode: 'live', countingIn: countIn > 0, stalled: null });
       this.refreshLauncherRuntime();
-    } else if (seqState.playing?.slot !== slot) {
-      this.applyLaunchResults([this.transport!.launchClip(trackId, slot)]);
+    } else if (seqState.playing?.slot !== slot || heard?.slot !== slot) {
+      const r = seqState.playing?.slot !== slot ? this.transport!.launchClip(trackId, slot) : null;
+      if (r) this.applyLaunchResults([r]);
+      startsAt = r ? r.atTick : (seq.queuedAtTick(trackId, this.transport!.audibleTick()) ?? null);
     }
+    rec.startsAt = startsAt;
+    if (startsAt !== null) patchRuntime({ recordStartsAtTick: startsAt });
+    meterWake();
   }
 
   /**
@@ -1534,8 +1770,9 @@ export class Session {
     const added = this.noteRec.added;
     this.noteRec = null;
     this.store.endGroup();
-    if (runtimeStore.getState().recording === 'notes') patchRuntime({ recording: 'off', recordTarget: null });
-    else patchRuntime({ recordTarget: null });
+    const done = { recordTarget: null, recordStartsAtTick: null, recordTargetAudible: true } as const;
+    if (runtimeStore.getState().recording === 'notes') patchRuntime({ recording: 'off', ...done });
+    else patchRuntime(done);
     if (added > 0) notify(`Recorded ${added} note${added === 1 ? '' : 's'} into the clip. Undo removes the whole pass, with any knob moves made during it.`, 'info', 'undo', this.store.undoEntryId());
   }
 
@@ -1557,9 +1794,15 @@ export class Session {
     const rec = this.noteRec;
     if (!rec || ev.trackId !== rec.trackId || !this.sequencer) return;
     const at = this.sequencer.playingAt(ev.trackId, ev.tick);
-    // Only while the recorded clip plays, from its first downbeat (not during the count-in).
-    if (!at || at.slot !== rec.slot || ev.tick < at.startTick) return;
-    rec.arpNotes.push({ tick: ev.tick - at.startTick, pitch: ev.pitch, velocity: ev.velocity, duration: ev.durationTicks });
+    let loopStart: number;
+    // While the recorded clip plays, from its first downbeat (not during the count-in) …
+    if (at && at.slot === rec.slot && ev.tick >= at.startTick) loopStart = at.startTick;
+    // … or, in the song, in a block that does not play it, where its loop would be.
+    else if (runtimeStore.getState().mode === 'song' && rec.lastLoopStart !== null && ev.tick >= rec.lastLoopStart) loopStart = rec.lastLoopStart;
+    else return;
+    const clip = this.store.getState().tracks.find((t) => t.id === rec.trackId)?.clips[rec.slot];
+    const len = clip ? clip.bars * TICKS_PER_BAR : Infinity;
+    rec.arpNotes.push({ tick: (ev.tick - loopStart) % len, pitch: ev.pitch, velocity: ev.velocity, duration: ev.durationTicks });
     rec.arpFlush ??= setTimeout(() => this.flushArpNotes(), ARP_RECORD_BATCH_MS);
   }
 
@@ -1756,6 +1999,7 @@ export class Session {
     this.transport!.start({ mode: { kind: 'replay', performanceId: id } });
     patchRuntime({ playing: true, paused: false, mode: 'replay', replayId: id, stalled: null, songLooping: false });
     this.refreshLauncherRuntime();
+    meterWake();
   }
 
   private endReplay(): void {
@@ -1776,7 +2020,16 @@ export class Session {
   /* Samples                                                             */
   /* ------------------------------------------------------------------ */
 
-  /** Import an audio file onto a part (turns it into a sampler). The project is untouched if anything fails. */
+  /**
+   * Import an audio file onto a part as a new clip that plays it (shape-05):
+   * the file is stored, then one undo step adds the recording and a clip on
+   * the part's selected pad (or the next empty one) that plays it once from
+   * the downbeat at its recorded pitch, its length rounded to whole bars;
+   * the part becomes a sampler if it is not one (see
+   * cmd.importRecordingAsClip). The new clip is selected. Nothing changes if
+   * anything fails (the message says why: a full part, storage, a file that
+   * cannot be read).
+   */
   async importSample(file: File, trackId: Id): Promise<{ ok: boolean; message: string }> {
     if (this.store.getLock()) return { ok: false, message: this.store.getLock()! };
     const check = checkAudioFile(file);
@@ -1789,17 +2042,35 @@ export class Session {
     } catch (e) {
       return { ok: false, message: sampleStorageMessage(e) };
     }
+    // Decoded once: the live bank gets it before the project names it.
     if (this.bank) {
       this.bank.add(res.meta.id, res.buffer);
       this.loadedSampleIds.add(res.meta.id);
     }
-    // Adding the recording and putting it on the part is one undo step.
-    const gesture = uid('import');
-    cmd.addSampleMeta(this.store, res.meta as SampleMeta, gesture);
-    const a = cmd.assignSample(this.store, trackId, res.meta.id, gesture);
-    this.store.endGesture();
-    if (!a.changed && (a.refused || a.reason)) return { ok: false, message: a.refused ?? a.message ?? 'The recording could not be assigned to this part.' };
-    return { ok: true, message: `Imported "${res.meta.name}" (${res.meta.duration.toFixed(1)} s).` };
+    const before = this.store.getState();
+    const track = before.tracks.find((t) => t.id === trackId);
+    const r = cmd.importRecordingAsClip(this.store, trackId, res.meta.id, {
+      durationSeconds: res.meta.duration,
+      slot: slotFor(uiStore.getState(), trackId),
+      meta: res.meta as SampleMeta,
+    });
+    if (!r.changed || r.slot === undefined) {
+      this.bank?.remove(res.meta.id);
+      this.loadedSampleIds.delete(res.meta.id);
+      void db.deleteSample(res.meta.id).catch(() => undefined);
+      return { ok: false, message: r.refused ?? r.message ?? 'The recording could not be put on this part.' };
+    }
+    selectTrack(trackId);
+    selectSlot(trackId, r.slot);
+    const after = this.store.getState();
+    const part = after.tracks.find((t) => t.id === trackId);
+    const where = `${part?.name ?? 'the part'} · ${after.scenes[r.slot]?.name ?? `row ${r.slot + 1}`}`;
+    let message = `Imported “${res.meta.name}” as a new clip on ${where}. ${importPitchWords(part, r.partRecording === true)}`;
+    // A synth or drum part became a sampler: its other clips now play the recording at their notes' pitches.
+    if (track && track.instrument.kind !== 'sampler' && track.clips.some((c, i) => i !== r.slot && !!c && c.notes.length > 0)) {
+      message += ` ${part?.name ?? 'The part'} plays recordings now, so its other clips play this one at their notes’ pitches.`;
+    }
+    return { ok: true, message };
   }
 
   /**
@@ -1831,12 +2102,29 @@ export class Session {
 
   /**
    * Render offline with the same engine and sequencer, and encode a WAV.
-   * Music playing meanwhile plays on: while the export prepares and renders,
-   * live playback is scheduled further ahead (EXPORT_LOOKAHEAD_S), so the
-   * moments the export keeps the main thread busy (building its engine,
-   * encoding) do not interrupt it.
+   * The file starts on the music's first downbeat (sample 0) and lasts
+   * exactly the music plus the tail (see renderOffline `align`).
+   * `opts.mastering: false` renders without the project's mastering (the
+   * output limiter and its ceiling stay). Music playing meanwhile plays on:
+   * while the export prepares and renders, live playback is scheduled
+   * further ahead (EXPORT_LOOKAHEAD_S), so the moments the export keeps the
+   * main thread busy (building its engine, encoding) do not interrupt it.
    */
   async renderWav(opts: ExportOptions): Promise<Blob> {
+    return (await this.renderExport(opts, false)).blob;
+  }
+
+  /**
+   * renderWav, plus a loudness report of the rendered audio (measured with
+   * render/loudness on the buffer before it is encoded): integrated
+   * loudness, true and sample peak, length.
+   */
+  async renderWavWithReport(opts: ExportOptions): Promise<{ blob: Blob; report: ExportReport }> {
+    const r = await this.renderExport(opts, true);
+    return { blob: r.blob, report: r.report! };
+  }
+
+  private async renderExport(opts: ExportOptions, measure: boolean): Promise<{ blob: Blob; report: ExportReport | null }> {
     if (this.exportsRunning++ === 0) this.transport?.holdAhead(EXPORT_LOOKAHEAD_S);
     try {
       await this.autosaver?.flush();
@@ -1849,10 +2137,13 @@ export class Session {
         tailSeconds: opts.tailSeconds,
         signal: opts.signal,
         onProgress: opts.onProgress,
+        align: true,
+        mastering: opts.mastering !== false,
         createEngine: (ctx) => AudioEngine.create(ctx, { samples: bank, seed: project.seed, meters: false }),
       });
+      const report = measure ? await measureExport(buffer) : null;
       const channels = [buffer.getChannelData(0), buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : buffer.getChannelData(0)];
-      return new Blob([encodeWav(channels, buffer.sampleRate, opts.bitDepth)], { type: 'audio/wav' });
+      return { blob: new Blob([encodeWav(channels, buffer.sampleRate, opts.bitDepth)], { type: 'audio/wav' }), report };
     } finally {
       if (--this.exportsRunning === 0) this.transport?.holdAhead(null);
     }
@@ -1868,6 +2159,8 @@ export class Session {
     const bank = new SampleBank(sampleRate);
     const ids = new Set<Id>(project.samples.map((s) => s.id));
     for (const perf of project.performances) for (const t of perf.snapshot.tracks) if (t.instrument.kind === 'sampler' && t.instrument.sampleId) ids.add(t.instrument.sampleId);
+    // Recordings clips play themselves (also in takes' starting states).
+    for (const id of cmd.clipSampleIds(project)) ids.add(id);
     let decoder: BaseAudioContext | null = null;
     for (const id of ids) {
       if (id.startsWith('builtin:')) continue;
@@ -1892,6 +2185,29 @@ export class Session {
     if (!this.engine) return false;
     this.engine.readMeters(out);
     return true;
+  }
+
+  /**
+   * One meter frame shared by every view in an animation frame (TransportBar,
+   * the Loops grid, Mix): the engine is read once per frame (the analysers
+   * hold ~21 ms, so no peak falls between reads) and the same object is
+   * returned to every caller until the next frame. The frame is the
+   * document timeline's time, which stays the same through a frame's
+   * callbacks and the code they run, however long they take; without one,
+   * reads are at least 8 ms apart. Null before audio starts. Read-only for
+   * callers.
+   */
+  readMetersShared(): MeterFrame | null {
+    if (!this.engine) return null;
+    const key = frameKey();
+    const now = performance.now();
+    const same = key !== null ? key === this.sharedFrameKey : now - this.sharedFrameAt < 8 && now >= this.sharedFrameAt;
+    if (!same) {
+      this.sharedFrameKey = key;
+      this.sharedFrameAt = now;
+      this.sharedFrameLive = this.readMeters(this.sharedFrame);
+    }
+    return this.sharedFrameLive ? this.sharedFrame : null;
   }
 
   /** Output spectrum in dB per log-spaced band (see AudioEngineApi.readSpectrum); false when unavailable. */
@@ -1934,6 +2250,7 @@ export class Session {
 
   dispose(): void {
     this.stopEverything();
+    this.uiUnsub();
     for (const u of this.unsubs) u();
     this.unsubs = [];
     this.transport?.dispose();
@@ -1971,6 +2288,62 @@ function soundsWhileHeld(track: Track): boolean {
 /** Did anything the song plays change (its blocks, the scenes, the clips of a part)? */
 function songEdited(p: Project, prev: Project): boolean {
   return p.arrangement !== prev.arrangement || p.scenes !== prev.scenes || p.tracks.some((t, i) => t.clips !== prev.tracks[i]?.clips);
+}
+
+/** Did a part's instrument change (a new kit, preset, recording or kind: nodes to build, voices to warm up)? */
+function instrumentsChanged(p: Project, prev: Project): boolean {
+  if (p.tracks === prev.tracks) return false;
+  for (let i = 0; i < p.tracks.length; i++) {
+    const a = p.tracks[i].instrument;
+    const b = prev.tracks[i]?.instrument;
+    if (!b || a.kind !== b.kind) return true;
+    if (a.kind === 'drums' && b.kind === 'drums' && a.kitId !== b.kitId) return true;
+    if ((a.kind === 'bass' || a.kind === 'poly') && (b.kind === 'bass' || b.kind === 'poly') && a.presetId !== b.presetId) return true;
+    if (a.kind === 'sampler' && b.kind === 'sampler' && a.sampleId !== b.sampleId) return true;
+  }
+  return false;
+}
+
+/** Did any song block's moves (fades, filter rise, echo throw) change? */
+function movesChanged(p: Project, prev: Project): boolean {
+  if (p.arrangement === prev.arrangement) return false;
+  const a = p.arrangement.blocks;
+  const b = prev.arrangement.blocks;
+  if (a.length !== b.length) return a.some((x) => x.moves?.length) || b.some((x) => x.moves?.length);
+  return a.some((x, i) => x.moves !== b[i].moves || (x.moves?.length && x.id !== b[i].id));
+}
+
+/** What an imported clip's pitch is, in words: as recorded, unless the part's own settings move it. */
+function importPitchWords(part: Track | undefined, partRecording: boolean): string {
+  const inst = part?.instrument;
+  if (partRecording || inst?.kind !== 'sampler') return 'It plays at its recorded pitch.';
+  const v = (id: string) => inst.params[id] ?? specById(SAMPLER_PARAMS, id)?.default ?? 0;
+  // The part's sampler settings apply to every clip on it, its own recordings too.
+  const how = [v('mode') >= 1 ? 'Loop mode' : '', v('pitch') !== 0 || v('fine') !== 0 ? 'transposed' : '', v('sync') >= 1 ? 'Tempo sync, which changes speed and pitch together' : ''].filter(Boolean);
+  if (!how.length) return 'It plays at its recorded pitch.';
+  return `It plays with ${part!.name}’s sampler settings (${how.join(', ')}): set them in Shape to hear it as recorded.`;
+}
+
+/** The current animation frame's time (document.timeline), or null where there is none. */
+function frameKey(): number | null {
+  if (typeof document === 'undefined') return null;
+  const t = document.timeline?.currentTime;
+  return typeof t === 'number' ? t : null;
+}
+
+/** One animation frame (then a task), so what a click changed on screen paints first; at most 100 ms (hidden tabs). */
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const go = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    const raf = (globalThis as { requestAnimationFrame?: (cb: () => void) => number }).requestAnimationFrame;
+    if (typeof raf === 'function') raf(() => setTimeout(go, 0));
+    setTimeout(go, 100);
+  });
 }
 
 /** Did anything that changes generated notes change (clips, instrument kind, arp)? */

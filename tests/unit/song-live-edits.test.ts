@@ -239,13 +239,29 @@ describe('deleting the block that plays', () => {
   it('undone before the hand-over, it plays on as if nothing happened', () => {
     const r = new Rig().play().to(1000);
     r.edit((s) => cmd.removeBlocks(s, ['b1']));
-    r.to(1100);
+    // Before the look-ahead (300 ms, 58 ticks) reaches the hand-over at 1152.
+    r.to(1080);
     r.edit((s) => s.undo());
     expect(r.plan()).toEqual([['b0', 0, 0, 768], ['b1', 1, 768, 2304], ['b2', 2, 2304, 3072], ['b3', 3, 3072, 3456]]);
     expect(r.seq.songBlockAt(r.tick)).toEqual({ index: 1, blockId: 'b1' });
     r.finish();
     expect(r.notes('t1')).toEqual(UNEDITED);
     expect(r.held('t4')).toEqual([[0, 30, 768], [768, 50, 1536], [1536, 50, 2304], [3072, 90, 3456]]);
+    expect(r.launches('t4')).toEqual([[0, 0], [768, 1], [2304, null], [3072, 3]]);
+    expect(r.ends()).toEqual([3456]);
+  });
+
+  it('undone once the hand-over was scheduled: every part plays on, and the chord the hand-over had cut comes back with its next start', () => {
+    const r = new Rig().play().to(1000);
+    r.edit((s) => cmd.removeBlocks(s, ['b1']));
+    // The look-ahead already handed out the hand-over at 1152 (the held chord's release there).
+    r.to(1100);
+    r.edit((s) => s.undo());
+    expect(r.plan()).toEqual([['b0', 0, 0, 768], ['b1', 1, 768, 2304], ['b2', 2, 2304, 3072], ['b3', 3, 3072, 3456]]);
+    r.finish();
+    expect(r.notes('t1')).toEqual(UNEDITED);
+    // A note an edit already cut stays cut (its release is scheduled); the chord returns at its next start.
+    expect(r.held('t4')).toEqual([[0, 30, 768], [768, 50, 1152], [1536, 50, 2304], [3072, 90, 3456]]);
     expect(r.launches('t4')).toEqual([[0, 0], [768, 1], [2304, null], [3072, 3]]);
     expect(r.ends()).toEqual([3456]);
   });

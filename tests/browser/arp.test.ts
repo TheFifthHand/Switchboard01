@@ -424,7 +424,7 @@ describe('Preview notes (editors and the sound browser)', () => {
       liveNoteOff: (t: Id) => live.push(['off', t, -1]),
       releaseLive: () => {},
     };
-    s.transport = { playing: false, setArpHeld: (t: Id, pitches: number[]) => arpHeld.push([t, [...pitches]]), getPosition: () => ({ tick: 0 }) };
+    s.transport = { playing: false, setArpHeld: (t: Id, pitches: number[]) => arpHeld.push([t, [...pitches]]), getPosition: () => ({ tick: 0 }), restoreSongGain: () => {} };
     const take = { events: [] as unknown[] };
     s.take = take;
     try {

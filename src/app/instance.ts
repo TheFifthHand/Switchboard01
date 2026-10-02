@@ -5,7 +5,7 @@ import { createProject } from '../project/factory';
 import type { Project } from '../project/types';
 import { useStore } from '../state/store';
 import { uiStore, type UiState } from '../state/uiStore';
-import type { AutosaveState } from '../persistence/autosave';
+import { IDLE_AUTOSAVE_STATE, type AutosaveState } from '../persistence/autosave';
 import type { HistoryInfo } from '../state/projectStore';
 import { createStore } from '../state/store';
 import { Session } from './session';
@@ -24,7 +24,7 @@ export function useHistory(): HistoryInfo {
   return useStore(session.store.info, (s) => s);
 }
 
-const idleSave = createStore<AutosaveState>({ status: 'idle', lastError: null, lastSavedAt: null, dirty: false });
+const idleSave = createStore<AutosaveState>({ ...IDLE_AUTOSAVE_STATE });
 
 export function useAutosave(): AutosaveState {
   return useStore(session.autosaver?.status ?? idleSave, (s) => s);
