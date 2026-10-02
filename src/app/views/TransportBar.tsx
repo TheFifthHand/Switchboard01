@@ -516,7 +516,7 @@ function MoreMenu(props: { onOpenLibrary(): void; onNewProject(): void; onOpenEx
           <MenuItem icon="midi" onSelect={then(props.onOpenDevices)}>
             MIDI & audio…
           </MenuItem>
-          <MenuItem icon="keys" hint="?" keyShortcut="Shift+?" onSelect={then(props.onOpenHelp)}>
+          <MenuItem icon="keys" hint="?" keyShortcut="?" onSelect={then(props.onOpenHelp)}>
             Help…
           </MenuItem>
           {/* The app's own state closes the menu, as plain text. */}

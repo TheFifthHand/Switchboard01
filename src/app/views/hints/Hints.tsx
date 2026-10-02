@@ -222,7 +222,9 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
   /** Pointer clicks on the chip before this time (performance.now()) are ignored (see HINT_CLICK_GUARD_MS). */
   const clickGuardUntil = useRef(0);
   /** Measured size of each layout for the current words and window width (measuring forces a layout, so once is enough). */
-  const sizes = useRef<{ key: string; list: ({ w: number; h: number } | null)[] }>({ key: '', list: [] });
+  const sizes = useRef<{ key: string; map: Map<string, { w: number; h: number }> }>({ key: '', map: new Map() });
+  /** A placement found a stale measure and asked for one more (only once in a row). */
+  const restale = useRef(false);
   /** A pointer is pressed (a drag may be under way): no placing or checking until it is released. */
   const pressed = useRef(false);
   const wordsKey = `${text}|${more ?? ''}|${go?.label ?? ''}|${where ?? ''}|${step ? 'step' : 'end'}`;
@@ -230,12 +232,13 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
   /** The size of layout `i` for the current words (measured once per words and window width). */
   const sizeOf = (el: HTMLElement, i: number, maxW: number, vw: number): { w: number; h: number } => {
     const key = `${wordsKey}|${vw}`;
-    if (sizes.current.key !== key) sizes.current = { key, list: [] };
-    const cached = sizes.current.list[i];
+    if (sizes.current.key !== key) sizes.current = { key, map: new Map() };
+    const id = `${i}|${Math.round(maxW)}`;
+    const cached = sizes.current.map.get(id);
     if (cached) return cached;
     applyLayout(el, LAYOUTS[i], maxW);
     const s = { w: el.offsetWidth, h: el.offsetHeight };
-    sizes.current.list[i] = s;
+    sizes.current.map.set(id, s);
     return s;
   };
 
@@ -254,15 +257,16 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     // Collapsed (a step done elsewhere): the one-line layouts only.
     const choices = LAYOUTS.map((l, i) => ({ l, i })).filter(({ l }) => !go || l.compact);
     let best: (Spot & { maxW: number; i: number }) | null = null;
+    // The view's home first: the chip sits on it (over the home's own words), as wide as it needs, when that covers nothing else.
     const home = homeBox(el, vw, vh, area);
     if (home) {
       for (const { l, i } of choices) {
-        const maxW = Math.min(l.maxW, home.box.right - home.box.left, area.right - area.left);
-        if (maxW < 160) continue;
+        const maxW = Math.min(l.maxW, area.right - area.left);
         const size = sizeOf(el, i, maxW, vw);
-        if (size.w > home.box.right - home.box.left + 1) continue;
-        const x = Math.round(home.align === 'end' ? home.box.right - size.w : home.align === 'center' ? (home.box.left + home.box.right - size.w) / 2 : home.box.left);
-        const y = Math.round(home.box.top);
+        const wanted = home.align === 'end' ? home.box.right - size.w : home.align === 'center' ? (home.box.left + home.box.right - size.w) / 2 : home.box.left;
+        const x = Math.round(Math.max(area.left, Math.min(wanted, area.right - size.w)));
+        // Centred on the home's line, never above the work area.
+        const y = Math.round(Math.max(area.top, Math.min((home.box.top + home.box.bottom - size.h) / 2, area.bottom - size.h)));
         const cost = spotCost(x, y, size, obstacles);
         if (cost <= FREE) {
           best = { x, y, cost, maxW, i };
@@ -280,10 +284,25 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     }
     if (!best) return;
     applyLayout(el, LAYOUTS[best.i], best.maxW);
-    el.style.left = `${best.x}px`;
-    el.style.top = `${best.y}px`;
-    const w = el.offsetWidth;
-    const h = el.offsetHeight;
+    const used = sizeOf(el, best.i, best.maxW, vw);
+    let w = el.offsetWidth;
+    let h = el.offsetHeight;
+    if (Math.abs(w - used.w) > 1 || Math.abs(h - used.h) > 1) {
+      // A measured size went stale (the fonts finished loading, say): measure again from scratch, and look again.
+      sizes.current = { key: '', map: new Map() };
+      if (!restale.current) {
+        restale.current = true;
+        placeSoon();
+      }
+    } else restale.current = false;
+    // Never past the work area's edges, whatever the measures said.
+    const x = Math.round(Math.max(area.left, Math.min(best.x, area.right - w)));
+    const y = Math.round(Math.max(area.top, Math.min(best.y, area.bottom - h)));
+    best = { ...best, x, y };
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    w = el.offsetWidth;
+    h = el.offsetHeight;
     const prev = spot.current;
     // Appeared, moved or changed size: its buttons are somewhere new, so a click meant for what was there before is ignored.
     if (!prev || prev.x !== best.x || prev.y !== best.y || prev.w !== w || prev.h !== h || !el.hasAttribute('data-ready')) clickGuardUntil.current = performance.now() + HINT_CLICK_GUARD_MS;
@@ -376,6 +395,10 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     window.addEventListener('click', onUp, { capture: true, passive: true });
     window.addEventListener('pointermove', onMove, { capture: true, passive: true });
     window.addEventListener('blur', onUp);
+    // A view that mounts part of itself later (Mix's mastering panel after its first frame): look again once it is in.
+    const main = document.querySelector('main');
+    const mo = main && typeof MutationObserver !== 'undefined' ? new MutationObserver(soon) : null;
+    mo?.observe(main!, { childList: true, subtree: true });
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') soon();
     }, CHECK_MS);
@@ -388,6 +411,7 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
       window.removeEventListener('click', onUp, { capture: true });
       window.removeEventListener('pointermove', onMove, { capture: true });
       window.removeEventListener('blur', onUp);
+      mo?.disconnect();
       window.clearInterval(timer);
       pending?.();
     };
@@ -476,7 +500,8 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
 
 /**
  * The current view's hint home ([data-hint-home] in the workspace, on
- * screen): the box the chip may sit in, and how it aligns there
+ * screen): where the chip goes first, over the home's own words (a panel's
+ * subtitle, an empty strip), lined up with its start, centre or end
  * (data-hint-home="start" | "center" | "end"). Null when the view has none.
  */
 function homeBox(chip: Element, vw: number, vh: number, area: Box): { box: Box; align: 'start' | 'center' | 'end' } | null {

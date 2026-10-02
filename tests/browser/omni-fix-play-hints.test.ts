@@ -22,6 +22,7 @@ import { HINT_CLICK_GUARD_MS } from '../../src/app/views/hints/Hints';
 import { HINTS_STORAGE_KEY, HINT_IDS, INITIAL_HINTS, hideHints, hintsStore, markHintDone, showHintsAgain, type HintId } from '../../src/app/views/hints/hintsState';
 import { deleteDb } from '../../src/persistence/db';
 import { selectTrack, setGuideDone, setPadMode, setTipsEnabled, setUiMode, setView, type UiMode } from '../../src/state/uiStore';
+import { chipPlaced } from './r4-shell-chip';
 import { cleanup, mount, wait } from './ui-harness';
 
 const realJumpIn = session.jumpIn;
@@ -187,7 +188,8 @@ function expectNoOverlapInside(label: string) {
     expect(r.left, `${label}: inside`).toBeGreaterThanOrEqual(box.left - 0.5);
     expect(r.right, `${label}: inside`).toBeLessThanOrEqual(box.right + 0.5);
     expect(r.bottom, `${label}: inside`).toBeLessThanOrEqual(box.bottom + 0.5);
-    expect(Math.min(r.width, r.height), `${label}: 32 px target`).toBeGreaterThanOrEqual(32);
+    // (Layout units are 1/64 px: a 32 px key can measure 31.99999.)
+    expect(Math.min(r.width, r.height), `${label}: 32 px target`).toBeGreaterThanOrEqual(31.99);
   }
   // The suggestion's words do not run under the buttons either.
   const text = c.querySelector('p')!.getBoundingClientRect();
@@ -263,6 +265,7 @@ describe('the chip never covers a heading or a status line', () => {
         await settle();
         act(() => selectTrack('t2'));
         await settle(900);
+        await chipPlaced();
         const heading = [...document.querySelectorAll('h2')].find((el) => el.textContent?.includes('Hand Percussion'));
         expect(heading, 'the Shape heading').toBeTruthy();
         expect(coveredKeyText(), `${w} ${mode} shape: covers`).toEqual([]);
@@ -275,6 +278,7 @@ describe('the chip never covers a heading or a status line', () => {
           });
           showStep(step);
           await settle();
+          await chipPlaced();
           expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toMatch(/Loops pads decide what plays\./);
           // The Song header's words too ("Export tail", "Length"): the chip finds room elsewhere.
           expect(coveredKeyText({ headers: true }), `${w} ${mode} arrange ${step}: covers`).toEqual([]);
@@ -291,6 +295,7 @@ describe('the chip never covers a heading or a status line', () => {
           act(() => setView(view));
           showStep(step);
           await settle();
+          await chipPlaced();
           expect(coveredKeyText(), `${w} ${mode} ${view} ${step}: covers`).toEqual([]);
           expect(coveredControls(), `${w} ${mode} ${view} ${step}: covers`).toEqual([]);
           expectNoOverlapInside(`${w} ${mode} ${view} ${step}`);
@@ -332,6 +337,7 @@ describe('the closing line says where Export is', () => {
     // Narrower: Export is in the ⋯ menu, and the line says so.
     await page.viewport(1100, 768);
     await settle(900);
+    await chipPlaced();
     expect(exportKey()!.getBoundingClientRect().width).toBe(0);
     expect(chip()!.textContent).toContain('Export, in the ⋯ menu at the top right, saves your music as a WAV file.');
     await act(async () => {
@@ -345,10 +351,12 @@ describe('the closing line says where Export is', () => {
     await page.viewport(1366, 768);
     act(() => setUiMode('advanced'));
     await settle(900);
+    await chipPlaced();
     expect(exportKey()!.getBoundingClientRect().width).toBeGreaterThan(1);
     expect(chip()!.textContent).toContain('Export, at the top right');
     act(() => setUiMode('simple'));
     await settle(900);
+    await chipPlaced();
     expect(chip()!.textContent).toContain('Export, at the top right');
   });
 });

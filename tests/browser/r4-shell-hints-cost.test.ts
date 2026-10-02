@@ -56,9 +56,19 @@ const median = (xs: number[]) => {
   const s = [...xs].sort((a, b) => a - b);
   return s[Math.floor(s.length / 2)];
 };
+/**
+ * The typical switch without the machine's other load: the mean of the
+ * faster half of the rounds. A busy machine (other processes) adds long,
+ * random delays to single rounds of either kind; what the hints themselves
+ * cost shows in every round, so it shows here too.
+ */
+const typical = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b).slice(0, Math.ceil(xs.length / 2));
+  return s.reduce((a, b) => a + b, 0) / s.length;
+};
 
 describe('the cost of the hints', () => {
-  it('a Play → Mix switch paints Mix within 1.3× of the time it takes with the hints hidden', async () => {
+  it('a Play → Mix switch paints Mix within 1.3× of the time it takes with the hints hidden', { timeout: 240_000 }, async () => {
     await openShell();
     await click(button('Just look around')!);
     await until(() => chip()?.hasAttribute('data-ready'), 'the chip');
@@ -67,7 +77,7 @@ describe('the cost of the hints', () => {
     await timeSwitch('Play');
     const on: number[] = [];
     const off: number[] = [];
-    for (let round = 0; round < 8; round++) {
+    for (let round = 0; round < 10; round++) {
       // Interleaved, so a busy moment of the machine falls on both alike.
       for (const hints of round % 2 ? [false, true] : [true, false]) {
         act(() => {
@@ -87,9 +97,11 @@ describe('the cost of the hints', () => {
         await settle(200);
       }
     }
-    const ratio = median(on) / median(off);
+    const ratio = typical(on) / typical(off);
     // eslint-disable-next-line no-console
-    console.log(`Play → Mix, click to Mix painted: hints on ${median(on).toFixed(1)} ms, hidden ${median(off).toFixed(1)} ms, ratio ${ratio.toFixed(2)} (on ${on.map((x) => x.toFixed(0)).join(' ')}; off ${off.map((x) => x.toFixed(0)).join(' ')})`);
+    console.log(
+      `Play → Mix, click to Mix painted: hints on ${typical(on).toFixed(1)} ms (median ${median(on).toFixed(1)}), hidden ${typical(off).toFixed(1)} ms (median ${median(off).toFixed(1)}), ratio ${ratio.toFixed(2)} (on ${on.map((x) => x.toFixed(0)).join(' ')}; off ${off.map((x) => x.toFixed(0)).join(' ')})`,
+    );
     expect(ratio).toBeLessThanOrEqual(1.3);
   });
 

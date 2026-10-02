@@ -200,8 +200,9 @@ function onScreen(r: DOMRect, vw: number, vh: number): boolean {
  */
 export function readObstacles(chip: Element | null, vw: number, vh: number, opts: { text?: boolean } = {}): Obstacle[] {
   const out: Obstacle[] = [];
+  // A view's hint home ([data-hint-home]) is where the chip may sit: what it holds is not in the way.
   const add = (el: Element, weight: number, margin = MARGIN) => {
-    if (chip?.contains(el) || el.closest('[inert]')) return;
+    if (chip?.contains(el) || el.closest('[inert], [data-hint-home]')) return;
     const r = el.getBoundingClientRect();
     if (onScreen(r, vw, vh)) out.push({ box: grow(r, margin), weight });
   };
@@ -219,7 +220,7 @@ export function readObstacles(chip: Element | null, vw: number, vh: number, opts
   const addText = (root: Node, weight: number, margin: number, skip?: (n: Node) => boolean) => {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      if (!n.nodeValue || !n.nodeValue.trim() || chip?.contains(n) || skip?.(n)) continue;
+      if (!n.nodeValue || !n.nodeValue.trim() || chip?.contains(n) || skip?.(n) || n.parentElement?.closest('[data-hint-home]')) continue;
       range.selectNodeContents(n);
       for (const r of range.getClientRects()) if (onScreen(r, vw, vh)) out.push({ box: grow(r, margin), weight });
     }

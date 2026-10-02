@@ -81,3 +81,16 @@ export function wavStats16(buf: Buffer, dataOffset: number, frames: number, chan
   }
   return { peak, rms: Math.sqrt(sum / Math.max(1, n)), finite: Number.isFinite(sum) };
 }
+
+/** Peak and RMS of a 24-bit PCM WAV body (the Export dialog's default bit depth). */
+export function wavStats24(buf: Buffer, dataOffset: number, frames: number, channels: number): { peak: number; rms: number; finite: boolean } {
+  let peak = 0;
+  let sum = 0;
+  const n = frames * channels;
+  for (let i = 0; i < n; i++) {
+    const v = buf.readIntLE(dataOffset + i * 3, 3) / 8388608;
+    peak = Math.max(peak, Math.abs(v));
+    sum += v * v;
+  }
+  return { peak, rms: Math.sqrt(sum / Math.max(1, n)), finite: Number.isFinite(sum) };
+}

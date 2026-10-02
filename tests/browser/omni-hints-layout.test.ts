@@ -17,6 +17,7 @@ import { HINTS_STORAGE_KEY, HINT_IDS, INITIAL_HINTS, hintsStore, markHintDone, s
 import { findSpot } from '../../src/app/views/hints/placement';
 import { deleteDb } from '../../src/persistence/db';
 import { selectTrack, setGuideDone, setPadMode, setTipsEnabled, setUiMode, setView, type PadMode, type UiMode, type View } from '../../src/state/uiStore';
+import { chipPlaced } from './r4-shell-chip';
 import { cleanup, mount, wait } from './ui-harness';
 
 let boot: BootInfo;
@@ -128,6 +129,7 @@ async function showStep(id: HintId) {
     if (!id.startsWith('song-')) for (const s of HINT_IDS) if (s.startsWith('song-')) markHintDone(s);
   });
   await settle();
+  await chipPlaced();
 }
 
 describe('where the hint chip sits', () => {
@@ -175,6 +177,7 @@ describe('where the hint chip sits', () => {
     document.body.appendChild(intruder);
     try {
       await settle(900);
+      await chipPlaced();
       const after = chip().getBoundingClientRect();
       expect(overlaps(after, intruder.getBoundingClientRect())).toBe(false);
       expect(covered()).toEqual([]);

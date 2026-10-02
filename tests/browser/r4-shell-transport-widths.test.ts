@@ -130,7 +130,15 @@ describe('labels, words and counts', () => {
     await keys('{Escape}');
     let tick = 384 - 3 * 96 + 10;
     // The transport as far as the strip reads it: the position (bar.beat) and the position heard.
-    const fake = { playing: true, paused: false, audibleTick: () => tick, getPosition: () => ({ tick, bar: Math.floor(tick / 384), beat: Math.floor((tick % 384) / 96) }) } as unknown as NonNullable<typeof session.transport>;
+    const fake = {
+      playing: true,
+      paused: false,
+      audibleTick: () => tick,
+      getPosition: () => ({ tick, bar: Math.floor(tick / 384), beat: Math.floor((tick % 384) / 96) }),
+      // What the pads read for their loop progress: nothing plays in this stand-in.
+      clipPhase: () => null,
+      queuedAt: () => null,
+    } as unknown as NonNullable<typeof session.transport>;
     const real = session.transport;
     session.transport = fake;
     try {
