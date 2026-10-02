@@ -342,7 +342,7 @@ export class Session {
     let project = starter;
     let stored = true;
     try {
-      project = await library.createFromStarter(starter, current);
+      ({ project } = await library.createFromStarter(starter, current));
     } catch (e) {
       stored = false;
       notify(`Could not save to browser storage: ${e instanceof Error ? e.message : String(e)}. You can keep playing; export the project file to keep a copy.`, 'warn');
