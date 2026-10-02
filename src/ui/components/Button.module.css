@@ -27,7 +27,7 @@
   box-shadow: var(--btn-shadow);
   color: var(--ink);
   font-size: var(--fs-md);
-  font-weight: 560;
+  font-weight: var(--fw-medium);
   line-height: 1;
   letter-spacing: 0.005em;
   white-space: nowrap;
@@ -45,6 +45,13 @@
   --px: 11px;
   gap: 6px;
   font-size: var(--fs-sm);
+}
+
+/* Nothing clickable is smaller than 32 x 32 px, whatever a view sets on a small key. */
+.button[data-size='sm'],
+.button[data-size='sm'].iconOnly {
+  min-width: var(--hit);
+  min-height: var(--hit);
 }
 
 .button[data-size='lg'] {
@@ -169,7 +176,7 @@
 /* ---------- transport: squarer hardware key ---------- */
 .button[data-variant='transport'] {
   border-radius: 6px;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 .button[data-variant='transport'][data-on] .icon {

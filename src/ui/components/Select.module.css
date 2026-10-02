@@ -14,7 +14,7 @@
 .label {
   color: var(--ink-2);
   font-size: var(--fs-sm);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
 }
 
 .field {
@@ -39,7 +39,7 @@
     0 1px 1.5px rgba(20, 24, 28, 0.12);
   color: var(--ink);
   font-size: var(--fs-md);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
   text-overflow: ellipsis;
   cursor: pointer;
 }
