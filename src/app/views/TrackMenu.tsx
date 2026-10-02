@@ -1,7 +1,9 @@
 /**
  * Part menu for a Loops column header ('⋯', right-click, the menu key or
- * F2): rename the part, change its instrument, lock it against Variation and
- * open its full sound settings. Every change is an undoable project command.
+ * F2): rename the part, change its instrument, keep its pattern (Variation
+ * leaves it alone) and open its full sound settings. Every change is an
+ * undoable project command; while a performance take records, the rows that
+ * would edit say so and do nothing.
  */
 import { useState } from 'react';
 import type { Id } from '../../project/types';
@@ -11,7 +13,7 @@ import { shallowEqual } from '../../state/store';
 import { session, useProject } from '../instance';
 import { notify } from '../runtime';
 import { INSTRUMENT_LABEL, soundName } from '../labels';
-import { MenuHeader, MenuItem, MenuSeparator, Popover, RenameForm, type MenuAnchor } from './ClipMenu';
+import { LOCKED_REASON, MenuHeader, MenuItem, MenuSeparator, Popover, RenameForm, useEditLocked, type MenuAnchor } from './ClipMenu';
 import styles from './TrackMenu.module.css';
 
 export interface TrackMenuProps {
@@ -35,7 +37,8 @@ export function TrackMenu({ trackId, anchor, returnFocus, ignore, startInRename,
     },
     shallowEqual,
   );
-  const [renaming, setRenaming] = useState(!!startInRename);
+  const locked = useEditLocked();
+  const [renaming, setRenaming] = useState(!!startInRename && !locked);
   if (!info) return null;
   const eyebrow = `Part ${info.index + 1} · ${info.kind}`;
 
@@ -63,11 +66,13 @@ export function TrackMenu({ trackId, anchor, returnFocus, ignore, startInRename,
       <MenuHeader eyebrow={eyebrow} title={info.name}>
         <div className={styles.sound}>{info.sound}</div>
       </MenuHeader>
-      <MenuItem hint="F2" keyShortcut="F2" onSelect={() => setRenaming(true)}>
+      <MenuItem icon="pencil" hint="F2" keyShortcut="F2" disabled={locked} disabledReason={LOCKED_REASON} onSelect={() => setRenaming(true)}>
         Rename part…
       </MenuItem>
       <MenuItem
         icon="wave"
+        disabled={locked}
+        disabledReason={LOCKED_REASON}
         onSelect={() => {
           selectTrack(trackId);
           onClose();
@@ -92,16 +97,18 @@ export function TrackMenu({ trackId, anchor, returnFocus, ignore, startInRename,
         icon={info.locked ? 'lock' : 'unlock'}
         role="menuitemcheckbox"
         checked={info.locked}
-        hint={info.locked ? 'Locked' : 'Unlocked'}
+        hint={info.locked ? 'On' : 'Off'}
+        disabled={locked}
+        disabledReason={LOCKED_REASON}
         onSelect={() => {
-          const lock = !info.locked;
-          if (session.accepted(setLocked(session.store, trackId, lock))) {
-            notify(lock ? `${info.name} is locked: Variation leaves its patterns alone.` : `${info.name} is unlocked: Variation can change it again.`);
+          const keep = !info.locked;
+          if (session.accepted(setLocked(session.store, trackId, keep))) {
+            notify(keep ? `${info.name} keeps its pattern: Variation leaves it alone.` : `${info.name} no longer keeps its pattern: Variation can change it again.`);
           }
           onClose();
         }}
       >
-        Lock against Variation
+        Keep pattern (no Variation)
       </MenuItem>
     </Popover>
   );

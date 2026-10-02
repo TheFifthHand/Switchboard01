@@ -268,6 +268,10 @@ describe('Clip pad menu', () => {
       expect(document.activeElement!.getAttribute('aria-label')).toBe(`Length ${bars - 1} bar${bars - 1 === 1 ? '' : 's'}`);
     }
     key(document.activeElement!, 'keydown', { key: 'ArrowDown' });
+    expect((document.activeElement as HTMLElement).textContent).toContain('Double (repeat)');
+    key(document.activeElement!, 'keydown', { key: 'ArrowDown' });
+    expect((document.activeElement as HTMLElement).textContent).toContain('Repeat to 8 bars');
+    key(document.activeElement!, 'keydown', { key: 'ArrowDown' });
     expect((document.activeElement as HTMLElement).textContent).toContain('Move…');
     key(document.activeElement!, 'keydown', { key: 'ArrowDown' });
     expect((document.activeElement as HTMLElement).textContent).toContain('Duplicate');

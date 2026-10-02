@@ -128,14 +128,42 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Words on the right (a place, a state, why a row is off): the UI font, quiet. */
 .itemHint {
   flex: none;
-  max-width: 140px;
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--fs-xs);
   color: var(--ink-3);
+}
+/* A shortcut: small key caps ([Ctrl] [V]). */
+.caps {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+}
+.itemKeys {
+  margin-left: 8px;
+}
+.cap {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--shell-hi);
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
 }
 .item[role='menuitemcheckbox'][aria-checked='true'] .itemIcon {
   color: var(--amber);
@@ -146,8 +174,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 36px;
-  padding: 2px 10px 2px 30px;
+  min-height: 38px;
+  padding: 3px 10px 3px 30px;
 }
 .keyRowLabel {
   flex: 1;
@@ -159,16 +187,18 @@
   display: inline-flex;
   gap: 4px;
 }
+/* At least 32 x 32 px, like every other key. Numbers in the UI font with even figures. */
 .key {
-  min-width: 30px;
-  height: 28px;
+  min-width: 32px;
+  height: 32px;
   padding: 0 7px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: linear-gradient(180deg, var(--shell-hi), var(--pad-lo));
   box-shadow: var(--shadow-raised);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
   color: var(--ink-2);
   white-space: nowrap;
 }
@@ -197,6 +227,10 @@
   font-size: var(--fs-xs);
   color: var(--ink-3);
   width: 26px;
+}
+/* The keys' tooltip anchor holds them in one row. */
+.keyRow > span:has(> .keys) {
+  display: inline-flex;
 }
 
 /* Inline rename */

@@ -2,8 +2,13 @@
  * Play: the default surface — pad matrix (four modes), the selected part's
  * sound controls and the keyboard. Switching pad modes (or Simple / Advanced)
  * never touches playback or the project. The cables drawer is in Advanced.
+ *
+ * Importing selection.ts here registers the one-selected-clip rule for the
+ * whole app (the app loads this view eagerly): a selected part always has the
+ * slot its controls act on.
  */
 import type { ReactNode } from 'react';
+import '../selection';
 import { SegmentedControl } from '../../ui/components';
 import { setPadMode, type PadMode } from '../../state/uiStore';
 import { useUi } from '../instance';
