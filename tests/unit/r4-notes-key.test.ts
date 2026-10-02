@@ -112,6 +112,30 @@ describe('move the song to a new key', () => {
     expect(valid(store.getState())).toBe(true);
   });
 
+  it('leaves recorded performance takes in their own key and says how many', () => {
+    const store = house();
+    const p = store.getState();
+    store.apply('performance:Add take', (d) => {
+      const snapshot = { bpm: p.bpm, swing: p.swing, root: p.root, scale: p.scale, assist: p.assist, masterVolumeDb: p.masterVolumeDb, tracks: p.tracks, scenes: p.scenes, patch: p.patch, launcher: [], seed: p.seed };
+      d.performances.push({ id: 'take1', name: 'Take 1', createdAt: 0, startTick: 0, endTick: 384, snapshot: structuredClone(snapshot), events: [{ t: 0, type: 'noteOn', trackId: 't4', pitch: 62, velocity: 0.8, key: 'k' }] });
+    });
+    const take = store.getState().performances[0];
+    const r = transposeSong(store, { root: 9, scale: 'dorian' });
+    expect(r).toMatchObject({ changed: true, takesKept: 1 });
+    expect(store.getState().performances[0]).toBe(take);
+    expect(store.getState().performances[0].snapshot.root).toBe(7);
+  });
+
+  it('names the root when moving to the chromatic scale', () => {
+    const store = house();
+    expect(transposeSong(store, { root: 2, scale: 'chromatic' })).toMatchObject({ changed: true, takesKept: 0 });
+    expect(store.undoLabel()).toBe('Move the song to D chromatic');
+    const bounce = pitches(part(store.getState(), 'bass'), 'Bounce');
+    store.undo();
+    // To chromatic, notes move by the interval only (G to D: down 5).
+    expect(bounce).toEqual(pitches(part(store.getState(), 'bass'), 'Bounce').map((p) => p - 5));
+  });
+
   it('is refused during a performance take, like the key change itself', () => {
     const store = house();
     store.setLock('Recording a performance', (label) => label === 'project:Change tempo');

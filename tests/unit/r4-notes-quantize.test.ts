@@ -81,6 +81,33 @@ describe('quantize a clip', () => {
     ]);
   });
 
+  it('keeps a note pulled onto the loop end inside the clip when quantizing ends', () => {
+    for (const [bars, tick, duration] of [
+      [1, 380, 24],
+      [4, 1530, 30],
+    ] as const) {
+      const store = setup();
+      store.apply('clip:Length', (d) => {
+        const c = d.tracks[4].clips[0]!;
+        c.bars = bars;
+        c.notes = [{ id: 'end', tick, pitch: 60, velocity: 0.5, duration }];
+      });
+      expect(quantizeClip(store, LEAD, 0, { grid: '1/16', ends: true })).toMatchObject({ changed: true, moved: 1 });
+      const n = notes(store)[0];
+      expect(n.tick).toBe(0);
+      expect(n.duration).toBe(24);
+      expect(n.tick + n.duration).toBeLessThanOrEqual(bars * 384);
+      expect(valid(store)).toBe(true);
+    }
+    // A note whose quantized end would pass the clip end stops at it.
+    const store = setup();
+    store.apply('notes:Write', (d) => {
+      d.tracks[4].clips[0]!.notes = [{ id: 'long', tick: 700, pitch: 60, velocity: 0.5, duration: 200 }];
+    });
+    quantizeClip(store, LEAD, 0, { grid: '1/16', ends: true });
+    expect(notes(store)[0]).toMatchObject({ tick: 696, duration: 72 });
+  });
+
   it('refuses unknown grids and strengths outside 0..1, and changes nothing on the grid already', () => {
     const store = setup();
     const at = store.getState();
@@ -110,7 +137,8 @@ describe('humanize a clip', () => {
       expect(n.velocity).toBeLessThanOrEqual(grid[i].velocity * 1.2 + 1e-9);
       expect(n.id).toBe(grid[i].id);
     });
-    expect(a.undoLabel()).toBe('Humanize 8 notes');
+    // Undo counts the notes that changed, as the result does.
+    expect(a.undoLabel()).toBe(`Humanize ${r.notes} note${r.notes === 1 ? '' : 's'}`);
     expect(valid(a)).toBe(true);
 
     // Same project seed, clip and press seed: the same result (so live and exported renders match).
@@ -125,6 +153,20 @@ describe('humanize a clip', () => {
     a.undo();
     humanizeClip(a, LEAD, 0, { timingTicks: 6, velocityPct: 20, seed: 2 });
     expect(notes(a).map((n) => n.tick)).not.toEqual(once.map((n) => n.tick));
+  });
+
+  it('names only the notes it changed', () => {
+    const store = setup(3);
+    quantizeClip(store, LEAD, 0, { grid: '1/16' });
+    // No timing change and a tiny velocity range: some notes stay exactly as they were.
+    store.apply('notes:Write', (d) => {
+      for (const n of d.tracks[4].clips[0]!.notes) n.velocity = 1;
+    });
+    const r = humanizeClip(store, LEAD, 0, { timingTicks: 0, velocityPct: 10, seed: 4 });
+    const changed = notes(store).filter((n) => n.velocity !== 1).length;
+    expect(r.notes).toBe(changed);
+    expect(r.moved).toBe(0);
+    expect(store.undoLabel()).toBe(`Humanize ${changed} note${changed === 1 ? '' : 's'}`);
   });
 
   it('never pushes a note before the clip start, and refuses missing amounts', () => {

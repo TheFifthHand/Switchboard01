@@ -19,13 +19,16 @@ export const INTENSITY = { subtle: 0.35, bold: 0.85 } as const;
 export const VARIATION_MAX_COUNT_CHANGE = 0.3;
 
 /**
- * Hold a varied note list within ±30% of the count it was made from: drop the
- * quietest added notes when it grew too much, or bring back the source's own
- * notes (in their order) when it shrank too much. Works in place.
+ * Hold a varied note list within ±30% of the count it was made from, never
+ * past it (the bounds round inward): drop the quietest added notes when it
+ * grew too much, or bring back the source's own notes (in their order) when
+ * it shrank too much. Clips of three notes or fewer keep their note count
+ * (30% of three is less than one note); their notes can still move, change
+ * pitch, length or level. Works in place.
  */
 function keepCountNear(notes: Note[], source: readonly Note[]): void {
-  const most = Math.ceil(source.length * (1 + VARIATION_MAX_COUNT_CHANGE));
-  const least = Math.floor(source.length * (1 - VARIATION_MAX_COUNT_CHANGE));
+  const most = Math.floor(source.length * (1 + VARIATION_MAX_COUNT_CHANGE) + 1e-9);
+  const least = Math.ceil(source.length * (1 - VARIATION_MAX_COUNT_CHANGE) - 1e-9);
   const sourceIds = new Set(source.map((n) => n.id));
   if (notes.length > most) {
     const added = notes.filter((n) => !sourceIds.has(n.id)).sort((a, b) => a.velocity - b.velocity || b.tick - a.tick);
@@ -43,6 +46,8 @@ function keepCountNear(notes: Note[], source: readonly Note[]): void {
       taken.add(`${n.tick}|${n.pitch}`);
     }
   }
+  // Every removed note was blocked by a moved one: keep the source as it was rather than break the bound.
+  if (notes.length < least) notes.splice(0, notes.length, ...source.map((n) => ({ ...n })));
 }
 
 export interface VariationResult extends CommandResult {
@@ -60,8 +65,8 @@ export interface VariationResult extends CommandResult {
  * presses explore different variations of one original instead of piling
  * changes on changes. Notes in `from` that do not fit the clip or the part
  * are left out. A press never changes the note count by more than 30% of
- * the notes it varies (VARIATION_MAX_COUNT_CHANGE). One undo step; a locked
- * part is refused.
+ * the notes it varies (VARIATION_MAX_COUNT_CHANGE; clips of three notes or
+ * fewer keep their count). One undo step; a locked part is refused.
  */
 export function applyVariation(
   store: ProjectStore,

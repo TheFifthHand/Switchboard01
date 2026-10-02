@@ -227,6 +227,24 @@ describe('spelling by key (PLAY-23)', () => {
     expect(keyUsesFlats(9, 'minor')).toBe(false);
   });
 
+  it('writes the leading tone of a minor-type key as a raised seventh, and the blues ♭5 as a flat', () => {
+    expect(noteName(66, { root: 7, scale: 'dorian' })).toBe('F#4');
+    expect(noteName(66, { root: 7, scale: 'minor' })).toBe('F#4');
+    expect(noteName(61, { root: 2, scale: 'minor' })).toBe('C#4');
+    expect(noteName(61, { root: 2, scale: 'dorian' })).toBe('C#4');
+    expect(noteName(64, { root: 5, scale: 'minor' })).toBe('E4');
+    expect(noteName(71, { root: 0, scale: 'minorPentatonic' })).toBe('B4');
+    // The rest of a flat key's outside notes stay flat.
+    expect(noteName(61, { root: 7, scale: 'minor' })).toBe('D♭4');
+    // Blues: the ♭5 is a flattened fifth.
+    expect(noteName(63, { root: 9, scale: 'blues' })).toBe('E♭4');
+    expect(noteName(70, { root: 4, scale: 'blues' })).toBe('B♭4');
+    expect(noteName(61, { root: 7, scale: 'blues' })).toBe('D♭4');
+    // Major keys are unchanged: their leading tone is in the key.
+    expect(noteName(66, { root: 7, scale: 'major' })).toBe('F#4');
+    expect(noteName(64, { root: 5, scale: 'major' })).toBe('E4');
+  });
+
   it('keeps sharp keys sharp and gives every scale note its own letter', () => {
     expect([0, 2, 3, 5, 7, 8, 11].map((iv) => noteName(60 + iv, { root: 0, scale: 'harmonicMinor' }))).toEqual(['C4', 'D4', 'E♭4', 'F4', 'G4', 'A♭4', 'B4']);
     // G harmonic minor: B♭ and E♭ beside F#; D harmonic minor: B♭ beside C#; A minor keeps G#.
@@ -299,6 +317,15 @@ describe('moving music between keys', () => {
     expect(moveToKey(61, gDor, { root: 9, scale: 'minor' })).toBe(63);
     // Seven notes to five: scale notes land on the nearest note of the new key.
     expect(isInScale(moveToKey(65, { root: 0, scale: 'major' }, { root: 0, scale: 'majorPentatonic' }), 0, 'majorPentatonic')).toBe(true);
+    // Pentatonic and blues keys count degrees in their parent scale: C minor pentatonic to C major
+    // turns C E♭ F G B♭ into C E F G B (♭3 -> 3, ♭7 -> 7), not a tie snapped downward.
+    expect([60, 63, 65, 67, 70].map((m) => moveToKey(m, { root: 0, scale: 'minorPentatonic' }, { root: 0, scale: 'major' }))).toEqual([60, 64, 65, 67, 71]);
+    expect([60, 63, 65, 67, 70].map((m) => moveToKey(m, { root: 0, scale: 'blues' }, { root: 2, scale: 'dorian' }))).toEqual([62, 65, 67, 69, 72]);
+    // The blues ♭5 is outside the parent scale: it moves by the interval only.
+    expect(moveToKey(66, { root: 0, scale: 'blues' }, { root: 0, scale: 'major' })).toBe(66);
+    // C major pentatonic to C minor pentatonic: E -> E♭; A -> A♭, which the five-note key lacks, lands on G.
+    expect(moveToKey(64, { root: 0, scale: 'majorPentatonic' }, { root: 0, scale: 'minorPentatonic' })).toBe(63);
+    expect(moveToKey(69, { root: 0, scale: 'majorPentatonic' }, { root: 0, scale: 'minorPentatonic' })).toBe(67);
     // To or from chromatic: interval only.
     expect(moveToKey(61, { root: 0, scale: 'chromatic' }, { root: 2, scale: 'minor' })).toBe(63);
   });

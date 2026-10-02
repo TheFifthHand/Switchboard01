@@ -1,5 +1,5 @@
 /** Project-wide edits: name, tempo, swing, key (and moving the song to a new key), Musical Assist, master volume, settings. */
-import { keyLabel, moveToKey, pitchClass, type MusicalKey } from '../../music/scales';
+import { keyLabel, keyRootName, moveToKey, pitchClass, type MusicalKey } from '../../music/scales';
 import { BPM_SPEC, MASTER_VOLUME_SPEC, SWING_SPEC } from '../../project/params';
 import type { Id, Note, ProjectSettings, ScaleId } from '../../project/types';
 import { QUANTIZE_GRIDS, SCALE_IDS } from '../../project/validate';
@@ -50,6 +50,18 @@ export interface SongMoveResult extends CommandResult {
   notes: number;
   /** Notes that would have left the part's range and were folded back an octave. */
   clamped: number;
+  /**
+   * Recorded performance takes left in the key they were played in. A take
+   * replays from its own snapshot (its clips, key and Musical Assist), so it
+   * stays in tune with itself; moving its notes alone would make it clash with
+   * that snapshot. The toast can say "Recorded performances keep their key."
+   */
+  takesKept: number;
+}
+
+/** The words for a key in "Move the song to …": 'A Dorian', 'D chromatic'. */
+function songKeyWords(root: number, scale: ScaleId): string {
+  return scale === 'chromatic' ? `${keyRootName(root, scale)} chromatic` : keyLabel(root, scale);
 }
 
 /**
@@ -60,11 +72,13 @@ export interface SongMoveResult extends CommandResult {
  * music/scales), and notes outside the old key move by the interval only.
  * Drum parts never move. Sampler parts play recordings, which keep their
  * pitch, so they move only when listed in `samplerParts`. Notes folded back
- * into the part's range are counted in `clamped`. Refused during a
- * performance take like every key change.
+ * into the part's range are counted in `clamped`. Recorded performance takes
+ * keep their own key (`takesKept`). Refused during a performance take like
+ * every key change. Undo names it "Move the song to A Dorian" ("… to D
+ * chromatic" for the chromatic scale).
  */
 export function transposeSong(store: ProjectStore, to: MusicalKey, opts: { samplerParts?: readonly Id[] } = {}): SongMoveResult {
-  const none = { clips: 0, notes: 0, clamped: 0 };
+  const none = { clips: 0, notes: 0, clamped: 0, takesKept: 0 };
   if (!to || !isFiniteNumber(to.root) || !SCALE_IDS.includes(to.scale)) return { ...refuse('invalid', 'Unknown key or scale.'), ...none };
   const p = store.getState();
   const listed = opts.samplerParts ?? [];
@@ -122,8 +136,9 @@ export function transposeSong(store: ProjectStore, to: MusicalKey, opts: { sampl
         if (c && next) c.notes = next;
       });
     }
-  }, undefined, { display: `Move the song to ${keyLabel(root, to.scale)}` });
-  return r.changed ? { ...r, clips: moves.size, notes, clamped } : { ...r, ...none };
+  }, undefined, { display: `Move the song to ${songKeyWords(root, to.scale)}` });
+  const takesKept = p.performances.filter((perf) => perf.snapshot.root !== root || perf.snapshot.scale !== to.scale).length;
+  return r.changed ? { ...r, clips: moves.size, notes, clamped, takesKept } : { ...r, ...none };
 }
 
 export function setAssist(store: ProjectStore, on: boolean): CommandResult {

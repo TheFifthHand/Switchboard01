@@ -5,15 +5,15 @@
  */
 import { describe, expect, it } from 'vitest';
 import { getStarter } from '../../src/content/starters';
-import { PROGRESSIONS, chordAt, chordName, getProgression, pitchClassSet, resolveProgression, romanNumeral, spellChord, voiceLeadLoop, voiceLeadingDistance } from '../../src/music/chords';
-import { isInScale } from '../../src/music/scales';
+import { PROGRESSIONS, chordAt, chordName, getProgression, harmonicParent, pitchClassSet, resolveProgression, romanNumeral, spellChord, voiceLeadLoop, voiceLeadingDistance } from '../../src/music/chords';
+import { SCALES, isInScale, relativeMajorRoot } from '../../src/music/scales';
 import { createProject } from '../../src/project/factory';
 import type { Note, ScaleId } from '../../src/project/types';
 import { validateProject } from '../../src/project/validate';
 import { ProjectStore } from '../../src/state/projectStore';
 import { chordForPad, createProgressionClip } from '../../src/state/commands/notes';
 
-const SCALES: ScaleId[] = ['major', 'minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'harmonicMinor', 'majorPentatonic', 'minorPentatonic', 'blues', 'chromatic'];
+const SCALES_LIST: ScaleId[] = ['major', 'minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'harmonicMinor', 'majorPentatonic', 'minorPentatonic', 'blues', 'chromatic'];
 
 /** Chords of a clip: the notes starting together, in time order. */
 function chordsOf(notes: readonly Note[]): number[][] {
@@ -35,7 +35,7 @@ describe('chord names in the key', () => {
 
   it('names a chord for every degree of every key, with roman numerals beside it', () => {
     for (let root = 0; root < 12; root++) {
-      for (const scale of SCALES) {
+      for (const scale of SCALES_LIST) {
         for (let d = 0; d < 7; d++) {
           expect(chordName(root, scale, d).length).toBeGreaterThan(0);
           expect(chordName(root, scale, d, { size: 4 }).length).toBeGreaterThan(0);
@@ -103,7 +103,7 @@ describe('progressions', () => {
     // Harmonic minor: the dominant is major.
     expect(resolveProgression(9, 'harmonicMinor', getProgression('moody')!).names).toEqual(['Am', 'Dm', 'E', 'Am']);
     for (let root = 0; root < 12; root++) {
-      for (const scale of SCALES) {
+      for (const scale of SCALES_LIST) {
         for (const prog of PROGRESSIONS) {
           const r = resolveProgression(root, scale, prog);
           for (const c of r.chords) {
@@ -111,16 +111,39 @@ describe('progressions', () => {
             const fifth = c[2] - c[0];
             expect(fifth, `${prog.name} in ${root} ${scale}`).toBe(7);
             expect([3, 4]).toContain(third);
-            if (scale !== 'chromatic') expect(c.every((p) => isInScale(p, root, scale === 'majorPentatonic' ? 'major' : scale === 'minorPentatonic' || scale === 'blues' ? 'minor' : scale))).toBe(true);
+            // The rule: every chord note is in the key's seven-note scale; pentatonic, blues and chromatic keys use their parent's.
+            expect(c.every((p) => isInScale(p, root, harmonicParent(scale)))).toBe(true);
+            if (harmonicParent(scale) === scale) expect(c.every((p) => isInScale(p, root, scale))).toBe(true);
           }
         }
       }
     }
   });
 
+  it('starts only from the key’s root or its relative major / minor, so every progression comes home', () => {
+    // Harmonic minor: the Jazz turn ends on the home chord, not on V.
+    expect(resolveProgression(7, 'harmonicMinor', getProgression('jazz-turn')!).names).toEqual(['Cm', 'D', 'Gm', 'Gm']);
+    expect(resolveProgression(0, 'harmonicMinor', getProgression('jazz-turn')!).names).toEqual(['Fm', 'G', 'Cm', 'Cm']);
+    for (let root = 0; root < 12; root++) {
+      for (const scale of SCALES_LIST) {
+        const iv = SCALES[harmonicParent(scale)].intervals;
+        for (const prog of PROGRESSIONS) {
+          const relPc = prog.home === 'major' ? relativeMajorRoot(root, scale) : (relativeMajorRoot(root, scale) + 9) % 12;
+          const relative = iv.indexOf((relPc - root + 12) % 12);
+          const r = resolveProgression(root, scale, prog);
+          expect([0, relative], `${prog.name} in ${root} ${scale}`).toContain(r.anchor);
+        }
+        // The Jazz turn (ii–V–I–I) always lands on the chord it counts from.
+        const jazz = resolveProgression(root, scale, getProgression('jazz-turn')!);
+        expect(jazz.degrees[2]).toBe(jazz.anchor);
+        expect(jazz.degrees[3]).toBe(jazz.anchor);
+      }
+    }
+  });
+
   it('voice-leads every progression in every key with at most 7 semitones of movement per change (triads)', () => {
     for (let root = 0; root < 12; root++) {
-      for (const scale of SCALES) {
+      for (const scale of SCALES_LIST) {
         for (const prog of PROGRESSIONS) {
           const v = voiceLeadLoop(resolveProgression(root, scale, prog).chords, 50, 74);
           for (let i = 0; i < v.length; i++) expect(voiceLeadingDistance(v[i], v[(i + 1) % v.length]), `${prog.name} ${root} ${scale}`).toBeLessThanOrEqual(7);
@@ -188,6 +211,26 @@ describe('write a progression into a clip', () => {
     const roots = [0, 1, 2, 3].map((bar) => clip.notes.find((n) => n.tick >= bar * 384)!.pitch % 12);
     expect(roots).toEqual([2, 0, 10, 0]);
     expect(Math.max(...clip.notes.map((n) => n.pitch))).toBeLessThanOrEqual(60);
+  });
+
+  it('in a pentatonic or blues key uses the parent scale’s chords and says so', () => {
+    const p = createProject({ now: 0 });
+    p.root = 0;
+    p.scale = 'minorPentatonic';
+    const store = new ProjectStore(p);
+    const r = createProgressionClip(store, 't4', 0, { progressionId: 'moody', rhythm: 'held', bars: 4, size: 3 });
+    expect(r).toMatchObject({ changed: true, chords: ['Cm', 'Fm', 'Gm', 'Cm'], message: 'C minor pentatonic has too few notes for full chords, so the chords use the notes of C minor.' });
+    const clip = store.getState().tracks[3].clips[0]!;
+    expect(clip.notes.every((n) => isInScale(n.pitch, 0, 'minor'))).toBe(true);
+    // A♭ (Fm) and D (Gm) are chord notes the five-note key does not have.
+    expect(clip.notes.some((n) => !isInScale(n.pitch, 0, 'minorPentatonic'))).toBe(true);
+    const chromatic = createProject({ now: 0 });
+    chromatic.scale = 'chromatic';
+    chromatic.root = 2;
+    const s2 = new ProjectStore(chromatic);
+    expect(createProgressionClip(s2, 't4', 0, { progressionId: 'pop', rhythm: 'held', bars: 4, size: 3 }).message).toBe('A chromatic key has no chords of its own, so the chords use the notes of D major.');
+    const s3 = new ProjectStore(createProject({ now: 0 }));
+    expect(createProgressionClip(s3, 't4', 0, { progressionId: 'pop', rhythm: 'held', bars: 4, size: 3 }).message).toBeUndefined();
   });
 
   it('refuses drums and sampler parts with a reason, and bad options, changing nothing', () => {

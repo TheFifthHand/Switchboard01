@@ -106,10 +106,17 @@ const LETTER_SCALE: Record<ScaleId, ScaleId | null> = {
   chromatic: null,
 };
 const LETTERS = 'CDEFGAB';
+/** Scales with a minor third: their leading tone (a semitone under the root) is written as a raised seventh, F# in G minor. */
+const MINOR_THIRD: ReadonlySet<ScaleId> = new Set(['minor', 'dorian', 'phrygian', 'harmonicMinor', 'minorPentatonic', 'blues']);
+
+/** The root pitch class of the major key that shares a key's notes (A minor -> C, G Dorian -> F). */
+export function relativeMajorRoot(root: number, scale: ScaleId): number {
+  return (pitchClass(root) + MAJOR_OFFSET[scale]) % 12;
+}
 
 /** True when the key is written with flats (its key signature has flats): F major, G Dorian, D minor, F Phrygian... */
 export function keyUsesFlats(root: number, scale: ScaleId): boolean {
-  return FLAT_MAJOR_ROOTS.has((pitchClass(root) + MAJOR_OFFSET[scale]) % 12);
+  return FLAT_MAJOR_ROOTS.has(relativeMajorRoot(root, scale));
 }
 
 const spellingCache = new Map<string, readonly string[]>();
@@ -118,8 +125,12 @@ const spellingCache = new Map<string, readonly string[]>();
  * The twelve pitch-class names (index = pitch class) as a key writes them.
  * Flat keys use flats, the others sharps. Each scale note takes its own
  * letter where one of the two spellings allows it, so G harmonic minor reads
- * F# beside B♭ and D harmonic minor reads C#. Only C..B with one ♭ or # are
- * used (never E#, B#, C♭ or F♭), so octave numbers stay those of noteName.
+ * F# beside B♭ and D harmonic minor reads C#. Two notes outside the key are
+ * written the way they work: in a key with a minor third the leading tone is
+ * a raised seventh (F# in G minor and G Dorian, C# in D minor), and the
+ * blues ♭5 is a flattened fifth (E♭ in A blues). Only C..B with one ♭ or #
+ * are used (never E#, B#, C♭ or F♭), so octave numbers stay those of
+ * noteName.
  */
 export function keyNoteNames(root: number, scale: ScaleId): readonly string[] {
   const r = pitchClass(root);
@@ -137,6 +148,14 @@ export function keyNoteNames(root: number, scale: ScaleId): readonly string[] {
       const fit = [ROOT_NAMES[pc], FLAT_NAMES[pc]].find((n) => n[0] === letter);
       if (fit) names[pc] = fit;
     });
+    const spellAs = (pc: number, letter: string) => {
+      if (isInScale(pc, r, letterScale)) return; // a degree already has its letter
+      const fit = [ROOT_NAMES[pc], FLAT_NAMES[pc]].find((n) => n[0] === letter);
+      if (fit) names[pc] = fit;
+    };
+    // The leading tone takes the letter under the root (F# under G); the blues ♭5 the fifth's letter (E♭ under E in A).
+    if (MINOR_THIRD.has(scale)) spellAs((r + 11) % 12, LETTERS[(tonicLetter + 6) % 7]);
+    if (scale === 'blues') spellAs((r + 6) % 12, LETTERS[(tonicLetter + 4) % 7]);
   }
   const frozen = Object.freeze(names);
   spellingCache.set(cacheKey, frozen);
@@ -301,24 +320,27 @@ export function keyInterval(fromRoot: number, toRoot: number): number {
 /**
  * Where a note of a song in key `from` goes when the song moves to key `to`.
  * Everything moves by the shortest root interval (keyInterval). When the
- * scale changes between two seven-note scales, each scale degree maps to the
- * same degree of the new scale (G Dorian's E becomes G minor's E♭); between
- * scales of different sizes a scale note lands on the nearest note of the new
- * key. Notes outside the old key (chromatic passing notes) and anything to
- * or from the chromatic scale only move by the interval. The result may lie
- * outside 0..127; callers fold it into their range.
+ * scale changes, each scale note keeps its degree, counted in the seven-note
+ * scale behind each key (a pentatonic or blues key counts in its parent major
+ * or minor scale): G Dorian's E becomes G minor's E♭, and C minor
+ * pentatonic's E♭ and B♭ become C major's E and B. A note the new key does
+ * not have (moving to a pentatonic key) lands on the nearest note it has.
+ * Notes outside the old key (chromatic passing notes, the blues ♭5) and
+ * anything to or from the chromatic scale only move by the interval. The
+ * result may lie outside 0..127; callers fold it into their range.
  */
 export function moveToKey(midi: number, from: MusicalKey, to: MusicalKey): number {
   const m = Math.round(midi);
   const d = keyInterval(from.root, to.root);
-  if (from.scale === to.scale || from.scale === 'chromatic' || to.scale === 'chromatic') return m + d;
-  const fromIv = SCALES[from.scale].intervals;
-  const toIv = SCALES[to.scale].intervals;
+  const fromParent = LETTER_SCALE[from.scale];
+  const toParent = LETTER_SCALE[to.scale];
+  if (from.scale === to.scale || !fromParent || !toParent) return m + d;
   const rel = (pitchClass(m) - pitchClass(from.root) + 12) % 12;
-  const degree = fromIv.indexOf(rel);
+  if (!SCALES[from.scale].intervals.includes(rel)) return m + d;
+  const degree = SCALES[fromParent].intervals.indexOf(rel);
   if (degree < 0) return m + d;
-  if (fromIv.length === toIv.length) return m - rel + d + toIv[degree];
-  const moved = m + d;
+  const moved = m - rel + d + SCALES[toParent].intervals[degree];
+  if (isInScale(moved, to.root, to.scale)) return moved;
   // Snap by pitch class (a stand-in in the middle octave), so a note near the MIDI edges keeps its register.
   const stand = 60 + pitchClass(moved);
   return moved + snapToScale(stand, to.root, to.scale) - stand;

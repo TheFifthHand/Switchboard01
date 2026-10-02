@@ -58,6 +58,35 @@ describe('paint steps', () => {
   });
 });
 
+describe('a paint drag on an empty slot', () => {
+  it('grows the clip it created as the drag goes on, in the same undo step', () => {
+    const store = new ProjectStore(createProject({ now: 0 }));
+    const before = store.undoLabel();
+    expect(paintSteps(store, DRUMS, 2, HAT, [12], true, 'drag-x')).toMatchObject({ changed: true, painted: 1 });
+    expect(store.getState().tracks[0].clips[2]!.bars).toBe(1);
+    for (let s = 13; s <= 40; s++) expect(paintSteps(store, DRUMS, 2, HAT, [s], true, 'drag-x')).toMatchObject({ changed: true, painted: 1 });
+    expect(store.getState().tracks[0].clips[2]!.bars).toBe(3);
+    expect(steps(store, HAT, 2)).toHaveLength(29);
+    expect(valid(store.getState())).toBe(true);
+    // It stops at MAX_CLIP_BARS.
+    expect(paintSteps(store, DRUMS, 2, HAT, [MAX_CLIP_BARS * 16], true, 'drag-x')).toMatchObject({ changed: false, reason: 'invalid' });
+    store.undo();
+    expect(store.getState().tracks[0].clips[2]).toBeNull();
+    expect(store.undoLabel()).toBe(before);
+  });
+
+  it('keeps an existing clip at its length, and a new drag does not grow a clip made by an earlier one', () => {
+    const store = new ProjectStore(createProject({ now: 0 }));
+    createClip(store, DRUMS, 0, 1);
+    expect(paintSteps(store, DRUMS, 0, HAT, [15], true, 'one')).toMatchObject({ changed: true });
+    expect(paintSteps(store, DRUMS, 0, HAT, [16], true, 'one')).toMatchObject({ changed: false, reason: 'invalid' });
+    paintSteps(store, DRUMS, 1, HAT, [0], true, 'two');
+    store.endGesture();
+    expect(paintSteps(store, DRUMS, 1, HAT, [20], true, 'three')).toMatchObject({ changed: false, reason: 'invalid' });
+    expect(store.getState().tracks[0].clips[1]!.bars).toBe(1);
+  });
+});
+
 describe('fill, shift and clear a sound', () => {
   it('fills a 2-bar clip with 8th-note hats, keeping hits already there', () => {
     const store = new ProjectStore(createProject({ now: 0 }));

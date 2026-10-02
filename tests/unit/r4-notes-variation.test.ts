@@ -29,22 +29,27 @@ function press(store: ProjectStore, trackId: string, slot: number, presses: numb
 }
 
 describe('Variation from the original', () => {
-  it('keeps the note count within ±30% of the original over 8 presses (House drums, bass, chords, lead)', () => {
-    const p = getStarter('house')!.build();
-    const cases: [string, number][] = [];
-    for (const t of p.tracks) t.clips.forEach((c, slot) => c && c.notes.length >= 4 && t.instrument.kind !== 'sampler' && cases.push([t.id, slot]));
-    expect(cases.length).toBeGreaterThan(10);
-    for (const [trackId, slot] of cases) {
-      for (const intensity of [undefined, INTENSITY.subtle, INTENSITY.bold]) {
-        const store = new ProjectStore(getStarter('house')!.build());
-        const base = clipOf(store.getState(), trackId, slot).notes.length;
-        const counts = press(store, trackId, slot, 8, intensity);
-        for (const n of counts) {
-          expect(n, `${trackId} slot ${slot}`).toBeGreaterThanOrEqual(Math.floor(base * 0.7));
-          expect(n, `${trackId} slot ${slot}`).toBeLessThanOrEqual(Math.ceil(base * 1.3));
+  it('keeps the note count within ±30% of the original for every clip of every starter, at every strength', () => {
+    let presses = 0;
+    for (const starter of STARTERS) {
+      const p = starter.build();
+      const cases: [string, number, number][] = [];
+      for (const t of p.tracks) t.clips.forEach((c, slot) => c && c.notes.length > 0 && cases.push([t.id, slot, c.notes.length]));
+      for (const [trackId, slot, base] of cases) {
+        for (const intensity of [undefined, INTENSITY.subtle, INTENSITY.bold]) {
+          const store = new ProjectStore(starter.build());
+          for (const n of press(store, trackId, slot, 10, intensity)) {
+            presses++;
+            const where = `${starter.id} ${trackId} slot ${slot} (${base} notes)`;
+            expect(n, where).toBeLessThanOrEqual(base * 1.3);
+            expect(n, where).toBeGreaterThanOrEqual(base * 0.7);
+            // Three notes or fewer: 30% is less than a note, so the count stays.
+            if (base <= 3) expect(n, where).toBe(base);
+          }
         }
       }
     }
+    expect(presses).toBeGreaterThan(3000);
   });
 
   it('drums stay near the original where pressing on the result kept piling notes up', () => {

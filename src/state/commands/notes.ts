@@ -14,8 +14,8 @@
  * take like every other clip edit (its "notes:" label is not on the take's
  * allow-list). Each returns counts for a toast.
  */
-import { chordAt, getProgression, resolveProgression, voiceLeadLoop } from '../../music/chords';
-import { pitchClass, snapToScale, transposeInScale, type MusicalKey } from '../../music/scales';
+import { chordAt, getProgression, harmonicParent, resolveProgression, voiceLeadLoop } from '../../music/chords';
+import { keyLabel, pitchClass, snapToScale, transposeInScale, type MusicalKey } from '../../music/scales';
 import { uid } from '../../project/factory';
 import { Rng, subSeed } from '../../project/rng';
 import {
@@ -473,13 +473,38 @@ export function addRecordedNotes(store: ProjectStore, trackId: Id, slot: number,
 /* ------------------------------------------------------------------ */
 
 /**
+ * What a moved, transposed or placed note does when it lands exactly on
+ * another note (same tick and pitch). 'refuse': the edit is refused
+ * ('occupied') and nothing changes. 'replace': the note landed on is removed
+ * (counted in `replaced`; Undo brings it back).
+ */
+export type Collide = 'replace' | 'refuse';
+
+/** Where a refused or shortened move stopped, in words ("the end of the clip", "the highest note (G9)"). */
+function edgeWords(kind: InstrumentKind, time: number, pitch: number): string {
+  const parts: string[] = [];
+  if (time) parts.push(time < 0 ? 'the start of the clip' : 'the end of the clip');
+  if (pitch) {
+    if (kind === 'drums') parts.push(pitch < 0 ? 'the first sound of the kit' : 'the last sound of the kit');
+    else parts.push(pitch < 0 ? 'the lowest note (C-1)' : 'the highest note (G9)');
+  }
+  return parts.join(' and ');
+}
+
+/**
  * Move selected notes by `dTick` ticks and `dPitch` semitones (drum rows for
  * kits) anywhere in the clip, across bars. The selection moves as one shape:
  * the move is shortened so every note stays inside 0..clip length and the
- * part's pitch range (`dTick`/`dPitch` in the result say how far it went).
- * A nudge is dTick ±NUDGE_TICKS. A moved note that lands exactly on an
- * unselected note replaces it; during a drag (`gesture`) that is refused
- * ('occupied') instead, so notes passed over are never deleted.
+ * part's pitch range; `dTick`/`dPitch` in the result say how far it went and
+ * `message` names the limit that shortened it. A nudge is dTick
+ * ±NUDGE_TICKS. Calls sharing a `gesture` id (one drag) form one undo step.
+ *
+ * Landing exactly on an unselected note is refused ('occupied') by default,
+ * so a move never deletes a note by accident: an arrow key stepping a note
+ * through its neighbours stops at the first one instead of eating them, and
+ * a drag never deletes notes it passes over. Pass `collide: 'replace'` for a
+ * drop the user aims on purpose; the notes landed on are then removed and
+ * counted in `replaced`.
  */
 export function moveNotes(
   store: ProjectStore,
@@ -489,8 +514,9 @@ export function moveNotes(
   dTick: number,
   dPitch: number,
   gesture?: string,
-): CommandResult & { moved: number; dTick: number; dPitch: number } {
-  const none = { moved: 0, dTick: 0, dPitch: 0 };
+  opts: { collide?: Collide } = {},
+): CommandResult & { moved: number; dTick: number; dPitch: number; replaced: number } {
+  const none = { moved: 0, dTick: 0, dPitch: 0, replaced: 0 };
   const t = target(store.getState(), trackId, slot);
   if (!isTarget(t)) return { ...t, ...none };
   const bad = noSelection(ids);
@@ -498,20 +524,23 @@ export function moveNotes(
   if (!isFiniteNumber(dTick) || !isFiniteNumber(dPitch)) return { ...refuse('invalid', 'A move must be a number of ticks and semitones.'), ...none };
   const sel = selectedNotes(t.clip, ids);
   if (sel.length === 0) return { ...GONE(), ...none };
-  const [lo, hi] = pitchRangeFor(t.track.instrument.kind);
+  const kind = t.track.instrument.kind;
+  const [lo, hi] = pitchRangeFor(kind);
+  const wantP = Math.round(dPitch);
   const minTick = Math.min(...sel.map((n) => n.tick));
   const maxTick = Math.max(...sel.map((n) => n.tick));
   const minPitch = Math.min(...sel.map((n) => n.pitch));
   const maxPitch = Math.max(...sel.map((n) => n.pitch));
   const dt = clamp(dTick, -minTick, Math.max(0, t.len - 1 - maxTick)) || 0;
-  const dp = clamp(Math.round(dPitch), lo - minPitch, hi - maxPitch) || 0;
+  const dp = clamp(wantP, lo - minPitch, hi - maxPitch) || 0;
+  const stopped = edgeWords(kind, dt !== dTick ? Math.sign(dTick) : 0, dp !== wantP ? Math.sign(wantP) : 0);
   if (dt === 0 && dp === 0) {
-    return dTick === 0 && Math.round(dPitch) === 0 ? { changed: false, ...none } : { ...refuse('limit', 'The notes are already at the edge of the clip.'), ...none };
+    return dTick === 0 && wantP === 0 ? { changed: false, ...none } : { ...refuse('limit', `The notes are already at ${stopped}.`), ...none };
   }
   const selIds = new Set(sel.map((n) => n.id));
   const landing = new Set(sel.map((n) => noteKey(n.tick + dt, n.pitch + dp)));
   const hit = t.clip.notes.filter((n) => !selIds.has(n.id) && landing.has(noteKey(n.tick, n.pitch)));
-  if (gesture !== undefined && hit.length) return { ...refuse('occupied', 'There is already a note there.'), ...none };
+  if (hit.length && (opts.collide ?? 'refuse') === 'refuse') return { ...refuse('occupied', 'There is already a note there.'), ...none };
   const hitIds = new Set(hit.map((n) => n.id));
   const r = run(store, 'notes:Move notes', (d) => {
     const c = draftClip(d, trackId, slot);
@@ -522,7 +551,8 @@ export function moveNotes(
       n.pitch += dp;
     }
   }, gesture, { display: `Move ${plural(sel.length, 'note')}` });
-  return r.changed ? { ...r, moved: sel.length, dTick: dt, dPitch: dp } : { ...r, ...none };
+  if (!r.changed) return { ...r, ...none };
+  return { ...r, moved: sel.length, dTick: dt, dPitch: dp, replaced: hit.length, ...(stopped ? { message: `The move stopped at ${stopped}.` } : {}) };
 }
 
 /** Delete the selected notes. */
@@ -570,7 +600,7 @@ export function setNotesVelocity(
       const v = next.get(n.id);
       if (v !== undefined) n.velocity = v;
     }
-  }, gesture, { display: `Change velocity of ${plural(sel.length, 'note')}` });
+  }, gesture, { display: `Change velocity of ${plural(changedCount, 'note')}` });
   return { ...r, notes: r.changed ? changedCount : 0 };
 }
 
@@ -587,11 +617,13 @@ function scaleShift(pitch: number, steps: number, key: MusicalKey): number {
 /**
  * Transpose the selected notes by `steps` semitones, or by scale steps of
  * `inScale` (Musical Assist; ±7 is an octave in a seven-note scale). In
- * semitones the selection keeps its shape and stops at the part's range; in
- * scale steps each note follows the key and folds back by an octave at the
- * range's edge. A transposed note landing on another note's tick and pitch
- * replaces it. Drum notes are sounds, not pitches, so they are refused (move
- * them to another row with moveNotes).
+ * semitones the selection keeps its shape and stops at the part's range
+ * (`steps` in the result is the move made; Undo names it); in scale steps
+ * each note follows the key and folds back by an octave at the range's edge.
+ * Landing on another note's tick and pitch is refused by default, like
+ * moveNotes; `collide: 'replace'` removes the notes landed on (`replaced`).
+ * Drum notes are sounds, not pitches, so they are refused (move them to
+ * another row with moveNotes).
  */
 export function transposeNotes(
   store: ProjectStore,
@@ -599,44 +631,52 @@ export function transposeNotes(
   slot: number,
   ids: readonly Id[],
   steps: number,
-  opts: { inScale?: MusicalKey } = {},
-): CommandResult & { moved: number } {
+  opts: { inScale?: MusicalKey; collide?: Collide } = {},
+): CommandResult & { moved: number; steps: number; replaced: number } {
+  const none = { moved: 0, steps: 0, replaced: 0 };
   const t = target(store.getState(), trackId, slot);
-  if (!isTarget(t)) return { ...t, moved: 0 };
-  if (t.track.instrument.kind === 'drums') return { ...refuse('invalid', 'Drum notes are sounds, not pitches: move them to another sound instead.'), moved: 0 };
+  if (!isTarget(t)) return { ...t, ...none };
+  if (t.track.instrument.kind === 'drums') return { ...refuse('invalid', 'Drum notes are sounds, not pitches: move them to another sound instead.'), ...none };
   const bad = noSelection(ids);
-  if (bad) return { ...bad, moved: 0 };
-  if (!Number.isInteger(steps) || Math.abs(steps) > MAX_TRANSPOSE_STEPS) return { ...refuse('invalid', 'Transpose by a whole number of steps.'), moved: 0 };
+  if (bad) return { ...bad, ...none };
+  if (!Number.isInteger(steps) || Math.abs(steps) > MAX_TRANSPOSE_STEPS) return { ...refuse('invalid', 'Transpose by a whole number of steps.'), ...none };
   const key = opts.inScale;
-  if (key && !(isFiniteNumber(key.root) && SCALE_IDS.includes(key.scale))) return { ...refuse('invalid', 'Unknown key or scale.'), moved: 0 };
+  if (key && !(isFiniteNumber(key.root) && SCALE_IDS.includes(key.scale))) return { ...refuse('invalid', 'Unknown key or scale.'), ...none };
   const sel = selectedNotes(t.clip, ids);
-  if (sel.length === 0) return { ...GONE(), moved: 0 };
-  if (steps === 0) return { changed: false, moved: 0 };
+  if (sel.length === 0) return { ...GONE(), ...none };
+  if (steps === 0) return { changed: false, ...none };
   const [lo, hi] = pitchRangeFor(t.track.instrument.kind);
   let to: Map<Id, number>;
+  let made = steps;
   if (key) {
     to = new Map(sel.map((n) => [n.id, foldPitch(scaleShift(n.pitch, steps, key), lo, hi)]));
   } else {
     const minPitch = Math.min(...sel.map((n) => n.pitch));
     const maxPitch = Math.max(...sel.map((n) => n.pitch));
-    const dp = clamp(steps, lo - minPitch, hi - maxPitch);
-    if (dp === 0) return { ...refuse('limit', 'The notes are already at the edge of the range.'), moved: 0 };
-    to = new Map(sel.map((n) => [n.id, n.pitch + dp]));
+    made = clamp(steps, lo - minPitch, hi - maxPitch);
+    if (made === 0) return { ...refuse('limit', `The notes are already at ${edgeWords(t.track.instrument.kind, 0, Math.sign(steps))}.`), ...none };
+    to = new Map(sel.map((n) => [n.id, n.pitch + made]));
   }
   const moved = sel.filter((n) => to.get(n.id) !== n.pitch).length;
-  if (moved === 0) return { changed: false, moved: 0 };
-  const words = key ? plural(Math.abs(steps), 'scale step') : plural(Math.abs(steps), 'semitone');
+  if (moved === 0) return { changed: false, ...none };
+  const landing = new Set(sel.map((n) => noteKey(n.tick, to.get(n.id) as number)));
+  const hit = t.clip.notes.filter((n) => !to.has(n.id) && landing.has(noteKey(n.tick, n.pitch)));
+  // Two selected notes can meet on one pitch when out-of-key notes follow the key; one of each pair goes.
+  const replaced = hit.length + (sel.length - landing.size);
+  if (replaced && (opts.collide ?? 'refuse') === 'refuse') return { ...refuse('occupied', 'There is already a note there.'), ...none };
+  const hitIds = new Set(hit.map((n) => n.id));
+  const words = key ? plural(Math.abs(made), 'scale step') : plural(Math.abs(made), 'semitone');
   const r = run(store, 'notes:Transpose notes', (d) => {
     const c = draftClip(d, trackId, slot);
-    const landing = new Set(sel.map((n) => noteKey(n.tick, to.get(n.id) as number)));
-    const kept = c.notes.filter((n) => to.has(n.id) || !landing.has(noteKey(n.tick, n.pitch)));
+    const kept = c.notes.filter((n) => !hitIds.has(n.id));
     for (const n of kept) {
       const v = to.get(n.id);
       if (v !== undefined) n.pitch = v;
     }
     c.notes = dedupeNotes(kept);
-  }, undefined, { display: `Transpose ${plural(sel.length, 'note')} ${steps > 0 ? 'up' : 'down'} ${words}` });
-  return { ...r, moved: r.changed ? moved : 0 };
+  }, undefined, { display: `Transpose ${plural(sel.length, 'note')} ${made > 0 ? 'up' : 'down'} ${words}` });
+  if (!r.changed) return { ...r, ...none };
+  return { ...r, moved, steps: made, replaced, ...(made !== steps ? { message: `The notes stopped at ${edgeWords(t.track.instrument.kind, 0, Math.sign(steps))}.` } : {}) };
 }
 
 /**
@@ -656,7 +696,9 @@ export function copyNotes(project: Project, trackId: Id, slot: number, ids: read
  * Place notes in the clip with their earliest note at `atTick`, as new notes
  * (new ids, returned so the view can select them). Notes that would start
  * past the clip's end or that the part cannot play are left out (`skipped`).
- * A pasted note replaces a note at the same tick and pitch.
+ * A placed note landing on a note at the same tick and pitch replaces it
+ * (`replaced`; Undo brings it back), or with `collide: 'refuse'` the whole
+ * edit is refused.
  */
 function placeNotes(
   store: ProjectStore,
@@ -665,10 +707,11 @@ function placeNotes(
   t: Target,
   notes: readonly Omit<Note, 'id'>[],
   atTick: number,
+  collide: Collide,
   label: string,
   verb: string,
-): CommandResult & { ids: Id[]; added: number; skipped: number } {
-  const none = { ids: [] as Id[], added: 0, skipped: 0 };
+): CommandResult & { ids: Id[]; added: number; skipped: number; replaced: number } {
+  const none = { ids: [] as Id[], added: 0, skipped: 0, replaced: 0 };
   const finite = notes.filter((n) => n && [n.tick, n.pitch, n.velocity, n.duration].every(isFiniteNumber));
   if (finite.length === 0) return { ...refuse('empty', 'There are no notes to place.'), ...none };
   const start = Math.min(...finite.map((n) => n.tick));
@@ -679,48 +722,54 @@ function placeNotes(
     if (tick < 0 || tick >= t.len || !validPitch(t.track.instrument.kind, pitch)) continue;
     placed.push({ id: uid('n'), tick, pitch, velocity: clamp(n.velocity, 0, 1), duration: clamp(n.duration, VALIDATION_LIMITS.minNoteTicks, VALIDATION_LIMITS.maxNoteTicks) });
   }
-  const skipped = notes.length - placed.length;
-  if (placed.length === 0) return { ...refuse('limit', 'None of those notes fit here: they would start past the end of the clip or outside what this part can play.'), ...none, skipped };
+  if (placed.length === 0) return { ...refuse('limit', 'None of those notes fit here: they would start past the end of the clip or outside what this part can play.'), ...none, skipped: notes.length };
   const unique = dedupeNotes(placed);
   const landing = new Set(unique.map((n) => noteKey(n.tick, n.pitch)));
   const kept = t.clip.notes.filter((n) => !landing.has(noteKey(n.tick, n.pitch)));
+  const replaced = t.clip.notes.length - kept.length;
+  if (replaced && collide === 'refuse') return { ...refuse('occupied', 'There is already a note there.'), ...none };
   if (kept.length + unique.length > MAX_NOTES) return { ...refuse('limit', 'The clip would have too many notes.'), ...none };
   const r = run(store, label, (d) => {
     const c = draftClip(d, trackId, slot);
     c.notes = [...c.notes.filter((n) => !landing.has(noteKey(n.tick, n.pitch))), ...unique];
   }, undefined, { display: `${verb} ${plural(unique.length, 'note')}` });
-  return r.changed ? { ...r, ids: unique.map((n) => n.id), added: unique.length, skipped: notes.length - unique.length } : { ...r, ...none };
+  return r.changed ? { ...r, ids: unique.map((n) => n.id), added: unique.length, skipped: notes.length - unique.length, replaced } : { ...r, ...none };
 }
 
-/** Paste a clipboard (copyNotes) with its earliest note at `atTick`. Returns the new note ids. */
+/**
+ * Paste a clipboard (copyNotes) with its earliest note at `atTick`. Returns
+ * the new note ids. Pasting over notes replaces them by default (`replaced`).
+ */
 export function pasteNotes(
   store: ProjectStore,
   trackId: Id,
   slot: number,
   notes: readonly Omit<Note, 'id'>[],
   atTick: number,
-): CommandResult & { ids: Id[]; added: number; skipped: number } {
-  const none = { ids: [] as Id[], added: 0, skipped: 0 };
+  opts: { collide?: Collide } = {},
+): CommandResult & { ids: Id[]; added: number; skipped: number; replaced: number } {
+  const none = { ids: [] as Id[], added: 0, skipped: 0, replaced: 0 };
   const t = target(store.getState(), trackId, slot);
   if (!isTarget(t)) return { ...t, ...none };
   if (!Array.isArray(notes)) return { ...refuse('invalid', 'The notes could not be read.'), ...none };
   if (!isFiniteNumber(atTick) || atTick < 0 || atTick >= t.len) return { ...refuse('invalid', 'That position is outside the clip.'), ...none };
-  return placeNotes(store, trackId, slot, t, notes, atTick, 'notes:Paste notes', 'Paste');
+  return placeNotes(store, trackId, slot, t, notes, atTick, opts.collide ?? 'replace', 'notes:Paste notes', 'Paste');
 }
 
 /**
  * Copy the selected notes `offsetTicks` later (default: right after the
  * selection, rounded up to a whole 16th). Copies that would start past the
- * clip's end are left out (`skipped`). Returns the new ids.
+ * clip's end are left out (`skipped`). Copies replace notes they land on by
+ * default (`replaced`). Returns the new ids.
  */
 export function duplicateNotes(
   store: ProjectStore,
   trackId: Id,
   slot: number,
   ids: readonly Id[],
-  opts: { offsetTicks?: number } = {},
-): CommandResult & { ids: Id[]; added: number; skipped: number } {
-  const none = { ids: [] as Id[], added: 0, skipped: 0 };
+  opts: { offsetTicks?: number; collide?: Collide } = {},
+): CommandResult & { ids: Id[]; added: number; skipped: number; replaced: number } {
+  const none = { ids: [] as Id[], added: 0, skipped: 0, replaced: 0 };
   const t = target(store.getState(), trackId, slot);
   if (!isTarget(t)) return { ...t, ...none };
   const bad = noSelection(ids);
@@ -732,7 +781,7 @@ export function duplicateNotes(
   const offset = opts.offsetTicks ?? Math.max(TICKS_PER_STEP, Math.ceil((end - start) / TICKS_PER_STEP) * TICKS_PER_STEP);
   if (!isFiniteNumber(offset) || offset === 0) return { ...refuse('invalid', 'A copy needs a distance to move.'), ...none };
   if (start + offset < 0 || start + offset >= t.len) return { ...refuse('limit', 'There is no room for a copy there in this clip.'), ...none };
-  return placeNotes(store, trackId, slot, t, copyNotes(store.getState(), trackId, slot, ids), start + offset, 'notes:Duplicate notes', 'Duplicate');
+  return placeNotes(store, trackId, slot, t, copyNotes(store.getState(), trackId, slot, ids), start + offset, opts.collide ?? 'replace', 'notes:Duplicate notes', 'Duplicate');
 }
 
 /* ------------------------------------------------------------------ */
@@ -750,8 +799,9 @@ export interface QuantizeOptions {
 
 /**
  * Tighten timing: pull each note's start towards the nearest grid line by
- * `strength`. A note pulled onto the loop's end moves to its start. Two
- * notes of one pitch that land on the same tick become one (the louder).
+ * `strength`. A note pulled onto the loop's end moves to its start. With
+ * `ends`, note ends are pulled too, and a note never ends past the clip.
+ * Two notes of one pitch that land on the same tick become one (the louder).
  * One undo step; returns how many notes moved.
  */
 export function quantizeClip(store: ProjectStore, trackId: Id, slot: number, opts: QuantizeOptions): CommandResult & { moved: number } {
@@ -767,15 +817,17 @@ export function quantizeClip(store: ProjectStore, trackId: Id, slot: number, opt
   let touched = 0;
   const next = t.clip.notes.map((n) => {
     const snapped = Math.round(n.tick / g) * g;
-    let tick = round(n.tick + (snapped - n.tick) * strength);
-    if (tick >= len) tick = 0;
+    const start = round(n.tick + (snapped - n.tick) * strength);
     let duration = n.duration;
     if (opts.ends) {
+      // The length comes from the start before it wraps, so a note pulled onto the loop end keeps its own length.
       const end = n.tick + n.duration;
       const endSnap = Math.round(end / g) * g;
       const newEnd = round(end + (endSnap - end) * strength);
-      duration = clamp(newEnd - tick > 0 ? newEnd - tick : g, VALIDATION_LIMITS.minNoteTicks, VALIDATION_LIMITS.maxNoteTicks);
+      duration = newEnd - start > 0 ? newEnd - start : g;
     }
+    const tick = start >= len ? start - len : start;
+    if (opts.ends) duration = clamp(duration, VALIDATION_LIMITS.minNoteTicks, Math.max(VALIDATION_LIMITS.minNoteTicks, len - tick));
     if (tick === n.tick && duration === n.duration) return n;
     if (tick !== n.tick) moved++;
     touched++;
@@ -830,7 +882,7 @@ export function humanizeClip(store: ProjectStore, trackId: Id, slot: number, opt
   const notes = dedupeNotes(next);
   const r = run(store, 'notes:Humanize clip', (d) => {
     draftClip(d, trackId, slot).notes = notes;
-  }, undefined, { display: `Humanize ${plural(notes.length, 'note')}` });
+  }, undefined, { display: `Humanize ${plural(touched, 'note')}` });
   return r.changed ? { ...r, moved, notes: touched } : { ...r, moved: 0, notes: 0 };
 }
 
@@ -838,15 +890,19 @@ export function humanizeClip(store: ProjectStore, trackId: Id, slot: number, opt
 /* Drum sounds (one row of the step grid)                              */
 /* ------------------------------------------------------------------ */
 
-function stepCount(clip: Clip | null): number {
-  return (clip ? clip.bars : MAX_CLIP_BARS) * STEPS_PER_BAR;
-}
+/**
+ * The clip a paint drag created on an empty slot, per store: while the same
+ * drag (gesture id) goes on, that clip grows to reach the steps it paints.
+ */
+const paintCreated = new WeakMap<ProjectStore, { gesture: string; clipId: Id }>();
 
 /**
  * Paint a drag across a sound's steps: `on` adds a one-step hit on every
  * listed step that has none; off removes the sound's hits on them. Calls
- * that share a `gesture` id (one drag) form one undo step. An empty slot
- * gets a clip long enough when painting on.
+ * that share a `gesture` id (one drag) form one undo step. Painting on an
+ * empty slot creates a clip just long enough, and while that same drag goes
+ * on the clip grows (up to MAX_CLIP_BARS) to reach the steps it paints; an
+ * existing clip keeps its length.
  */
 export function paintSteps(
   store: ProjectStore,
@@ -866,7 +922,9 @@ export function paintSteps(
   const velocity = opts.velocity ?? DEFAULT_STEP_VELOCITY;
   if (!isFiniteNumber(velocity)) return { ...refuse('invalid', 'Velocity must be a number.'), painted: 0 };
   const clip = t.clips[slot];
-  const max = stepCount(clip);
+  const made = paintCreated.get(store);
+  const grows = !clip || (gesture !== undefined && made !== undefined && made.gesture === gesture && made.clipId === clip.id);
+  const max = (grows ? MAX_CLIP_BARS : clip.bars) * STEPS_PER_BAR;
   if (!Array.isArray(steps) || steps.some((s) => !Number.isInteger(s) || s < 0 || s >= max)) return { ...refuse('invalid', 'That step is outside the clip.'), painted: 0 };
   const wanted = [...new Set(steps)].sort((a, b) => a - b);
   const display = { display: on ? 'Paint steps' : 'Erase steps' };
@@ -875,14 +933,20 @@ export function paintSteps(
     if (add.length === 0) return { changed: false, painted: 0 };
     if ((clip?.notes.length ?? 0) + add.length > MAX_NOTES) return { ...refuse('limit', 'This clip is full.'), painted: 0 };
     const fresh = add.map((s): Note => ({ id: uid('n'), tick: s * TICKS_PER_STEP, pitch, velocity: clamp(velocity, 0, 1), duration: TICKS_PER_STEP }));
-    const r = clip
-      ? run(store, 'notes:Paint steps', (d) => {
-          draftClip(d, trackId, slot).notes.push(...fresh);
-        }, gesture, display)
-      : run(store, 'notes:Paint steps', (d) => {
-          const bars = clamp(Math.ceil((add[add.length - 1] + 1) / STEPS_PER_BAR), 1, MAX_CLIP_BARS) as ClipBars;
-          draftTrack(d, trackId).clips[slot] = { id: uid('clip'), name: defaultClipName(p, slot), bars, notes: fresh };
-        }, gesture, display);
+    const reach = clamp(Math.ceil((add[add.length - 1] + 1) / STEPS_PER_BAR), 1, MAX_CLIP_BARS) as ClipBars;
+    if (clip) {
+      const r = run(store, 'notes:Paint steps', (d) => {
+        const c = draftClip(d, trackId, slot);
+        if (grows && reach > c.bars) c.bars = reach;
+        c.notes.push(...fresh);
+      }, gesture, display);
+      return { ...r, painted: r.changed ? add.length : 0 };
+    }
+    const clipId = uid('clip');
+    const r = run(store, 'notes:Paint steps', (d) => {
+      draftTrack(d, trackId).clips[slot] = { id: clipId, name: defaultClipName(p, slot), bars: reach, notes: fresh };
+    }, gesture, display);
+    if (r.changed && gesture !== undefined) paintCreated.set(store, { gesture, clipId });
     return { ...r, painted: r.changed ? add.length : 0 };
   }
   if (!clip) return { changed: false, painted: 0 };
@@ -1052,7 +1116,11 @@ function rhythmHits(rhythm: ProgressionRhythm, span: number): [number, number, n
  * more (the loop repeats), faster changes in shorter clips. An empty slot
  * gets a new clip named after the progression; an existing clip gets the new
  * notes and length and keeps its name. Drum and sampler parts are refused
- * with a reason. Deterministic, made from fixed rules (no AI).
+ * with a reason. In a pentatonic, blues or chromatic key the chords come
+ * from the parent major or minor scale (a five-note scale holds too few full
+ * chords), so a few chord notes lie outside the key; `message` says so for
+ * the toast. Clip playback is never re-snapped by Musical Assist, so the
+ * chords sound as written. Deterministic, made from fixed rules (no AI).
  */
 export function createProgressionClip(
   store: ProjectStore,
@@ -1115,7 +1183,16 @@ export function createProgressionClip(
     : run(store, 'notes:Write progression', (d) => {
         draftTrack(d, trackId).clips[slot] = { id: clipId, name: prog.name, bars, notes };
       }, undefined, display);
-  return r.changed ? { ...r, clipId, notes: notes.length, chords: resolved.names } : { ...r, ...none };
+  if (!r.changed) return { ...r, ...none };
+  const parent = harmonicParent(p.scale);
+  // A pentatonic, blues or chromatic key borrows its chords: say so, since a few chord notes are outside it.
+  const message =
+    parent === p.scale
+      ? undefined
+      : p.scale === 'chromatic'
+        ? `A chromatic key has no chords of its own, so the chords use the notes of ${keyLabel(p.root, parent)}.`
+        : `${keyLabel(p.root, p.scale)} has too few notes for full chords, so the chords use the notes of ${keyLabel(p.root, parent)}.`;
+  return { ...r, clipId, notes: notes.length, chords: resolved.names, ...(message ? { message } : {}) };
 }
 
 /** The chord a chord pad plays: chordAt in the project's key around a part's register (re-exported for views next to the commands). */

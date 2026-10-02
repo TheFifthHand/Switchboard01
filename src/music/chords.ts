@@ -7,7 +7,7 @@
  * root in the octave starting at C3 = 48.
  */
 import type { ScaleId } from '../project/types';
-import { MIDI_MAX, MIDI_MIN, ROOT_NAMES, SCALES, keyNoteNames, pitchClass } from './scales';
+import { MIDI_MAX, MIDI_MIN, ROOT_NAMES, SCALES, keyNoteNames, pitchClass, relativeMajorRoot } from './scales';
 
 /* ------------------------------------------------------------------ */
 /* Chord qualities                                                     */
@@ -614,18 +614,27 @@ export interface ResolvedProgression {
  * progression in a major key; in Mixolydian its V is minor, which is that
  * key's colour). When that would give the wrong home chord (a major-key
  * progression in a minor key) or a diminished or augmented chord, it is
- * played from the degree where every chord keeps its quality: the key's
- * relative major or minor. A diminished or augmented chord that remains
- * (harmonic minor has three) is replaced by the major or minor chord a third
- * below or above it. Deterministic; no randomness.
+ * played from the key's relative major (for a major-key progression) or
+ * relative minor (for a minor-key one); those are the only two places it
+ * can start from, so it always comes home. A diminished or augmented chord
+ * that remains (harmonic minor has three) is replaced by the major or minor
+ * chord a third below or above it. Pentatonic and blues keys take the chords
+ * of their parent minor or major scale (harmonicParent): five or six notes
+ * hold too few full chords for these progressions. Chromatic uses major.
+ * Deterministic; no randomness.
  */
 export function resolveProgression(root: number, scale: ScaleId, progression: ProgressionDef, size: 3 | 4 = 3): ResolvedProgression {
   const homeScale: ScaleId = progression.home === 'major' ? 'major' : 'minor';
   const want = progression.degrees.map((d) => triadQuality(diatonicChord(0, homeScale, d, 3, 3)));
   const homeQuality: TriadQuality = progression.home === 'major' ? 'maj' : 'min';
+  // Only two places to count from: the key's own root, or its relative major (minor) for a
+  // major-key (minor-key) progression. Anywhere else would end the progression off home.
+  const relPc = progression.home === 'major' ? relativeMajorRoot(root, scale) : (relativeMajorRoot(root, scale) + 9) % 12;
+  const relative = SCALES[harmonicParent(scale)].intervals.indexOf((relPc - pitchClass(root) + 12) % 12);
+  const anchors = relative > 0 ? [0, relative] : [0];
   let anchor = 0;
   let bestCost = Infinity;
-  for (let a = 0; a < 7; a++) {
+  for (const a of anchors) {
     let cost = a === 0 ? 0 : 1;
     if (triadQuality(diatonicChord(root, scale, a, 3, 3)) !== homeQuality) cost += 3;
     progression.degrees.forEach((d, i) => {
