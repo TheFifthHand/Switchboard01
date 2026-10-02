@@ -1,0 +1,47 @@
+/* The Channel drawer: a panel under the mixer holding the part's effects rack at its natural height
+   (the Mix view scrolls to it; the rack itself never becomes a small scroll box). */
+
+.drawer {
+  min-width: 0;
+  scroll-margin: 10px;
+}
+
+.panel {
+  min-width: 0;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.part {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.part :global(.mono) {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+
+.note {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: var(--r-md);
+  background: var(--coral-wash);
+  color: var(--coral-ink);
+  font-size: var(--fs-sm);
+}
+
+.rack {
+  min-width: 0;
+}
+
+/* The rack's body keeps its natural height here. */
+.rack > :last-child {
+  overflow: visible;
+  max-height: none;
+}

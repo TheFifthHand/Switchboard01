@@ -1,14 +1,18 @@
 /*
  * Mix layout.
- * - Wide enough: mixer and mastering side by side, filling the workspace
- *   (Simple from 1280 px; Advanced, whose strips carry two more knobs, from 1800 px).
+ * - From 1340 px (Simple and Advanced): mixer and mastering side by side, both
+ *   filling the workspace height, so Presets and Match target are always in
+ *   sight. Eight parts, the two returns and the master fit the mixer without
+ *   scrolling sideways (the mastering column is a little narrower below 1600 px).
  * - Narrower: mixer on top at about the workspace height (the top of Mastering
  *   peeks out below it), mastering below at its full height, laid out in two
  *   columns; the view scrolls. The mastering panel never becomes a small
  *   scroll box of its own.
  * - Below 1024 px (200 % zoom), the page scrolls (App switches to auto rows).
+ * - The Channel drawer, when open, sits under the mixer (full width); the view
+ *   scrolls to it and the strips keep their height.
  * The strips scroll sideways inside the mixer if they ever run out of room,
- * so all eight parts and the master stay reachable.
+ * so every strip stays reachable.
  */
 
 .view {
@@ -16,6 +20,9 @@
   grid-template-columns: minmax(0, 1fr);
   /* max-content: an auto row would get no room under a full-height mixer. */
   grid-template-rows: max(560px, calc(100% - 52px)) max-content;
+  grid-template-areas:
+    'mixer'
+    'mastering';
   gap: 10px;
   height: 100%;
   min-height: 0;
@@ -25,39 +32,61 @@
   overflow-y: auto;
 }
 
-.view[data-mode='advanced'] {
-  grid-template-rows: max(600px, calc(100% - 52px)) max-content;
+.view[data-drawer] {
+  grid-template-rows: max(560px, calc(100% - 52px)) max-content max-content;
+  grid-template-areas:
+    'mixer'
+    'drawer'
+    'mastering';
+}
+
+.mixer {
+  grid-area: mixer;
+}
+
+.mastering {
+  grid-area: mastering;
+}
+
+.drawer {
+  grid-area: drawer;
 }
 
 /* Side by side, both filling the workspace height (a very short workspace scrolls instead of clipping faders). */
-@media (min-width: 1280px) {
-  .view[data-mode='simple'] {
-    grid-template-columns: minmax(0, 1fr) minmax(380px, 34%);
+@media (min-width: 1340px) {
+  .view {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 28%);
     grid-template-rows: minmax(470px, 1fr);
+    grid-template-areas: 'mixer mastering';
+  }
+  .view[data-drawer] {
+    grid-template-rows: max(470px, 100%) max-content;
+    grid-template-areas:
+      'mixer mastering'
+      'drawer drawer';
   }
 }
 
-@media (min-width: 1800px) {
-  .view[data-mode='advanced'] {
+@media (min-width: 1600px) {
+  .view {
     grid-template-columns: minmax(0, 1fr) minmax(480px, 34%);
-    grid-template-rows: minmax(600px, 1fr);
   }
 }
 
 @media (max-width: 1023px) {
-  .view,
-  .view[data-mode='advanced'] {
+  .view {
     height: auto;
     grid-template-rows: 560px max-content;
     overflow: visible;
   }
-  .view[data-mode='advanced'] {
-    grid-template-rows: 740px max-content;
+  .view[data-drawer] {
+    grid-template-rows: 560px max-content max-content;
   }
 }
 
 .mixer,
-.mastering {
+.mastering,
+.drawer {
   min-width: 0;
   min-height: 0;
 }
@@ -66,14 +95,17 @@
   display: flex;
   min-height: 0;
   overflow-x: auto;
-  overflow-y: hidden;
+  /* Only with the Sends and effects row shown on a short window are the strips taller than the
+     mixer: they then scroll inside it rather than lose the bottom of their faders. */
+  overflow-y: auto;
   padding-bottom: 10px;
 }
 
+/* Parts, then the two returns, then the master. */
 .strips {
   display: grid;
-  grid-template-columns: repeat(var(--parts, 8), minmax(78px, 1fr)) minmax(104px, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(var(--parts, 8), minmax(78px, 1fr)) repeat(2, minmax(78px, 1fr)) minmax(84px, 1fr);
+  gap: 4px;
   flex: 1 1 auto;
   min-width: min-content;
   min-height: 0;
