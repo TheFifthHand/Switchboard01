@@ -1403,13 +1403,14 @@ export class Session {
   /* Recordable edits                                                    */
   /* ------------------------------------------------------------------ */
 
-  setMacro(trackId: Id, macro: MacroId, value: number, gesture?: string): void {
-    const r = cmd.setMacro(this.store, trackId, macro, value, gesture);
+  /** `opts.display` names the undo step in the calling view's words ("Drums reverb"). */
+  setMacro(trackId: Id, macro: MacroId, value: number, gesture?: string, opts: { display?: string } = {}): void {
+    const r = cmd.setMacro(this.store, trackId, macro, value, gesture, opts);
     if (this.accepted(r)) this.recordControl(`macro:${trackId}:${macro}`, { t: this.currentTick(), type: 'macro', trackId, macro, value });
   }
 
-  setModuleParam(moduleId: Id, param: string, value: number, gesture?: string): void {
-    const r = cmd.setModuleParam(this.store, moduleId, param, value, gesture);
+  setModuleParam(moduleId: Id, param: string, value: number, gesture?: string, opts: { display?: string } = {}): void {
+    const r = cmd.setModuleParam(this.store, moduleId, param, value, gesture, opts);
     if (this.accepted(r)) this.recordControl(`param:${moduleId}:${param}`, { t: this.currentTick(), type: 'param', module: moduleId, param, value });
   }
 

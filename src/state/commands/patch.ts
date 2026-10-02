@@ -140,9 +140,10 @@ export function setConnectionAmount(store: ProjectStore, connectionId: Id, amoun
 
 /**
  * Set a module parameter (clamped through the registry). Instrument modules
- * ("<t>:inst") set the part's instrument parameters.
+ * ("<t>:inst") set the part's instrument parameters. `opts.display` gives the
+ * undo step the words the calling view uses for the control ("Reverb return level").
  */
-export function setModuleParam(store: ProjectStore, moduleIdStr: Id, param: string, value: number, gesture?: string): CommandResult {
+export function setModuleParam(store: ProjectStore, moduleIdStr: Id, param: string, value: number, gesture?: string, opts: { display?: string } = {}): CommandResult {
   const p = store.getState();
   const mod = findModule(p.patch, moduleIdStr);
   if (!mod) return NOT_FOUND('module');
@@ -154,21 +155,24 @@ export function setModuleParam(store: ProjectStore, moduleIdStr: Id, param: stri
     const v = clampParam(spec, value);
     return run(store, `module:Change ${spec.label}`, (d) => {
       draftTrack(d, track.id).instrument.params[param] = v;
-    }, gesture);
+    }, gesture, opts.display !== undefined ? { display: opts.display } : {});
   }
   const spec = specById(MODULE_PARAMS[mod.type], param);
   if (!spec) return refuse('invalid', 'This module has no such control.');
   const v = clampParam(spec, value);
   // A part's channel (the Mix view's fader, pan and sends): the undo step names the part ("Bass level").
-  const display = mod.type === 'channel' && mod.trackId ? `${partName(p, mod.trackId)} ${spec.label.toLowerCase()}` : undefined;
+  const display = opts.display ?? (mod.type === 'channel' && mod.trackId ? `${partName(p, mod.trackId)} ${spec.label.toLowerCase()}` : undefined);
   return run(store, `module:Change ${MODULE_DEFS[mod.type].label} ${spec.label}`, (d) => {
     const m = d.patch.modules.find((x) => x.id === moduleIdStr);
     if (m) m.params[param] = v;
   }, gesture, display !== undefined ? { display } : {});
 }
 
-/** Bypass an effect or LFO (sound passes through unprocessed / no movement). */
-export function setBypass(store: ProjectStore, moduleIdStr: Id, bypass: boolean): CommandResult {
+/**
+ * Bypass an effect or LFO (sound passes through unprocessed / no movement).
+ * `opts.display` names the undo step in the calling view's words ("Mute Reverb return").
+ */
+export function setBypass(store: ProjectStore, moduleIdStr: Id, bypass: boolean, opts: { display?: string } = {}): CommandResult {
   const locked = lockedResult(store);
   if (locked) return locked;
   const mod = findModule(store.getState().patch, moduleIdStr);
@@ -177,7 +181,7 @@ export function setBypass(store: ProjectStore, moduleIdStr: Id, bypass: boolean)
   return run(store, bypass ? 'patch:Bypass effect' : 'patch:Turn effect back on', (d) => {
     const m = d.patch.modules.find((x) => x.id === moduleIdStr);
     if (m) m.bypass = !!bypass;
-  });
+  }, undefined, opts.display !== undefined ? { display: opts.display } : {});
 }
 
 /* ------------------------------------------------------------------ */
