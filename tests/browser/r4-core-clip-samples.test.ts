@@ -4,7 +4,8 @@
  * The sequencer hands the clip's recording to the engine with each note
  * (NoteTrigger.sample), live and in exports alike, and the session loads
  * clip recordings ahead (engine.preloadSamples) when a project loads and
- * whenever new ones appear.
+ * whenever new ones appear; a recording not decoded yet is read from
+ * browser storage for that (the live bank's loader).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { NoteTrigger } from '../../src/audio/contracts';
@@ -17,7 +18,8 @@ import { applySamplerToProject } from '../../src/content/presets';
 import type { ClipSample, Project } from '../../src/project/types';
 import { renderOffline } from '../../src/render/offline';
 import { rms } from '../../src/render/analysis';
-import { deleteDb } from '../../src/persistence/db';
+import { deleteDb, putSample } from '../../src/persistence/db';
+import { encodeWav } from '../../src/render/wav';
 
 const SR = 48000;
 const BELL: ClipSample = { id: 'builtin:bell-hit', start: 0, end: 1, rootNote: 60 };
@@ -157,5 +159,36 @@ describe('per-clip recordings (capability-01)', () => {
     } finally {
       proto.preloadSamples = original;
     }
+  });
+
+  it('a recording only in browser storage is read and decoded when the engine loads it ahead, and its notes play', async () => {
+    // A stored recording the project does not list (nothing decoded it yet).
+    const n = SR / 2;
+    const ch = new Float32Array(n);
+    for (let i = 0; i < n; i++) ch[i] = 0.5 * Math.sin((2 * Math.PI * 330 * i) / SR);
+    const blob = new Blob([encodeWav([ch, ch], SR, 16)], { type: 'audio/wav' });
+    const id = 'smp_stored_only';
+    await putSample({ id, name: 'Stored', mime: 'audio/wav', byteLength: blob.size, duration: 0.5, sampleRate: SR, channels: 2 }, blob);
+    const p = project();
+    p.tracks[0].clips[0] = null;
+    const s = new Session(p);
+    live.push(s);
+    expect(await s.startAudio()).toBe(true);
+    const engine = s.engine!;
+    await engine.preloadSamples([id, 'smp_nowhere']);
+    const ctx = s.ctx!;
+    engine.scheduleNote('t8', { pitch: 60, velocity: 1, time: ctx.currentTime + 0.05, duration: 0.3, sample: { id, start: 0, end: 1, rootNote: 60 } });
+    let peak = 0;
+    const until = performance.now() + 500;
+    while (performance.now() < until) {
+      const m = s.readMetersShared();
+      if (m) peak = Math.max(peak, m.masterPeakL);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(engine.getStats().skippedSampleNotes ?? 0).toBe(0);
+    expect(peak).toBeGreaterThan(0.01);
+    // One that is nowhere stays unavailable: its note is skipped, nothing breaks.
+    engine.scheduleNote('t8', { pitch: 60, velocity: 1, time: ctx.currentTime + 0.05, duration: 0.3, sample: { id: 'smp_nowhere', start: 0, end: 1, rootNote: 60 } });
+    expect(engine.getStats().skippedSampleNotes ?? 0).toBe(1);
   });
 });

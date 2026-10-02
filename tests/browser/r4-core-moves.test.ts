@@ -139,6 +139,56 @@ describe('song moves, live (the real-time transport on an AudioContext)', () => 
     }
   });
 
+  it('a song that opens with a Fade in starts from silence, also again after Stop; Pause and Play in the fade go on from the level reached', async () => {
+    const p = song(coreProject(), { A: [{ id: 'f', kind: 'fadeIn' }] });
+    const ctx = new AudioContext({ sampleRate: SR });
+    await ctx.resume();
+    const { factory } = makeFactory();
+    const engine = await AudioEngine.create(ctx, { samples: { get: () => null }, seed: 7, meters: true, instrumentFactory: factory });
+    engine.setProject(p);
+    const seq = new Sequencer({ getProject: () => p });
+    const transport = new RealtimeTransport({ ctx, engine, sequencer: seq });
+    const f: MeterFrame = { masterPeakL: 0, masterPeakR: 0, masterRms: 0, limiterReductionDb: 0, tracks: [] };
+    /** The level when the audio clock reaches song time `t` of a playback whose tick 0 is at `t0` (relative to the tone's own). */
+    const levelAt = async (t0: number, t: number) => {
+      while (ctx.currentTime < t0 + t + LATENCY) await new Promise((r) => setTimeout(r, 5));
+      engine.readMeters(f);
+      return f.masterRms / (VEL * Math.SQRT1_2);
+    };
+    try {
+      const levels: number[] = [];
+      for (let pass = 0; pass < 2; pass++) {
+        transport.start({ mode: { kind: 'song', fromBlock: 0 } });
+        const t0 = seq.timeAt(0);
+        levels.push(await levelAt(t0, 0.15), await levelAt(t0, 1.75));
+        // Stopped at ~90 %: the gain holds there until the next start.
+        transport.stop();
+      }
+      // Pause at about half way (song time 1.0 s), Play again half a second later.
+      transport.start({ mode: { kind: 'song', fromBlock: 0 } });
+      const t0 = seq.timeAt(0);
+      await levelAt(t0, 1.0);
+      expect(transport.pause()).toBe(true);
+      const pausedTick = seq.tickAt(ctx.currentTime);
+      await new Promise((r) => setTimeout(r, 500));
+      expect(transport.resume()).toBe(true);
+      const t1 = seq.timeAt(pausedTick);
+      const resumed = await levelAt(t1, 0.1);
+      const reached = pausedTick / 384;
+      console.info(`[moves] fade-in start ${levels.map((x) => x.toFixed(3)).join(' ')}; resumed at ${reached.toFixed(2)} of the fade: ${resumed.toFixed(3)}`);
+      expect(levels[0]).toBeLessThan(0.15);
+      expect(levels[1]).toBeGreaterThan(0.75);
+      expect(levels[2]).toBeLessThan(0.15);
+      expect(levels[3]).toBeGreaterThan(0.75);
+      expect(resumed).toBeGreaterThan(reached - 0.1);
+      expect(resumed).toBeLessThan(reached + 0.15);
+    } finally {
+      transport.dispose();
+      engine.dispose();
+      await ctx.close();
+    }
+  });
+
   it('started in the middle of a fade (a seek), it begins at the value the fade has there', async () => {
     const p = song(coreProject(), { B: [{ id: 'f', kind: 'fadeIn' }] });
     // Bar 2 of the song = half way through B's fade in (B spans song bars 1..3).

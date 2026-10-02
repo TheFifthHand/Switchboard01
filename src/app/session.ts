@@ -507,7 +507,10 @@ export class Session {
       // The view change this click made (Welcome to Play) paints before the engine is built.
       await nextFrame();
       const project = this.store.getState();
-      this.bank = new SampleBank(ctx.sampleRate);
+      const bank = new SampleBank(ctx.sampleRate);
+      // What the engine loads ahead (preloadSamples) and is not in the bank yet comes from browser storage.
+      bank.setLoader((id) => this.loadSampleForBank(bank, ctx, id));
+      this.bank = bank;
       await this.loadProjectSamples(project);
       const engine = await AudioEngine.create(ctx, { samples: this.bank, seed: project.seed, meters: true });
       this.engine = engine;
@@ -756,15 +759,18 @@ export class Session {
     }
   }
 
-  /** Load ahead the recordings clips play themselves (Clip.sample), once each, so no note waits for one. */
+  /**
+   * Load ahead the recordings clips play themselves (Clip.sample), once each,
+   * so no note waits for one: built-in sounds are generated, recordings come
+   * from the bank, which reads browser storage for one it does not hold yet
+   * (loadSampleForBank).
+   */
   private preloadClipSamples(p: Project): void {
-    const engine = this.engine as (AudioEngine & { preloadSamples?: (ids: readonly string[]) => Promise<void> }) | null;
+    const engine = this.engine;
     if (!engine?.preloadSamples) return;
     const ids: Id[] = [];
     for (const id of cmd.clipSampleIds(p)) {
       if (this.preloaded.has(id)) continue;
-      // An imported recording must be decoded into the bank first (loadProjectSamples).
-      if (!id.startsWith('builtin:') && !this.loadedSampleIds.has(id)) continue;
       this.preloaded.add(id);
       ids.push(id);
     }
@@ -905,6 +911,24 @@ export class Session {
       this.transport.stopTrack(t.id);
       setTrackRuntime(t.id, { playingSlot: null, queued: null });
     }
+  }
+
+  /**
+   * The live bank's loader: a recording it does not hold yet, read from
+   * browser storage and decoded (one decode per id: a load already under way
+   * for the project's samples is waited for). Null when there is none.
+   */
+  private async loadSampleForBank(bank: SampleBank, ctx: AudioContext, id: Id): Promise<AudioBuffer | null> {
+    const pending = this.sampleLoads.get(id);
+    if (pending) {
+      await pending;
+      return bank.get(id);
+    }
+    const rec = await db.getSample(id).catch(() => null);
+    if (!rec) return null;
+    const buffer = await ctx.decodeAudioData(await rec.blob.arrayBuffer());
+    if (this.bank === bank) this.loadedSampleIds.add(id);
+    return buffer;
   }
 
   /** Decode every sample the project uses into the bank (once per id). */
