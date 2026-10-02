@@ -1,9 +1,13 @@
 /**
  * Reverb module: convolution with a generated, seeded stereo impulse response.
  *
- *   in ─┬─ dryGate (1 − mix) ───────────────────────────────────────────┐
+ *   in ─┬─ dryGate (1 − mix; 0 as a send return) ──────────────────────┐
  *       └─ pre-delay (mono) ─┬─ slot.in ─ convolver ─ slot.out ─┐        │
  *                            └─ (older slots ringing out) ──────┴─ tone LP ─ wetGate ─┴─> out
+ *
+ * As a send return (fed only by channel sends: setSendReturn) there is no
+ * dry path and Mix is the return level: the output is the room × Mix. As an
+ * insert the dry sound passes at 1 − Mix.
  *
  * The room is fed a mono sum and answers in decorrelated stereo, so every
  * part gets the same wide room whatever its pan.
@@ -67,6 +71,9 @@ export class ReverbModule extends EffectModule {
   private readonly seed: number;
   /** Latest requested decay (may still be waiting for the debounce). */
   private requestedDecay: number;
+  private mix: number;
+  /** Fed only by channel sends (no dry path); null until the engine says. */
+  private sendReturn: boolean | null = null;
   private debounce: number | null = null;
 
   constructor(env: ModuleEnv, id: Id, params: ParamValues) {
@@ -75,6 +82,7 @@ export class ReverbModule extends EffectModule {
     this.seed = subSeed(env.seed, 'reverb-ir');
     const decay = readParam(REVERB_PARAMS, params, 'decay');
     const mix = readParam(REVERB_PARAMS, params, 'mix');
+    this.mix = mix;
     this.predelay = readParam(REVERB_PARAMS, params, 'predelay') / 1000;
     this.requestedDecay = decay;
 
@@ -217,8 +225,9 @@ export class ReverbModule extends EffectModule {
     if (this.disposed) return;
     const t = this.at(time);
     const mix = readParam(REVERB_PARAMS, params, 'mix');
+    this.mix = mix;
     this.predelay = readParam(REVERB_PARAMS, params, 'predelay') / 1000;
-    this.smooth(this.dryGate.gain, 1 - mix, t);
+    this.smooth(this.dryGate.gain, this.dryLevel(), t);
     this.smooth(this.ctl.base.offset, mix, t);
     this.smooth(this.tone.frequency, readParam(REVERB_PARAMS, params, 'tone'), t);
     this.smooth(this.pre.delayTime, this.predelay, t);
@@ -239,6 +248,19 @@ export class ReverbModule extends EffectModule {
       const now = this.ctx.currentTime;
       this.switchTo(this.requestedDecay, now, now);
     }, REVERB_REGEN_DEBOUNCE_MS);
+  }
+
+  /** Dry share: none as a send return, 1 − Mix as an insert. */
+  private dryLevel(): number {
+    return this.sendReturn ? 0 : 1 - this.mix;
+  }
+
+  setSendReturn(isReturn: boolean, time: number): void {
+    if (this.disposed || isReturn === this.sendReturn) return;
+    const first = this.sendReturn === null;
+    this.sendReturn = isReturn;
+    if (first) this.setNow(this.dryGate.gain, this.dryLevel());
+    else this.smooth(this.dryGate.gain, this.dryLevel(), this.at(time));
   }
 
   protected afterCancel(time: number): void {

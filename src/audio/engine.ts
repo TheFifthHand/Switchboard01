@@ -218,6 +218,8 @@ interface ConnRec {
   toAudio: AudioNode;
   gain: GainNode;
   target: number;
+  /** Offline: when its fade-out after being unpatched ends (it is released at a later rewiring). */
+  fadeEnd?: number;
 }
 
 interface DesiredConn {
@@ -929,7 +931,9 @@ export class AudioEngine implements AudioEngineApi {
   /**
    * Effects fed only by channel sends are send returns (the shared Reverb and
    * Delay by default). Bypassing a return switches its output off; passing
-   * the dry send through would just make every sending part louder.
+   * the dry send through would just make every sending part louder. (For the
+   * same reason a Reverb or Echo return has no dry path while on:
+   * setSendReturn, reported in reconcileConnections.)
    */
   private bypassedReturns(project: Project): Set<Id> {
     const out = new Set<Id>();
@@ -943,6 +947,13 @@ export class AudioEngine implements AudioEngineApi {
   }
 
   private reconcileConnections(project: Project, now: number, immediate: boolean): void {
+    // Offline: cables whose fade-out has ended are released now.
+    for (const rec of [...this.fadingConns]) {
+      if (rec.fadeEnd !== undefined && rec.fadeEnd <= now) {
+        this.fadingConns.delete(rec);
+        this.disconnectConnection(rec);
+      }
+    }
     const mutedReturns = this.bypassedReturns(project);
     this.mutedReturns = mutedReturns;
     // A bypassed LFO stops moving its targets: its cables glide to 0 and stay
@@ -1009,17 +1020,31 @@ export class AudioEngine implements AudioEngineApi {
     }
     const none: ReadonlySet<string> = new Set();
     for (const rec of this.mods.values()) rec.node.setModulated?.(modulated.get(rec.id) ?? none, now);
+    // Send returns: everything wired into the audio input comes from channel sends (see ModuleNode.setSendReturn).
+    const direct = new Set<Id>();
+    for (const c of project.patch.connections) {
+      const d = c && desired.get(c.id);
+      if (!d || d.kind !== 'audio' || c.to.port !== 'in') continue;
+      const fromSend = this.mods.get(c.from.module)?.type === 'channel' && (c.from.port === 'sendA' || c.from.port === 'sendB');
+      if (!fromSend) direct.add(c.to.module);
+    }
+    for (const rec of this.mods.values()) rec.node.setSendReturn?.(!direct.has(rec.id), now);
   }
 
+  /**
+   * An unpatched cable fades out over REWIRE_RAMP, live and offline alike
+   * (an export sounds like playback). Live, a timer releases it; offline
+   * (no wall clock), the next rewiring after its fade, or dispose.
+   */
   private dropConnection(rec: ConnRec, now: number): void {
-    if (this.offline) {
-      this.disconnectConnection(rec);
-      return;
-    }
     const p = rec.gain.gain;
     holdAt(p, now);
     p.linearRampToValueAtTime(0, now + REWIRE_RAMP);
     this.fadingConns.add(rec);
+    if (this.offline) {
+      rec.fadeEnd = now + REWIRE_RAMP;
+      return;
+    }
     this.setTimer(() => {
       this.fadingConns.delete(rec);
       this.disconnectConnection(rec);
