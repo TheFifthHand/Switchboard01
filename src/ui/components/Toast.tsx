@@ -8,10 +8,13 @@
  *   hovered or focused; errors stay until dismissed unless given a duration
  *   (any caller may pass one, e.g. 3000 ms for "Undid: …").
  * - Placement contract (Toast.module.css): the stack sits above the on-screen
- *   keyboard (`--keyboard-h`, set by the KeyboardStrip); while a menu is open
- *   (`body[data-popover-open]`, set by Popover) it moves to the top, under the
- *   transport (`--transport-h`), below the menu; while a modal dialog is open
- *   (`body[data-modal-open]`, set by Dialog) its action keys are hidden.
+ *   keyboard (`--keyboard-h`, written by the KeyboardStrip: the height it
+ *   covers at the window's bottom, 0 when hidden or not docked there); while a
+ *   menu is open (`body[data-popover-open]`, set by Popover) it moves to the
+ *   top, under the transport (`--transport-h`, written by the TransportBar),
+ *   below the menu; while a modal dialog is open (`body[data-modal-open]`, set
+ *   by Dialog) its action keys are hidden. Both measures must be set on
+ *   `document.documentElement`: toasts render into body, outside the app tree.
  *
  * Tone is shown by an icon and wording, not colour alone: coral marks
  * warnings and errors (attention); info/success are neutral.

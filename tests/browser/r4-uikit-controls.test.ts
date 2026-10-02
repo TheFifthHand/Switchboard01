@@ -6,7 +6,8 @@
  * - a dialog adds no banner/contentinfo landmarks and marks body[data-modal-open] while open;
  * - a tooltip opens for focus the user moved with the keyboard (Tab), not for focus the app moved
  *   after another key (Delete), so it never lands on a button nobody went to;
- * - the new icons; useRafLoop's frame cap; useElementSize measures before the first paint.
+ * - the new icons; useRafLoop's frame cap and its pause while the tab is hidden; useElementSize
+ *   measures before the first paint.
  */
 import { act, createElement as h, Fragment, useRef, useState, type KeyboardEvent } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -161,6 +162,52 @@ describe('hooks', () => {
     await wait(1000);
     expect(calls).toBeGreaterThan(8);
     expect(calls).toBeLessThanOrEqual(22);
+  });
+
+  it('useRafLoop makes no calls while the tab is hidden, and picks up again when it is shown', async () => {
+    // The page's visibility, as the browser reports it to the loop (the test runner itself must keep running).
+    const setHidden = (hidden: boolean) => {
+      if (hidden) {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      } else {
+        delete (document as { hidden?: boolean }).hidden;
+        delete (document as { visibilityState?: string }).visibilityState;
+      }
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    let calls = 0;
+    let firstDelta = 0;
+    function Host() {
+      useRafLoop((dt) => {
+        calls += 1;
+        if (calls === 1) firstDelta = dt;
+      }, true);
+      return null;
+    }
+    try {
+      // Mounted while hidden: it does not start.
+      setHidden(true);
+      mount(h(Host));
+      await wait(250);
+      expect(calls).toBe(0);
+      setHidden(false);
+      await wait(250);
+      expect(calls).toBeGreaterThan(3);
+      // The first call after showing measures from the moment it was shown, not from mount.
+      expect(firstDelta).toBeLessThan(120);
+      // Hidden while running: it stops.
+      setHidden(true);
+      await settleFrames(2);
+      const atHide = calls;
+      await wait(300);
+      expect(calls).toBe(atHide);
+      setHidden(false);
+      await wait(250);
+      expect(calls).toBeGreaterThan(atHide + 3);
+    } finally {
+      if (Object.prototype.hasOwnProperty.call(document, 'hidden')) setHidden(false);
+    }
   });
 
   it('useElementSize has the real size before the first paint (no frame laid out for zero)', () => {

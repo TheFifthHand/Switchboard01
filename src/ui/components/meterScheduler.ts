@@ -3,8 +3,10 @@
  *
  * Each meter registers a task. The loop reads every source each frame (at most ~70 times a second:
  * the engine's analysers hold about 21 ms of audio, so no peak falls between two reads), runs the
- * ballistics, and writes the DOM at most 30 times a second, only what changed. Meters draw with
- * transforms on composited layers, so a write costs no paint.
+ * ballistics, and draws at most 30 times a second, only what changed. Each meter draws into its own
+ * small canvas, so a draw changes nothing in the page's paint or layer tree (no layout, no paint of
+ * other elements, no re-layerization); only the clip lamp, the peak number and the aria values are
+ * DOM writes, and those change rarely.
  *
  * The loop sleeps once every meter shows its floor (no level, no held peak, no clip lamp) and
  * nothing has called `meterWake()` for METER_SLEEP_AFTER_MS: a stopped, silent app then runs no

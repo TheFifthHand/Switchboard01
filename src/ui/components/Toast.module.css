@@ -115,10 +115,14 @@
 /* ---------- toasts ---------- */
 /*
  * Toasts never cover what is being played or chosen:
- * - they sit above the on-screen keyboard (the KeyboardStrip sets --keyboard-h, 0 when hidden);
+ * - they sit above the on-screen keyboard: the KeyboardStrip writes --keyboard-h, the height the
+ *   strip covers at the bottom of the window, and 0 when it is hidden or not docked there (e.g. a
+ *   page that scrolls at 960 x 540 @2x);
  * - while a menu is open (a Popover sets body[data-popover-open]) the stack moves to the top,
- *   just under the transport (--transport-h, set by the TransportBar), and goes below menus, so an
- *   open menu is never covered and the toast keeps its Undo;
+ *   just under the transport (--transport-h, written by the TransportBar), and goes below menus,
+ *   so an open menu is never covered and the toast keeps its Undo;
+ * - both measures must be set on document.documentElement (:root): the toasts render into body,
+ *   outside the app's own tree, so a value set on an app element would never reach them;
  * - while a modal dialog is open (body[data-modal-open]) their action keys hide: an Undo must not
  *   change the project under a dialog (an export, for one). Ctrl+Z still works where it applies.
  * The region passes the pointer through; only the cards take it.
