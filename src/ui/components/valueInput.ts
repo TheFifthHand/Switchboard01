@@ -28,7 +28,7 @@ const NUM = /^([+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+))\s*([a-zµ%×']*)$/i;
  * fromDisplayValue in project/params: the shown number is minus the stored one.
  */
 function negated(spec: ParamSpec): boolean {
-  return (spec as ParamSpec & { negate?: boolean }).negate === true;
+  return spec.negate === true;
 }
 
 function toNumber(s: string): number {
