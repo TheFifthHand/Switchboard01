@@ -1,6 +1,7 @@
 /**
- * Loudness targets for Match target, and the one the user picked (a viewing
- * preference: remembered in this browser, never part of the project).
+ * Viewing preferences of the Mix view, remembered in this browser (never part
+ * of the project): the loudness target Match aims for, and whether Advanced
+ * strips show each part's sends and effects.
  */
 import { createStore, useStore } from '../../../state/store';
 
@@ -22,28 +23,43 @@ export const LOUDNESS_TARGETS: readonly LoudnessTarget[] = [
 
 export const MIX_PREFS_KEY = 'switchboard01.mix';
 
-function readTarget(): LoudnessTargetId {
+interface MixPrefs {
+  target: LoudnessTargetId;
+  /** Advanced: the strips' Sends and effects row is shown (null: not chosen yet, shown when the window is tall). */
+  sends: boolean | null;
+}
+
+function read(): MixPrefs {
+  const out: MixPrefs = { target: 'streaming', sends: null };
   try {
     const raw = globalThis.localStorage?.getItem(MIX_PREFS_KEY);
     const v: unknown = raw ? JSON.parse(raw) : null;
-    const id = typeof v === 'object' && v !== null ? (v as { target?: unknown }).target : undefined;
-    if (LOUDNESS_TARGETS.some((t) => t.id === id)) return id as LoudnessTargetId;
+    if (typeof v === 'object' && v !== null) {
+      const { target, sends } = v as { target?: unknown; sends?: unknown };
+      if (LOUDNESS_TARGETS.some((t) => t.id === target)) out.target = target as LoudnessTargetId;
+      if (typeof sends === 'boolean') out.sends = sends;
+    }
   } catch {
-    /* storage unavailable or malformed: use the default */
+    /* storage unavailable or malformed: the defaults */
   }
-  return 'streaming';
+  return out;
 }
 
-const prefs = createStore<{ target: LoudnessTargetId }>({ target: readTarget() });
+const prefs = createStore<MixPrefs>(read());
+
+function save(): void {
+  try {
+    const s = prefs.getState();
+    globalThis.localStorage?.setItem(MIX_PREFS_KEY, JSON.stringify(s.sends === null ? { target: s.target } : s));
+  } catch {
+    /* not remembered */
+  }
+}
 
 export function setLoudnessTarget(id: LoudnessTargetId): void {
   if (!LOUDNESS_TARGETS.some((t) => t.id === id)) return;
   prefs.setState((s) => (s.target === id ? s : { ...s, target: id }));
-  try {
-    globalThis.localStorage?.setItem(MIX_PREFS_KEY, JSON.stringify({ target: id }));
-  } catch {
-    /* not remembered */
-  }
+  save();
 }
 
 export function loudnessTarget(id: LoudnessTargetId = prefs.getState().target): LoudnessTarget {
@@ -52,4 +68,24 @@ export function loudnessTarget(id: LoudnessTargetId = prefs.getState().target): 
 
 export function useLoudnessTarget(): LoudnessTarget {
   return loudnessTarget(useStore(prefs, (s) => s.target));
+}
+
+/** A window this tall has room for the Sends and effects row above full-height faders. */
+export const SENDS_ROW_MIN_HEIGHT = 1000;
+
+/** Whether Advanced strips show the Sends and effects row: the user's choice, else only on tall windows. */
+export function sendsRowShown(): boolean {
+  const s = prefs.getState().sends;
+  return s ?? (typeof window !== 'undefined' && window.innerHeight >= SENDS_ROW_MIN_HEIGHT);
+}
+
+export function useSendsRow(): boolean {
+  const chosen = useStore(prefs, (s) => s.sends);
+  return chosen ?? (typeof window !== 'undefined' && window.innerHeight >= SENDS_ROW_MIN_HEIGHT);
+}
+
+/** Show or hide the Sends and effects row (remembered); `null` forgets the choice. */
+export function setSendsRow(shown: boolean | null): void {
+  prefs.setState((s) => (s.sends === shown ? s : { ...s, sends: shown }));
+  save();
 }

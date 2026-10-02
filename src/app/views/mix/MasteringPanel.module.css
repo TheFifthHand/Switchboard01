@@ -12,7 +12,7 @@
   container: mastering / inline-size;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -60,7 +60,7 @@
 .section {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -81,6 +81,17 @@
   margin: 0;
   color: var(--ink-2);
   font-size: var(--fs-sm);
+}
+
+/* What the chosen preset does: two lines kept (the longest are cut, the whole sentence is in the chip's tip),
+   so choosing another preset moves nothing below. */
+.presetNote {
+  display: -webkit-box;
+  min-height: calc(2 * 1.35em);
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.35;
 }
 
 .note strong {
@@ -131,6 +142,35 @@
   cursor: default;
 }
 
+/* Both words share one grid cell: the key is as wide as the longer one, so it never moves. */
+.compareWords,
+.matchWords {
+  display: inline-grid;
+}
+
+.compareWords > span,
+.matchWords > span {
+  grid-area: 1 / 1;
+  text-align: center;
+}
+
+.compareWords > span:not([data-shown]),
+.matchWords > span:not([data-shown]) {
+  visibility: hidden;
+}
+
+/* While comparing: how much the un-mastered sound was turned to match (in the Presets heading's row). */
+.levelMatch {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--teal-ink);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- presets ---------- */
 
 .chips {
@@ -172,6 +212,19 @@
 }
 
 /* ---------- loudness ---------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--ink-2);
+}
 
 .targets {
   min-width: 0;
@@ -242,18 +295,20 @@
   white-space: nowrap;
 }
 
+/* The number, then its unit; in a narrow column the unit goes under the number instead of being cut. */
 .readoutValue {
-  display: block;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 4px;
   margin: 1px 0 0;
-  overflow: hidden;
   font-size: var(--fs-md);
   font-weight: 500;
   color: var(--ink);
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* True peak: amber just above the limiter's −1 dB (normal), red above 0 dBTP (the name then says so). */
+/* True peak: amber at the limiter's −1 dBTP ceiling (normal), red above 0 dBTP (the name then says so). */
 .readoutValue [data-level='near'] {
   color: var(--amber-ink);
   font-weight: 650;
@@ -272,15 +327,16 @@
 
 .status {
   margin: 0;
-  min-height: 17px;
+  /* Two lines kept: "Measuring the new setting…" and the distance to the target can wrap, and moving nothing below. */
+  min-height: calc(2 * 1.35em);
   font-size: var(--fs-sm);
   font-weight: 600;
+  line-height: 1.35;
   color: var(--ink);
 }
 
 .matchRow {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
@@ -290,9 +346,23 @@
   cursor: default;
 }
 
+/* "Loudness drive" over its value ("0.0 → +6.0 dB"), beside the Match key. */
 .loudnessNow {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   font-size: var(--fs-sm);
+  line-height: 1.3;
   color: var(--ink-2);
+}
+
+.loudnessNowName {
+  font-size: var(--fs-xs);
+}
+
+.loudnessNowValue {
+  color: var(--ink);
+  white-space: nowrap;
 }
 
 .blocked {
@@ -321,7 +391,7 @@
 
 .spectrumSection {
   flex: 1 1 auto;
-  min-height: 146px;
+  min-height: 136px;
 }
 
 .spectrumSection > :last-child {
@@ -407,4 +477,28 @@
 
 .groups > .note {
   grid-column: 1 / -1;
+}
+
+/* A narrow column (beside the mixer at 1366 px): the readings keep number and unit on one line, and the
+   spacing tightens so the spectrum keeps its room under Match target. */
+@container mastering (max-width: 420px) {
+  .readoutRow {
+    gap: 3px;
+  }
+  .readouts {
+    gap: 3px;
+  }
+  .readout {
+    padding: 4px 4px 5px;
+  }
+  .readoutValue {
+    column-gap: 3px;
+    font-size: var(--fs-sm);
+  }
+  .reset {
+    min-width: 44px;
+  }
+  .section {
+    gap: 5px;
+  }
 }
