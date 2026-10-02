@@ -765,7 +765,7 @@ export const clipActions = {
     selectTrack(trackId);
     selectSlot(trackId, slot);
     const { track, clip } = trackAndClip(trackId, slot);
-    const text = `New ${barsLabel(bars)} clip "${clip?.name ?? ''}" on ${track?.name ?? 'this part'}. Add notes in Steps or with Record Notes.`;
+    const text = `New ${bars}-bar clip "${clip?.name ?? ''}" on ${track?.name ?? 'this part'}. Add notes in Steps or with Record Notes.`;
     if (toasts) toasts.show({ id: 'notice', tone: 'info', message: text, action: { label: 'Edit steps', onAction: () => clipActions.editSteps(trackId, slot) } });
     else notify(text, 'info', 'undo');
     return true;

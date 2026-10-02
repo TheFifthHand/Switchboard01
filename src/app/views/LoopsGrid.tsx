@@ -1242,10 +1242,9 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
   const look = usePadLook(trackId, slot, clip);
   const { state, paused } = look;
   // A queued pad counts down the beats to its start (re-rendered once a beat, only while queued).
-  const beats = useSyncExternalStore(
-    state === 'queued' && !look.caption ? (fn: () => void) => countdown.subscribe(trackId, fn) : noSubscribe,
-    () => (state === 'queued' && !look.caption ? countdown.get(trackId) : null),
-  );
+  const counting = state === 'queued' && !look.caption;
+  const subscribeBeats = useCallback((fn: () => void) => (counting ? countdown.subscribe(trackId, fn) : noSubscribe()), [counting, trackId]);
+  const beats = useSyncExternalStore(subscribeBeats, () => (counting ? countdown.get(trackId) : null));
   const caption = look.caption ?? (state === 'queued' ? queuedCaption(beats) : undefined);
   const id = padId(trackId, slot);
   const onPress = () => {

@@ -341,7 +341,7 @@ export function PartPanel() {
       el.removeEventListener('scroll', check);
       ro?.disconnect();
     };
-  });
+  }, [header !== null, advanced, xl, trackId]);
 
   if (!header) return null;
   const type = INSTRUMENT_TYPE[header.kind];

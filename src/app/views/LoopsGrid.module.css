@@ -529,11 +529,12 @@
 .rowLift .liftIcon[data-for='move'] {
   display: inline-flex;
 }
-.lift[data-kind='swap'] .liftIcon,
-.lift[data-kind='no'] .liftIcon,
-.lift[data-kind='none'] .liftIcon,
-.rowLift[data-kind='none'] .liftIcon,
-.rowLift[data-kind='no'] .liftIcon {
+/* (As specific as the Move / Copy rule above, so the one icon of a Swap, a refusal or a cancel replaces it.) */
+.lift[data-kind='swap'] .liftIcon[data-for],
+.lift[data-kind='no'] .liftIcon[data-for],
+.lift[data-kind='none'] .liftIcon[data-for],
+.rowLift[data-kind='none'] .liftIcon[data-for],
+.rowLift[data-kind='no'] .liftIcon[data-for] {
   display: none;
 }
 .lift[data-kind='swap'] .liftIcon[data-for='swap'],

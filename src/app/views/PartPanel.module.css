@@ -331,7 +331,7 @@
  * laid out (--knob-value-h), so the value never runs into the caption under it.
  */
 .panel[data-xl] .macros {
-  --knob-value-h: 28px;
+  --knob-value-h: 32px;
   gap: 10px 4px;
   padding-bottom: 12px;
 }

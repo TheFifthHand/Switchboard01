@@ -17,7 +17,7 @@ import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
 import { runtimeStore } from '../../src/app/runtime';
-import { selectSlot, selectTrack } from '../../src/state/uiStore';
+import { selectSlot, selectTrack, setPadMode, uiStore } from '../../src/state/uiStore';
 import { SIZES, button, clickEl, clipsOf, grid, item, menu, openApp, pad, press, project, setUp, tearDown, until } from './r4-play-helpers';
 
 beforeEach(setUp);
@@ -174,6 +174,15 @@ describe('the pad menu uses every row and the longer lengths', () => {
     expect(keys).toEqual(['New clip, 1 bar', 'New clip, 2 bars', 'New clip, 3 bars', 'New clip, 4 bars', 'New clip, 8 bars']);
     await clickEl(item(/New clip, 8 bars/));
     expect(clipsOf('t3')[5]!.bars).toBe(8);
+    // PLAY-21: the next step is to fill it. Focus goes to the pad actions' Edit steps, and the toast offers Edit steps too.
+    await until(() => (document.activeElement?.textContent ?? '') === 'Edit steps', 'focus on Edit steps');
+    expect(document.activeElement!.closest('[data-pad-actions]')).not.toBeNull();
+    const toast = [...document.querySelectorAll<HTMLElement>('[role="status"]')].find((t) => t.textContent?.includes('New 8-bar clip'))!;
+    expect(toast).toBeDefined();
+    await clickEl(button('Edit steps', toast));
+    await until(() => !!document.querySelector('input[aria-label="Clip name"]'), 'Steps on the new clip');
+    expect(uiStore.getState().padMode).toBe('steps');
+    act(() => setPadMode('loops'));
     act(() => session.undo());
 
     // Double, then Repeat to 8 bars, on a 2-bar Bass clip.
