@@ -31,7 +31,7 @@ import { shallowEqual, useStore, type ReadableStore } from '../../../state/store
 import { session, useProject, useUi } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { exportsDone, finishHints, hideHints, hintsRunning, hintsStore, markHintDone, startSongHints, type HintId } from './hintsState';
-import { HINT_STEPS, VIEW_NAMES, bassHasClips, bassPart, currentHint, drumsPart, hintsFinishedText, projectHasClips, type HintContext } from './steps';
+import { HINT_STEPS, bassHasClips, bassPart, currentHint, drumsPart, hintWhere, hintsFinishedText, projectHasClips, type HintContext } from './steps';
 import { findSpotFast, readObstacles, spotCost, workArea, type Box, type Spot } from './placement';
 import { watchHints } from './tracker';
 import styles from './Hints.module.css';
@@ -170,19 +170,20 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     shallowEqual,
   );
   const recording = useRuntime((s) => s.recording === 'performance');
+  const padsPlaying = useRuntime((s) => s.playing && s.mode === 'live');
   const selectedTrack = useUi((s) => s.selectedTrackId);
   // Where Export is at this width, for the closing line and the export step (read from the strip, which follows the window).
   const [exportShown, setExportShown] = useState(true);
   const exportShownRef = useRef(exportShown);
   exportShownRef.current = exportShown;
-  const ctx: HintContext = { view, padMode, recording, ...parts, exportAt: exportShown ? 'strip' : 'menu' };
+  const ctx: HintContext = { view, padMode, recording, padsPlaying, ...parts, exportAt: exportShown ? 'strip' : 'menu' };
 
   const current = currentHint(done, ctx, { song });
   const step = current?.step ?? null;
   const here = step ? step.here(ctx) : true;
   const go = step && !here ? (step.go ?? null) : null;
-  // A step done in another view: one line, "Next, in Play: …", with the button that goes there.
-  const where = go ? `Next, in ${VIEW_NAMES[go.view]}:` : null;
+  // A step done in another view (or pad tab): one line, "Next, in Play: …", with the button that goes there.
+  const where = go ? hintWhere(go, ctx) : null;
   const songDone = song && HINT_STEPS.every((s) => s.track !== 'song' || done.includes(s.id));
   const text = step ? step.text(ctx) : hintsFinishedText(exportShown ? 'strip' : 'menu', songDone);
   const more = step && !go ? (step.more?.(ctx) ?? null) : null;
@@ -396,8 +397,10 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     window.addEventListener('pointermove', onMove, { capture: true, passive: true });
     window.addEventListener('blur', onUp);
     // A view that mounts part of itself later (Mix's mastering panel after its first frame): look again once it is in.
+    // Only new elements count: readings that change their words (Mix's loudness, several times a second) do not.
     const main = document.querySelector('main');
-    const mo = main && typeof MutationObserver !== 'undefined' ? new MutationObserver(soon) : null;
+    const added = (records: MutationRecord[]) => records.some((r) => [...r.addedNodes].some((n) => n.nodeType === Node.ELEMENT_NODE));
+    const mo = main && typeof MutationObserver !== 'undefined' ? new MutationObserver((records) => added(records) && soon()) : null;
     mo?.observe(main!, { childList: true, subtree: true });
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') soon();

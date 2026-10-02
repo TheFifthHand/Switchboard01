@@ -64,6 +64,11 @@ describe('the song track', () => {
     let c = await until(() => (chip()?.dataset.hint === 'song-play' ? chip() : null), 'the song track');
     expect(c.getAttribute('aria-label')).toBe('Try this, song hint 1 of 4');
     expect(c.textContent).toContain('Press Play to hear your song.');
+    // While the pads play, Play is Pause: the step points at a block's ▶ instead (and playing pads are not the song).
+    act(() => patchRuntime({ playing: true, mode: 'live' }));
+    c = await until(() => (chip()?.textContent?.includes('Press ▶ on a block to hear your song from there.') ? chip() : null), 'the words for playing pads');
+    expect(c.dataset.hint).toBe('song-play');
+    act(() => patchRuntime({ playing: false, mode: 'live' }));
     // The song plays in Arrange.
     act(() => patchRuntime({ playing: true, mode: 'song', songBlock: 0 }));
     c = await until(() => (chip()?.dataset.hint === 'song-repeats' ? chip() : null), 'the next song step');

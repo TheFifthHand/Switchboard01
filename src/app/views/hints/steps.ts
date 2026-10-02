@@ -34,6 +34,8 @@ export interface HintContext {
   bassHasClips?: boolean;
   /** Where Export is at this width: on the strip, or in its ⋯ menu. Absent: the strip. */
   exportAt?: 'strip' | 'menu';
+  /** The pads play (live), so Play is Pause for now. Absent: no. */
+  padsPlaying?: boolean;
 }
 
 export interface HintGo {
@@ -259,8 +261,9 @@ export const HINT_STEPS: readonly HintStep[] = [
   {
     id: 'song-play',
     track: 'song',
-    text: () => 'Press Play to hear your song.',
-    more: () => 'In Arrange, Play (or Space) plays the blocks in order.',
+    // While the pads play, Play is Pause: the song starts from a block's ▶ (or after Stop).
+    text: (c) => (c.padsPlaying ? 'Press ▶ on a block to hear your song from there.' : 'Press Play to hear your song.'),
+    more: (c) => (c.padsPlaying ? 'Or Stop, then Play (or Space) plays the blocks in order.' : 'In Arrange, Play (or Space) plays the blocks in order.'),
     here: (c) => c.view === 'arrange',
     go: ARRANGE,
     // The song plays (runtime mode 'song') while the Arrange view is open.
@@ -308,6 +311,14 @@ export const HINTS_FINISHED_TEXT = hintsFinishedText('strip');
 
 /** View names, for "Next, in Play: …". */
 export const VIEW_NAMES: Readonly<Record<View, string>> = { play: 'Play', shape: 'Shape', arrange: 'Arrange', mix: 'Mix' };
+/** Pad tab names (Play's Loops · Drums · Notes · Steps), for "Next, in Loops: …". */
+export const PAD_MODE_NAMES: Readonly<Record<PadMode, string>> = { loops: 'Loops', drums: 'Drums', notes: 'Notes', steps: 'Steps' };
+
+/** Where a step that is done elsewhere is done: the view, or the pad tab when the view is already open ("Next, in Loops:"). */
+export function hintWhere(go: HintGo, ctx: Pick<HintContext, 'view'>): string {
+  const place = go.view === ctx.view && go.padMode ? PAD_MODE_NAMES[go.padMode] : VIEW_NAMES[go.view];
+  return `Next, in ${place}:`;
+}
 
 export interface CurrentHint {
   step: HintStep;

@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { RuntimeState } from '../../src/app/runtime';
-import { HINT_STEPS, currentHint, type HintContext } from '../../src/app/views/hints/steps';
+import { HINT_STEPS, currentHint, hintWhere, type HintContext } from '../../src/app/views/hints/steps';
 import { HINT_IDS, createHintsStore, showHintsAgain, startHints, startSongHints, type HintId } from '../../src/app/views/hints/hintsState';
 import { watchHints } from '../../src/app/views/hints/tracker';
 import { getStarter } from '../../src/content/starters';
@@ -86,6 +86,24 @@ describe('which step comes next', () => {
       expect(s.here(ctx({ view: 'arrange' }))).toBe(true);
       expect(s.go).toMatchObject({ label: 'Open Arrange', view: 'arrange' });
     }
+  });
+
+  it('a step done elsewhere names the view, or the pad tab when its view is open', () => {
+    const pad = HINT_STEPS.find((x) => x.id === 'pad')!;
+    // In Mix: "Next, in Play:". In Play on the Steps tab: "Next, in Loops:", not the view already open.
+    expect(pad.here(ctx({ view: 'mix' }))).toBe(false);
+    expect(hintWhere(pad.go!, ctx({ view: 'mix' }))).toBe('Next, in Play:');
+    expect(pad.here(ctx({ padMode: 'steps' }))).toBe(false);
+    expect(hintWhere(pad.go!, ctx({ padMode: 'steps' }))).toBe('Next, in Loops:');
+    const song = HINT_STEPS.find((x) => x.id === 'song-play')!;
+    expect(hintWhere(song.go!, ctx())).toBe('Next, in Arrange:');
+  });
+
+  it('while the pads play (Play is Pause), the song step points at a block’s ▶ instead', () => {
+    const play = HINT_STEPS.find((x) => x.id === 'song-play')!;
+    expect(play.text(ctx({ view: 'arrange' }))).toBe('Press Play to hear your song.');
+    expect(play.text(ctx({ view: 'arrange', padsPlaying: true }))).toBe('Press ▶ on a block to hear your song from there.');
+    expect(play.more?.(ctx({ view: 'arrange', padsPlaying: true }))).toBe('Or Stop, then Play (or Space) plays the blocks in order.');
   });
 
   it('the song track is offered once while the hints run, and again after Show hints again', () => {

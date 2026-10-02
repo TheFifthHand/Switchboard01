@@ -44,6 +44,26 @@ export async function masterPeakOver(page: Page, ms: number): Promise<{ peak: nu
   }, ms);
 }
 
+/**
+ * Highest master peak from now for `ms`, read every 10 ms once audio runs. Start it before the
+ * key or click it measures (without awaiting), so a short sound (a closed hat) is caught.
+ */
+export function masterPeakFrom(page: Page, ms: number): Promise<number> {
+  return page.evaluate(async (ms) => {
+    const sb = (window as any).__switchboard;
+    let peak = 0;
+    const end = performance.now() + ms;
+    while (performance.now() < end) {
+      if (sb.audioState() === 'running') {
+        const m = sb.meters();
+        peak = Math.max(peak, m.masterPeakL, m.masterPeakR);
+      }
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return peak;
+  }, ms);
+}
+
 export async function runtime<T = any>(page: Page, fn: string): Promise<T> {
   return page.evaluate((src) => new Function('rt', `return (${src})(rt)`)((window as any).__switchboard.runtime.getState()), fn);
 }
