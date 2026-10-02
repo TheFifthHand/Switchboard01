@@ -6,7 +6,7 @@
 import { kitInfo } from '../catalog';
 import { ROLE_DEFAULT_SOUND, createProject } from '../../project/factory';
 import type { TrackRole } from '../../project/types';
-import { assignSound, setChannel, setInstrumentParams, starterSeed } from './dsl';
+import { assignSound, keyLabel, setChannel, setInstrumentParams, starterGainStaging, starterSeed } from './dsl';
 import type { StarterDef } from './index';
 
 /**
@@ -33,19 +33,22 @@ export const BLANK: StarterDef = {
   id: 'blank',
   name: 'Blank',
   bpm: 120,
-  key: 'C minor',
+  key: keyLabel(0, 'minor'),
   description: 'Eight empty parts with ready-to-play sounds, for starting from scratch.',
   build() {
-    const project = createProject({ name: 'Blank Project', bpm: 120 });
+    const project = createProject({ name: 'Blank project', bpm: 120 });
     project.starterId = 'blank';
     project.seed = starterSeed('blank');
     project.root = 0;
     project.scale = 'minor';
+    // The balance was set against a master at -3 dB; like the starters, that level goes onto the faders.
+    const { channelLiftDb, masterDb } = starterGainStaging(project.masterVolumeDb, project.tracks.map((t) => BLANK_LEVELS[t.role]));
+    project.masterVolumeDb = masterDb;
     for (const track of project.tracks) {
       assignSound(project, track.id, ROLE_DEFAULT_SOUND[track.role]);
       const kit = track.instrument.kind === 'drums' ? kitInfo(track.instrument.kitId) : undefined;
       if (kit) setInstrumentParams(project, track.id, { level: kit.level });
-      setChannel(project, track.id, { level: BLANK_LEVELS[track.role], pan: 0 });
+      setChannel(project, track.id, { level: BLANK_LEVELS[track.role] + channelLiftDb, pan: 0 });
     }
     project.arrangement = { blocks: [], tailSeconds: 3 };
     return project;

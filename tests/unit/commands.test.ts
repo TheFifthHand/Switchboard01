@@ -7,9 +7,9 @@ import { mulberry32 } from '../../src/project/rng';
 import { validateProject } from '../../src/project/validate';
 import type { Patch, Performance, PortRef, Project } from '../../src/project/types';
 import { ProjectStore } from '../../src/state/projectStore';
-import { addBlock, moveBlock, removeBlock, setBlockRepeats, setTailSeconds } from '../../src/state/commands/arrangement';
-import { clipDropProblem, copyClip, copyClipTo, createClip, duplicateClipContent, duplicateClipToSlot, moveClip, pasteClip, setClipBars } from '../../src/state/commands/clips';
-import { moveScene } from '../../src/state/commands/scenes';
+import { addBlock, moveBlock, removeBlock, setBlockRepeats, setBlocksPart, setTailSeconds, toggleBlockMove } from '../../src/state/commands/arrangement';
+import { clipDropProblem, copyClip, copyClipTo, createClip, duplicateClipContent, duplicateClipToSlot, moveClip, pasteClip, repeatClipToBars, setClipBars } from '../../src/state/commands/clips';
+import { duplicateScene, insertScene, moveScene } from '../../src/state/commands/scenes';
 import {
   addNote,
   addRecordedNotes,
@@ -109,7 +109,7 @@ describe('patch commands with undo/redo', () => {
 
   it('respects the per-part effect limit and refuses custom routing', () => {
     const store = fresh();
-    const types = ['chorus', 'phaser', 'crusher', 'delay'] as const;
+    const types = ['chorus', 'phaser', 'crusher', 'delay', 'flanger', 'tape'] as const;
     for (const t of types) expect(insertEffect(store, 't4', t).changed).toBe(true);
     expect(trackChain(store.getState().patch, 't4')!.length - 2).toBe(PATCH_LIMITS.maxEffectsPerTrack);
     expect(insertEffect(store, 't4', 'reverb')).toMatchObject({ changed: false, reason: 'limit' });
@@ -355,9 +355,13 @@ describe('clip commands', () => {
     expect(doubled.bars).toBe(2);
     expect(doubled.notes.map((n) => n.tick)).toEqual([0, 200, 384, 584]);
     setClipBars(store, 't3', 0, 3);
-    duplicateClipContent(store, 't3', 0); // 3 -> 4: bar 1 repeats into bar 4
-    expect(store.getState().tracks[2].clips[0]!.notes.map((n) => n.tick)).toEqual([0, 200, 384, 584, 1152, 1352]);
+    duplicateClipContent(store, 't3', 0); // 3 -> 6: bars 1-3 repeat into bars 4-6
+    expect(store.getState().tracks[2].clips[0]!.notes.map((n) => n.tick)).toEqual([0, 200, 384, 584, 1152, 1352, 1536, 1736]);
+    duplicateClipContent(store, 't3', 0); // 6 -> 8: bars 1-2 repeat into bars 7-8
+    expect(store.getState().tracks[2].clips[0]!.bars).toBe(8);
+    expect(store.getState().tracks[2].clips[0]!.notes.map((n) => n.tick).slice(-4)).toEqual([2304, 2504, 2688, 2888]);
     expect(duplicateClipContent(store, 't3', 0)).toMatchObject({ changed: false, reason: 'limit' });
+    store.undo();
     store.undo();
     store.undo();
     store.undo();
@@ -676,12 +680,18 @@ describe('undo and redo over random edits', () => {
         const ops: [string, () => unknown][] = [
           ['step', () => toggleStep(store, t, int(4), int(64), int(16))],
           ['note', () => addNote(store, t, int(4), { tick: int(400), pitch: int(16), velocity: rnd(), duration: 24 })],
-          ['bars', () => setClipBars(store, t, int(4), pick([1, 2, 3, 4] as const))],
+          ['bars', () => setClipBars(store, t, int(4), pick([1, 2, 3, 4, 8] as const))],
           ['double', () => duplicateClipContent(store, t, int(4))],
+          ['repeat', () => repeatClipToBars(store, t, int(4), pick([2, 4, 6, 8] as const))],
+          // Rows are only added here, so the four slots the note commands use always exist.
+          ['addScene', () => insertScene(store, int(5))],
+          ['dupScene', () => duplicateScene(store, int(4))],
+          ['parts', () => setBlocksPart(store, p.arrangement.blocks.slice(0, 1 + int(3)).map((b) => b.id), t, pick([null, undefined, p.scenes[int(p.scenes.length)].id]))],
+          ['move', () => p.arrangement.blocks.length && toggleBlockMove(store, pick(p.arrangement.blocks).id, pick(['fadeIn', 'fadeOut', 'filterRise', 'echoThrow'] as const))],
           ['record', () => addRecordedNotes(store, t, int(4), [{ tick: rnd() * 2000 - 100, pitch: int(16), velocity: rnd(), duration: 30 }], { quantize: pick(['off', '1/16'] as const), mode: pick(['overdub', 'replace'] as const) })],
           ['connect', () => connect(store, ref(pick(mods), 'out'), ref(pick(mods), pick(['in', 'cutoff', 'pan'])), rnd())],
           ['disconnect', () => disconnect(store, pick(cables))],
-          ['insert', () => insertEffect(store, t, pick(['chorus', 'phaser', 'crusher', 'delay'] as const), int(4))],
+          ['insert', () => insertEffect(store, t, pick(['chorus', 'phaser', 'crusher', 'delay', 'filter', 'drive'] as const), int(4))],
           ['remove', () => removeEffect(store, pick(mods))],
           ['moveFx', () => moveEffect(store, pick(mods), int(4))],
           ['restore', () => restoreTrackPatch(store, t)],

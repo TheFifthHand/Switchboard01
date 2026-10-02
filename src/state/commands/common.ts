@@ -6,11 +6,13 @@
  * creates an undo step), then run one named recipe through the store.
  *
  * Labels are "<area>:<Human text>". The area prefix groups edits; "patch:" is
- * special because the edit lock refuses it during a performance take.
+ * special because the edit lock refuses it during a performance take. A label
+ * names the kind of edit (a take's allow-list matches it), so words that name
+ * a part ("Mute Lead", "Bass level") go in `display` instead (see run()).
  */
 import type { Clip, Id, Project, Track } from '../../project/types';
-import { SCENE_ROWS, TICKS_PER_BAR } from '../../project/types';
-import type { ApplyResult, ProjectStore } from '../projectStore';
+import { MAX_SCENES, TICKS_PER_BAR } from '../../project/types';
+import type { ApplyOptions, ApplyResult, ProjectStore } from '../projectStore';
 
 export type RefuseReason =
   | 'not-found'
@@ -41,13 +43,15 @@ export function findTrack(p: Project, trackId: Id): Track | undefined {
   return p.tracks.find((t) => t.id === trackId);
 }
 
-export function isSlot(slot: number): boolean {
-  return Number.isInteger(slot) && slot >= 0 && slot < SCENE_ROWS;
+/** A clip slot index: below MAX_SCENES and, given a part, one of its slots (one per scene). */
+export function isSlot(slot: number, track?: Pick<Track, 'clips'>): boolean {
+  return Number.isInteger(slot) && slot >= 0 && slot < MAX_SCENES && (!track || slot < track.clips.length);
 }
 
 export function clipAt(p: Project, trackId: Id, slot: number): Clip | null {
-  if (!isSlot(slot)) return null;
-  return findTrack(p, trackId)?.clips[slot] ?? null;
+  const t = findTrack(p, trackId);
+  if (!t || !isSlot(slot, t)) return null;
+  return t.clips[slot] ?? null;
 }
 
 /** Draft-side lookup inside recipes (inputs are validated before apply). */
@@ -97,6 +101,19 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   return ka.length === kb.length && ka.every((k) => deepEqual(ra[k], rb[k]));
 }
 
-export function run(store: ProjectStore, label: string, recipe: (d: Project) => void, gesture?: string): CommandResult {
-  return store.apply(label, recipe, gesture !== undefined ? { gesture } : {});
+/**
+ * Run one named edit. `display` gives the words Undo and Redo show when they
+ * should say more than the label ("Mute Lead" for "track:Mute part").
+ */
+export function run(store: ProjectStore, label: string, recipe: (d: Project) => void, gesture?: string, opts: { display?: string } = {}): CommandResult {
+  const o: ApplyOptions = {};
+  if (gesture !== undefined) o.gesture = gesture;
+  if (opts.display !== undefined) o.display = opts.display;
+  return store.apply(label, recipe, o);
+}
+
+/** A plain-text name of one part for messages and undo steps (its name, else "Part N"). */
+export function partName(p: Project, trackId: Id): string {
+  const i = p.tracks.findIndex((t) => t.id === trackId);
+  return i < 0 ? 'part' : p.tracks[i].name || `Part ${i + 1}`;
 }

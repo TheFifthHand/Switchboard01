@@ -841,7 +841,8 @@ function setModuleParams(project: Project, trackId: Id, slot: 'lfo' | 'filter' |
  *
  * Writes: the instrument (registry defaults + preset params), the macro map
  * (defaults + preset overrides), the preset's LFO/filter/drive settings, and
- * the Tone/Motion/Drive positions (the preset's suggestion, else the default).
+ * the Tone/Motion/Drive positions (the preset's suggestion, else the default),
+ * which also become those big knobs' designed positions (Track.macroHome).
  * Space, Echo and Pump positions, channel level/pan/sends, clips and
  * connections are left as the user set them. Throws for unknown ids.
  */
@@ -862,7 +863,14 @@ export function applyPresetToProject(project: Project, trackId: Id, presetId: st
   for (const slot of ['lfo', 'filter', 'drive'] as const) setModuleParams(project, trackId, slot, data.modules?.[slot], true);
 
   const defaults = defaultMacros();
-  for (const m of ['tone', 'motion', 'drive'] as const) track.macros[m] = data.macros?.[m] ?? defaults[m];
+  // The positions the sound was designed with are also where its big knobs return to (macroHome);
+  // Space, Echo and Pump keep theirs (they belong to the part's mix, not to the sound).
+  const home = { ...(track.macroHome ?? {}) };
+  for (const m of ['tone', 'motion', 'drive'] as const) {
+    track.macros[m] = data.macros?.[m] ?? defaults[m];
+    home[m] = track.macros[m];
+  }
+  track.macroHome = home;
 }
 
 /**
