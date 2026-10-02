@@ -54,10 +54,26 @@ export interface ModuleNode {
   transportStopped?(time: number): void;
   /** Clear internal state/tails immediately (Mute All / panic). */
   flush?(): void;
-  /** Cancel automation scheduled after `time`. */
-  cancelAfter?(time: number): void;
+  /**
+   * Cancel automation scheduled after `time`. With `hold`, a ramp under way
+   * at `time` stops at the value it has reached there (cancelAndHoldAtTime)
+   * instead of falling back to its last step.
+   */
+  cancelAfter?(time: number, hold?: boolean): void;
+  /**
+   * Song automation (AudioEngine.scheduleMacroRamp): apply `params` at
+   * `time` without the usual smoothing. 'anchor' sets every value the
+   * module drives at `time` (a ramp starts exactly there), 'step' sets the
+   * values that change at `time`, 'ramp' moves them linearly from the
+   * previous point to reach these values at `time`. Optional: modules
+   * without it get smoothed points.
+   */
+  automate?(params: ParamValues, time: number, mode: AutomationMode): void;
   dispose(): void;
 }
+
+/** How ModuleNode.automate applies a point. */
+export type AutomationMode = 'anchor' | 'step' | 'ramp';
 
 export type ModuleConstructor = new (env: ModuleEnv, id: Id, params: ParamValues) => ModuleNode;
 

@@ -21,6 +21,7 @@ export class CompressorModule extends EffectModule {
   readonly type = 'compressor' as const;
   private readonly params = new Map<string, AudioParam>();
   private readonly flusher: WorkletFlush;
+  private reduction = 0;
 
   constructor(env: ModuleEnv, id: Id, params: ParamValues) {
     super(env, id);
@@ -28,12 +29,17 @@ export class CompressorModule extends EffectModule {
     for (const k of IDS) parameterData[k] = readParam(COMPRESSOR_PARAMS, params, k);
     let node: AudioWorkletNode;
     try {
-      node = this.ownWorklet(stereoWorklet(this.ctx, COMPRESSOR_PROCESSOR_NAME, 'Compressor', { parameterData }));
+      node = this.ownWorklet(stereoWorklet(this.ctx, COMPRESSOR_PROCESSOR_NAME, 'Compressor', { parameterData, processorOptions: { report: !env.offline } }));
     } catch (e) {
       super.dispose();
       throw e;
     }
     for (const k of IDS) this.params.set(k, workletParam(node, k, 'Compressor'));
+    if (!env.offline) {
+      node.port.onmessage = (e: MessageEvent) => {
+        this.reduction = typeof e.data === 'number' && Number.isFinite(e.data) ? Math.max(0, e.data) : 0;
+      };
+    }
     this.flusher = new WorkletFlush(workletParam(node, 'flush', 'Compressor'));
     this.bypass.input.connect(node);
     node.connect(this.bypass.processed);
@@ -46,6 +52,11 @@ export class CompressorModule extends EffectModule {
     if (this.disposed) return;
     const t = this.at(time);
     for (const k of IDS) this.smooth(this.params.get(k)!, readParam(COMPRESSOR_PARAMS, params, k), t);
+  }
+
+  /** Gain reduction in dB (>= 0) last reported by the worklet (live engines; 0 offline). */
+  get reductionDb(): number {
+    return this.disposed ? 0 : this.reduction;
   }
 
   /** Mute All: forget the gain reduction in progress. */

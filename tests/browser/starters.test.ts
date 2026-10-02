@@ -20,15 +20,22 @@ const SR = 44100;
 /** Allowed drift from the shipped levels (dB). */
 const TOLERANCE_DB = 0.3;
 
-/** TEST_REPORT.md "Starter levels": [RMS dBFS, peak dBFS] per scene, as shipped. */
+/**
+ * TEST_REPORT.md "Starter levels": [RMS dBFS, peak dBFS] per scene, as shipped.
+ * Techno, Breakbeat and Downtempo were re-measured in round 4: their parts
+ * use the Drive (Techno's acid bass preset, Breakbeat's and Downtempo's
+ * drive macros), and the Drive is now level-compensated in practice (an RMS
+ * trim per character plus a slow level match) instead of lifting quiet
+ * parts by a few dB.
+ */
 const SHIPPED: Record<string, readonly (readonly [number, number])[]> = {
   house: [[-30.7, -13.3], [-19.3, -5.7], [-18.0, -1.3], [-25.2, -9.5]],
   synthwave: [[-30.3, -14.3], [-20.6, -5.5], [-19.3, -3.7], [-23.0, -9.1]],
   ambient: [[-26.9, -8.4], [-21.6, -6.2], [-20.2, -4.0], [-22.6, -6.9]],
-  techno: [[-30.1, -5.9], [-18.7, -3.5], [-16.9, -2.3], [-20.2, -5.8]],
-  breakbeat: [[-27.9, -8.1], [-19.7, -3.8], [-17.8, -2.1], [-22.9, -9.1]],
+  techno: [[-30.1, -5.9], [-18.7, -3.5], [-17.2, -2.3], [-20.3, -6.0]],
+  breakbeat: [[-28.2, -8.4], [-20.5, -4.3], [-18.4, -2.5], [-23.3, -9.3]],
   drumAndBass: [[-28.8, -10.7], [-20.0, -4.3], [-18.5, -3.3], [-22.6, -9.2]],
-  downtempo: [[-31.9, -13.1], [-21.3, -4.5], [-20.2, -4.0], [-23.6, -10.0]],
+  downtempo: [[-32.0, -14.7], [-21.9, -5.1], [-20.7, -4.5], [-23.6, -10.0]],
   garage: [[-30.3, -11.4], [-20.5, -1.6], [-18.5, -1.0], [-24.3, -6.0]],
 };
 

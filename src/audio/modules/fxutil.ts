@@ -18,7 +18,7 @@
  */
 import { Rng, subSeed } from '../../project/rng';
 import type { Id, ModuleType, ParamValues } from '../../project/types';
-import { PARAM_SMOOTHING, type ModuleEnv, type ModuleNode } from './types';
+import { PARAM_SMOOTHING, type AutomationMode, type ModuleEnv, type ModuleNode } from './types';
 
 export type Curve = Float32Array<ArrayBuffer>;
 
@@ -46,6 +46,54 @@ export const BUTTERWORTH_Q_DB = -3.0103;
 /** Conventional (linear) Q to the dB resonance value Web Audio expects for lowpass/highpass. */
 export function linearQToDb(q: number): number {
   return 20 * Math.log10(Math.max(1e-4, q));
+}
+
+/* ------------------------------------------------------------------ */
+/* Node construction                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A WaveShaperNode with `curve`. The curve is assigned after construction:
+ * passing it in the constructor options converts it element by element as an
+ * IDL sequence, which costs about 1.2 ms for a 4097-point curve in Chromium
+ * (45 times more than assigning the Float32Array afterwards). Assigning copies
+ * the data, so one curve array can be shared by any number of shapers.
+ */
+export function shaperNode(ctx: BaseAudioContext, curve: Float32Array<ArrayBuffer>, opts: Omit<WaveShaperOptions, 'curve'> = {}): WaveShaperNode {
+  const node = new WaveShaperNode(ctx, opts);
+  node.curve = curve;
+  return node;
+}
+
+/**
+ * Q (in the dB units Web Audio uses for low-pass biquads) of a critically
+ * damped second-order low-pass: linear Q 0.5, i.e. two coincident real
+ * poles, so a step never overshoots and the output stays a weighted average
+ * of the input (bounded inputs stay bounded).
+ */
+export const CRITICAL_Q_DB = 20 * Math.log10(0.5);
+/**
+ * A critically damped two-pole low-pass has its −3 dB point at 0.6436 times
+ * its pole frequency; this factor puts that point at the requested corner.
+ */
+export const CRITICAL_CORNER_RATIO = 1 / Math.sqrt(Math.SQRT2 - 1);
+
+/**
+ * Smoother for a control (modulation) signal: a critically damped low-pass
+ * BiquadFilterNode whose −3 dB corner is `cornerHz`, mono. It replaces the
+ * one-pole IIRFilterNode these paths used before: creating an IIRFilterNode
+ * costs about 17 ms in Chromium (a BiquadFilterNode about 0.04 ms), and the
+ * two-pole has the same rise time (10–90 %: 0.35 / corner) with a steeper
+ * roll-off, so square-wave edges are rounded at least as well.
+ */
+export function controlSmoother(ctx: BaseAudioContext, cornerHz: number): BiquadFilterNode {
+  return new BiquadFilterNode(ctx, {
+    type: 'lowpass',
+    frequency: Math.min(cornerHz * CRITICAL_CORNER_RATIO, ctx.sampleRate * 0.45),
+    Q: CRITICAL_Q_DB,
+    channelCount: 1,
+    channelCountMode: 'explicit',
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -147,18 +195,46 @@ export function driveWetFade(d: number): number {
   return Math.min(1, clamp(d, 0, 1) * 8);
 }
 
-/** Level the loudness compensation keeps constant through the Warm curve (about -10 dBFS peak). */
-const DRIVE_REF_LEVEL = 0.3;
+/**
+ * RMS level (linear) of the reference input the drive's level compensation
+ * is tuned for: −20 dBFS RMS, about where a part's sound reaches its Drive.
+ */
+export const DRIVE_REF_RMS = 0.1;
+/** Integration points for driveRmsGain (trapezoid over ±DRIVE_REF_SPAN standard deviations). */
+const DRIVE_REF_POINTS = 96;
+const DRIVE_REF_SPAN = 4.5;
 
 /**
- * Output make-up gain for normalised drive d: a sine peaking at the reference
- * level keeps its peak level through the Warm curve. Louder material is
- * compressed and quieter material lifted, as with any saturator, but turning
- * Drive up no longer adds up to +30 dB.
+ * RMS gain of the drive curve for character `character` at normalised drive
+ * d, for a Gaussian-distributed input at DRIVE_REF_RMS (music is much closer
+ * to that than to a sine): sqrt(E[f(g·x)²]) / DRIVE_REF_RMS. It is 1 at
+ * d = 0 (every curve has unity small-signal gain) and grows with d as the
+ * curve's pre-gain pushes the sound up before it saturates.
  */
-export function driveMakeup(d: number): number {
+export function driveRmsGain(character: number, d: number): number {
   const g = driveGain(d);
-  return DRIVE_REF_LEVEL / Math.tanh(g * DRIVE_REF_LEVEL);
+  const s = DRIVE_REF_RMS;
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i <= DRIVE_REF_POINTS; i++) {
+    const z = -DRIVE_REF_SPAN + (2 * DRIVE_REF_SPAN * i) / DRIVE_REF_POINTS;
+    const w = Math.exp(-0.5 * z * z) * (i === 0 || i === DRIVE_REF_POINTS ? 0.5 : 1);
+    const y = driveTransfer(character, g * s * z);
+    num += w * y * y;
+    den += w * s * s * z * z;
+  }
+  return den > 0 && num > 0 ? Math.sqrt(num / den) : 1;
+}
+
+/**
+ * Output make-up gain (an RMS trim per character) for normalised drive d:
+ * the reference input (DRIVE_REF_RMS, Gaussian) leaves the wet path at the
+ * level it came in with, so turning Drive up changes the character, not the
+ * loudness. Louder material is compressed and quieter material lifted, as
+ * with any saturator; at the reference level the trim is exact.
+ */
+export function driveMakeup(d: number, character = 0): number {
+  return 1 / driveRmsGain(character, d);
 }
 
 /* ------------------------------------------------------------------ */
@@ -267,12 +343,56 @@ export function generateImpulse(spec: ImpulseSpec): Curve[] {
   return out;
 }
 
-/** Stereo AudioBuffer holding `generateImpulse` for this context's sample rate. */
+/** Memory budget of the shared impulse-response cache (bytes of sample data). */
+const IR_CACHE_BUDGET_BYTES = 64 * 1024 * 1024;
+const irCache = new Map<string, AudioBuffer>();
+let irCacheBytes = 0;
+let irBuilds = 0;
+
+function irBytes(buf: AudioBuffer): number {
+  return buf.length * buf.numberOfChannels * 4;
+}
+
+/**
+ * Stereo AudioBuffer holding `generateImpulse` for this context's sample
+ * rate. Impulse responses are cached by (size, seed, sample rate) and shared
+ * by every engine of the page (an AudioBuffer is not tied to a context and
+ * nothing writes to it), so loading the same project or sound again, or
+ * exporting it, never rebuilds a room it has built before; they are built
+ * on first use only. The generation is deterministic, so a cached room is
+ * exactly the one a fresh build would give.
+ */
 export function createImpulseBuffer(ctx: BaseAudioContext, decay: number, seed: number): AudioBuffer {
-  const data = generateImpulse({ sampleRate: ctx.sampleRate, decay, seed, channels: 2 });
-  const buf = ctx.createBuffer(2, data[0].length, ctx.sampleRate);
+  const sr = ctx.sampleRate;
+  const key = `${clamp(decay, 0.01, 60)}|${seed >>> 0}|${sr}`;
+  const hit = irCache.get(key);
+  if (hit) {
+    irCache.delete(key);
+    irCache.set(key, hit);
+    return hit;
+  }
+  const data = generateImpulse({ sampleRate: sr, decay, seed, channels: 2 });
+  const buf = new AudioBuffer({ numberOfChannels: 2, length: data[0].length, sampleRate: sr });
   for (let c = 0; c < 2; c++) buf.copyToChannel(data[c], c);
+  irBuilds++;
+  irCache.set(key, buf);
+  irCacheBytes += irBytes(buf);
+  for (const [k, old] of irCache) {
+    if (irCacheBytes <= IR_CACHE_BUDGET_BYTES || k === key) break;
+    irCache.delete(k);
+    irCacheBytes -= irBytes(old);
+  }
   return buf;
+}
+
+/** Shared impulse-response cache: entries, bytes and how many rooms were built so far (tests, diagnostics). */
+export function impulseCacheStats(): { entries: number; bytes: number; builds: number } {
+  return { entries: irCache.size, bytes: irCacheBytes, builds: irBuilds };
+}
+
+export function clearImpulseCache(): void {
+  irCache.clear();
+  irCacheBytes = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -361,7 +481,7 @@ export class ControlBus {
 
   /** A WaveShaper output carrying curve(u); connect it wherever needed. */
   shape(curve: Curve): WaveShaperNode {
-    const ws = this.own(new WaveShaperNode(this.ctx, { curve, oversample: 'none', channelCount: 1, channelCountMode: 'explicit' }));
+    const ws = this.own(shaperNode(this.ctx, curve, { oversample: 'none', channelCount: 1, channelCountMode: 'explicit' }));
     this.sum.connect(ws);
     return ws;
   }
@@ -388,6 +508,43 @@ export class ControlBus {
     neg.connect(dry.gain);
     return { dry, wet };
   }
+
+  /**
+   * Equal-power dry/wet pair for modulation effects (Chorus, Phaser): with
+   * w = clamp(u, 0, 1), wet gain = sin(w·π/2) and dry gain = cos(w·π/2).
+   * Their squares sum to 1, so a wet signal that is decorrelated from the
+   * dry one (a swept delay or an all-pass chain) keeps the total energy as
+   * the mix moves, where a linear crossfade dips about 3 dB in the middle.
+   * Mix 0 is exactly dry and 1 exactly wet.
+   */
+  blendEqualPower(): { dry: GainNode; wet: GainNode } {
+    const dry = this.own(new GainNode(this.ctx, { gain: 0 }));
+    const wet = this.own(new GainNode(this.ctx, { gain: 0 }));
+    this.shape(equalPowerCurve('wet')).connect(wet.gain);
+    this.shape(equalPowerCurve('dry')).connect(dry.gain);
+    return { dry, wet };
+  }
+}
+
+const equalPowerCurves = new Map<'dry' | 'wet', Curve>();
+
+/** Control curve of the equal-power mix law (shared: assigning a curve copies it). */
+export function equalPowerCurve(side: 'dry' | 'wet'): Curve {
+  let c = equalPowerCurves.get(side);
+  if (!c) {
+    c = makeControlCurve((w) => equalPowerGain(w, side));
+    equalPowerCurves.set(side, c);
+  }
+  return c;
+}
+
+/** Equal-power mix law: the wet (sin) or dry (cos) gain for mix w in 0..1 (exact 0 and 1 at the ends). */
+export function equalPowerGain(w: number, side: 'dry' | 'wet'): number {
+  const x = clamp(w, 0, 1);
+  if (x === 0) return side === 'dry' ? 1 : 0;
+  if (x === 1) return side === 'dry' ? 0 : 1;
+  const th = (x * Math.PI) / 2;
+  return side === 'dry' ? Math.cos(th) : Math.sin(th);
 }
 
 /* ------------------------------------------------------------------ */
@@ -463,6 +620,11 @@ export abstract class EffectModule implements ModuleNode {
   private readonly mods = new Map<string, AudioNode>();
   /** Last target scheduled per smoothed AudioParam (skips redundant events). */
   private readonly targets = new Map<AudioParam, number>();
+  /** Song automation in progress (automate): how smooth() writes, else null, and the point's time. */
+  private autoMode: AutomationMode | null = null;
+  private autoTime = 0;
+  /** Per AudioParam: end of the song automation that owns it (an anchor leaves it alone until then). */
+  private readonly autoUntil = new Map<AudioParam, number>();
   private readonly timers = new Set<number>();
   private readonly worklets: AudioWorkletNode[] = [];
 
@@ -490,13 +652,29 @@ export abstract class EffectModule implements ModuleNode {
     this.bypass.set(bypass, this.at(time));
   }
 
-  cancelAfter(time: number): void {
+  cancelAfter(time: number, hold = false): void {
     if (this.disposed) return;
     const t = Number.isFinite(time) ? Math.max(0, time) : this.ctx.currentTime;
-    for (const p of this.targets.keys()) p.cancelScheduledValues(t);
+    for (const p of this.targets.keys()) {
+      if (hold) p.cancelAndHoldAtTime(t);
+      else p.cancelScheduledValues(t);
+    }
+    for (const [p, until] of [...this.autoUntil]) if (until >= t) this.autoUntil.delete(p);
     // Values we believed scheduled may be gone; re-apply everything next time.
     this.targets.clear();
     this.afterCancel(t);
+  }
+
+  /** Song automation: apply params at `time` as an anchor, a step or the end of a linear ramp (see ModuleNode.automate). */
+  automate(params: ParamValues, time: number, mode: AutomationMode): void {
+    if (this.disposed) return;
+    this.autoMode = mode;
+    this.autoTime = Number.isFinite(time) ? time : this.ctx.currentTime;
+    try {
+      this.setParams(params, time);
+    } finally {
+      this.autoMode = null;
+    }
   }
 
   /** Subclass hook after automation past `time` was cancelled. */
@@ -570,6 +748,21 @@ export abstract class EffectModule implements ModuleNode {
   /** Smoothly move `param` to `value` from `time` (skipped when that target is already scheduled). */
   protected smooth(param: AudioParam, value: number, time: number, tau: number = PARAM_SMOOTHING): void {
     if (!Number.isFinite(value)) return;
+    const mode = this.autoMode;
+    if (mode) {
+      const t = Math.max(time, this.autoTime);
+      if (mode === 'anchor') {
+        // Every value starts exactly here, except params another ramp still owns.
+        if ((this.autoUntil.get(param) ?? -Infinity) > t) return;
+      } else if (this.targets.get(param) === value) {
+        return;
+      }
+      this.targets.set(param, value);
+      if (mode === 'ramp') param.linearRampToValueAtTime(value, t);
+      else param.setValueAtTime(value, t);
+      if (mode !== 'anchor') this.autoUntil.set(param, t);
+      return;
+    }
     if (this.targets.get(param) === value) return;
     this.targets.set(param, value);
     param.setTargetAtTime(value, time, tau);

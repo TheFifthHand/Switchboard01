@@ -57,6 +57,14 @@ export class SampleBank implements SampleProvider {
     return id.startsWith(BUILTIN_PREFIX) && !this.missing.has(id) && builtinSampleInfo(id) !== undefined;
   }
 
+  /**
+   * Make `id` available (generates a built-in sample; an imported recording
+   * must have been added). Resolves with the buffer, or null when unknown.
+   */
+  load(id: string): Promise<AudioBuffer | null> {
+    return Promise.resolve(this.get(id));
+  }
+
   get(id: string): AudioBuffer | null {
     const hit = this.buffers.get(id);
     if (hit) return hit;

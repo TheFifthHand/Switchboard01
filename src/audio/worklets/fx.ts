@@ -10,7 +10,10 @@
  *   ahead for a wide image. Loop gain is feedback (≤ 0.85) times a 12 kHz
  *   damping pole, so it always decays; the input is scaled by √(1 − fb²) to
  *   keep the broadband level even as feedback rises.
- *       y = (1 − mix)·x + mix·line(t − d(t))
+ *       y = cos(mix·π/2)·x + sin(mix·π/2)·line(t − d(t))
+ *   (an equal-power blend: the swept line is decorrelated from the dry
+ *   sound, so switching the flanger in keeps the part's energy where a linear
+ *   50/50 blend lost about 3 dB; Mix 0 is exactly dry, 1 exactly wet).
  *
  * 'sb-tape' — tape colour:
  *   1. saturation at 2x (polyphase IIR half-bands, see halfband.ts): a soft,
@@ -30,12 +33,31 @@
  *   The dry path for Mix runs through the same half-band all-pass and the
  *   same mean delay, so blending never comb-filters (only the wobble itself
  *   differs).
+ *
+ * 'sb-level-match' — the Drive's level compensation in practice. Input 0 is
+ *   the driven (wet) sound, input 1 the same part before the drive, both
+ *   already scaled by the wet share. Their mean squares are averaged over
+ *   LEVEL_MATCH_TAU and the wet sound leaves multiplied by
+ *   sqrt(reference / wet), glided over LEVEL_MATCH_GLIDE and bounded to
+ *   ±LEVEL_MATCH_MAX_DB: whatever level and shape a part reaches its Drive
+ *   with, turning Drive up keeps its RMS level. In silence the gain holds.
+ *   A block of silence on both inputs costs almost nothing.
  */
 import { FLUSH_PARAM_JS, WORKLET_COMMON_JS } from './common';
 import { HALFBAND_JS } from './halfband';
 
 export const FLANGER_PROCESSOR_NAME = 'sb-flanger';
 export const TAPE_PROCESSOR_NAME = 'sb-tape';
+export const LEVEL_MATCH_PROCESSOR_NAME = 'sb-level-match';
+
+/** Averaging time of the level match's mean squares (seconds). */
+export const LEVEL_MATCH_TAU = 0.4;
+/** Glide of its gain toward the measured ratio (seconds). */
+export const LEVEL_MATCH_GLIDE = 0.05;
+/** Largest correction the level match applies, either way (dB). */
+export const LEVEL_MATCH_MAX_DB = 6;
+/** Below this mean square (about −80 dBFS) the level match holds its gain (silence says nothing). */
+export const LEVEL_MATCH_FLOOR = 1e-8;
 
 export const FLANGER_MIN_MS = 0.3;
 export const FLANGER_MAX_MS = 8;
@@ -64,6 +86,15 @@ ${HALFBAND_JS}
 
 const SB_FL_MIN = ${FLANGER_MIN_MS} * 0.001;
 const SB_FL_MAX = ${FLANGER_MAX_MS} * 0.001;
+
+/** Equal-power blend gain for mix m (0..1): sin for the wet side, cos for the dry side; exact at the ends. */
+function sbEqualPower(m, wet) {
+  const x = m <= 0 ? 0 : m >= 1 ? 1 : m;
+  if (x === 0) return wet ? 0 : 1;
+  if (x === 1) return wet ? 1 : 0;
+  const th = x * Math.PI * 0.5;
+  return wet ? Math.sin(th) : Math.cos(th);
+}
 
 function sbPow2(n) {
   let s = 1;
@@ -123,12 +154,18 @@ class SbFlangerProcessor extends AudioWorkletProcessor {
     const minF = this.minFrames, logRange = this.logRange, aDamp = this.aDamp;
     let w = this.w, phase = this.phase, dampL = this.dampL, dampR = this.dampR;
     const twoPi = 2 * Math.PI;
+    const mixConst = mixA.length === 1;
+    let gDry = sbEqualPower(mixA[0], false);
+    let gWet = sbEqualPower(mixA[0], true);
     for (let i = 0; i < n; i++) {
       const l = iL ? sbIn(iL[i]) : 0;
       const r = iR ? sbIn(iR[i]) : 0;
       const depth = sbAt(depthA, i);
       const fb = sbAt(fbA, i);
-      const mix = sbAt(mixA, i);
+      if (!mixConst) {
+        gDry = sbEqualPower(mixA[i], false);
+        gWet = sbEqualPower(mixA[i], true);
+      }
       phase += sbAt(rateA, i) / sampleRate;
       if (phase >= 1) phase -= 1;
       const sweepL = 0.5 - 0.5 * Math.cos(twoPi * phase);
@@ -144,8 +181,8 @@ class SbFlangerProcessor extends AudioWorkletProcessor {
       bufL[w] = sbTidy(l * k + fb * dampL);
       bufR[w] = sbTidy(r * k + fb * dampR);
       w = (w + 1) & mask;
-      oL[i] = l + mix * (yl - l);
-      if (oR) oR[i] = r + mix * (yr - r);
+      oL[i] = l * gDry + yl * gWet;
+      if (oR) oR[i] = r * gDry + yr * gWet;
     }
     this.w = w;
     this.phase = phase;
@@ -388,6 +425,89 @@ class SbTapeProcessor extends AudioWorkletProcessor {
   }
 }
 
+const SB_LM_TAU = ${LEVEL_MATCH_TAU};
+const SB_LM_GLIDE = ${LEVEL_MATCH_GLIDE};
+const SB_LM_MAX = Math.pow(10, ${LEVEL_MATCH_MAX_DB} / 20);
+const SB_LM_FLOOR = ${LEVEL_MATCH_FLOOR};
+
+class SbLevelMatchProcessor extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    return [${FLUSH_PARAM_JS}];
+  }
+
+  constructor() {
+    super();
+    this.a = 1 - sbPole(SB_LM_TAU);
+    this.b = 1 - sbPole(SB_LM_GLIDE);
+    this.eWet = 0;
+    this.eRef = 0;
+    this.g = 1;
+    this.flushSeen = 0;
+    this.alive = true;
+    this.port.onmessage = (e) => {
+      if (e.data === 'dispose') this.alive = false;
+    };
+  }
+
+  process(inputs, outputs, p) {
+    const output = outputs[0];
+    if (!output || output.length === 0) return this.alive;
+    const oL = output[0];
+    const oR = output.length > 1 ? output[1] : null;
+    const n = oL.length;
+    if (p.flush[0] !== this.flushSeen) {
+      this.flushSeen = p.flush[0];
+      this.eWet = 0;
+      this.eRef = 0;
+      this.g = 1;
+    }
+    const wet = inputs[0] || [];
+    const ref = inputs[1] || [];
+    const wL = wet.length > 0 ? wet[0] : null;
+    const wR = wet.length > 1 ? wet[1] : wL;
+    const rL = ref.length > 0 ? ref[0] : null;
+    const rR = ref.length > 1 ? ref[1] : rL;
+    let silent = true;
+    for (let i = 0; i < n && silent; i++) {
+      if ((wL && wL[i] !== 0) || (wR && wR[i] !== 0) || (rL && rL[i] !== 0) || (rR && rR[i] !== 0)) silent = false;
+    }
+    if (silent) {
+      // Nothing to measure (Drive at zero gates both inputs): the averages decay, the gain holds.
+      const k = Math.pow(1 - this.a, n);
+      this.eWet = sbTidy(this.eWet * k);
+      this.eRef = sbTidy(this.eRef * k);
+      oL.fill(0);
+      if (oR) oR.fill(0);
+      for (let ch = 2; ch < output.length; ch++) output[ch].fill(0);
+      return this.alive;
+    }
+    const a = this.a, b = this.b;
+    let eWet = this.eWet, eRef = this.eRef, g = this.g;
+    for (let i = 0; i < n; i++) {
+      const l = wL ? sbIn(wL[i]) : 0;
+      const r = wR ? sbIn(wR[i]) : 0;
+      const x = rL ? sbIn(rL[i]) : 0;
+      const y = rR ? sbIn(rR[i]) : 0;
+      eWet += a * (0.5 * (l * l + r * r) - eWet);
+      eRef += a * (0.5 * (x * x + y * y) - eRef);
+      if (eWet > SB_LM_FLOOR && eRef > SB_LM_FLOOR) {
+        let target = Math.sqrt(eRef / eWet);
+        if (target > SB_LM_MAX) target = SB_LM_MAX;
+        else if (target < 1 / SB_LM_MAX) target = 1 / SB_LM_MAX;
+        g += b * (target - g);
+      }
+      oL[i] = l * g;
+      if (oR) oR[i] = r * g;
+    }
+    this.eWet = sbTidy(eWet);
+    this.eRef = sbTidy(eRef);
+    this.g = g;
+    for (let ch = 2; ch < output.length; ch++) output[ch].fill(0);
+    return this.alive;
+  }
+}
+
 sbRegister('${FLANGER_PROCESSOR_NAME}', SbFlangerProcessor);
 sbRegister('${TAPE_PROCESSOR_NAME}', SbTapeProcessor);
+sbRegister('${LEVEL_MATCH_PROCESSOR_NAME}', SbLevelMatchProcessor);
 `;

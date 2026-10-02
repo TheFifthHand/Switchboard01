@@ -37,6 +37,19 @@ export interface VoiceHandle {
   readonly ended: boolean;
 }
 
+/**
+ * The recording a sampler note plays, when it is not the part's own
+ * (a per-clip recording: Clip.sample in project schema v3). Region bounds are
+ * fractions of the buffer (0..1, like the sampler's Start/End), `rootNote` is
+ * the MIDI note at which the recording plays at its own pitch.
+ */
+export interface NoteSample {
+  id: string;
+  start: number;
+  end: number;
+  rootNote: number;
+}
+
 export interface NoteTrigger {
   /** MIDI note for melodic instruments; drum slot 0..15 for drum kits. */
   pitch: number;
@@ -51,11 +64,22 @@ export interface NoteTrigger {
    * from that note's pitch (glide) instead of retriggering the envelope.
    */
   legato?: boolean;
+  /**
+   * Sampler parts: play this recording, region and root instead of the
+   * part's own (its other settings still apply). A note whose recording is
+   * not loaded yet is skipped and counted (EngineStats.skippedSampleNotes).
+   */
+  sample?: NoteSample;
 }
 
 /** Supplies decoded sample buffers (imported and built-in). */
 export interface SampleProvider {
   get(sampleId: string): AudioBuffer | null;
+  /**
+   * Make `sampleId` available to get() (decode or generate it). Optional;
+   * without it, AudioEngineApi.preloadSamples calls get() once per id.
+   */
+  load?(sampleId: string): Promise<AudioBuffer | null>;
 }
 
 export interface InstrumentContext {
@@ -65,6 +89,27 @@ export interface InstrumentContext {
   noise: AudioBuffer;
   /** Current project tempo (for tempo-synced sampler playback). */
   getBpm(): number;
+  /** A note could not sound because its recording is not loaded (counted in EngineStats). */
+  noteSkipped?(): void;
+  /** Offline rendering (export): everything must be computed in place, never deferred. */
+  offline?: boolean;
+}
+
+/** InstrumentEngine.prepare / AudioEngine.prepareInstruments options. */
+export interface PrepareOptions {
+  /**
+   * Prepare in idle slices of at most 8 ms (requestIdleCallback where
+   * available, else setTimeout 0) instead of now, in one go. The returned
+   * promise resolves when the work is done (or superseded).
+   */
+  incremental?: boolean;
+  /**
+   * 'used' prepares only what the project's clips use (drum voices that
+   * play), 'all' (default) everything; used work always comes first.
+   */
+  scope?: 'used' | 'all';
+  /** Drum kits: slots in the order to prepare them (most-used first); missing slots follow. */
+  order?: readonly number[];
 }
 
 /** One per track. Implementations: drum kit, mono bass synth, poly synth, sampler. */
@@ -93,8 +138,11 @@ export interface InstrumentEngine {
   /** Hard stop of every voice, immediately (Mute All / panic). */
   kill(): void;
   activeVoices(): number;
-  /** Optional warm-up outside the scheduling path (e.g. render drum buffers). */
-  prepare?(): void;
+  /**
+   * Optional warm-up outside the scheduling path (e.g. render drum buffers).
+   * Incremental preparation resolves when its idle work is done.
+   */
+  prepare?(opts?: PrepareOptions): void | Promise<void>;
   dispose(): void;
 }
 
@@ -107,6 +155,12 @@ export type InstrumentFactory = (ictx: InstrumentContext, instrument: Instrument
 export interface TrackMeter {
   trackId: Id;
   /** Peak absolute sample value over the last read window, linear. */
+  peak: number;
+  rms: number;
+}
+
+/** Peak and RMS (linear) of a stereo signal over the last read window. */
+export interface LevelReading {
   peak: number;
   rms: number;
 }
@@ -125,6 +179,23 @@ export interface MeterFrame {
   loudness?: LoudnessReading;
   /** Gain reduction of the mastering Glue compressor in dB (>= 0). */
   glueReductionDb?: number;
+  /**
+   * Gain reduction (dB, >= 0) of every Compressor and Gate module, by module
+   * id, reported by their worklets about 30 times a second (live engines
+   * only). A bypassed module reads 0.
+   */
+  moduleReductionDb?: Record<Id, number>;
+  /**
+   * Levels after the shared Reverb (fx:reverb) and Echo (fx:delay) returns,
+   * i.e. what each return adds to the mix (live engines only). A return
+   * switched off reads 0.
+   */
+  returns?: { reverb: LevelReading; delay: LevelReading };
+  /**
+   * Level-matched A/B (setMasteringBypass): the gain in dB applied to the
+   * un-mastered sound while the comparison is on, 0 otherwise.
+   */
+  compareTrimDb?: number;
 }
 
 export interface LoudnessReading {
@@ -136,6 +207,11 @@ export interface LoudnessReading {
   integrated: number;
   /** Highest true peak since the last reset, in dBTP (4× oversampled). */
   truePeakDb: number;
+  /**
+   * Short-term loudness (3 s, LUFS) of the mix as it enters the mastering
+   * chain; −Infinity while mastering is off (the tap only runs while it is on).
+   */
+  preMasteringShortTerm?: number;
 }
 
 export interface EngineStats {
@@ -145,6 +221,8 @@ export interface EngineStats {
   connections: number;
   /** Engine-owned timers / pending callbacks. */
   pendingTimers: number;
+  /** Sampler notes skipped because their recording was not loaded yet (since the engine was made). */
+  skippedSampleNotes?: number;
 }
 
 export interface EngineOptions {
@@ -179,9 +257,31 @@ export interface AudioEngineApi {
   /** Automation: master volume (dB) at a future time (performance replay). */
   scheduleMasterVolume(db: number, time: number): void;
   /**
+   * Song automation: move `macro` of a part linearly in macro space from
+   * `from` at `t0` to `to` at `t1` (0..1), resolved through the part's
+   * macroMap to every target. Targets mapped linearly ramp exactly
+   * (linearRampToValueAtTime); other curves get setValueAtTime points at
+   * most 10 ms apart. The ramp owns its params until `t1`: project edits
+   * and macro smoothing do not move them meanwhile. Afterwards the value
+   * holds like other automation (until the project changes it, a cancel or
+   * Stop). Optional.
+   */
+  scheduleMacroRamp?(trackId: Id, macro: MacroId, from: number, to: number, t0: number, t1: number): void;
+  /**
+   * Song automation: the song-gain stage (after master volume, before
+   * mastering; linear gain, 1 = unity, at most 4) reaches `value` at `time`
+   * (with a 5 ms glide), or, with `rampEndTime`, ramps linearly from its value
+   * at `time` to `value` at `rampEndTime`. Unity and bit-transparent unless
+   * used. Stop holds it (a fade-out's tail stays faded); the next
+   * transportStarted returns it to unity. Optional.
+   */
+  scheduleSongGain?(value: number, time: number, rampEndTime?: number): void;
+  /**
    * Cancel everything the engine scheduled on the sequencer's behalf at/after
-   * `afterTime`: param/macro/mute/master automation, pump ducks and metronome
-   * clicks. The sequencer regenerates those events after an invalidation.
+   * `afterTime`: param/macro/mute/master automation, pump ducks, metronome
+   * clicks, macro ramps and song-gain ramps (a ramp under way at that time
+   * holds the value it has reached). The sequencer regenerates those events
+   * after an invalidation.
    */
   cancelScheduledAutomation(afterTime: number): void;
 
@@ -230,8 +330,12 @@ export interface AudioEngineApi {
   /**
    * A/B listening: hear the output without the mastering chain while `on`.
    * Never changes the project; offline renders (exports) are unaffected.
+   * Level-matched unless `matchLevels` is false: turning it on measures the
+   * short-term loudness after and before mastering and plays the un-mastered
+   * sound that much louder or quieter (±12 dB at most, a boost only as far
+   * as it adds ≤ 1.5 dB of limiting), reported as MeterFrame.compareTrimDb.
    */
-  setMasteringBypass?(on: boolean): void;
+  setMasteringBypass?(on: boolean, opts?: { matchLevels?: boolean }): void;
   /**
    * Live pitch bend for a part's playing and future notes, in cents
    * (MIDI pitch wheel). Optional; 0 = centred.

@@ -12,6 +12,7 @@ import {
   drumVoiceCacheStats,
   drumVoiceKey,
   getDrumVoice,
+  peekDrumVoice,
   quantizeDrumDecay,
   renderDrumVoice,
 } from '../../src/audio/instruments/drumSynth';
@@ -388,7 +389,20 @@ describe('voice cache', () => {
     expect(drumVoiceKey('tight-circuit', 5, SR, 1)).toBe(drumVoiceKey('tight-circuit', 5, SR, 1.01));
     expect(Array.from(a)).toEqual(Array.from(renderDrumVoice('tight-circuit', 5, SR, 1)));
     clearDrumVoiceCache();
-    expect(drumVoiceCacheStats()).toEqual({ entries: 0, bytes: 0 });
+    expect(drumVoiceCacheStats()).toMatchObject({ entries: 0, bytes: 0 });
+  });
+
+  it('counts renders and peeks without rendering', () => {
+    clearDrumVoiceCache();
+    const before = drumVoiceCacheStats().renders;
+    expect(peekDrumVoice('tight-circuit', 2, SR, 1)).toBeNull();
+    expect(drumVoiceCacheStats().renders).toBe(before);
+    const a = getDrumVoice('tight-circuit', 2, SR, 1);
+    expect(drumVoiceCacheStats().renders).toBe(before + 1);
+    expect(peekDrumVoice('tight-circuit', 2, SR, 1.01)).toBe(a);
+    getDrumVoice('tight-circuit', 2, SR, 1);
+    expect(drumVoiceCacheStats().renders).toBe(before + 1);
+    clearDrumVoiceCache();
   });
 
   it('quantises decay to a bounded 1/12-octave grid', () => {

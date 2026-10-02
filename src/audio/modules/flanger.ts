@@ -6,7 +6,9 @@
  *   mix mod ─> worklet 'mix' AudioParam (clamped to 0..1 by its range)
  *
  * Depth sweeps the delay from 0.3 ms up to 8 ms (exponentially, so the
- * notches move evenly in pitch); left and right sweep 90° apart. Feedback is
+ * notches move evenly in pitch); left and right sweep 90° apart. Mix blends
+ * dry and wet with an equal-power law (dry cos, wet sin), so switching the
+ * flanger in keeps the part's energy. Feedback is
  * bounded at 0.85 and damped, so the sound never runs away; Mute All clears
  * the delay line.
  */

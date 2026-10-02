@@ -11,16 +11,28 @@
  * - Pitch bend (MIDI wheel): a ConstantSource in cents, created on first
  *   use and glided to each new value, added to the engine's pitchMod bus so
  *   playing and future notes bend together. Drum kits are not bent.
+ * - Song automation (automate, a macro ramp on instrument params): an
+ *   instrument takes new settings for its next notes as soon as it is
+ *   updated, so ramp points are kept here and handed over in time order, no
+ *   earlier than the notes and beats being scheduled reach them (advance()),
+ *   or, live, about 0.25 s ahead on a timer: a note scheduled during the ramp
+ *   starts with the value the ramp has at its start, and sounding notes follow
+ *   each point (smoothed by the instrument). Until the last point is handed
+ *   over, project updates keep the ramp's current values for its params.
  */
 import type { Id, Instrument, ParamValues } from '../../project/types';
 import { MODULE_DEFS } from '../../project/modules';
-import type { InstrumentEngine, NoteTrigger, VoiceHandle } from '../contracts';
-import type { ModuleEnv, ModuleNode } from './types';
+import type { InstrumentEngine, NoteTrigger, PrepareOptions, VoiceHandle } from '../contracts';
+import type { AutomationMode, ModuleEnv, ModuleNode } from './types';
 
 /** Crossfade when the instrument kind changes. */
 export const INSTRUMENT_SWAP_FADE = 0.03;
 /** Glide time constant of pitch-bend changes (MIDI wheel steps become smooth). */
 export const BEND_TAU = 0.004;
+/** Live engines hand ramp points to the instrument this far ahead of their time (seconds). */
+const AUTO_AHEAD = 0.25;
+/** How often a live engine checks for ramp points to hand over (ms). */
+const AUTO_TICK_MS = 50;
 
 function modAmount(port: string): number {
   return MODULE_DEFS.instrument.ports.find((p) => p.id === port && p.direction === 'in')?.modRange?.amount ?? 0;
@@ -44,6 +56,11 @@ export class InstrumentModule implements ModuleNode {
   private bend: ConstantSourceNode | null = null;
   private bendCents = 0;
   private disposed = false;
+  /** Ramp points not handed to the instrument yet (time ascending). */
+  private pendingAuto: { time: number; params: ParamValues }[] = [];
+  /** Params a ramp in progress owns, with the value it last handed over. */
+  private autoValues: ParamValues | null = null;
+  private autoTimer: number | null = null;
 
   constructor(
     env: ModuleEnv,
@@ -78,6 +95,11 @@ export class InstrumentModule implements ModuleNode {
   update(instrument: Instrument, time: number): void {
     if (this.disposed) return;
     const t = Math.max(Number.isFinite(time) ? time : 0, this.env.ctx.currentTime);
+    // A ramp in progress keeps its params where it has brought them (its end values come back
+    // through the engine's automation overlay before the ramp gets there).
+    if (this.autoValues && this.pendingAuto.length && instrument.kind === this.instrument?.kind) {
+      instrument = { ...instrument, params: { ...instrument.params, ...this.autoValues } } as Instrument;
+    }
     if (!this.current || this.current.engine.kind !== instrument.kind) {
       this.swap(instrument, t);
     } else if (instrument !== this.instrument) {
@@ -94,6 +116,52 @@ export class InstrumentModule implements ModuleNode {
 
   setBypass(_bypass: boolean, _time: number): void {
     // The sound source cannot be bypassed.
+  }
+
+  /** Song automation: keep the point; it reaches the instrument in time order (see the file comment). */
+  automate(params: ParamValues, time: number, _mode: AutomationMode): void {
+    if (this.disposed || !this.instrument) return;
+    const t = Math.max(Number.isFinite(time) ? time : 0, this.env.ctx.currentTime);
+    this.pendingAuto = this.pendingAuto.filter((p) => p.time < t);
+    this.pendingAuto.push({ time: t, params: { ...params } });
+    this.advance(this.env.ctx.currentTime);
+    if (!this.env.offline && this.pendingAuto.length && this.autoTimer === null) this.tickAuto();
+  }
+
+  /** Hand over the ramp points due by `time` (notes and beats being scheduled up to there). */
+  advance(time: number): void {
+    if (this.disposed || this.pendingAuto.length === 0 || !this.instrument) return;
+    while (this.pendingAuto.length && this.pendingAuto[0].time <= time) {
+      const p = this.pendingAuto.shift()!;
+      const owned: ParamValues = {};
+      for (const k of Object.keys(p.params)) if (p.params[k] !== this.instrument.params[k]) owned[k] = p.params[k];
+      this.autoValues = { ...(this.autoValues ?? {}), ...owned };
+      const next = { ...this.instrument, params: { ...p.params } } as Instrument;
+      if (this.current && this.current.engine.kind === next.kind) this.current.engine.update(next, p.time);
+      this.instrument = next;
+    }
+    if (this.pendingAuto.length === 0) this.autoValues = null;
+  }
+
+  private tickAuto(): void {
+    this.autoTimer = this.env.setTimer(() => {
+      this.autoTimer = null;
+      this.advance(this.env.ctx.currentTime + AUTO_AHEAD);
+      if (this.pendingAuto.length) this.tickAuto();
+    }, AUTO_TICK_MS);
+  }
+
+  /** Drop ramp points at/after `time` (the engine then applies the values that should hold). */
+  cancelAfter(time: number, _hold = false): void {
+    const t = Number.isFinite(time) ? time : this.env.ctx.currentTime;
+    this.pendingAuto = this.pendingAuto.filter((p) => p.time < t);
+    if (this.pendingAuto.length === 0) {
+      this.autoValues = null;
+      if (this.autoTimer !== null) {
+        this.env.clearTimer(this.autoTimer);
+        this.autoTimer = null;
+      }
+    }
   }
 
   private swap(instrument: Instrument, time: number): void {
@@ -209,6 +277,8 @@ export class InstrumentModule implements ModuleNode {
 
   trigger(note: NoteTrigger): VoiceHandle | null {
     if (this.disposed || !this.current) return null;
+    // Ramp points up to the note's start reach the instrument first.
+    if (this.pendingAuto.length && Number.isFinite(note.time)) this.advance(note.time);
     return this.current.engine.trigger(note);
   }
 
@@ -239,14 +309,18 @@ export class InstrumentModule implements ModuleNode {
     this.kill();
   }
 
-  /** Warm the current instrument's caches (drum buffers) outside the scheduling path. */
-  prepare(): void {
-    this.current?.engine.prepare?.();
+  /** Warm the current instrument's caches (drum buffers) outside the scheduling path; see PrepareOptions. */
+  prepare(opts?: PrepareOptions): Promise<void> | undefined {
+    const r = this.current?.engine.prepare?.(opts);
+    return r instanceof Promise ? r : undefined;
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.autoTimer !== null) this.env.clearTimer(this.autoTimer);
+    this.autoTimer = null;
+    this.pendingAuto = [];
     const cur = this.current;
     this.current = null;
     if (cur) {
