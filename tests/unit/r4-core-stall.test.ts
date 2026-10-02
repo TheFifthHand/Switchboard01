@@ -267,6 +267,102 @@ describe('perf-01: a busy main thread never stops or delays playback in a visibl
   });
 });
 
+describe('perf-01: a skip leaves out only what it must (review minor 5)', () => {
+  it('a miss just past the tolerance (a 290 ms block, then a tick) leaves nothing out and is no skip', () => {
+    const r = rig(groove());
+    r.transport.launchClip('t1', 0);
+    r.transport.start();
+    // Scheduled up to 1.35 s; the next 16th is at 1.425 s.
+    r.run(1050);
+    r.block(290);
+    r.run(1000);
+    expect(r.got.skipped).toEqual([]);
+    expect(r.transport.getStats().skips).toBe(0);
+    expect(r.transport.getStats().lateDropped).toBe(0);
+    const ticks = r.notes.map((n) => Math.round((n.time - 0.05) * 192));
+    for (let t = 0; t <= 384; t += 24) expect(ticks).toContain(t);
+    expect(r.notes.filter((n) => n.time < n.at - 0.01)).toEqual([]);
+    r.transport.dispose();
+  });
+
+  it('a note due between 10 ms ago and now is still played (at most 10 ms late), not skipped', () => {
+    const r = rig(groove());
+    r.transport.launchClip('t1', 0);
+    r.transport.start();
+    r.run(1050);
+    // The next tick comes at 1.43 s: the 16th at 1.425 s is 5 ms late, the stretch before it has no note.
+    r.block(355);
+    r.run(25);
+    expect(r.ctx.currentTime).toBeCloseTo(1.43, 6);
+    const due = r.notes.find((n) => Math.abs(n.time - 1.425) < 1e-6);
+    expect(due).toBeDefined();
+    expect(due!.at - due!.time).toBeLessThanOrEqual(0.01);
+    expect(r.got.skipped).toEqual([]);
+    r.transport.dispose();
+  });
+});
+
+describe('simulateStall (review minor 6)', () => {
+  it('a brace during a simulated stall (a long frame, a view switch) schedules nothing: the stall still stops playback', () => {
+    const r = rig(groove());
+    r.transport.launchClip('t1', 0);
+    r.transport.start();
+    r.run(500);
+    r.transport.simulateStall(1200);
+    r.transport.brace();
+    r.run(1300);
+    expect(r.got.stalled!.length).toBe(1);
+    expect(r.transport.playing).toBe(false);
+    r.transport.dispose();
+  });
+});
+
+describe('song gain after Stop and Pause (review minors 1, 2)', () => {
+  /** The groove as a song: one block (row 0) of `bars` bars with a Fade out. */
+  function fadeOutSong(bars: number): Project {
+    const p = groove();
+    p.arrangement = { tailSeconds: 1, blocks: [{ id: 'A', sceneId: p.scenes[0].id, repeats: bars, moves: [{ id: 'f', kind: 'fadeOut' }] }] };
+    return p;
+  }
+  const gains = (r: ReturnType<typeof rig>, from: number) => r.events.filter((e) => e.kind === 'songGain' && e.at >= from).map((e) => e.args as number[]);
+
+  it('a faded ending stays faded after Stop (no timed return to bring effect tails back); the next live sound brings unity back, once', () => {
+    const r = rig(fadeOutSong(1));
+    r.transport.start({ mode: { kind: 'song', fromBlock: 0 } });
+    r.run(2500);
+    expect(r.transport.playing).toBe(false);
+    const stoppedAt = r.ctx.currentTime;
+    r.run(15000);
+    expect(gains(r, stoppedAt)).toEqual([]);
+    const now = r.ctx.currentTime;
+    r.transport.restoreSongGain();
+    expect(gains(r, now)).toEqual([[1, now]]);
+    r.transport.restoreSongGain();
+    expect(gains(r, now)).toHaveLength(1);
+    r.transport.dispose();
+  });
+
+  it('Pause inside a fade out: a live sound is heard at unity; Play goes on from the level the fade had reached', () => {
+    const r = rig(fadeOutSong(2));
+    r.transport.start({ mode: { kind: 'song', fromBlock: 0 } });
+    // 0.95 s into a 4 s fade: at 0.7625.
+    r.run(1000);
+    expect(r.transport.pause()).toBe(true);
+    const pausedAt = r.ctx.currentTime;
+    r.run(500);
+    expect(gains(r, pausedAt)).toEqual([]);
+    const now = r.ctx.currentTime;
+    r.transport.restoreSongGain();
+    expect(gains(r, now)).toEqual([[1, now]]);
+    r.run(500);
+    const resumedAt = r.ctx.currentTime;
+    expect(r.transport.resume()).toBe(true);
+    const [step] = gains(r, resumedAt);
+    expect(step[0]).toBeCloseTo(1 - 0.95 / 4, 2);
+    r.transport.dispose();
+  });
+});
+
 describe('perf-01: events whose time has passed are dropped, never played late', () => {
   it('the dispatcher drops late notes but lets their control events through', async () => {
     const { EngineDispatcher } = await import('../../src/time/transport');

@@ -65,8 +65,6 @@ export const TICK_GAP_MS = 60;
 export const LONG_FRAME_MS = 80;
 /** Notes whose start time passed more than this long ago (seconds) are dropped, never played late. */
 export const LATE_TOLERANCE = 0.01;
-/** After a skip, scheduling picks up this far ahead of the audio clock (seconds). */
-export const SKIP_MARGIN = 0.02;
 /** Song moves: a song-gain value is reached by gliding over this long (seconds) before its time. */
 export const MOVE_GLIDE = 0.005;
 /** Play starts this far after the gesture so the first events can be scheduled in time. */
@@ -240,6 +238,33 @@ export class EngineDispatcher {
     }
   }
 
+  /**
+   * Schedule again, with the instrument's settings as they are now, the
+   * voices of `tracks` whose event time is at or after `from` (not started
+   * yet): same notes, same lengths (cuts included), in time order. A voice
+   * the engine declines now is forgotten. Returns how many were scheduled.
+   */
+  revoice(tracks: ReadonlySet<Id>, from: number): number {
+    const redo: [NoteEvent, HeldVoice][] = [];
+    for (const entry of this.voices) if (tracks.has(entry[1].trackId) && entry[1].time >= from) redo.push(entry);
+    if (!redo.length) return 0;
+    // All cancelled first, then scheduled again in order, as an invalidation does (a mono part's
+    // notes cut and glide from one another in the order they are scheduled).
+    for (const [, v] of redo) v.handle.cancel();
+    redo.sort((a, b) => a[1].time - b[1].time);
+    let n = 0;
+    for (const [ev, v] of redo) {
+      const trigger: NoteTrigger = { pitch: ev.pitch, velocity: ev.velocity, time: ev.time, duration: Math.max(0, v.end - ev.time), legato: ev.legato };
+      if (ev.sample) trigger.sample = ev.sample;
+      const h = this.o.engine.scheduleNote(ev.trackId, trigger);
+      if (h) {
+        v.handle = h;
+        n++;
+      } else this.voices.delete(ev);
+    }
+    return n;
+  }
+
   /** Cancel voices whose event time is at or after `time` (not started yet). */
   cancelFrom(time: number): void {
     for (const [ev, v] of this.voices) {
@@ -291,9 +316,9 @@ export interface TransportEventMap {
   stalled: { reason: 'throttled' | 'suspended'; lateBy: number; tick: number; songBlockId: Id | null };
   /**
    * The main thread was busy for longer than the scheduling margin in a
-   * visible tab: the missed stretch (`lateBy` seconds) was skipped and
-   * playback goes on in time from `tick`. Nothing stops (a performance take
-   * goes on too).
+   * visible tab: the missed stretch (`lateBy` seconds) was skipped, notes in
+   * it were left out (sent only when there were some), and playback goes on
+   * in time from `tick`. Nothing stops (a performance take goes on too).
    */
   skipped: { lateBy: number; tick: number };
 }
@@ -373,10 +398,14 @@ export class RealtimeTransport {
   /** Wall-clock time of the last tick (0: the ticker just started). */
   private lastTickAt = 0;
   private skips = 0;
-  /** Song moves moved the song gain since playback started (Stop then brings it back to unity). */
+  /** Song moves moved the song gain since playback started or resumed. */
   private songGainMoved = false;
-  /** Until this audio time the song gain is on its way back to unity after a Stop (restoreSongGain hurries it). */
-  private songGainReturnUntil = 0;
+  /**
+   * Stopped or paused with the song gain where song moves left it (a
+   * fade-out's tail stays faded): the next live sound brings it back to
+   * unity (restoreSongGain), as the next start does (the engine).
+   */
+  private songGainHeld = false;
   private longFrames: PerformanceObserver | null = null;
   private readonly isHidden: () => boolean;
   private readonly wall: () => number;
@@ -451,7 +480,7 @@ export class RealtimeTransport {
     this.engine.transportStarted(t, this.sequencer.tickAt(t), this.sequencer.bpm);
     // The engine returns the song gain to unity for a new playback.
     this.songGainMoved = false;
-    this.songGainReturnUntil = 0;
+    this.songGainHeld = false;
     // Integrated loudness and true peak measure this playback: every start (a replay of a take
     // recorded mid-song, the song from a later block) begins a new measurement; resume() keeps counting.
     this.engine.resetLoudness?.();
@@ -487,6 +516,7 @@ export class RealtimeTransport {
     }
     this.dispatcher.releaseAll(now);
     this.engine.transportStopped(now);
+    this.holdSongGain();
     this.queue = [];
     this.horizon = now;
     this.ensureTicker();
@@ -507,8 +537,10 @@ export class RealtimeTransport {
     this.queue = [];
     const t = now + START_OFFSET;
     this.sequencer.resume(t);
+    // The engine glides the song gain back to unity; song moves send the value a fade had reached (moveSync).
     this.engine.transportStarted(t, this.sequencer.tickAt(t), this.sequencer.bpm);
-    this.songGainReturnUntil = 0;
+    this.songGainMoved = false;
+    this.songGainHeld = false;
     this.horizon = now;
     this.schedule(now);
     this.ensureTicker();
@@ -521,7 +553,7 @@ export class RealtimeTransport {
     if (wasPlaying) {
       this.dispatcher.releaseAll(now);
       this.engine.transportStopped(now);
-      if (this.songGainMoved) this.returnSongGain(now);
+      this.holdSongGain();
     } else {
       // Already stopped: Stop only drops a latched arpeggio. The idle arp's
       // look-ahead is regenerated from now, so keys still held play on
@@ -647,7 +679,13 @@ export class RealtimeTransport {
   brace(seconds: number = BRACE_AHEAD, forMs: number = BRACE_MS): void {
     if (this.disposed || !Number.isFinite(seconds) || !Number.isFinite(forMs)) return;
     this.extendBrace(seconds, forMs);
-    if (this.sequencer.playing) this.schedule(this.ctx.currentTime);
+    // A simulated stall (simulateStall) schedules nothing until it ends, as a frozen tab would not.
+    if (this.sequencer.playing && !this.stalling()) this.schedule(this.ctx.currentTime);
+  }
+
+  /** Inside a simulated stall (simulateStall): ticks are ignored until it ends. */
+  private stalling(): boolean {
+    return this.stallUntil !== 0 && this.wall() < this.stallUntil;
   }
 
   /** Raise the margin to `seconds` for `forMs` (the next schedule uses it). */
@@ -666,30 +704,25 @@ export class RealtimeTransport {
   }
 
   /**
-   * Live sound is about to play while the transport is stopped (a key, a
-   * preview): a song-gain fade that Stop is still bringing back to unity
-   * gets there at once, so the sound is heard at its level.
+   * Live sound is about to play while the transport is stopped or paused
+   * (a key, a preview): a song gain that song moves left away from unity (a
+   * fade-out's end, a pause inside a fade) comes back to it at once, so the
+   * sound is heard at its level. Nothing changes while playing, or when the
+   * gain was not moved. A resume sends the value the fade had reached again.
    */
   restoreSongGain(): void {
-    if (this.disposed || this.sequencer.playing || this.songGainReturnUntil <= this.ctx.currentTime) return;
-    this.songGainReturnUntil = 0;
+    if (this.disposed || this.sequencer.playing || !this.songGainHeld) return;
+    this.songGainHeld = false;
     this.engine.scheduleSongGain?.(1, this.ctx.currentTime);
   }
 
   /**
-   * After Stop, a song gain moved by song moves (a fade) comes back to unity
-   * once the tail has had time to ring out (the project's export tail, at
-   * least a second; a fade-out's tail stays faded), so playing afterwards is
-   * heard at its level. Live sound before then brings it back at once
-   * (restoreSongGain); a new start does too (the engine).
+   * Stop or Pause: the engine holds the song gain where it is (effect tails
+   * of a faded ending stay faded) until the next start or live sound.
    */
-  private returnSongGain(now: number): void {
+  private holdSongGain(): void {
+    if (this.songGainMoved) this.songGainHeld = true;
     this.songGainMoved = false;
-    if (!this.engine.scheduleSongGain) return;
-    const tail = this.sequencer.liveProject().arrangement.tailSeconds;
-    const wait = Math.max(1, Math.min(10, Number.isFinite(tail) ? tail : 1));
-    this.engine.scheduleSongGain(1, now + wait, now + wait + 0.5);
-    this.songGainReturnUntil = now + wait + 0.5;
   }
 
   setTempo(bpm: number): void {
@@ -735,6 +768,21 @@ export class RealtimeTransport {
       this.invalidateFrom(at, now);
     }
     this.ensureTicker();
+  }
+
+  /**
+   * Parts whose sound changed (instrument settings, kit, preset, a big knob
+   * mapped onto the instrument): what is scheduled for them and has not
+   * started is scheduled again with the new sound, so the next note is heard
+   * as edited however far ahead it was scheduled (a brace schedules a second
+   * ahead). The notes stay the same; nothing else is regenerated. Returns how
+   * many voices were scheduled again.
+   */
+  revoice(trackIds: Iterable<Id>): number {
+    if (this.disposed) return 0;
+    const tracks = new Set(trackIds);
+    if (!tracks.size) return 0;
+    return this.dispatcher.revoice(tracks, this.ctx.currentTime + INVALIDATE_MARGIN);
   }
 
   /** Regenerate everything not yet started (after edits that change upcoming events). */
@@ -1006,13 +1054,17 @@ export class RealtimeTransport {
    * change in it applies (see Sequencer.skipTo), and playback goes on in time.
    */
   private skip(now: number, lateBy: number): void {
-    const at = now + SKIP_MARGIN;
+    // Up to the tolerance: what starts later is still played (in time, or at most LATE_TOLERANCE late).
+    const at = now - LATE_TOLERANCE;
     const changes = this.sequencer.skipTo(at);
+    const dropped = this.sequencer.skippedNotes;
     this.horizon = Math.max(this.horizon, at);
     this.dispatcher.dispatch(changes);
     this.dispatcher.applyCuts(this.sequencer.takeCuts(), now);
-    this.skips++;
     this.extendBrace(BRACE_AHEAD, BRACE_MS);
+    // A skip is only news when notes were left out.
+    if (dropped === 0) return;
+    this.skips++;
     this.emit('skipped', { lateBy, tick: this.sequencer.getPosition(now).tick });
   }
 
