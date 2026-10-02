@@ -625,6 +625,9 @@ export abstract class EffectModule implements ModuleNode {
   private autoTime = 0;
   /** Per AudioParam: end of the song automation that owns it (an anchor leaves it alone until then). */
   private readonly autoUntil = new Map<AudioParam, number>();
+  /** Time of the previous automation point, and per AudioParam the time automation last wrote it. */
+  private autoPrev = 0;
+  private readonly autoLast = new Map<AudioParam, number>();
   private readonly timers = new Set<number>();
   private readonly worklets: AudioWorkletNode[] = [];
 
@@ -665,6 +668,13 @@ export abstract class EffectModule implements ModuleNode {
     this.afterCancel(t);
   }
 
+  /** Stop: no param stays owned by a ramp; cancelAfter already made the next setParams write everything. */
+  endAutomation(_time: number): void {
+    this.autoUntil.clear();
+    this.autoLast.clear();
+    this.targets.clear();
+  }
+
   /** Song automation: apply params at `time` as an anchor, a step or the end of a linear ramp (see ModuleNode.automate). */
   automate(params: ParamValues, time: number, mode: AutomationMode): void {
     if (this.disposed) return;
@@ -674,6 +684,7 @@ export abstract class EffectModule implements ModuleNode {
       this.setParams(params, time);
     } finally {
       this.autoMode = null;
+      this.autoPrev = this.autoTime;
     }
   }
 
@@ -751,15 +762,21 @@ export abstract class EffectModule implements ModuleNode {
     const mode = this.autoMode;
     if (mode) {
       const t = Math.max(time, this.autoTime);
+      const prev = this.targets.get(param);
       if (mode === 'anchor') {
         // Every value starts exactly here, except params another ramp still owns.
         if ((this.autoUntil.get(param) ?? -Infinity) > t) return;
-      } else if (this.targets.get(param) === value) {
+      } else if (prev === value) {
         return;
+      } else if (mode === 'ramp') {
+        // Held unchanged over the points before (a flat stretch): the move starts at the previous point.
+        const last = this.autoLast.get(param);
+        if (prev !== undefined && last !== undefined && last < this.autoPrev - 1e-9 && this.autoPrev < t) param.setValueAtTime(prev, this.autoPrev);
       }
       this.targets.set(param, value);
       if (mode === 'ramp') param.linearRampToValueAtTime(value, t);
       else param.setValueAtTime(value, t);
+      this.autoLast.set(param, t);
       if (mode !== 'anchor') this.autoUntil.set(param, t);
       return;
     }

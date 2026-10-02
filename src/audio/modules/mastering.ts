@@ -32,6 +32,8 @@ export const MASTER_LOW_CUT_OFF = 10;
 export const MASTER_AIR_HZ = 14000;
 /** Glide of the A/B level match (seconds). */
 export const COMPARE_TRIM_TAU = 0.03;
+/** When a comparison ends, the trim returns to unity this long after (the un-mastered path has faded out by then). */
+export const COMPARE_RELEASE_HOLD = 10 * BYPASS_TAU;
 /** Q of the wide Mids band. */
 export const MASTER_MID_Q = 0.7;
 /** 4th-order Butterworth as two biquads (linear Q). */
@@ -158,17 +160,31 @@ export class MasteringChain {
    * A/B listening: hear the mix without mastering without changing the
    * project (exports, which build their own engine, always keep it).
    * `trimGain` (linear) is applied to the un-mastered sound while the
-   * comparison is on, so both sides can be heard at the same loudness; it
-   * glides (COMPARE_TRIM_TAU) and returns to unity when the comparison ends.
+   * comparison is on, so both sides can be heard at the same loudness. When
+   * the comparison starts the trim is in place at once (the un-mastered path
+   * is fading in from silence, so nothing jumps); when it ends the trim stays
+   * until that path has faded out, then returns to unity; a new trim while
+   * comparing glides (COMPARE_TRIM_TAU).
    */
   setListenBypass(on: boolean, time: number, trimGain = 1): void {
     if (this.disposed) return;
     const t = Number.isFinite(time) ? Math.max(time, this.ctx.currentTime) : this.ctx.currentTime;
     const trim = on && this.enabled && Number.isFinite(trimGain) && trimGain > 0 ? trimGain : 1;
-    if (trim !== this.trimGain) {
+    const g = this.compareTrim.gain;
+    // The direct path is silent before a comparison starts (mastering on) and after this fade.
+    const directSilent = !this.listenBypass && this.enabled;
+    if (on !== this.listenBypass && !on && this.enabled) {
+      // Ending: keep the trim on the fading un-mastered sound, unity once it is gone.
+      if (this.trimGain !== 1) {
+        this.trimGain = 1;
+        g.cancelScheduledValues(t);
+        g.setValueAtTime(1, t + COMPARE_RELEASE_HOLD);
+      }
+    } else if (trim !== this.trimGain) {
       this.trimGain = trim;
-      this.compareTrim.gain.cancelScheduledValues(t);
-      this.compareTrim.gain.setTargetAtTime(trim, t, COMPARE_TRIM_TAU);
+      g.cancelScheduledValues(t);
+      if (on && directSilent) g.setValueAtTime(trim, t);
+      else g.setTargetAtTime(trim, t, COMPARE_TRIM_TAU);
     }
     if (on === this.listenBypass) return;
     this.listenBypass = on;

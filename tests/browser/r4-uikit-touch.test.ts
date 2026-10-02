@@ -118,6 +118,15 @@ describe('a finger on a knob', () => {
     expect(calls.knob.length).toBeGreaterThan(0);
     expect(calls.knob.at(-1)!).toBeGreaterThan(0.18);
   });
+
+  it(`a finger that rests still for ${TOUCH_HOLD_MS} ms on its label, then moves up, turns it; the page does not move`, async () => {
+    const { calls, scroller, knobLabel } = setup();
+    const from = centre(knobLabel);
+    await finger(from, { x: from.x, y: from.y - 50 }, { steps: 10, holdMs: TOUCH_HOLD_MS + 120 });
+    expect(scroller.scrollTop).toBe(0);
+    expect(calls.knob.length).toBeGreaterThan(0);
+    expect(calls.knob.at(-1)!).toBeGreaterThan(0.18);
+  });
 });
 
 describe('a mouse', () => {

@@ -188,12 +188,14 @@ export interface MeterFrame {
   /**
    * Levels after the shared Reverb (fx:reverb) and Echo (fx:delay) returns,
    * i.e. what each return adds to the mix (live engines only). A return
-   * switched off reads 0.
+   * switched off that only sends feed is silenced and reads 0; one with a
+   * direct feed too passes that on dry, and reads it.
    */
   returns?: { reverb: LevelReading; delay: LevelReading };
   /**
    * Level-matched A/B (setMasteringBypass): the gain in dB applied to the
-   * un-mastered sound while the comparison is on, 0 otherwise.
+   * un-mastered sound while the comparison is on (and the project has
+   * mastering on), 0 otherwise.
    */
   compareTrimDb?: number;
 }
@@ -260,20 +262,31 @@ export interface AudioEngineApi {
    * Song automation: move `macro` of a part linearly in macro space from
    * `from` at `t0` to `to` at `t1` (0..1), resolved through the part's
    * macroMap to every target. Targets mapped linearly ramp exactly
-   * (linearRampToValueAtTime); other curves get setValueAtTime points at
-   * most 10 ms apart. The ramp owns its params until `t1`: project edits
-   * and macro smoothing do not move them meanwhile. Afterwards the value
-   * holds like other automation (until the project changes it, a cancel or
-   * Stop). Optional.
+   * (linearRampToValueAtTime); other curves move linearly between points at
+   * most 10 ms apart (enum params step). Where a param is not at the ramp's
+   * start value when it starts (the project had it elsewhere, the ramp
+   * starts late, or a cancel held it), it glides onto the ramp within 20 ms
+   * (MACRO_RAMP_JOIN) instead of jumping; re-scheduling a ramp after a
+   * cancel therefore rejoins without a step. The ramp owns its params until
+   * `t1`: project edits and macro smoothing do not move them meanwhile.
+   * Afterwards the value holds like other automation until the project
+   * changes that param or a cancel; Stop (transportStopped) ends all song
+   * automation and every target glides back to the project's value.
+   * Optional.
    */
   scheduleMacroRamp?(trackId: Id, macro: MacroId, from: number, to: number, t0: number, t1: number): void;
   /**
    * Song automation: the song-gain stage (after master volume, before
    * mastering; linear gain, 1 = unity, at most 4) reaches `value` at `time`
    * (with a 5 ms glide), or, with `rampEndTime`, ramps linearly from its value
-   * at `time` to `value` at `rampEndTime`. Unity and bit-transparent unless
-   * used. Stop holds it (a fade-out's tail stays faded); the next
-   * transportStarted returns it to unity. Optional.
+   * at `time` to `value` at `rampEndTime`. A ramp at the same `time` as a
+   * step scheduled just before starts from that step's value: (0, t) then
+   * (1, t, t1) is a fade-in from silence, also right after a start. Moves
+   * scheduled earlier at or after `time` are replaced. Unity and
+   * bit-transparent unless used. Stop holds it (a fade-out's tail stays
+   * faded); the next transportStarted glides it back to unity over 20 ms
+   * unless moves scheduled at that start say otherwise (a resume can set the
+   * value it had). Optional.
    */
   scheduleSongGain?(value: number, time: number, rampEndTime?: number): void;
   /**
@@ -330,10 +343,14 @@ export interface AudioEngineApi {
   /**
    * A/B listening: hear the output without the mastering chain while `on`.
    * Never changes the project; offline renders (exports) are unaffected.
-   * Level-matched unless `matchLevels` is false: turning it on measures the
-   * short-term loudness after and before mastering and plays the un-mastered
-   * sound that much louder or quieter (±12 dB at most, a boost only as far
-   * as it adds ≤ 1.5 dB of limiting), reported as MeterFrame.compareTrimDb.
+   * Level-matched unless `matchLevels` is false: turning it on reads the
+   * short-term loudness (the last 3 s) after and before mastering and plays
+   * the un-mastered sound that much louder or quieter (±12 dB at most, a
+   * boost only as far as it adds ≤ 1.5 dB of limiting), reported as
+   * MeterFrame.compareTrimDb. Measured once per comparison: with less than
+   * about 3 s of music before it (or silence) the gain is 0 dB, and changes
+   * to the mastering while comparing are not re-measured (turn it off and on
+   * again). The gain is in place as the comparison fades in.
    */
   setMasteringBypass?(on: boolean, opts?: { matchLevels?: boolean }): void;
   /**

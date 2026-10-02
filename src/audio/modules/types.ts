@@ -69,6 +69,19 @@ export interface ModuleNode {
    * without it get smoothed points.
    */
   automate?(params: ParamValues, time: number, mode: AutomationMode): void;
+  /**
+   * Transport stopped: the song automation of the take is over. Forget all
+   * of it (points before `time` included) and make the next setParams write
+   * every value again, so the project's values come back even where the
+   * automation ended on them. Called after cancelAfter, before setParams.
+   */
+  endAutomation?(time: number): void;
+  /**
+   * The module's mod inputs that have a working cable (a bypassed LFO's
+   * silenced cables do not count), reported after every rewiring. Lets a
+   * module keep processing that only a modulation can make audible.
+   */
+  setModulated?(ports: ReadonlySet<string>, time: number): void;
   dispose(): void;
 }
 

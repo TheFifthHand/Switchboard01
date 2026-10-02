@@ -114,19 +114,43 @@ const CAL_POWER = Math.pow(10, SPECTRUM_CAL_DB / 10);
 /**
  * Bands from one frame of AnalyserNode.getFloatFrequencyData output (dB per
  * bin). `power` is scratch space of at least fftSize / 2 entries. Writes
- * map.bands values into `out` (clamped to −140..+20 dB; silence −140).
+ * map.bands values into `out` (clamped to −140..+20 dB; silence −140), or
+ * only bands fromBand..toBand − 1 (`binsDb` then needs only the bins those
+ * read: spectrumBandsLastBin).
  */
-export function spectrumBands(map: SpectrumBandMap, binsDb: Float32Array, out: Float32Array, power: Float64Array): void {
-  for (let k = map.firstBin; k <= map.lastBin; k++) {
+export function spectrumBands(map: SpectrumBandMap, binsDb: Float32Array, out: Float32Array, power: Float64Array, fromBand = 0, toBand = map.bands): void {
+  const n = Math.min(out.length, map.bands, toBand);
+  const from = Math.max(0, fromBand);
+  if (from >= n) return;
+  // Bins ascend with the bands: the ones these bands read.
+  const t0 = map.start[from];
+  const t1 = map.start[n] - 1;
+  const lo = t1 >= t0 ? map.bin[t0] : 0;
+  const hi = t1 >= t0 ? Math.min(map.bin[t1], binsDb.length - 1) : -1;
+  for (let k = lo; k <= hi; k++) {
     const db = binsDb[k];
     // −Infinity (silence) and NaN read as no power.
     power[k] = db > -1000 && db < 1000 ? CAL_POWER * Math.exp(db * LN10_10) : 0;
   }
-  const n = Math.min(out.length, map.bands);
-  for (let b = 0; b < n; b++) {
+  for (let b = from; b < n; b++) {
     let p = 0;
     for (let t = map.start[b]; t < map.start[b + 1]; t++) p += power[map.bin[t]] * map.weight[t];
     const db = p > 0 ? 10 * Math.log10(p) : SPECTRUM_FLOOR_DB;
     out[b] = db < SPECTRUM_FLOOR_DB ? SPECTRUM_FLOOR_DB : db > SPECTRUM_CEIL_DB ? SPECTRUM_CEIL_DB : db;
   }
+}
+
+/** Highest bin bands 0..toBand − 1 of a map read (−1 if none). */
+export function spectrumBandsLastBin(map: SpectrumBandMap, toBand: number): number {
+  const n = Math.min(map.bands, Math.max(0, toBand));
+  const t = map.start[n] - 1;
+  return t >= 0 ? map.bin[t] : -1;
+}
+
+/** Number of bands (of `bands` from SPECTRUM_LOW_HZ) whose upper edge is at or below `hz`. */
+export function spectrumBandsBelow(bands: number, hz: number): number {
+  const ratio = SPECTRUM_HIGH_HZ / SPECTRUM_LOW_HZ;
+  let n = 0;
+  while (n < bands && SPECTRUM_LOW_HZ * Math.pow(ratio, (n + 1) / bands) <= hz * (1 + 1e-9)) n++;
+  return n;
 }

@@ -61,7 +61,7 @@
   flex-direction: column;
   align-items: center;
   width: 100%;
-  padding: 2px 0 0;
+  padding: 2px 0 1px;
   border-radius: var(--r-md);
   outline: none;
   cursor: ns-resize;
@@ -269,27 +269,28 @@
 }
 
 /*
- * The value line. Under a number knob it is a key: a click opens typed entry. Its box is a full
- * 32 x 32 px target that moves nothing: the label's last 8 px hang out of the slider's box (the
- * slider ends where the value's box begins, so the two never overlap), the box starts there with
- * the text 8 px down, and reaches 8 px past the knob's own bottom. Every knob's value line has the
- * same box, so values still line up across a row.
+ * The value line (15 px; 18 px on xl knobs), at most the knob's width plus 8 px on each side, so
+ * "20.0 kHz" with a modulation wave fits a small knob. Under a knob that is set by a macro, an
+ * option knob or a disabled one it is part of the slider (a drag from it turns the knob). Under a
+ * number knob that can be typed into it is a key below the slider: a click opens typed entry, a
+ * drag turns the knob. That key takes the same line of the layout but is a full 32 px tall,
+ * reaching down past the knob, never up over the label (which stays the slider's), so values
+ * still line up across a row and nothing moves.
+ *
+ * Contract for views: a compact view sets the line's height with --knob-value-h on the knob or
+ * an ancestor (e.g. `.master { --knob-value-h: 12px; }`); the text, the wave and the key follow.
+ * Never style the value by its place among the slider's children: the key is not inside it.
  */
-.knob[data-value] .label {
-  margin-bottom: -8px;
-}
-
 .value {
   position: relative;
   display: flex;
   align-items: flex-start;
   justify-content: center;
   gap: 2px;
-  min-width: var(--hit);
-  max-width: calc(100% + 8px);
-  height: 32px;
-  margin: 0 0 -8px;
-  padding: 8px 0 0;
+  max-width: calc(100% + 16px);
+  height: var(--knob-value-h, 15px);
+  margin: 0;
+  padding: 0;
   overflow: hidden;
   border: 0;
   border-radius: 4px;
@@ -298,46 +299,61 @@
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
-  line-height: 15px;
+  line-height: var(--knob-value-h, 15px);
   letter-spacing: -0.01em;
   white-space: nowrap;
 }
 
 .knob[data-size='xl'] .value {
-  margin-bottom: -5px;
+  height: var(--knob-value-h, 18px);
   font-size: var(--fs-sm);
-  line-height: 18px;
+  line-height: var(--knob-value-h, 18px);
 }
 
-/* Marks before the value (the modulation wave, the macro chain) sit on the middle of its line. */
-.value > svg,
-.value > .badge {
-  margin-top: 2.5px;
+/*
+ * The slider of a knob with a value key ends right under its label, and the key starts there (the
+ * two never overlap). The key takes its line plus the slider's 1 px back in the layout; the rest
+ * of its 32 px reaches past the knob's bottom.
+ */
+.knob[data-typable] .slider {
+  padding-bottom: 0;
 }
 
-.knob[data-size='xl'] .value > svg,
-.knob[data-size='xl'] .value > .badge {
-  margin-top: 4px;
+button.value {
+  min-width: var(--hit);
+  height: 32px;
+  margin-bottom: calc(var(--knob-value-h, 15px) + 1px - 32px);
+  cursor: text;
+}
+
+.knob[data-size='xl'] button.value {
+  margin-bottom: calc(var(--knob-value-h, 18px) + 1px - 32px);
 }
 
 .valueText {
   min-width: 0;
-  padding: 0 3px;
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: 3px;
   text-overflow: ellipsis;
-}
-
-button.value {
-  cursor: text;
 }
 
 button.value:hover {
   color: var(--ink);
 }
 
+/* The hover tint is drawn around the text (a shadow, not padding), so the text keeps its width. */
 button.value:hover .valueText {
   background: rgba(20, 24, 28, 0.06);
+  box-shadow: 0 0 0 2px rgba(20, 24, 28, 0.06);
+}
+
+/* The modulation wave (10 px) sits on the middle of the value's line. */
+.value > svg {
+  margin-top: calc((var(--knob-value-h, 15px) - 10px) / 2);
+}
+
+.knob[data-size='xl'] .value > svg {
+  margin-top: calc((var(--knob-value-h, 18px) - 10px) / 2);
 }
 
 .value[data-kind='option'] {
@@ -361,12 +377,17 @@ button.value:hover .valueText {
   color: var(--teal);
 }
 
-/* Set by a macro: a teal chain before the value (the macro's name is in the value text and the tip). */
+/* Set by a macro: a teal chain beside the dial's top corner, outside the dial, and teal value text
+   (the macro's name is in the spoken value and the tip). Small knobs have exactly 10 px beside
+   their dial. */
 .badge {
+  position: absolute;
+  top: -1px;
+  left: 100%;
   display: inline-flex;
-  flex: none;
   align-items: center;
   color: var(--teal-key);
+  pointer-events: none;
 }
 
 .value[data-macro] {

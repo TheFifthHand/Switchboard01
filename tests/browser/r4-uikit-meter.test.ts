@@ -222,4 +222,46 @@ describe('peak hold and scale', () => {
     expect(meter.textContent).toBe('');
     expect(meter.querySelector('[data-meter-clip]')!.getAttribute('data-on')).toBe('1');
   });
+
+  it('the clip lamp is its own cap, a gap beyond the bar: an outline while off, white-hot in a coral ring when lit', async () => {
+    const quiet = { v: lin(-12) };
+    const loud = { v: 1.2 };
+    const m = mount(
+      h(
+        'div',
+        { style: { display: 'flex', gap: '10px', height: '240px' } },
+        h(Meter, { read: () => quiet.v, label: 'Quiet', orientation: 'vertical', segments: 24, thickness: 6 }),
+        h(Meter, { read: () => loud.v, label: 'Loud', orientation: 'vertical', segments: 24, thickness: 6 }),
+      ),
+    );
+    await frames(4);
+    await wait(200);
+    const [off, on] = [...m.container.querySelectorAll('[role="meter"]')].map((meter) => ({
+      lamp: meter.querySelector<HTMLElement>('[data-meter-clip]')!,
+      bar: meter.querySelector<HTMLElement>('canvas[data-meter-bar]')!,
+    }));
+    const colour = (css: string) => {
+      const el = document.createElement('span');
+      el.style.color = css;
+      document.body.append(el);
+      const c = getComputedStyle(el).color;
+      el.remove();
+      return c;
+    };
+    for (const { lamp, bar } of [off, on]) {
+      // Above the bar with clear space between: a cap, not one more segment.
+      expect(bar.getBoundingClientRect().top - lamp.getBoundingClientRect().bottom).toBeGreaterThanOrEqual(3);
+    }
+    expect(off.lamp.dataset.on).toBe('0');
+    const offStyle = getComputedStyle(off.lamp);
+    expect(offStyle.backgroundColor).toBe('rgba(0, 0, 0, 0)');
+    expect(offStyle.backgroundImage).toBe('none');
+    expect(offStyle.boxShadow).toMatch(/inset/);
+    expect(on.lamp.dataset.on).toBe('1');
+    const onStyle = getComputedStyle(on.lamp);
+    // White at its centre (not the flat coral of the top segments), ringed in deep coral.
+    expect(onStyle.backgroundImage).toMatch(/^radial-gradient\(.*rgb\(255, 255, 255\)/);
+    expect(onStyle.boxShadow).toContain(colour('var(--coral-key)'));
+    expect(onStyle.boxShadow).toMatch(/inset/);
+  });
 });

@@ -10,15 +10,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { userEvent } from 'vitest/browser';
 import '../../src/ui/theme.css';
 import { Fader, Knob, TipsProvider, type FaderChangeInfo, type KnobChangeInfo } from '../../src/ui/components';
-import { BASS_PARAMS, CHANNEL_PARAMS, specById } from '../../src/project/params';
+import { BASS_PARAMS, CHANNEL_PARAMS, FILTER_PARAMS, POLY_PARAMS, specById } from '../../src/project/params';
 import { cleanup, mount } from './ui-harness';
-import { centre, click, settleFrames } from './r4-uikit-input';
+import { centre, click, drag, settleFrames } from './r4-uikit-input';
 
 afterEach(cleanup);
 
 const LEVEL = specById(CHANNEL_PARAMS, 'level')!;
 const CUTOFF = specById(BASS_PARAMS, 'cutoff')!;
 const WAVE = specById(BASS_PARAMS, 'wave')!;
+const FILTER_CUTOFF = specById(FILTER_PARAMS, 'cutoff')!; // up to 20 kHz
+const SYNTH_CUTOFF = specById(POLY_PARAMS, 'cutoff')!;
 const MINUS = '−';
 const db = (v: number) => `${v < 0 ? MINUS : v > 0 ? '+' : ''}${Math.abs(v).toFixed(1)} dB`;
 const levelText = (v: number) => (v <= LEVEL.min ? `Silent (${db(v)})` : db(v));
@@ -109,13 +111,16 @@ describe('the knob value is a key for typed entry', () => {
 });
 
 describe('a knob set by a macro', () => {
-  it('keeps the dial clear: a chain before the value, a teal outer arc, the macro named in its value text', () => {
+  it('keeps the dial clear: a chain beside the dial, a teal outer arc, the macro named in its spoken value', () => {
     const m = mount(h(TipsProvider, { enabled: false }, h(Knob, { spec: CUTOFF, value: 3000, size: 'sm', controlledBy: 'Tone', macroRange: [400, 6000], onChange: () => {} })));
     const dial = m.container.querySelector<HTMLElement>('[class*="dial"]')!.getBoundingClientRect();
     const badge = m.container.querySelector<HTMLElement>('[class*="badge"]')!;
     const b = badge.getBoundingClientRect();
-    // Nothing of the badge lies on the dial.
+    // Nothing of the badge lies on the dial, nor in the value's line; it stays within the knob.
     expect(b.top >= dial.bottom || b.bottom <= dial.top || b.left >= dial.right || b.right <= dial.left).toBe(true);
+    const value = m.container.querySelector<HTMLElement>('[class*="value"]')!.getBoundingClientRect();
+    expect(b.bottom).toBeLessThanOrEqual(value.top);
+    expect(b.right).toBeLessThanOrEqual(m.container.querySelector<HTMLElement>('[data-size]')!.getBoundingClientRect().right + 0.5);
     expect(badge.querySelector('svg[data-icon="link"]')).not.toBeNull();
     const arc = m.container.querySelector<SVGPathElement>('svg [class*="macroArc"]')!;
     expect(arc).not.toBeNull();
@@ -125,6 +130,96 @@ describe('a knob set by a macro', () => {
     expect(getComputedStyle(arc).stroke).toBe(getComputedStyle(teal).color);
     teal.remove();
     expect(m.container.querySelector('[role="slider"]')!.getAttribute('aria-valuetext')).toBe('3.00 kHz, set by Tone');
+  });
+});
+
+describe('values fit small knobs', () => {
+  const cut = (el: HTMLElement) => el.scrollWidth > el.clientWidth + 0.5;
+  const values = (root: ParentNode) => [...root.querySelectorAll<HTMLElement>('[class*="valueText"]')];
+
+  it('"20.0 kHz" on a small knob set by a macro and moved by a cable is shown whole', () => {
+    const m = mount(h('div', { style: { display: 'flex', gap: '12px' } }, h(Knob, { spec: FILTER_CUTOFF, value: 20000, size: 'sm', controlledBy: 'Motion', modulated: true, onChange: () => {} }), h(Knob, { spec: FILTER_CUTOFF, value: 20000, size: 'sm', modulated: true, onChange: () => {} })));
+    for (const v of values(m.container)) {
+      expect(v.textContent).toBe('20.0 kHz');
+      expect(cut(v), v.textContent!).toBe(false);
+      expect(cut(v.parentElement!), v.textContent!).toBe(false);
+    }
+  });
+
+  it('"9.20 kHz" and "2.30 kHz" fit small knobs, typable or set by a macro', () => {
+    const m = mount(
+      h('div', { style: { display: 'flex', gap: '12px' } }, h(Knob, { spec: SYNTH_CUTOFF, value: 9200, size: 'sm', label: 'Cutoff max', onChange: () => {} }), h(Knob, { spec: SYNTH_CUTOFF, value: 2300, size: 'sm', controlledBy: 'Tone', onChange: () => {} }), h(Knob, { spec: SYNTH_CUTOFF, value: 575, size: 'sm', onChange: () => {} })),
+    );
+    for (const v of values(m.container)) expect(cut(v), v.textContent!).toBe(false);
+  });
+});
+
+describe('every part of a knob takes a drag (real mouse)', () => {
+  const knob = (spec = SYNTH_CUTOFF, value = 700, extra: Record<string, unknown> = {}) => {
+    const calls: number[] = [];
+    const m = mount(h(TipsProvider, { enabled: false }, h('div', { style: { padding: '60px 40px' } }, h(Knob, { spec, value, size: 'lg', onChange: (v: number) => calls.push(v), ...extra }))));
+    return { m, calls, slider: m.container.querySelector<HTMLElement>('[role="slider"]')! };
+  };
+
+  it('a drag that starts on the label (top, middle and bottom of it) turns the knob', async () => {
+    for (const fy of [0.2, 0.5, 0.85]) {
+      const { m, calls } = knob();
+      const label = m.container.querySelector<HTMLElement>('[class*="labelText"]')!;
+      const from = centre(label, 0.5, fy);
+      expect(document.elementFromPoint(from.x, from.y)?.closest('[role="slider"]'), `label at ${fy}`).not.toBeNull();
+      await drag(from, { x: from.x, y: from.y - 30 }, 8);
+      expect(calls.length, `label at ${fy}`).toBeGreaterThan(0);
+      expect(calls.at(-1)!, `label at ${fy}`).toBeGreaterThan(700);
+      cleanup();
+    }
+  });
+
+  it('a drag that starts on an option knob\'s value text turns it', async () => {
+    const { m, calls } = knob(WAVE, 0);
+    const value = m.container.querySelector<HTMLElement>('[class*="valueText"]')!;
+    const from = centre(value);
+    await drag(from, { x: from.x, y: from.y - 60 }, 10);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.at(-1)!).toBeGreaterThan(0);
+  });
+
+  it("a drag that starts on a number knob's value key turns the knob; a click there types", async () => {
+    const { m, calls } = knob();
+    const key = m.container.querySelector<HTMLElement>('button[class*="value"]')!;
+    const from = centre(key, 0.5, 0.25);
+    await drag(from, { x: from.x, y: from.y - 40 }, 10);
+    expect(calls.at(-1)!).toBeGreaterThan(700);
+    expect(m.container.querySelector('input')).toBeNull();
+    await click(centre(key, 0.5, 0.25));
+    expect(m.container.querySelector('input')).not.toBeNull();
+  });
+
+  it('the value key reaches down only: it never covers the label or the slider, and is a full 32 px target', () => {
+    const { m, slider } = knob();
+    const key = m.container.querySelector<HTMLElement>('button[class*="value"]')!.getBoundingClientRect();
+    const label = m.container.querySelector<HTMLElement>('[role="slider"] > [class*="label"]')!.getBoundingClientRect();
+    expect(key.top).toBeGreaterThanOrEqual(label.bottom - 0.5);
+    expect(key.top).toBeGreaterThanOrEqual(slider.getBoundingClientRect().bottom - 0.5);
+    expect(key.height).toBeGreaterThanOrEqual(32);
+    expect(key.width).toBeGreaterThanOrEqual(32);
+  });
+
+  it('a compact view sets the value line with --knob-value-h; the key and the text follow, the knob stays as tall as before', () => {
+    const tall = (extra: Record<string, unknown>) => {
+      const m = mount(h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: '12px', '--knob-value-h': '12px' } }, h(Knob, { spec: SYNTH_CUTOFF, value: 700, size: 'sm', onChange: () => {}, ...extra })));
+      const root = m.container.querySelector<HTMLElement>('[data-size]')!;
+      const value = root.querySelector<HTMLElement>('[class*="value"]')!;
+      const r = { height: root.getBoundingClientRect().height, line: parseFloat(getComputedStyle(value).lineHeight), key: value.tagName === 'BUTTON' ? value.getBoundingClientRect().height : 0 };
+      cleanup();
+      return r;
+    };
+    const typable = tall({});
+    const readOnly = tall({ controlledBy: 'Tone' });
+    expect(typable.line).toBe(12);
+    expect(readOnly.line).toBe(12);
+    expect(typable.key).toBe(32);
+    // A typable knob and a read-only one take the same height: the key adds nothing to the layout.
+    expect(typable.height).toBe(readOnly.height);
   });
 });
 

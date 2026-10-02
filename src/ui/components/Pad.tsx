@@ -17,8 +17,10 @@
  * the 3 px bar along the bottom appears only once it is written. `sketch` is
  * a small picture of the pad's content (see ClipSketch), shown in the empty
  * middle of pads at least 100 px tall. A long name fades out at its end
- * instead of an ellipsis, and the full name is the pad's title. On large pads
- * (about 150 x 120 px and up) a large name steps up to --fs-2xl.
+ * instead of an ellipsis; while it is cut, the pad's native title has it whole
+ * (measured when the pointer comes over the pad, so a pad whose name fits
+ * shows no second tooltip). On large pads (about 150 x 120 px and up) a large
+ * name steps up to --fs-2xl.
  */
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref } from 'react';
 import { Icon, type IconName } from './Icon';
@@ -72,8 +74,8 @@ export interface PadProps {
   /** A small picture of the content (e.g. a ClipSketch), drawn in the pad's empty middle when it is at least 100 px tall. */
   sketch?: ReactNode;
   /**
-   * Native title of the pad (its full name when the name is cut). Default: the label on clip pads
-   * (`labelSize` 'lg'), none elsewhere; null for none.
+   * Native title of the pad. Default (undefined): the label, only while the name is cut on screen
+   * (checked when the pointer enters); a string: always that; null: never.
    */
   title?: string | null;
   /** The pad's button, e.g. to write `--loop-progress` from an animation-frame loop. */
@@ -257,14 +259,30 @@ export function Pad(props: PadProps) {
 
   const cls = [styles.pad, className].filter(Boolean).join(' ');
 
-  const nativeTitle = title === null ? undefined : (title ?? (labelSize === 'lg' && state !== 'empty' ? label : undefined));
+  // The full name as a native title only while it is cut: measured as the pointer arrives, and
+  // again if the name or state changes after that (no stale name left in the title).
+  const titled = useRef<HTMLButtonElement | null>(null);
+  const applyTitle = (el: HTMLButtonElement) => {
+    if (title !== undefined) return;
+    const name = el.querySelector<HTMLElement>('[data-pad-name]');
+    const cut = !!name && state !== 'empty' && (name.scrollWidth > name.clientWidth + 0.5 || name.scrollHeight > name.clientHeight + 0.5);
+    if (cut) el.title = label;
+    else el.removeAttribute('title');
+  };
+  const titleWhenCut = (e: PointerEvent<HTMLButtonElement>) => {
+    titled.current = e.currentTarget;
+    applyTitle(e.currentTarget);
+  };
+  useEffect(() => {
+    if (titled.current?.isConnected) applyTitle(titled.current);
+  }, [label, state, title]);
 
   return (
     <button
       ref={ref}
       type="button"
       id={id}
-      title={nativeTitle}
+      title={title ?? undefined}
       className={cls}
       data-state={state}
       data-light={light}
@@ -281,6 +299,7 @@ export function Pad(props: PadProps) {
       aria-describedby={describedBy}
       aria-keyshortcuts={[keyHint, shortcuts].filter(Boolean).join(' ') || undefined}
       style={{ '--intensity': String(0.35 + 0.65 * lvl) } as CSSProperties}
+      onPointerEnter={titleWhenCut}
       onPointerDown={onPointerDown}
       onPointerMove={activateOn === 'release' ? onPointerMove : undefined}
       onPointerUp={onPointerEnd}
@@ -300,7 +319,9 @@ export function Pad(props: PadProps) {
           </span>
         )}
         <span className={styles.text}>
-          <span className={styles.label}>{label}</span>
+          <span className={styles.label} data-pad-name="">
+            {label}
+          </span>
           {sublabel && <span className={styles.sublabel}>{sublabel}</span>}
         </span>
         {sketch && state !== 'empty' && <span className={styles.sketch}>{sketch}</span>}

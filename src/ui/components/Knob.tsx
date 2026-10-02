@@ -14,7 +14,8 @@
  *   Stepped parameters always move by at least one step.
  * - Enter, or typing a digit, opens inline numeric entry ("2.5k", "-6",
  *   "220 ms", "L20", an option name). Enter commits, Escape cancels. A click
- *   on the value under a number knob opens the same entry.
+ *   on the value under a number knob opens the same entry; a mouse drag that
+ *   starts there turns the knob, as a drag from the dial or the label does.
  * - The mouse wheel only acts once the knob has keyboard focus (reached with
  *   Tab, or used with its own keys), so page scrolling never changes a sound
  *   by accident — not after a click, a right-click, or Space for Play.
@@ -30,9 +31,12 @@
  *   that row reserves two label lines, so the values stay aligned; rows of
  *   short labels and lone knobs (a compact strip) stay one line tall.
  *   `labelLines` sets it explicitly.
- * - A knob set by a macro is read-only: a chain mark before its value, a teal
- *   outer arc over the span the macro sweeps (`macroRange`, else the whole
- *   travel), and "set by …" in its value text and tip. Nothing covers the dial.
+ * - A knob set by a macro is read-only: a teal chain mark beside the dial's
+ *   top corner, a teal outer arc over the span the macro sweeps (`macroRange`,
+ *   else the whole travel), teal value text, and "set by <macro>" in its spoken
+ *   value (aria-valuetext) and tip. The macro's name is not drawn on the knob:
+ *   a view that wants it on screen shows it beside the knob (e.g. its row).
+ *   Nothing covers the dial and the value keeps its whole line.
  * - Sizes sm (34 px dial), md (44), lg (60) and xl (80, for big screens).
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
@@ -55,6 +59,8 @@ const SWEEP = 270;
 const START_ANGLE = -135;
 const WHEEL_NOTCH_PX = 100;
 const WHEEL_STEP = 0.02;
+/** Movement after which a press on the value key turns the knob instead of typing. */
+const VALUE_DRAG_START_PX = 3;
 
 export interface KnobChangeInfo {
   /** Same id for every call belonging to one drag / key burst / entry. */
@@ -215,6 +221,8 @@ export function Knob(props: KnobProps) {
   const dialRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const pendingTouch = useRef<PendingTouch | null>(null);
+  /** A mouse or pen press on the value key: a click types, a drag turns the knob. */
+  const valuePress = useRef<{ pointerId: number; x: number; y: number; dragged: boolean } | null>(null);
   const latest = useRef(shown);
   const specRef = useRef(spec);
   const interactiveRef = useRef(interactive);
@@ -595,19 +603,37 @@ export function Knob(props: KnobProps) {
       .join(' ') || undefined;
 
   const rootClass = [styles.knob, className].filter(Boolean).join(' ');
-  // The value under a number knob is a key that opens typed entry (option knobs are turned, not typed).
-  const typable = interactive && !optionKnob;
+  // The value under a number knob is a key that opens typed entry (option knobs are turned, not
+  // typed); every other value line stays inside the slider, so a drag from it turns the knob.
+  const typable = showValue && interactive && !optionKnob;
   const valueInner = (
     <>
-      {controlledBy && (
-        <span className={styles.badge} aria-hidden="true">
-          <Icon name="link" size={10} />
-        </span>
-      )}
       {modulated && <Icon name="wave" size={10} className={styles.modMark} />}
       <span className={styles.valueText}>{formatted}</span>
     </>
   );
+
+  /* A press on the value key: past DRAG_START_PX it becomes a drag of the knob. */
+  const onValuePointerDown = (e: PointerEvent<HTMLButtonElement>) => {
+    valuePress.current = null;
+    if (e.button !== 0 || !interactive || e.pointerType === 'touch') return;
+    e.preventDefault(); // no focus on the key itself; a click opens the entry, which takes focus
+    valuePress.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, dragged: false };
+  };
+  const onValuePointerMove = (e: PointerEvent<HTMLButtonElement>) => {
+    const p = valuePress.current;
+    if (!p || p.dragged || e.pointerId !== p.pointerId || !sliderRef.current) return;
+    if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < VALUE_DRAG_START_PX) return;
+    p.dragged = true;
+    // The slider takes the pointer from here (capture), so the rest of the drag is the knob's own.
+    beginDrag(sliderRef.current, e.pointerId, p.y);
+  };
+  const onValueClick = () => {
+    const p = valuePress.current;
+    valuePress.current = null;
+    if (p?.dragged) return;
+    openEntry(paramEditText(spec, latest.current), true);
+  };
 
   return (
     <div
@@ -618,7 +644,7 @@ export function Knob(props: KnobProps) {
       data-dragging={dragging || undefined}
       data-tone={arcTone}
       data-label-lines={labelLines}
-      data-value={showValue || undefined}
+      data-typable={typable || undefined}
       data-wraps={labelMayWrap(shownLabel) || undefined}
       style={labelLines ? ({ '--label-lines': labelLines } as CSSProperties) : undefined}
     >
@@ -647,6 +673,11 @@ export function Knob(props: KnobProps) {
           onBlur={onBlur}
         >
           <div ref={dialRef} className={styles.dial}>
+            {controlledBy && (
+              <span className={styles.badge} aria-hidden="true">
+                <Icon name="link" size={10} />
+              </span>
+            )}
             <svg className={styles.ring} viewBox="0 0 100 100" aria-hidden="true" focusable="false">
               {ticks}
               {macroArc && <path className={styles.macroArc} d={macroArc} />}
@@ -664,26 +695,28 @@ export function Knob(props: KnobProps) {
           <div className={styles.label}>
             <span className={styles.labelText}>{shownLabel}</span>
           </div>
+          {showValue && !typable && (
+            <div className={styles.value} data-kind={optionKnob ? 'option' : 'number'} data-macro={controlledBy ? '' : undefined} aria-hidden="true" style={entry ? { visibility: 'hidden' } : undefined}>
+              {valueInner}
+            </div>
+          )}
         </div>
       </Tooltip>
-      {showValue &&
-        (typable ? (
-          <button
-            type="button"
-            className={styles.value}
-            data-kind="number"
-            tabIndex={-1}
-            aria-label={`${name}: ${valueText}, type a value`}
-            style={entry ? { visibility: 'hidden' } : undefined}
-            onClick={() => openEntry(paramEditText(spec, latest.current), true)}
-          >
-            {valueInner}
-          </button>
-        ) : (
-          <div className={styles.value} data-kind={optionKnob ? 'option' : 'number'} data-macro={controlledBy ? '' : undefined} aria-hidden="true" style={entry ? { visibility: 'hidden' } : undefined}>
-            {valueInner}
-          </div>
-        ))}
+      {typable && (
+        <button
+          type="button"
+          className={styles.value}
+          data-kind="number"
+          tabIndex={-1}
+          aria-label={`${name}: ${valueText}, type a value`}
+          style={entry ? { visibility: 'hidden' } : undefined}
+          onPointerDown={onValuePointerDown}
+          onPointerMove={onValuePointerMove}
+          onClick={onValueClick}
+        >
+          {valueInner}
+        </button>
+      )}
       {entry && (
         <input
           ref={inputRef}

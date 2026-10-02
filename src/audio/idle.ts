@@ -6,8 +6,10 @@
  * the browser has it (with a timeout, so a busy page still makes progress),
  * otherwise setTimeout 0. A task is a function that does one unit of work and
  * says whether more remains; a slice runs units until its budget is used
- * (always at least one, so every slice makes progress). Units are small
- * (one drum voice, ~2-15 ms), so the main thread is never held long.
+ * (always at least one, so every slice makes progress). Units are short (a
+ * drum voice renders in steps of DRUM_STEP_FRAMES samples: about 0.1-3 ms
+ * each on a desktop machine), so a slice ends close to its budget and the
+ * main thread is never held long.
  */
 
 /** Longest stretch of idle work in one go (ms). */
