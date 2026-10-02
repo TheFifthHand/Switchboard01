@@ -1,7 +1,8 @@
 /**
  * The Export dialog, opened from Arrange or while the song plays, offers the
  * song; with a song loop set it offers the loop (its blocks once, with the
- * tail), and its duration is the loop's bars plus the tail.
+ * tail), and its duration is the loop's bars plus the tail. It offers every
+ * scene the project has (1 to 8).
  */
 import '../../src/ui/theme.css';
 import { act, createElement as h } from 'react';
@@ -59,6 +60,17 @@ describe('Export from Arrange', () => {
   it('in Play with the pads it keeps the clips playing now', () => {
     setView('play');
     expect(open().select().value).toBe('now');
+  });
+
+  it('offers every scene of the project: 8 scenes give 8 choices, 2 scenes give 2', () => {
+    setView('play');
+    for (const names of [['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'], ['Intro', 'Drop']]) {
+      act(() => session.store.replace(createProject({ scenes: names, now: 0 }), { resetHistory: true }));
+      const d = open();
+      const scenes = d.labels().filter((l) => l?.startsWith('Scene: '));
+      expect(scenes).toEqual(names.map((n) => `Scene: ${n} (loop)`));
+      cleanup();
+    }
   });
 
   it('with a loop set: "Loop (blocks 2–3)" exports those blocks once with the tail; cleared, the song again', () => {

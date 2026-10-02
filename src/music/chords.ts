@@ -7,7 +7,7 @@
  * root in the octave starting at C3 = 48.
  */
 import type { ScaleId } from '../project/types';
-import { MIDI_MAX, MIDI_MIN, ROOT_NAMES, SCALES, pitchClass } from './scales';
+import { MIDI_MAX, MIDI_MIN, ROOT_NAMES, SCALES, keyNoteNames, pitchClass, relativeMajorRoot } from './scales';
 
 /* ------------------------------------------------------------------ */
 /* Chord qualities                                                     */
@@ -471,4 +471,246 @@ export function voiceLeadProgression(chords: readonly (readonly number[])[], low
   const out: number[][] = [];
   for (const chord of chords) out.push(voiceLead(out.length ? out[out.length - 1] : null, chord, low, high));
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Chords in a key, by name (chord pads, progressions)                 */
+/* ------------------------------------------------------------------ */
+
+/** Display suffixes where the authoring suffix is not what a player reads ("E°", "Bm7♭5"). */
+const DISPLAY_SUFFIX: Partial<Record<ChordQuality, string>> = { dim: '°', dim7: '°7', aug: '+', m7b5: 'm7♭5' };
+
+/**
+ * A chord symbol for reading, spelled the way `key` writes its notes when a
+ * key is given ('B♭', 'E°', 'Fmaj7', 'Gm/B♭'); without a key, sharps.
+ */
+export function spellChord(spec: ChordSpec, key?: { root: number; scale: ScaleId }): string {
+  const names = key ? keyNoteNames(key.root, key.scale) : ROOT_NAMES;
+  const base = `${names[pitchClass(spec.root)]}${DISPLAY_SUFFIX[spec.quality] ?? CHORD_QUALITIES[spec.quality].suffix}`;
+  return spec.bass !== undefined && pitchClass(spec.bass) !== pitchClass(spec.root) ? `${base}/${names[pitchClass(spec.bass)]}` : base;
+}
+
+/**
+ * Name of the diatonic chord on a scale degree (0-based: 0 = I), spelled with
+ * the key's accidentals. G Dorian triads: Gm, Am, B♭, C, Dm, E°, F; as
+ * sevenths: Gm7, Am7, B♭maj7, C7, Dm7, Em7♭5, Fmaj7. A stack with no common
+ * name (harmonic minor's III+maj7) is named by its triad.
+ */
+export function chordName(root: number, scale: ScaleId, degree: number, opts: { size?: 3 | 4 } = {}): string {
+  const chord = diatonicChord(root, scale, degree, opts.size === 4 ? 4 : 3, 3);
+  const key = { root, scale };
+  for (let n = chord.length; n >= 3; n--) {
+    const spec = identifyChord(chord.slice(0, n));
+    if (spec && spec.bass === undefined) return spellChord(spec, key);
+  }
+  return keyNoteNames(root, scale)[pitchClass(chord[0])];
+}
+
+export interface ChordAtOptions {
+  /** 3 = triad (default), 4 = seventh chord. */
+  size?: 3 | 4;
+  /**
+   * 0 = root position, 1 = first inversion, 2 = second... (negative inverts
+   * downward). Left out, the chord takes whichever close voicing sits nearest
+   * `near`, so neighbouring degrees stay in one hand position.
+   */
+  inversion?: number;
+  /** MIDI note the chord centres on (default 60, C4). */
+  near?: number;
+  /** The chord played before: the new one moves as little as possible from it (voice leading); overrides `inversion`. */
+  from?: readonly number[];
+}
+
+/** The chord moved by whole octaves so its centre is nearest `near` (staying inside 0..127). */
+function centreShift(v: readonly number[], near: number): number[] {
+  let best: number[] | null = null;
+  for (let shift = -120; shift <= 120; shift += 12) {
+    const w = v.map((p) => p + shift);
+    if (w.some((p) => p < MIDI_MIN || p > MIDI_MAX)) continue;
+    if (!best || Math.abs(centre(w) - near) < Math.abs(centre(best) - near)) best = w;
+  }
+  return best ?? [...v];
+}
+
+/**
+ * The diatonic chord on a scale degree (0-based: 0 = I) as MIDI notes,
+ * sorted low to high, placed around `near` (diatonicChord plus
+ * voiceLead/voiceChord). One chord pad sends these. Every note is in the key;
+ * pentatonic and blues keys take their parent minor or major scale's chords,
+ * so a chord there can hold a note the five-note scale leaves out (play it
+ * without Musical Assist's snapping, or it would be re-snapped).
+ */
+export function chordAt(root: number, scale: ScaleId, degree: number, opts: ChordAtOptions = {}): number[] {
+  const size = opts.size === 4 ? 4 : 3;
+  const near = Number.isFinite(opts.near) ? Math.min(MIDI_MAX - 6, Math.max(MIDI_MIN + 6, opts.near as number)) : 60;
+  const base = diatonicChord(root, scale, Number.isFinite(degree) ? degree : 0, size, 3);
+  if (opts.from && opts.from.length > 0) return voiceLead(opts.from, base, near - 12, near + 12);
+  if (opts.inversion !== undefined && Number.isFinite(opts.inversion)) return centreShift(invertChord(base, opts.inversion), near);
+  return voiceChord(base, near - 7, near + 7);
+}
+
+/* ------------------------------------------------------------------ */
+/* Progressions                                                        */
+/* ------------------------------------------------------------------ */
+
+export interface ProgressionDef {
+  id: string;
+  /** Plain name for people who do not read numerals ("Pop", "Sad pop"). */
+  name: string;
+  /** Roman numerals as musicians write them ("I–V–vi–IV"). */
+  numerals: string;
+  /** The key the numerals are written in: a major key (I = major) or a minor key (i = minor). */
+  home: 'major' | 'minor';
+  /** One chord per bar of a four-bar loop, as 0-based degrees of the home key (ii–V–I holds the I for two bars). */
+  degrees: readonly number[];
+}
+
+/** Common progressions for "Write a progression…" (eight, in menu order). */
+export const PROGRESSIONS: readonly ProgressionDef[] = [
+  { id: 'pop', name: 'Pop', numerals: 'I–V–vi–IV', home: 'major', degrees: [0, 4, 5, 3] },
+  { id: 'sad-pop', name: 'Sad pop', numerals: 'vi–IV–I–V', home: 'major', degrees: [5, 3, 0, 4] },
+  { id: 'classic', name: 'Classic', numerals: 'I–vi–IV–V', home: 'major', degrees: [0, 5, 3, 4] },
+  { id: 'jazz-turn', name: 'Jazz turn', numerals: 'ii–V–I', home: 'major', degrees: [1, 4, 0, 0] },
+  { id: 'epic', name: 'Epic', numerals: 'i–VI–III–VII', home: 'minor', degrees: [0, 5, 2, 6] },
+  { id: 'moody', name: 'Moody', numerals: 'i–iv–v–i', home: 'minor', degrees: [0, 3, 4, 0] },
+  { id: 'anthem', name: 'Anthem', numerals: 'i–VII–VI–VII', home: 'minor', degrees: [0, 6, 5, 6] },
+  { id: 'uplift', name: 'Uplift', numerals: 'I–IV–vi–V', home: 'major', degrees: [0, 3, 5, 4] },
+];
+
+export function getProgression(id: string): ProgressionDef | undefined {
+  return PROGRESSIONS.find((p) => p.id === id);
+}
+
+type TriadQuality = 'maj' | 'min' | 'dim' | 'aug';
+
+function triadQuality(chord: readonly number[]): TriadQuality {
+  const third = chord[1] - chord[0];
+  const fifth = chord[2] - chord[0];
+  if (third === 4) return fifth === 8 ? 'aug' : 'maj';
+  return fifth === 6 ? 'dim' : 'min';
+}
+
+export interface ResolvedProgression {
+  progression: ProgressionDef;
+  /**
+   * The degree of the key the progression is counted from: 0 when it is
+   * played from the key's own home chord; otherwise the key's relative major
+   * or minor (a major-key progression in A minor counts from C).
+   */
+  anchor: number;
+  /** One entry per bar of the four-bar loop: 0-based degrees of the project key (0..6). */
+  degrees: number[];
+  /** Chord names in the key, spelled with its accidentals ('F', 'C', 'Dm', 'B♭'). */
+  names: string[];
+  /** Roman numerals of the chords actually played, counted from the key's own root ('VII', 'IV', 'v', 'III'). */
+  numerals: string[];
+  /** Root-position chords (MIDI), every note in the key. */
+  chords: number[][];
+}
+
+/**
+ * Place a progression in a key, keeping every chord in the key. It is played
+ * from the key's home chord when the key's own chords suit it (a major-key
+ * progression in a major key; in Mixolydian its V is minor, which is that
+ * key's colour). When that would give the wrong home chord (a major-key
+ * progression in a minor key) or a diminished or augmented chord, it is
+ * played from the key's relative major (for a major-key progression) or
+ * relative minor (for a minor-key one); those are the only two places it
+ * can start from, so it always comes home. A diminished or augmented chord
+ * that remains (harmonic minor has three) is replaced by the major or minor
+ * chord a third below or above it. Pentatonic and blues keys take the chords
+ * of their parent minor or major scale (harmonicParent): five or six notes
+ * hold too few full chords for these progressions. Chromatic uses major.
+ * Deterministic; no randomness.
+ */
+export function resolveProgression(root: number, scale: ScaleId, progression: ProgressionDef, size: 3 | 4 = 3): ResolvedProgression {
+  const homeScale: ScaleId = progression.home === 'major' ? 'major' : 'minor';
+  const want = progression.degrees.map((d) => triadQuality(diatonicChord(0, homeScale, d, 3, 3)));
+  const homeQuality: TriadQuality = progression.home === 'major' ? 'maj' : 'min';
+  // Only two places to count from: the key's own root, or its relative major (minor) for a
+  // major-key (minor-key) progression. Anywhere else would end the progression off home.
+  const relPc = progression.home === 'major' ? relativeMajorRoot(root, scale) : (relativeMajorRoot(root, scale) + 9) % 12;
+  const relative = SCALES[harmonicParent(scale)].intervals.indexOf((relPc - pitchClass(root) + 12) % 12);
+  const anchors = relative > 0 ? [0, relative] : [0];
+  let anchor = 0;
+  let bestCost = Infinity;
+  for (const a of anchors) {
+    let cost = a === 0 ? 0 : 1;
+    if (triadQuality(diatonicChord(root, scale, a, 3, 3)) !== homeQuality) cost += 3;
+    progression.degrees.forEach((d, i) => {
+      const q = triadQuality(diatonicChord(root, scale, a + d, 3, 3));
+      if (q === 'dim' || q === 'aug') cost += 2;
+      if (q !== want[i]) cost += 0.25;
+    });
+    if (cost < bestCost - 1e-9) {
+      bestCost = cost;
+      anchor = a;
+    }
+  }
+  // A diminished or augmented chord left over (harmonic minor) gives way to the
+  // chord a third below or above, which shares two of its notes (vii° -> V, III+ -> i).
+  const plain = (d: number) => {
+    const q = triadQuality(diatonicChord(root, scale, d, 3, 3));
+    return q === 'maj' || q === 'min';
+  };
+  const degrees = progression.degrees.map((d) => {
+    const deg = (anchor + d) % 7;
+    if (plain(deg)) return deg;
+    return [(deg + 5) % 7, (deg + 2) % 7].find(plain) ?? deg;
+  });
+  return {
+    progression,
+    anchor,
+    degrees,
+    names: degrees.map((d) => chordName(root, scale, d, { size })),
+    numerals: degrees.map((d) => romanNumeral(root, scale, d, size)),
+    chords: degrees.map((d) => diatonicChord(root, scale, d, size, 3)),
+  };
+}
+
+/**
+ * Voice a looping progression inside [low, high] so it moves as little as
+ * possible: the largest move between neighbouring chords (counting the
+ * loop's return from the last chord to the first) is as small as it can be,
+ * then the total movement, then the distance from the middle of the range.
+ * Short loops (the progressions here) are searched exhaustively over every
+ * close and drop-2 voicing in range; long ones fall back to chord-by-chord
+ * voice leading. Deterministic.
+ */
+export function voiceLeadLoop(chords: readonly (readonly number[])[], low: number, high: number): number[][] {
+  if (chords.length === 0) return [];
+  const options = chords.map((c) => chordVoicings(c, low, high));
+  const combos = options.reduce((n, o) => n * Math.max(1, o.length), 1);
+  if (options.some((o) => o.length === 0) || combos > 250_000) return voiceLeadProgression(chords, low, high);
+  const mid = (low + high) / 2;
+  const n = chords.length;
+  let best: number[][] = options.map((o) => o[0]);
+  let bestScore = [Infinity, Infinity, Infinity];
+  const pick: number[][] = new Array(n);
+  const walk = (i: number, worst: number, total: number) => {
+    if (worst > bestScore[0]) return;
+    if (i === n) {
+      const back = n > 1 ? voiceLeadingDistance(pick[n - 1], pick[0]) : 0;
+      const w = Math.max(worst, back);
+      const t = total + back;
+      const c = pick.reduce((s, v) => s + Math.abs(centre(v) - mid), 0);
+      const score = [w, t, c];
+      for (let k = 0; k < 3; k++) {
+        if (score[k] < bestScore[k] - 1e-9) {
+          bestScore = score;
+          best = pick.map((v) => [...v]);
+          return;
+        }
+        if (score[k] > bestScore[k] + 1e-9) return;
+      }
+      return;
+    }
+    for (const v of options[i]) {
+      const d = i > 0 ? voiceLeadingDistance(pick[i - 1], v) : 0;
+      pick[i] = v;
+      walk(i + 1, Math.max(worst, d), total + d);
+    }
+  };
+  walk(0, 0, 0);
+  return best;
 }
