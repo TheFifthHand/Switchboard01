@@ -1,9 +1,11 @@
-/** Project-wide edits: name, tempo, swing, key, Musical Assist, master volume, settings. */
+/** Project-wide edits: name, tempo, swing, key (and moving the song to a new key), Musical Assist, master volume, settings. */
+import { keyLabel, moveToKey, pitchClass, type MusicalKey } from '../../music/scales';
 import { BPM_SPEC, MASTER_VOLUME_SPEC, SWING_SPEC } from '../../project/params';
-import type { ProjectSettings, ScaleId } from '../../project/types';
+import type { Id, Note, ProjectSettings, ScaleId } from '../../project/types';
 import { QUANTIZE_GRIDS, SCALE_IDS } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
-import { clamp, cleanName, isFiniteNumber, refuse, run, type CommandResult } from './common';
+import { clamp, cleanName, findTrack, isFiniteNumber, refuse, run, type CommandResult } from './common';
+import { pitchRangeFor } from './notes';
 
 export function renameProject(store: ProjectStore, name: string): CommandResult {
   const n = cleanName(name, 80);
@@ -39,6 +41,89 @@ export function setKey(store: ProjectStore, root: number, scale: ScaleId): Comma
     d.root = r;
     d.scale = scale;
   });
+}
+
+export interface SongMoveResult extends CommandResult {
+  /** Clips whose notes moved. */
+  clips: number;
+  /** Notes whose pitch changed. */
+  notes: number;
+  /** Notes that would have left the part's range and were folded back an octave. */
+  clamped: number;
+}
+
+/**
+ * Change the key and move the song with it, in one undo step that Undo calls
+ * "Move the song to A Dorian". Every clip of a bass or synth part moves by
+ * the shortest interval between the roots (-5..+6 semitones); when the scale
+ * changes too, each scale degree maps to the new scale's degree (moveToKey in
+ * music/scales), and notes outside the old key move by the interval only.
+ * Drum parts never move. Sampler parts play recordings, which keep their
+ * pitch, so they move only when listed in `samplerParts`. Notes folded back
+ * into the part's range are counted in `clamped`. Refused during a
+ * performance take like every key change.
+ */
+export function transposeSong(store: ProjectStore, to: MusicalKey, opts: { samplerParts?: readonly Id[] } = {}): SongMoveResult {
+  const none = { clips: 0, notes: 0, clamped: 0 };
+  if (!to || !isFiniteNumber(to.root) || !SCALE_IDS.includes(to.scale)) return { ...refuse('invalid', 'Unknown key or scale.'), ...none };
+  const p = store.getState();
+  const listed = opts.samplerParts ?? [];
+  if (!Array.isArray(listed)) return { ...refuse('invalid', 'The sampler parts to move could not be read.'), ...none };
+  if (listed.some((id) => !findTrack(p, id))) return { ...refuse('not-found', 'One of the chosen parts no longer exists.'), ...none };
+  const samplers = new Set(listed);
+  const root = pitchClass(to.root);
+  const from: MusicalKey = { root: p.root, scale: p.scale };
+  const dest: MusicalKey = { root, scale: to.scale };
+  if (root === p.root && to.scale === p.scale) return { changed: false, ...none };
+
+  // Work out every moved clip first, so the recipe only writes results.
+  const moves = new Map<string, Note[]>();
+  let notes = 0;
+  let clamped = 0;
+  for (const t of p.tracks) {
+    const kind = t.instrument.kind;
+    if (kind === 'drums' || (kind === 'sampler' && !samplers.has(t.id))) continue;
+    const [lo, hi] = pitchRangeFor(kind);
+    t.clips.forEach((clip, slot) => {
+      if (!clip) return;
+      let changed = 0;
+      const seen = new Map<string, number>();
+      const out: Note[] = [];
+      for (const n of clip.notes) {
+        let q = moveToKey(n.pitch, from, dest);
+        if (q < lo || q > hi) {
+          while (q > hi) q -= 12;
+          while (q < lo) q += 12;
+          clamped++;
+        }
+        if (q !== n.pitch) changed++;
+        // Two notes that land on one tick and pitch (a scale with fewer notes) become one, the louder.
+        const k = `${n.tick}|${q}`;
+        const at = seen.get(k);
+        const moved = q === n.pitch ? n : { ...n, pitch: q };
+        if (at === undefined) {
+          seen.set(k, out.length);
+          out.push(moved);
+        } else if (moved.velocity > out[at].velocity) {
+          out[at] = moved;
+        }
+      }
+      if (changed === 0 && out.length === clip.notes.length) return;
+      notes += changed;
+      moves.set(`${t.id}|${slot}`, out);
+    });
+  }
+  const r = run(store, 'project:Move the song', (d) => {
+    d.root = root;
+    d.scale = to.scale;
+    for (const t of d.tracks) {
+      t.clips.forEach((c, slot) => {
+        const next = c ? moves.get(`${t.id}|${slot}`) : undefined;
+        if (c && next) c.notes = next;
+      });
+    }
+  }, undefined, { display: `Move the song to ${keyLabel(root, to.scale)}` });
+  return r.changed ? { ...r, clips: moves.size, notes, clamped } : { ...r, ...none };
 }
 
 export function setAssist(store: ProjectStore, on: boolean): CommandResult {

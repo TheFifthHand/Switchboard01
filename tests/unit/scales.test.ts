@@ -1,16 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import type { ScaleId } from '../../src/project/types';
 import {
+  FLAT_NAMES,
   ROOT_NAMES,
   SCALES,
   isInScale,
+  keyInterval,
   keyLabel,
+  keyNoteNames,
+  keyRootName,
+  keyShortName,
+  keyUsesFlats,
+  moveToKey,
   noteName,
   parseNote,
   scaleDegreeOf,
   scaleDegreesInRange,
   scaleMask,
   snapToScale,
+  stepsPerOctave,
   transposeInScale,
 } from '../../src/music/scales';
 
@@ -192,10 +200,124 @@ describe('scale steps and labels', () => {
   it('labels keys the way musicians say them', () => {
     expect(keyLabel(9, 'minor')).toBe('A minor');
     expect(keyLabel(0, 'major')).toBe('C major');
-    expect(keyLabel(1, 'major')).toBe('C# major');
+    // The root is spelled as the key writes it: D♭ major (five flats), not C# major (seven sharps).
+    expect(keyLabel(1, 'major')).toBe('D♭ major');
+    expect(keyLabel(1, 'minor')).toBe('C# minor');
+    expect(keyLabel(10, 'major')).toBe('B♭ major');
+    expect(keyLabel(3, 'major')).toBe('E♭ major');
     expect(keyLabel(2, 'dorian')).toBe('D Dorian');
     expect(keyLabel(4, 'minorPentatonic')).toBe('E minor pentatonic');
     expect(keyLabel(9, 'harmonicMinor')).toBe('A harmonic minor');
     expect(keyLabel(7, 'chromatic')).toBe('Chromatic');
+  });
+});
+
+describe('spelling by key (PLAY-23)', () => {
+  const G_DORIAN = { root: 7, scale: 'dorian' as const };
+
+  it('spells flat keys and their modes with flats: G Dorian reads B♭', () => {
+    expect(noteName(58, G_DORIAN)).toBe('B♭3');
+    expect(noteName(70, G_DORIAN)).toBe('B♭4');
+    expect(noteName(63, G_DORIAN)).toBe('E♭4'); // outside the key, still written the flat way
+    expect(noteName(58)).toBe('A#3'); // without a key: sharps, as before
+    expect(keyUsesFlats(7, 'dorian')).toBe(true);
+    expect(keyUsesFlats(5, 'phrygian')).toBe(true); // F Phrygian shares D♭ major's notes
+    expect(keyUsesFlats(2, 'minor')).toBe(true);
+    expect(keyUsesFlats(9, 'dorian')).toBe(false);
+    expect(keyUsesFlats(9, 'minor')).toBe(false);
+  });
+
+  it('keeps sharp keys sharp and gives every scale note its own letter', () => {
+    expect([0, 2, 3, 5, 7, 8, 11].map((iv) => noteName(60 + iv, { root: 0, scale: 'harmonicMinor' }))).toEqual(['C4', 'D4', 'E♭4', 'F4', 'G4', 'A♭4', 'B4']);
+    // G harmonic minor: B♭ and E♭ beside F#; D harmonic minor: B♭ beside C#; A minor keeps G#.
+    expect(keyNoteNames(7, 'harmonicMinor')[6]).toBe('F#');
+    expect(keyNoteNames(7, 'harmonicMinor')[10]).toBe('B♭');
+    expect(keyNoteNames(2, 'harmonicMinor')[1]).toBe('C#');
+    expect(keyNoteNames(9, 'harmonicMinor')[8]).toBe('G#');
+    expect(keyNoteNames(4, 'lydian')[10]).toBe('A#');
+    expect(keyNoteNames(5, 'phrygian').filter((_, pc) => isInScale(pc, 5, 'phrygian'))).toEqual(['D♭', 'E♭', 'F', 'G♭', 'A♭', 'B♭', 'C'].sort((a, b) => FLAT_NAMES.indexOf(a as never) - FLAT_NAMES.indexOf(b as never)));
+  });
+
+  it('writes every scale note of a seven-note key with seven different letters, and round-trips through parseNote', () => {
+    const sharedLetter: string[] = [];
+    const sevens: ScaleId[] = ['major', 'minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'harmonicMinor'];
+    for (let root = 0; root < 12; root++) {
+      for (const scale of SCALE_IDS) {
+        const key = { root, scale };
+        for (let m = 0; m <= 127; m++) expect(parseNote(noteName(m, key)), `${noteName(m, key)} in ${keyLabel(root, scale)}`).toBe(m);
+        if (!sevens.includes(scale)) continue;
+        const letters = SCALES[scale].intervals.map((iv) => keyNoteNames(root, scale)[(root + iv) % 12][0]);
+        if (new Set(letters).size < 7) sharedLetter.push(keyLabel(root, scale));
+      }
+    }
+    // Only keys that would need E#, B# or a double sharp (never written) share a letter.
+    expect(sharedLetter).toEqual([
+      'C# Mixolydian',
+      'C# harmonic minor',
+      'D# minor',
+      'D# harmonic minor',
+      'F# major',
+      'F# harmonic minor',
+      'G# Dorian',
+      'G# harmonic minor',
+      'A# Phrygian',
+      'B Lydian',
+    ]);
+  });
+
+  it('gives a short key name for tight spaces', () => {
+    expect(keyShortName(7, 'dorian')).toBe('G Dor');
+    expect(keyShortName(9, 'minor')).toBe('A min');
+    expect(keyShortName(10, 'major')).toBe('B♭ maj');
+    expect(keyShortName(4, 'minorPentatonic')).toBe('E min pent');
+    expect(keyShortName(0, 'chromatic')).toBe('Chrom');
+    for (let root = 0; root < 12; root++) for (const scale of SCALE_IDS) expect(keyShortName(root, scale).length).toBeLessThanOrEqual(11);
+    expect(keyRootName(1, 'major')).toBe('D♭');
+    expect(keyRootName(1, 'minor')).toBe('C#');
+  });
+});
+
+describe('moving music between keys', () => {
+  it('takes the shortest way between roots (a tritone goes up)', () => {
+    expect(keyInterval(7, 9)).toBe(2);
+    expect(keyInterval(7, 5)).toBe(-2);
+    expect(keyInterval(0, 6)).toBe(6);
+    expect(keyInterval(0, 7)).toBe(-5);
+    expect(keyInterval(11, 0)).toBe(1);
+  });
+
+  it('maps scale degrees when the scale changes and moves outside notes by the interval', () => {
+    const gDor = { root: 7, scale: 'dorian' as const };
+    // G Dorian -> G minor: E (the major sixth) becomes E♭; the other degrees stay.
+    expect(moveToKey(64, gDor, { root: 7, scale: 'minor' })).toBe(63);
+    expect(moveToKey(70, gDor, { root: 7, scale: 'minor' })).toBe(70);
+    // G Dorian -> A Dorian: everything up two.
+    expect([55, 58, 62, 64].map((m) => moveToKey(m, gDor, { root: 9, scale: 'dorian' }))).toEqual([57, 60, 64, 66]);
+    // A Dorian -> A minor (Aeolian): F# -> F.
+    expect(moveToKey(66, { root: 9, scale: 'dorian' }, { root: 9, scale: 'minor' })).toBe(65);
+    // C# is outside G Dorian: it only moves by the interval.
+    expect(moveToKey(61, gDor, { root: 9, scale: 'minor' })).toBe(63);
+    // Seven notes to five: scale notes land on the nearest note of the new key.
+    expect(isInScale(moveToKey(65, { root: 0, scale: 'major' }, { root: 0, scale: 'majorPentatonic' }), 0, 'majorPentatonic')).toBe(true);
+    // To or from chromatic: interval only.
+    expect(moveToKey(61, { root: 0, scale: 'chromatic' }, { root: 2, scale: 'minor' })).toBe(63);
+  });
+
+  it('keeps every scale note in the new key for every pair of seven-note keys', () => {
+    const sevens: ScaleId[] = ['major', 'minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'harmonicMinor'];
+    for (const a of sevens) for (const b of sevens) for (let ra = 0; ra < 12; ra += 5) for (let rb = 0; rb < 12; rb += 3) {
+      for (let m = 36; m < 84; m++) {
+        if (!isInScale(m, ra, a)) continue;
+        const q = moveToKey(m, { root: ra, scale: a }, { root: rb, scale: b });
+        expect(isInScale(q, rb, b)).toBe(true);
+        expect(Math.abs(q - m)).toBeLessThanOrEqual(8);
+      }
+    }
+  });
+
+  it('counts scale steps per octave', () => {
+    expect(stepsPerOctave('dorian')).toBe(7);
+    expect(stepsPerOctave('minorPentatonic')).toBe(5);
+    expect(stepsPerOctave('chromatic')).toBe(12);
   });
 });
