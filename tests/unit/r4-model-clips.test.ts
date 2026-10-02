@@ -88,6 +88,23 @@ describe('replace a clip’s notes in one named step (PLAY-16)', () => {
     expect(store.getState().tracks[3].clips[0]!.variation).toEqual({ seed: 7, generation: 3 });
   });
 
+  it('the notes the clip already has (and the same Variation information) change nothing and leave no step', () => {
+    const store = withClip(2, [0, 96, 192]);
+    const before = store.getState();
+    const steps = store.historySize().undo;
+    const notes = before.tracks[3].clips[0]!.notes;
+    expect(setClipNotes(store, 't4', 0, notes.map((x) => ({ ...x })), 'Back to original')).toEqual({ changed: false });
+    expect(setClipNotes(store, 't4', 0, notes, 'Back to original', { variation: null })).toEqual({ changed: false });
+    expect(store.getState()).toBe(before);
+    expect(store.historySize().undo).toBe(steps);
+    // Only the Variation information differs: that is a change.
+    store.apply('notes:Vary', (d) => {
+      d.tracks[3].clips[0]!.variation = { seed: 1, generation: 1 };
+    });
+    expect(setClipNotes(store, 't4', 0, notes, 'Back to original', { variation: null }).changed).toBe(true);
+    expect(store.getState().tracks[3].clips[0]!.variation).toBeUndefined();
+  });
+
   it('leaves out notes outside the clip or the part’s range, and refuses a missing clip or name', () => {
     const store = withClip(1, [0]);
     setClipNotes(store, 't4', 0, [{ id: 'a', ...n(0) }, { id: 'b', ...n(400) }, { id: 'c', ...n(10, 300) }] as Note[], 'Edit notes');

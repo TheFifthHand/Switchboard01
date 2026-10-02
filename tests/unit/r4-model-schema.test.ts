@@ -237,6 +237,19 @@ describe('song moves on blocks', () => {
     expect(c.moves).toBeUndefined();
     expect(r.warnings.length).toBeGreaterThan(0);
   });
+
+  it('an empty list of parts or of moves is left out, and the repair is said (never dropped silently)', () => {
+    const p = loose(createProject({ now: 0 }));
+    p.arrangement.blocks[0].moves = [{ id: 'mv_a', kind: 'filterRise', parts: [] }];
+    p.arrangement.blocks[1].moves = [];
+    const r = check(p);
+    const [a, b] = r.project.arrangement.blocks;
+    expect(a.moves).toEqual([{ id: 'mv_a', kind: 'filterRise' }]);
+    expect(b.moves).toBeUndefined();
+    expect(r.warnings).toEqual(['Adjusted the parts a song move acts on.', 'Removed an empty list of song moves from a block.']);
+    // What validation keeps round-trips exactly.
+    expect(check(JSON.parse(JSON.stringify(r.project))).warnings).toEqual([]);
+  });
 });
 
 describe('designed big-knob positions (Track.macroHome)', () => {

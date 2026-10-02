@@ -5,12 +5,12 @@
 import { builtinSampleInfo } from '../../content/catalog';
 import { applySamplerToProject } from '../../content/presets';
 import { createClip as makeClip } from '../../project/factory';
-import { SAMPLER_PARAMS, clampParam, specById } from '../../project/params';
+import { SAMPLER_PARAMS, clampParam, readParam, specById } from '../../project/params';
 import { MAX_CLIP_BARS, TICKS_PER_BAR, type ClipBars, type Id, type Project, type SampleMeta, type Track } from '../../project/types';
 import { VALIDATION_LIMITS, sanitizeSampleMeta } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
 import { isClipBars } from './clips';
-import { NOT_FOUND, cleanName, draftTrack, findTrack, isFiniteNumber, isSlot, partName, refuse, run, type CommandResult } from './common';
+import { NOT_FOUND, clamp, cleanName, draftTrack, findTrack, isFiniteNumber, isSlot, partName, refuse, run, type CommandResult } from './common';
 
 /** A clip that plays a recording itself (Clip.sample). */
 export interface ClipUse {
@@ -126,14 +126,16 @@ export interface RecordedTake {
 
 /**
  * Whether a new recording placed in `slot` also becomes the part's own
- * recording: when the part is not a sampler yet, has no recording, or no
- * other clip of the part plays the part's recording (every other clip with
- * notes has its own). Otherwise the part keeps its recording and its sampler
- * settings, so its other clips sound exactly as before.
+ * recording (and the part's sampler settings are reset to play it as
+ * recorded): when the part is not a sampler yet, has no recording, or has no
+ * other clip with notes. The part's settings (mode, pitch, tempo sync,
+ * fades) apply to every clip of the part, its own recordings included, so
+ * as soon as another clip plays on the part, its recording and settings are
+ * left exactly as they are.
  */
 function recordingBecomesPart(t: Track, slot: number): boolean {
   if (t.instrument.kind !== 'sampler' || !t.instrument.sampleId) return true;
-  return !t.clips.some((c, i) => i !== slot && !!c && !c.sample && c.notes.length > 0);
+  return !t.clips.some((c, i) => i !== slot && !!c && c.notes.length > 0);
 }
 
 /**
@@ -174,8 +176,8 @@ export interface RecordingClipResult extends CommandResult {
   /** Slot of the new clip. */
   slot?: number;
   /**
-   * The recording also became the part's own recording (the part had none, or
-   * no other clip played it). False: the part and its other clips kept theirs.
+   * The recording also became the part's own recording (the part had nothing
+   * else to play). False: the part kept its recording and settings.
    */
   partRecording?: boolean;
 }
@@ -184,12 +186,12 @@ export interface RecordingClipResult extends CommandResult {
  * A recorded take goes into its own clip in one undo step: the recording is
  * added to the project and a clip in `slot` plays it itself (Clip.sample: the
  * whole take at root 60) from the downbeat. Other clips keep their
- * recordings: the part's recording changes only when nothing else plays it
- * (see recordingBecomesPart), and then the part is set to play it as
- * recorded (one-shot, no transposition, Original BPM = the tempo it was
- * played at, Tempo Sync off). Otherwise the take plays with the part's
- * sampler settings, which keep it at its pitch unless the part is
- * transposed or tempo-synced.
+ * recordings: only a part with nothing else to play (not a sampler yet, no
+ * recording, or no other clip with notes; see recordingBecomesPart) takes
+ * the take as its own and is set to play it as recorded (one-shot, no
+ * transposition, Original BPM = the tempo it was played at, Tempo Sync off).
+ * Otherwise the part keeps its recording and settings, and the take plays
+ * with them: at its own pitch unless the part is transposed or tempo-synced.
  */
 export function addRecordedTake(store: ProjectStore, take: RecordedTake): RecordingClipResult {
   const p = store.getState();
@@ -262,10 +264,15 @@ export function importRecordingAsClip(
  * A new version of a part's recording (normalized, reversed, cropped, faded,
  * louder or quieter) replaces it on the part in one undo step. `region` sets
  * Start and End for the new file (a crop plays all of it); left out, the
- * trim stays. With `slot`, the version replaces the recording that clip plays
- * itself (Clip.sample) instead, and `region` sets that clip's region. The
- * version it replaces leaves the project's list once nothing uses it any
- * more (no part, no clip, no saved take); Undo brings it back.
+ * trim stays. The part's clips that play that recording themselves
+ * (Clip.sample) move to the new version too, so the edit is heard in them:
+ * with `region`, the new file is the part's old trim (as Crop makes it), so
+ * a clip's own region is mapped into it, and a clip whose region lies wholly
+ * outside the kept part keeps the old recording. With `slot`, the version
+ * replaces only the recording that clip plays itself, and `region` sets that
+ * clip's region. The version it replaces leaves the project's list once
+ * nothing uses it any more (no part, no clip, no saved take); Undo brings it
+ * back.
  */
 export function addSampleVersion(
   store: ProjectStore,
@@ -304,13 +311,30 @@ export function addSampleVersion(
     } else {
       const inst = track.instrument;
       if (inst.kind !== 'sampler') return;
+      // The part's old trim: what a crop kept.
+      const a = readParam(SAMPLER_PARAMS, inst.params, 'start');
+      const b = readParam(SAMPLER_PARAMS, inst.params, 'end');
       inst.sampleId = clean.id;
       if (region) {
         inst.params.start = region.start;
         inst.params.end = region.end;
       }
+      for (const c of track.clips) {
+        if (c?.sample?.id !== fromSampleId) continue;
+        if (!region) {
+          c.sample.id = clean.id;
+          continue;
+        }
+        const map = (x: number) => clamp(region.start + ((x - a) / Math.max(1e-9, b - a)) * (region.end - region.start), region.start, region.end);
+        const start = map(c.sample.start);
+        const end = map(c.sample.end);
+        if (!(start < end)) continue;
+        c.sample.id = clean.id;
+        c.sample.start = start;
+        c.sample.end = end;
+      }
     }
     const usage = sampleUsage(d, fromSampleId);
-    if (replaces && usage.tracks.length === 0 && usage.performances.length === 0) d.samples = d.samples.filter((s) => s.id !== fromSampleId);
+    if (replaces && usage.tracks.length === 0 && usage.clips.length === 0 && usage.performances.length === 0) d.samples = d.samples.filter((s) => s.id !== fromSampleId);
   });
 }

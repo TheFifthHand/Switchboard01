@@ -731,7 +731,7 @@ function partChoiceWords(p: Project, trackId: Id, choice: Id | null | undefined)
 }
 
 /**
- * What one part plays in several blocks at once (one undo step named like
+ * What one part plays in several blocks at once (one undo step; Undo says
  * "Drums off in 4 blocks"): a scene id, null (silent) or undefined (follow
  * each block's scene). Blocks where nothing changes are left as they are.
  * Returns how many blocks changed.
@@ -751,7 +751,7 @@ export function setBlocksPart(store: ProjectStore, blockIds: readonly Id[], trac
   }
   if (!changes.size) return { changed: false, blocks: 0 };
   const where = changes.size === 1 ? `in ${blockDisplayName(p, p.arrangement.blocks.find((b) => changes.has(b.id))!)}` : `in ${changes.size} blocks`;
-  const r = run(store, `arrange:${partChoiceWords(p, trackId, choice)} ${where}`, (d) => {
+  const r = run(store, 'arrange:Change part in blocks', (d) => {
     for (const x of d.arrangement.blocks) {
       if (!changes.has(x.id)) continue;
       const v = changes.get(x.id);
@@ -761,7 +761,7 @@ export function setBlocksPart(store: ProjectStore, blockIds: readonly Id[], trac
       if (Object.keys(parts).length) x.parts = parts;
       else delete x.parts;
     }
-  }, gesture);
+  }, gesture, { display: `${partChoiceWords(p, trackId, choice)} ${where}` });
   return { ...r, blocks: changes.size };
 }
 
@@ -781,7 +781,7 @@ export function setPartEverywhere(store: ProjectStore, trackId: Id, on: boolean)
   if (!touched.length) return { changed: false, blocks: 0 };
   const set = new Set(touched);
   const name = partName(p, trackId);
-  const r = run(store, on ? `arrange:${name} back on everywhere` : `arrange:${name} off everywhere`, (d) => {
+  const r = run(store, 'arrange:Change part everywhere', (d) => {
     for (const x of d.arrangement.blocks) {
       if (!set.has(x.id)) continue;
       const parts = { ...(x.parts ?? {}) };
@@ -790,7 +790,7 @@ export function setPartEverywhere(store: ProjectStore, trackId: Id, on: boolean)
       if (Object.keys(parts).length) x.parts = parts;
       else delete x.parts;
     }
-  });
+  }, undefined, { display: on ? `${name} back on everywhere` : `${name} off everywhere` });
   return { ...r, blocks: touched.length };
 }
 
@@ -805,6 +805,12 @@ export interface TakeBlocksPlan {
   rounded: boolean;
   /** What a block cannot hold and was left out: played notes, and knob, macro, mute, tempo, swing and volume moves. */
   ignored: { notes: number; knobs: number };
+  /**
+   * Scenes the take launched that have been deleted since (their names as the
+   * take knew them): what played them was left out (a stretch of such a scene
+   * makes no block; a part playing one counts as off).
+   */
+  deletedScenes: string[];
 }
 
 const KNOB_EVENTS = new Set(['macro', 'param', 'mute', 'tempo', 'swing', 'master']);
@@ -818,8 +824,9 @@ const KNOB_EVENTS = new Set(['macro', 'param', 'mute', 'tempo', 'swing', 'master
  * the same material are one block. A stretch plays whole passes of its
  * block, rounded from the take's timing (shorter than half a pass: left out),
  * and silence is left out. The take's snapshot gives only the timing and which
- * row (by scene id) was launched; the blocks play the project's clips as they
- * are now. Null when there is no such take.
+ * scene (by id) was launched; the blocks play the project's clips as they are
+ * now. A scene deleted since is left out and named in `deletedScenes`. Null
+ * when there is no such take.
  */
 export function takeToBlocks(p: Project, takeId: Id): TakeBlocksPlan | null {
   const perf = p.performances.find((x) => x.id === takeId);
@@ -834,11 +841,15 @@ export function takeToBlocks(p: Project, takeId: Id): TakeBlocksPlan | null {
     else if (KNOB_EVENTS.has(e.type)) ignored.knobs++;
   }
 
-  // The scene of a row of the take, as the project has it now (by id; a deleted one by position).
+  // The scene of a row of the take, as the project has it now (by id: rows may have moved since).
+  // A scene deleted since is left out and reported, never guessed by position.
+  const deleted = new Set<string>();
   const sceneOfRow = (row: number): Id | null => {
-    const id = snap.scenes[row]?.id;
-    if (id && p.scenes.some((s) => s.id === id)) return id;
-    return p.scenes[row]?.id ?? null;
+    const s = snap.scenes[row];
+    if (!s) return null;
+    if (p.scenes.some((x) => x.id === s.id)) return s.id;
+    deleted.add(s.name);
+    return null;
   };
   const playing = new Map<Id, number | null>(snap.tracks.map((t) => [t.id, null]));
   for (const e of snap.launcher) if (playing.has(e.trackId)) playing.set(e.trackId, e.playing ? e.playing.slot : null);
@@ -866,7 +877,7 @@ export function takeToBlocks(p: Project, takeId: Id): TakeBlocksPlan | null {
         parts[t.id] = plays;
         if (t.clips[sceneRow(p, plays)]) sounds = true;
       } else if (t.clips[row]) {
-        // Stopped (or its row is gone) while the scene has a clip for it: off here.
+        // Stopped (or playing a scene deleted since) while the scene has a clip for it: off here.
         parts[t.id] = null;
       }
     }
@@ -926,7 +937,7 @@ export function takeToBlocks(p: Project, takeId: Id): TakeBlocksPlan | null {
       passes -= r;
     }
   }
-  return { blocks, rounded, ignored };
+  return { blocks, rounded, ignored, deletedScenes: [...deleted] };
 }
 
 /**
@@ -935,11 +946,18 @@ export function takeToBlocks(p: Project, takeId: Id): TakeBlocksPlan | null {
  * Returns the new blocks' ids, whether timing was rounded and what was left
  * out, so the message can say so.
  */
-export function makeSongFromTake(store: ProjectStore, takeId: Id, opts: { mode: 'append' | 'replace' }): CommandResult & { blockIds?: Id[]; rounded?: boolean; ignored?: { notes: number; knobs: number } } {
+export function makeSongFromTake(
+  store: ProjectStore,
+  takeId: Id,
+  opts: { mode: 'append' | 'replace' },
+): CommandResult & { blockIds?: Id[]; rounded?: boolean; ignored?: { notes: number; knobs: number }; deletedScenes?: string[] } {
   const p = store.getState();
   const plan = takeToBlocks(p, takeId);
   if (!plan) return NOT_FOUND('performance');
-  if (!plan.blocks.length) return { ...refuse('empty', 'Nothing played long enough in this take to make a song block.'), rounded: plan.rounded, ignored: plan.ignored };
+  if (!plan.blocks.length) {
+    const why = plan.deletedScenes.length ? `the scenes it played (${plan.deletedScenes.join(', ')}) were deleted` : 'nothing played long enough to fill a pass';
+    return { ...refuse('empty', `This take makes no song blocks: ${why}.`), rounded: plan.rounded, ignored: plan.ignored, deletedScenes: plan.deletedScenes };
+  }
   const replace = opts.mode === 'replace';
   if ((replace ? 0 : p.arrangement.blocks.length) + plan.blocks.length > VALIDATION_LIMITS.maxBlocks) return refuse('limit', LIMIT_MESSAGE);
   const blocks = plan.blocks.map((t) => fromTemplate(p, t));
@@ -947,7 +965,7 @@ export function makeSongFromTake(store: ProjectStore, takeId: Id, opts: { mode: 
     if (replace) d.arrangement.blocks = blocks;
     else d.arrangement.blocks.push(...blocks);
   });
-  return { ...r, blockIds: blocks.map((b) => b.id), rounded: plan.rounded, ignored: plan.ignored };
+  return { ...r, blockIds: blocks.map((b) => b.id), rounded: plan.rounded, ignored: plan.ignored, deletedScenes: plan.deletedScenes };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1049,11 +1067,11 @@ export function toggleBlockMove(store: ProjectStore, blockId: Id, kind: BlockMov
   if (!BLOCK_MOVE_KINDS.includes(kind)) return refuse('invalid', 'That is not a song move.');
   const has = (b.moves ?? []).some((m) => m.kind === kind);
   const next = has ? (b.moves ?? []).filter((m) => m.kind !== kind) : [...(b.moves ?? []), ...cleanMoves(p, [{ kind, ...(parts ? { parts: [...parts] } : {}) }], false)];
-  const r = run(store, `arrange:${has ? 'Remove' : 'Add'} ${BLOCK_MOVE_NAMES[kind]}`, (d) => {
+  const r = run(store, 'arrange:Change song moves', (d) => {
     const x = d.arrangement.blocks.find((y) => y.id === blockId);
     if (!x) return;
     if (next.length) x.moves = next;
     else delete x.moves;
-  });
+  }, undefined, { display: `${has ? 'Remove' : 'Add'} ${BLOCK_MOVE_NAMES[kind]}` });
   return { ...r, on: !has };
 }

@@ -856,7 +856,9 @@ function validateMusicCore(raw: Obj, sampleIds: ReadonlySet<Id>, issues: Issues)
  * A block's song moves: known kinds only, at most one of each (the first is
  * kept), ids unique across the song, `parts` limited to existing parts
  * (fades never carry parts; an empty list is removed, so the move acts on
- * every melodic part). Nothing usable leaves the field out.
+ * every melodic part, as the commands store it). Nothing usable (an empty
+ * list included) leaves the field out. Every change is reported, so stored
+ * data comes back exactly as it went in or with a warning.
  */
 function validateMoves(raw: unknown, trackIds: ReadonlySet<Id>, moveIds: Set<Id>, issues: Issues): BlockMove[] | undefined {
   if (!Array.isArray(raw)) {
@@ -887,11 +889,12 @@ function validateMoves(raw: unknown, trackIds: ReadonlySet<Id>, moveIds: Set<Id>
       const list = Array.isArray(m.parts) ? (m.parts as unknown[]) : [];
       const parts: Id[] = [];
       for (const t of list) if (typeof t === 'string' && trackIds.has(t) && !parts.includes(t)) parts.push(t);
-      if (fade || !Array.isArray(m.parts) || parts.length !== list.length) issues.warn('Adjusted the parts a song move acts on.');
+      if (fade || !Array.isArray(m.parts) || parts.length !== list.length || !parts.length) issues.warn('Adjusted the parts a song move acts on.');
       if (!fade && parts.length) move.parts = parts;
     }
     out.push(move);
   }
+  if (!out.length && !(raw as unknown[]).length) issues.warn('Removed an empty list of song moves from a block.');
   return out.length ? out : undefined;
 }
 

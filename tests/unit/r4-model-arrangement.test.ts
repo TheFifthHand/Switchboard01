@@ -13,6 +13,7 @@ import { validateProject } from '../../src/project/validate';
 import { ProjectStore } from '../../src/state/projectStore';
 import * as cmd from '../../src/state/commands/arrangement';
 import { takeStartingAt, trimTakeStart } from '../../src/state/commands/performances';
+import { deleteScene } from '../../src/state/commands/scenes';
 import { makeSnapshot } from '../../src/time/snapshot';
 
 const BAR = TICKS_PER_BAR;
@@ -67,6 +68,27 @@ describe('a part in several blocks at once', () => {
     expect(store.undoLabel()).toBe('Bass back on everywhere');
     expect(store.getState().arrangement.blocks.some((b) => b.parts && 't3' in b.parts)).toBe(false);
     valid(store.getState());
+  });
+
+  it('names the kind of edit with fixed words (the part and blocks are only in the Undo words)', () => {
+    const store = new ProjectStore(HOUSE.build());
+    const p = store.getState();
+    // A lock that allows everything sees the kind of each edit.
+    let kind = '';
+    store.setLock('Watching', (label) => ((kind ||= label), true));
+    const kindOf = (edit: () => { changed: boolean }) => {
+      kind = '';
+      expect(edit().changed).toBe(true);
+      return kind;
+    };
+    expect([
+      kindOf(() => cmd.setBlocksPart(store, p.arrangement.blocks.slice(0, 2).map((b) => b.id), 't1', null)),
+      kindOf(() => cmd.setBlocksPart(store, [p.arrangement.blocks[0].id], 't3', p.scenes[2].id)),
+      kindOf(() => cmd.setPartEverywhere(store, 't3', false)),
+      kindOf(() => cmd.setPartEverywhere(store, 't3', true)),
+      kindOf(() => cmd.toggleBlockMove(store, p.arrangement.blocks[0].id, 'echoThrow')),
+    ]).toEqual(['arrange:Change part in blocks', 'arrange:Change part in blocks', 'arrange:Change part everywhere', 'arrange:Change part everywhere', 'arrange:Change song moves']);
+    expect(store.undoLabel()).toBe('Add Echo throw');
   });
 
   it('is refused while a take records', () => {
@@ -167,6 +189,40 @@ describe('make song blocks from a take', () => {
       { sceneId: p.scenes[0].id, repeats: 1 },
     ]);
     expect(plan.rounded).toBe(false);
+  });
+
+  it('leaves out a scene deleted since the take, never playing the scene now in its row, and says so', () => {
+    const p = HOUSE.build();
+    p.performances.push({
+      id: 'perf_l',
+      name: 'L',
+      createdAt: 0,
+      startTick: 0,
+      endTick: 16 * BAR,
+      snapshot: makeSnapshot(p, [], 0),
+      events: [
+        { t: 0, type: 'scene', row: 2, atTick: 0 },
+        { t: 1, type: 'scene', row: 1, atTick: 8 * BAR },
+      ],
+    } as Performance);
+    const store = new ProjectStore(p);
+    const [lift, brk, groove] = [p.scenes[2], p.scenes[3], p.scenes[1]];
+    expect(cmd.takeToBlocks(store.getState(), 'perf_l')!.blocks[0].sceneId).toBe(lift.id);
+    expect(lift.name).toBe('Lift');
+    // Lift is deleted: Break moves up into its row.
+    deleteScene(store, 2, { removeBlocks: true });
+    const plan = cmd.takeToBlocks(store.getState(), 'perf_l')!;
+    expect(plan.blocks.some((b) => b.sceneId === brk.id || Object.values(b.parts ?? {}).includes(brk.id))).toBe(false);
+    expect(plan.blocks.map((b) => b.sceneId)).toEqual(Array(plan.blocks.length).fill(groove.id));
+    expect(plan.deletedScenes).toEqual(['Lift']);
+    const r = cmd.makeSongFromTake(store, 'perf_l', { mode: 'replace' });
+    expect(r).toMatchObject({ changed: true, deletedScenes: ['Lift'] });
+    valid(store.getState());
+    // A take that played only deleted scenes makes nothing, and says why.
+    store.apply('performance:Edit', (d) => {
+      d.performances[0].events = [{ t: 0, type: 'scene', row: 2, atTick: 0 }];
+    });
+    expect(cmd.makeSongFromTake(store, 'perf_l', { mode: 'append' })).toMatchObject({ changed: false, deletedScenes: ['Lift'], message: expect.stringContaining('Lift') });
   });
 
   it('is refused while a take records', () => {

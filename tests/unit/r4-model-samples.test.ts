@@ -11,6 +11,7 @@ import type { Project, SampleMeta, SamplerInstrument } from '../../src/project/t
 import { validateProject } from '../../src/project/validate';
 import { ProjectStore } from '../../src/state/projectStore';
 import { setClipSampleRegion } from '../../src/state/commands/clips';
+import { setInstrumentParam } from '../../src/state/commands/tracks';
 import {
   RECORDED_TAKE_ROOT,
   addRecordedTake,
@@ -65,10 +66,27 @@ describe('recorded takes go into their own clips', () => {
     const inst = store.getState().tracks[7].instrument as SamplerInstrument;
     expect(inst.sampleId).toBe('smp_a');
     expect(inst.params).toMatchObject({ start: 0, end: 1, mode: 0, pitch: 0, sync: 0, rootNote: 60, originalBpm: 97 });
-    // A second take: the first clip has its own recording, so nothing else plays the part's: it moves on.
-    addRecordedTake(store, { trackId: 't8', meta: meta('smp_b'), slot: 3, bars: 2, bpm: 97, clipName: 'Take 2' });
-    expect((store.getState().tracks[7].instrument as SamplerInstrument).sampleId).toBe('smp_b');
-    expect(store.getState().tracks[7].clips[2]!.sample!.id).toBe('smp_a');
+    // Settings the user sets for the first take apply to every clip of the part.
+    setInstrumentParam(store, 't8', 'pitch', 5);
+    setInstrumentParam(store, 't8', 'mode', 1);
+    const tuned = store.getState().tracks[7].instrument;
+    // A second take: the first clip plays on the part, so the part keeps its recording and settings.
+    const r2 = addRecordedTake(store, { trackId: 't8', meta: meta('smp_b'), slot: 3, bars: 2, bpm: 120, clipName: 'Take 2' });
+    expect(r2).toMatchObject({ changed: true, partRecording: false });
+    const t8 = store.getState().tracks[7];
+    expect(t8.instrument).toEqual(tuned);
+    expect(t8.instrument.params).toMatchObject({ pitch: 5, mode: 1, originalBpm: 97 });
+    expect(t8.clips[2]!.sample!.id).toBe('smp_a');
+    expect(t8.clips[3]!.sample).toEqual({ id: 'smp_b', start: 0, end: 1, rootNote: RECORDED_TAKE_ROOT });
+    valid(store.getState());
+  });
+
+  it('a part whose clips are all empty still takes the next recording as its own', () => {
+    const p = createProject({ now: 0 });
+    p.tracks[7].clips[0] = createClip('Empty', 1);
+    const store = new ProjectStore(p);
+    expect(addRecordedTake(store, { trackId: 't8', meta: meta('smp_a'), slot: 1, bars: 1, bpm: 120, clipName: 'R' }).partRecording).toBe(true);
+    expect((store.getState().tracks[7].instrument as SamplerInstrument).sampleId).toBe('smp_a');
   });
 
   it('refuses lengths beyond 8 bars and slots the part does not have', () => {
@@ -155,6 +173,59 @@ describe('usage counts clips', () => {
     expect((vocal(p).instrument as SamplerInstrument).sampleId).toBe('builtin:vocal-oh');
     expect(p.samples.map((s) => s.id)).toEqual(['smp_take1b']);
     expect(addSampleVersion(store, t.id, 'smp_take1', meta('smp_x'), { label: 'Normalize recording', slot: 0 })).toMatchObject({ changed: false, reason: 'invalid' });
+  });
+
+  /** A part whose own recording is take 1, which its clip also plays itself. */
+  function partTake() {
+    const store = new ProjectStore(createProject({ now: 0 }));
+    expect(addRecordedTake(store, { trackId: 't8', meta: meta('smp_a'), slot: 0, bars: 1, bpm: 120, clipName: 'Recording 1' }).partRecording).toBe(true);
+    return store;
+  }
+
+  it('a new version of the part’s recording moves the part’s clips that play it onto the version too (the edit is heard there)', () => {
+    const store = partTake();
+    expect(addSampleVersion(store, 't8', 'smp_a', meta('smp_b'), { label: 'Normalize recording' }).changed).toBe(true);
+    const p = store.getState();
+    expect((p.tracks[7].instrument as SamplerInstrument).sampleId).toBe('smp_b');
+    expect(p.tracks[7].clips[0]!.sample).toEqual({ id: 'smp_b', start: 0, end: 1, rootNote: RECORDED_TAKE_ROOT });
+    expect(p.samples.map((s) => s.id)).toEqual(['smp_b']);
+    valid(p);
+    store.undo();
+    expect(store.getState().tracks[7].clips[0]!.sample!.id).toBe('smp_a');
+    expect(store.getState().samples.map((s) => s.id)).toEqual(['smp_a']);
+  });
+
+  it('a crop maps a clip’s region into the kept part; a clip wholly outside it keeps the old recording, which stays in the project', () => {
+    const p0 = partTake().getState();
+    const p = JSON.parse(JSON.stringify(p0)) as Project;
+    const t = p.tracks[7];
+    (t.instrument as SamplerInstrument).params.start = 0.2;
+    (t.instrument as SamplerInstrument).params.end = 0.6;
+    t.clips[0]!.sample = { id: 'smp_a', start: 0.3, end: 0.5, rootNote: 60 };
+    t.clips[1] = { ...t.clips[0]!, id: 'clip_out', name: 'Outside', sample: { id: 'smp_a', start: 0.7, end: 0.9, rootNote: 60 } };
+    const store = new ProjectStore(p);
+    // Crop keeps 0.2..0.6 of the old recording: the new file plays whole.
+    expect(addSampleVersion(store, 't8', 'smp_a', meta('smp_c'), { label: 'Crop recording', region: { start: 0, end: 1 } }).changed).toBe(true);
+    const q = store.getState();
+    const [inside, outside] = q.tracks[7].clips;
+    expect(inside!.sample!.id).toBe('smp_c');
+    expect(inside!.sample!.start).toBeCloseTo(0.25, 9);
+    expect(inside!.sample!.end).toBeCloseTo(0.75, 9);
+    expect(outside!.sample).toEqual({ id: 'smp_a', start: 0.7, end: 0.9, rootNote: 60 });
+    expect((q.tracks[7].instrument as SamplerInstrument).params).toMatchObject({ start: 0, end: 1 });
+    // The old recording still plays in a clip: it is kept.
+    expect(q.samples.map((s) => s.id)).toEqual(['smp_a', 'smp_c']);
+    valid(q);
+  });
+
+  it('a version of one clip’s recording keeps the old one while the part (or another clip) still plays it', () => {
+    const store = partTake();
+    expect(addSampleVersion(store, 't8', 'smp_a', meta('smp_d'), { label: 'Reverse recording', slot: 0 }).changed).toBe(true);
+    const p = store.getState();
+    expect(p.tracks[7].clips[0]!.sample!.id).toBe('smp_d');
+    expect((p.tracks[7].instrument as SamplerInstrument).sampleId).toBe('smp_a');
+    expect(p.samples.map((s) => s.id)).toEqual(['smp_a', 'smp_d']);
+    valid(p);
   });
 });
 

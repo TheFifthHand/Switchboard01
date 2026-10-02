@@ -10,7 +10,7 @@ import { SAMPLER_PARAMS, clampParam, specById } from '../../project/params';
 import { MAX_CLIP_BARS, TICKS_PER_BAR, type Clip, type ClipBars, type ClipSample, type Id, type Note, type Project, type Track, type VariationInfo } from '../../project/types';
 import { VALIDATION_LIMITS, sanitizeClip } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
-import { NOT_FOUND, clipAt, cleanName, draftClip, draftTrack, findTrack, isFiniteNumber, isSlot, refuse, run, type CommandResult } from './common';
+import { NOT_FOUND, clipAt, cleanName, deepEqual, draftClip, draftTrack, findTrack, isFiniteNumber, isSlot, refuse, run, type CommandResult } from './common';
 
 /** Clips are 1 to MAX_CLIP_BARS (8) bars. */
 export function isClipBars(bars: number): bars is ClipBars {
@@ -108,19 +108,20 @@ export function repeatClipToBars(store: ProjectStore, trackId: Id, slot: number,
     for (const n of reIdNotes(clip.notes.filter((x) => x.tick < room))) copies.push({ ...n, tick: n.tick + start });
   }
   if (clip.notes.length + copies.length > VALIDATION_LIMITS.maxNotesPerClip) return refuse('limit', 'The clip would have too many notes.');
-  return run(store, `clip:Repeat clip to ${bars} bars`, (d) => {
+  return run(store, 'clip:Repeat clip', (d) => {
     const c = draftClip(d, trackId, slot);
     c.bars = bars;
     c.notes.push(...copies);
-  });
+  }, undefined, { display: `Repeat clip to ${bars} bars` });
 }
 
 /**
- * Replace a clip's notes in one undo step called `label` (for example
- * Variation's "Back to original"). The notes are checked like a pasted clip
- * (inside the clip, playable by the part; ids kept when unique), and the clip
- * keeps its length. `opts.variation` sets the clip's Variation information
- * (null removes it); left out, it is kept.
+ * Replace a clip's notes in one undo step that Undo calls `label` (for
+ * example Variation's "Back to original"). The notes are checked like a
+ * pasted clip (inside the clip, playable by the part; ids kept when unique),
+ * and the clip keeps its length. `opts.variation` sets the clip's Variation
+ * information (null removes it); left out, it is kept. Notes and Variation
+ * information that are already the clip's change nothing and leave no step.
  */
 export function setClipNotes(
   store: ProjectStore,
@@ -143,12 +144,14 @@ export function setClipNotes(
   if (variation && !(isFiniteNumber(variation.seed) && Number.isInteger(variation.generation) && variation.generation >= 0)) {
     return refuse('invalid', 'The Variation information is not valid.');
   }
-  return run(store, `clip:${words}`, (d) => {
+  const nextVariation = variation === undefined ? clip.variation : (variation ?? undefined);
+  if (deepEqual(clean.notes, clip.notes) && deepEqual(nextVariation, clip.variation)) return { changed: false };
+  return run(store, 'clip:Replace notes', (d) => {
     const c = draftClip(d, trackId, slot);
     c.notes = clean.notes;
     if (variation === null) delete c.variation;
     else if (variation) c.variation = { seed: variation.seed, generation: variation.generation };
-  });
+  }, undefined, { display: words });
 }
 
 /* ------------------------------------------------------------------ */

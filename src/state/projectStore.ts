@@ -196,8 +196,12 @@ export class ProjectStore implements ReadableStore<Project> {
   private redoStack: HistoryEntry[] = [];
   /** Gesture of the most recent recorded apply; cleared by anything that ends the gesture. */
   private openGesture: string | null = null;
-  /** Open undo group: its label, the state it began from, and its history entry once something was recorded. */
-  private group: { label: string; entry: HistoryEntry | null; base: Project } | null = null;
+  /**
+   * Open undo group: its label, and once something was recorded its history
+   * entry and the state just before that entry (an undo inside the group can
+   * drop the entry; the next edit then starts a new one from where it is).
+   */
+  private group: { label: string; entry: HistoryEntry | null; base: Project | null } | null = null;
   private lock: string | null = null;
   /** While locked: which edits are still allowed (default: everything except routing edits). */
   private lockAllows: ((label: string) => boolean) | null = null;
@@ -268,7 +272,10 @@ export class ProjectStore implements ReadableStore<Project> {
         if (opts.display !== undefined && !this.group) entry.display = opts.display;
         if (opts.gesture !== undefined && !this.group) entry.base = base;
         this.undoStack.push(entry);
-        if (this.group) this.group.entry = entry;
+        if (this.group) {
+          this.group.entry = entry;
+          this.group.base = base;
+        }
         entryId = entry.id;
         if (this.undoStack.length > this.limit) this.undoStack.splice(0, this.undoStack.length - this.limit);
       }
@@ -303,20 +310,20 @@ export class ProjectStore implements ReadableStore<Project> {
    */
   beginGroup(label: string): void {
     if (this.group) this.endGroup();
-    this.group = { label, entry: null, base: this.store.getState() };
+    this.group = { label, entry: null, base: null };
     this.openGesture = null;
   }
 
   /**
-   * Close the undo group. A group whose edits ended where it began (sounds
-   * tried, then Cancel back to the original) leaves no step, so Undo stays
-   * on the edit before it. Returns whether the group left an undo step.
+   * Close the undo group. A group step whose edits ended where the step began
+   * (sounds tried, then Cancel back to the original) is dropped, so Undo
+   * stays on the edit before it. Returns whether the group left an undo step.
    */
   endGroup(): { step: boolean } {
     const g = this.group;
     this.group = null;
     this.openGesture = null;
-    if (!g || !g.entry) return { step: false };
+    if (!g || !g.entry || !g.base) return { step: false };
     const top = this.undoStack[this.undoStack.length - 1];
     if (top !== g.entry) return { step: false };
     if (netUnchanged(top, g.base, this.store.getState())) {

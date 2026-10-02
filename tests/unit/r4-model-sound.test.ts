@@ -92,6 +92,23 @@ describe('a part’s sound, saved and restored', () => {
     expect(store.historySize().undo).toBe(steps);
     expect(store.undoLabel()).toBe('Change Tone');
   });
+
+  it('a group that ends where it started is compared with the state when its step began (an Undo inside it counts)', () => {
+    const store = new ProjectStore(HOUSE.build());
+    setMacro(store, 't4', 'tone', 0.2);
+    setMacro(store, 't4', 'tone', 0.9);
+    store.beginGroup('Change sound');
+    // Undo inside the open group, then the same move again: a real step from 0.2 to 0.9.
+    store.undo();
+    setMacro(store, 't4', 'tone', 0.9);
+    expect(store.endGroup()).toEqual({ step: true });
+    expect(chords(store.getState()).macros.tone).toBe(0.9);
+    store.undo();
+    expect(chords(store.getState()).macros.tone).toBe(0.2);
+    // A group with nothing recorded leaves no step.
+    store.beginGroup('Change sound');
+    expect(store.endGroup()).toEqual({ step: false });
+  });
 });
 
 describe('designed values (where double-click returns)', () => {
