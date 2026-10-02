@@ -15,11 +15,15 @@
  *   below the menu; while a modal dialog is open (`body[data-modal-open]`, set
  *   by Dialog) its action keys are hidden. Both measures must be set on
  *   `document.documentElement`: toasts render into body, outside the app tree.
+ *   Any visible element marked `data-toast-avoid` in the lower half of the
+ *   window, under the stack's column (a view's bottom action bar, say), lifts
+ *   the stack above it too; it is measured whenever the stack changes and on
+ *   resize, so views only mark the element.
  *
  * Tone is shown by an icon and wording, not colour alone: coral marks
  * warnings and errors (attention); info/success are neutral.
  */
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon, type IconName } from './Icon';
 import styles from './Toast.module.css';
@@ -139,11 +143,27 @@ export function ToastProvider({ children, max = 4 }: ToastProviderProps) {
 
   const api = useMemo<ToastApi>(() => ({ show, dismiss, clear }), [show, dismiss, clear]);
 
+  // Lift the stack above bottom bars that toasts must not cover ([data-toast-avoid]).
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const showing = toasts.length > 0;
+  useLayoutEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    if (!showing) {
+      el.style.removeProperty('--toast-avoid-h');
+      return;
+    }
+    const place = () => el.style.setProperty('--toast-avoid-h', `${avoidHeight()}px`);
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  }, [showing, toasts]);
+
   return (
     <ToastContext.Provider value={api}>
       {children}
       {createPortal(
-        <div className={styles.viewport} aria-live="polite" aria-relevant="additions text">
+        <div ref={viewportRef} className={styles.viewport} aria-live="polite" aria-relevant="additions text">
           {toasts.map((t) => (
             <ToastItem key={t.id} toast={t} onDismiss={() => dismiss(t.id)} />
           ))}
@@ -152,6 +172,28 @@ export function ToastProvider({ children, max = 4 }: ToastProviderProps) {
       )}
     </ToastContext.Provider>
   );
+}
+
+/**
+ * How far from the window's bottom the stack must sit to clear every visible
+ * `[data-toast-avoid]` element in the lower half of the window that shares the
+ * stack's centred column (at most 60 % of the window's height).
+ */
+function avoidHeight(): number {
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+  const half = Math.min(520, vw - 32) / 2;
+  const left = vw / 2 - half;
+  const right = vw / 2 + half;
+  let lift = 0;
+  for (const el of document.querySelectorAll<HTMLElement>('[data-toast-avoid]')) {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    if (r.bottom < vh / 2 || r.top >= vh) continue;
+    if (r.right <= left || r.left >= right) continue;
+    lift = Math.max(lift, vh - r.top);
+  }
+  return Math.round(Math.min(lift, vh * 0.6));
 }
 
 /** Toast API from the nearest ToastProvider. */

@@ -123,6 +123,8 @@
  *   so an open menu is never covered and the toast keeps its Undo;
  * - both measures must be set on document.documentElement (:root): the toasts render into body,
  *   outside the app's own tree, so a value set on an app element would never reach them;
+ * - they also clear any bottom bar marked [data-toast-avoid] (the provider measures it into
+ *   --toast-avoid-h on the stack);
  * - while a modal dialog is open (body[data-modal-open]) their action keys hide: an Undo must not
  *   change the project under a dialog (an export, for one). Ctrl+Z still works where it applies.
  * The region passes the pointer through; only the cards take it.
@@ -130,7 +132,7 @@
 .viewport {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--keyboard-h, 0px) + 12px);
+  bottom: calc(max(var(--keyboard-h, 0px), var(--toast-avoid-h, 0px)) + 12px);
   z-index: 950;
   display: flex;
   flex-direction: column;
