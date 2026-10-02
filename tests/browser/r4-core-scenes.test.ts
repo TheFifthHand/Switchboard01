@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { Session } from '../../src/app/session';
+import { getStarter } from '../../src/content/starters';
 import { createClip, createProject } from '../../src/project/factory';
 import type { Id, Project } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
@@ -164,5 +165,48 @@ describe('scene rows inserted while the song plays', () => {
     expect(got.filter((n) => n.tick < 4 * BAR).every((n) => n.pitch === 1)).toBe(true);
     expect(got.filter((n) => n.tick >= 4 * BAR).every((n) => n.pitch === 2)).toBe(true);
     expect(got.length).toBeGreaterThan(4);
+  });
+});
+
+describe('chosen slots through scene edits, Undo and Redo (play review)', () => {
+  it('insert, copy and delete a row, each undone and redone: every part is back on the slot it had (Groove stays Groove)', () => {
+    // House: Intro, Groove, Lift, Break. No audio: the selections follow the project by themselves.
+    const s = new Session(getStarter('house')!.build());
+    live.push(s);
+    const chosen = (): Record<Id, number | undefined> => Object.fromEntries(s.store.getState().tracks.map((t) => [t.id, uiStore.getState().selectedSlot[t.id]]));
+    // t1–t4 on Groove (the row deleted below), t5 on Intro, t6 on Lift, t7 on Break; t8 has none chosen.
+    for (const id of ['t1', 't2', 't3', 't4']) selectSlot(id, 1);
+    selectSlot('t5', 0);
+    selectSlot('t6', 2);
+    selectSlot('t7', 3);
+    const start = chosen();
+    expect(start.t8).toBeUndefined();
+    const sceneOf = (id: Id) => s.store.getState().scenes[uiStore.getState().selectedSlot[id]!]?.name;
+
+    const steps: [string, () => boolean, Record<Id, number | undefined>][] = [
+      // A row above all of them: each moves down one, on the same clip.
+      ['insert', () => s.accepted(cmd.insertScene(s.store, 0)), { ...start, t1: 2, t2: 2, t3: 2, t4: 2, t5: 1, t6: 3, t7: 4 }],
+      // A copy of Groove goes below it: Groove's parts stay, those below move down.
+      ['copy', () => s.accepted(cmd.duplicateScene(s.store, 1)), { ...start, t6: 3, t7: 4 }],
+      // Groove deleted: its parts go to the row now there (Lift), the others stay on their clips.
+      ['delete', () => s.accepted(cmd.deleteScene(s.store, 1, { removeBlocks: true })), { ...start, t1: 1, t2: 1, t3: 1, t4: 1, t6: 1, t7: 2 }],
+    ];
+    for (const [what, edit, after] of steps) {
+      expect(edit(), what).toBe(true);
+      expect(chosen(), `${what}`).toEqual(after);
+      s.undo();
+      expect(chosen(), `${what}, undone`).toEqual(start);
+      for (const id of ['t1', 't2', 't3', 't4']) expect(sceneOf(id), `${what}, undone: ${id}`).toBe('Groove');
+      s.redo();
+      expect(chosen(), `${what}, redone`).toEqual(after);
+      s.undo();
+      expect(chosen(), `${what}, undone again`).toEqual(start);
+    }
+    // A part given another slot after the step keeps it through the Undo (on its clip).
+    expect(s.accepted(cmd.deleteScene(s.store, 1, { removeBlocks: true }))).toBe(true);
+    selectSlot('t1', 2);
+    s.undo();
+    expect(uiStore.getState().selectedSlot.t1).toBe(3);
+    expect(uiStore.getState().selectedSlot.t2).toBe(1);
   });
 });

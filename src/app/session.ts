@@ -200,6 +200,8 @@ const BULK_EDIT = /^(Variation|Subtle variation|Bold variation|Clear|Delete clip
 const SNAPSHOT_BEFORE_EVERY_MS = 2 * 60 * 1000;
 /** Shortest note Record Notes keeps (ticks; a 64th note): a tap is still a note you can see and hear. */
 const MIN_RECORDED_TICKS = 6;
+/** Undo steps of scene-row edits whose selections are remembered (the oldest go first). */
+const SCENE_SELECTIONS_KEPT = 200;
 /** Sound edits during a gesture re-schedule what is scheduled at most this often (ms). */
 const SOUND_EDIT_MS = 80;
 
@@ -242,6 +244,8 @@ export class Session {
   private exportsRunning = 0;
   /** When the last "skipped ahead" notice was shown (performance.now). */
   private lastSkipNotice = -Infinity;
+  /** Per undo step that moved scene rows: each part's selected slot before and after it (see followScenes). */
+  private readonly sceneSelections = new Map<number, { before: Record<Id, number>; after: Record<Id, number> }>();
   /** Sound edits not yet applied to what is scheduled (see noteSoundEdits), and when the last batch went. */
   private readonly soundEditsPending: { tracks: Set<Id>; beats: boolean; timer: ReturnType<typeof setTimeout> | null; at: number } = {
     tracks: new Set(),
@@ -814,24 +818,42 @@ export class Session {
    * or redone): each part's selected clip stays the same clip (an empty
    * selected pad stays on its scene; one whose scene went goes to the row
    * now there, within the scene count), and Record Notes keeps recording into
-   * its clip. Another project: selections beyond its scenes come back in range.
+   * its clip. Undo puts each part back on the slot it had before the step
+   * (a deleted row's clip comes back, and so does its selection), Redo on
+   * the one the step left it on, unless the part was given another slot
+   * since. Another project: selections beyond its scenes come back in range.
    */
   private followScenes(p: Project, prev: Project): void {
     const ui = uiStore.getState();
     const count = sceneCount(p);
     const same = p.id === prev.id;
+    if (!same) this.sceneSelections.clear();
+    const change = same ? this.store.lastChange() : null;
+    const kept = change && change.entryId !== null ? this.sceneSelections.get(change.entryId) : undefined;
+    const before: Record<Id, number> = {};
+    const after: Record<Id, number> = {};
     for (const t of p.tracks) {
       const sel = ui.selectedSlot[t.id];
       if (sel === undefined) continue;
+      before[t.id] = sel;
       let to = -1;
-      if (same) {
+      if (kept && change?.kind === 'undo' && kept.after[t.id] === sel && kept.before[t.id] !== undefined) to = kept.before[t.id];
+      else if (kept && change?.kind === 'redo' && kept.before[t.id] === sel && kept.after[t.id] !== undefined) to = kept.after[t.id];
+      else if (same) {
         const clipId = prev.tracks.find((x) => x.id === t.id)?.clips[sel]?.id;
         if (clipId) to = t.clips.findIndex((c) => c?.id === clipId);
         const sceneId = prev.scenes[sel]?.id;
         if (to < 0 && sceneId) to = p.scenes.findIndex((s) => s.id === sceneId);
       }
-      if (to < 0) to = Math.max(0, Math.min(sel, count - 1));
+      if (to < 0 || to >= count) to = Math.max(0, Math.min(to < 0 ? sel : to, count - 1));
+      after[t.id] = to;
       if (to !== sel) selectSlot(t.id, to);
+    }
+    // A new step (or more of one, merged into it): what Undo and Redo bring back.
+    if (change?.kind === 'edit' && change.entryId !== null) {
+      this.sceneSelections.delete(change.entryId);
+      this.sceneSelections.set(change.entryId, { before: kept?.before ?? before, after });
+      if (this.sceneSelections.size > SCENE_SELECTIONS_KEPT) this.sceneSelections.delete(this.sceneSelections.keys().next().value!);
     }
     const rec = this.noteRec;
     if (!rec || !same) return;
@@ -1782,11 +1804,16 @@ export class Session {
   }
 
   /**
-   * Record Notes into the selected part's selected clip (a new 2-bar clip is
-   * created in an empty slot). Starts playback if needed (with the one-bar
-   * count-in when that option is on); a selected clip that is not the one
-   * playing starts at the next bar, and recording begins there. With the
-   * part's arpeggiator on, the notes the arpeggiator plays are recorded.
+   * Record Notes into the selected part's selected clip, the one its pad
+   * ring shows (a new 2-bar clip is created in an empty slot); the ring
+   * stays where it is. Starts playback if needed (with the one-bar count-in
+   * when that option is on). On the live pads a selected clip that is not
+   * the one playing starts at the next bar, and recording begins there. In
+   * the song (playing or paused) nothing is launched: when the block playing
+   * does not play the selected clip, the notes still go into it where its
+   * loop would be, runtime.recordTargetAudible turns false and a notice says
+   * so once. With the part's arpeggiator on, the notes the arpeggiator plays
+   * are recorded.
    */
   async toggleRecordNotes(): Promise<void> {
     if (this.noteRec) {
@@ -1808,26 +1835,40 @@ export class Session {
     if (!track) return;
     const rt = runtimeStore.getState();
     const playingSlot = rt.tracks[trackId]?.playingSlot ?? null;
+    // The clip the part's ring shows (Steps, a pad tap or a scene launch choose it); a part with none
+    // chosen yet gets what the selection would give it (selection.ts defaultSlot): the clip it
+    // plays, else its first clip, else the first pad.
     const chosen = ui.selectedSlot[trackId] as number | undefined;
-    // On the live pads the clip selected on the part (Steps, a pad tap or a scene launch choose it), else the one it plays.
-    const slot = rt.mode === 'live' && chosen !== undefined ? chosen : (playingSlot ?? slotFor(ui, trackId));
+    const first = track.clips.findIndex((c) => !!c);
+    const slot = chosen ?? (playingSlot !== null && track.clips[playingSlot] ? playingSlot : first >= 0 ? first : 0);
+    const song = rt.mode === 'song';
     // The whole pass (a new clip, its notes, knob moves made meanwhile) is one undo step.
     this.store.beginGroup('Record notes');
     if (!track.clips[slot]) {
       const bars: ClipBars = track.instrument.kind === 'drums' ? 1 : 2;
       cmd.createClip(this.store, trackId, slot, bars, 'Take');
     }
-    selectSlot(trackId, slot);
+    if (chosen === undefined) selectSlot(trackId, slot);
     const seq = this.sequencer!;
+    const transport = this.transport!;
     // The clip heard now (the scheduler may already be past a switch that is not heard yet).
-    const heard = this.transport!.playing ? seq.playingAt(trackId, this.transport!.audibleTick()) : null;
-    const rec: NoteRecording = { trackId, slot, gesture: uid('rec'), added: 0, arpNotes: [], arpFlush: null, lastLoopStart: heard?.slot === slot ? heard.startTick : null, inaudibleTold: false, startsAt: null };
+    const now = transport.playing || transport.paused ? transport.audibleTick() : 0;
+    const heard = transport.playing || transport.paused ? seq.playingAt(trackId, now) : null;
+    // In the song, a selected clip this block does not play is recorded where its loop would be:
+    // from the loop start of what the part plays here (the block's start), else from the bar.
+    const silentInSong = song && (transport.playing || transport.paused) && heard?.slot !== slot;
+    const lastLoopStart = heard?.slot === slot ? heard.startTick : silentInSong ? (heard?.startTick ?? now - (now % TICKS_PER_BAR)) : null;
+    const rec: NoteRecording = { trackId, slot, gesture: uid('rec'), added: 0, arpNotes: [], arpFlush: null, lastLoopStart, inaudibleTold: false, startsAt: null };
     this.noteRec = rec;
     patchRuntime({ recording: 'notes', recordTarget: { trackId, slot }, recordTargetAudible: true, recordStartsAtTick: null });
+    if (silentInSong) this.recordTargetSilent(rec);
     const seqState = seq.getTrackState(trackId);
     // Where recording starts when it waits for it: the clip's launch at the next bar, or bar 1 after a count-in.
     let startsAt: number | null = null;
-    if (this.transport!.paused) {
+    if (song && (transport.playing || transport.paused)) {
+      // The song decides what plays: nothing is launched (see silentInSong).
+      if (transport.paused) this.resumeFromPause();
+    } else if (this.transport!.paused) {
       // Paused: playback continues from the pause (no count-in); another clip starts at the next bar.
       if (seqState.playing?.slot !== slot) startsAt = this.transport!.launchClip(trackId, slot).atTick;
       this.resumeFromPause();
