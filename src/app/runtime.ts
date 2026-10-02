@@ -56,6 +56,20 @@ export interface RuntimeState {
   held: Record<Id, readonly number[]>;
   /** One-line status message shown as a toast (e.g. "Variation: 5 notes changed" [Undo]). */
   notice: Notice | null;
+  /**
+   * Record Notes is waiting for its clip to start (the next bar, or the end
+   * of the count-in): the transport tick recording starts at, so the
+   * transport can count the beats down; null (or absent) when not waiting.
+   */
+  recordStartsAtTick?: number | null;
+  /**
+   * Record Notes in the song: false while the song plays a block that does
+   * not play the clip being recorded into (notes still go into it). True
+   * (or absent) otherwise.
+   */
+  recordTargetAudible?: boolean;
+  /** The project the last starter (Jump In, a new project) replaced on screen; it stays in My projects. Null (or absent): none. */
+  starterReplaced?: { id: Id; name: string } | null;
 }
 
 /** What a notice's button does: Undo (or Redo) the history step the message is about. */
@@ -96,6 +110,9 @@ export const runtimeStore = createStore<RuntimeState>({
   preview: false,
   held: {},
   notice: null,
+  recordStartsAtTick: null,
+  recordTargetAudible: true,
+  starterReplaced: null,
 });
 
 export function patchRuntime(partial: Partial<RuntimeState>): void {

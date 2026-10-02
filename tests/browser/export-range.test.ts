@@ -1,14 +1,14 @@
 /**
  * Exporting the song loop (the looped blocks once, with the tail) through the
- * real session and engine: the WAV is as long as the loop's bars plus the
- * tail, and its music is what the song render has over those blocks.
+ * real session and engine: the WAV is exactly as long as the loop's bars plus
+ * the tail (an export starts on the music's first downbeat, MIX-04), and its
+ * music is what the song render has over those blocks.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Session } from '../../src/app/session';
 import { createClip, createProject } from '../../src/project/factory';
 import type { Clip, ClipBars, Id, Project } from '../../src/project/types';
 import { rms } from '../../src/render/analysis';
-import { RENDER_START_OFFSET } from '../../src/render/offline';
 import { parseWav } from '../../src/render/wav';
 import { deleteDb } from '../../src/persistence/db';
 
@@ -58,15 +58,15 @@ describe('Export: the loop', () => {
     // Loop b1..b2: 3 bars at 120 BPM = 6 s, from 2 s into the song.
     const loop = await wav(s, { kind: 'songRange', fromBlockId: 'b1', toBlockId: 'b2' }, 1.5);
     expect(loop.sampleRate).toBe(SR);
-    expect(loop.channels[0].length).toBe(Math.ceil((RENDER_START_OFFSET + 6 + 1.5) * SR));
+    expect(loop.channels[0].length).toBe(Math.round((6 + 1.5) * SR));
     const song = await wav(s, { kind: 'song' }, 1.5);
-    expect(song.channels[0].length).toBe(Math.ceil((RENDER_START_OFFSET + 10 + 1.5) * SR));
+    expect(song.channels[0].length).toBe(Math.round((10 + 1.5) * SR));
     // Bar by bar (each 2 s), the loop file and the song file sound the same: same level, and their
     // difference is small next to the music (24-bit files of the same engine and notes).
     for (let bar = 0; bar < 3; bar++) {
       for (const ch of [0, 1]) {
-        const a = loop.channels[ch].subarray(Math.round((RENDER_START_OFFSET + bar * 2) * SR), Math.round((RENDER_START_OFFSET + bar * 2 + 2) * SR));
-        const off = Math.round((RENDER_START_OFFSET + 2 + bar * 2) * SR);
+        const a = loop.channels[ch].subarray(Math.round(bar * 2 * SR), Math.round((bar * 2 + 2) * SR));
+        const off = Math.round((2 + bar * 2) * SR);
         const b = song.channels[ch].subarray(off, off + a.length);
         const d = new Float32Array(a.length);
         for (let i = 0; i < a.length; i++) d[i] = a[i] - b[i];
@@ -77,8 +77,8 @@ describe('Export: the loop', () => {
       }
     }
     // After the loop's last block nothing new starts: the tail only rings out.
-    const tail = loop.channels[0].subarray(Math.round((RENDER_START_OFFSET + 6.5) * SR));
-    const songNext = song.channels[0].subarray(Math.round((RENDER_START_OFFSET + 8.0) * SR), Math.round((RENDER_START_OFFSET + 8.5) * SR));
+    const tail = loop.channels[0].subarray(Math.round(6.5 * SR));
+    const songNext = song.channels[0].subarray(Math.round(8.0 * SR), Math.round(8.5 * SR));
     expect(rms(tail)).toBeLessThan(rms(songNext) * 0.05);
   });
 });

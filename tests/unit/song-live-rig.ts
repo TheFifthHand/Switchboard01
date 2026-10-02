@@ -1,7 +1,7 @@
 /**
  * Shared driver for the song playback tests (song-live*.test.ts,
  * song-loop*.test.ts): runs a Sequencer the way RealtimeTransport and the
- * session do (25 ms ticker, 120 ms look-ahead, cancel-and-regenerate on every
+ * session do (25 ms ticker, the transport's look-ahead, cancel-and-regenerate on every
  * change; on an edit, clips and scenes that moved are followed first, the
  * song loop follows the edit, then the song is replanned when its signature
  * or the loop changed) and records everything it hands out.
@@ -13,11 +13,12 @@ import { ProjectStore } from '../../src/state/projectStore';
 import type { SeqEvent, SongLoop, StartOptions } from '../../src/time/contracts';
 import { Sequencer, songBlocks, songSignature, type NoteCut, type NoteEvent, type SongBlockPlan } from '../../src/time/sequencer';
 import { SongLoopHistory, sameSongLoop, songLoopRange } from '../../src/time/songLoop';
+import { DEFAULT_LOOKAHEAD } from '../../src/time/transport';
 import { makeClip, makeProject, notesOf, ofKind, setClip } from './sequencer-fixtures';
 
 export const BAR = 384;
 export const BEAT = 96;
-const LOOKAHEAD = 0.12;
+const LOOKAHEAD = DEFAULT_LOOKAHEAD;
 const TICKER = 0.025;
 /** INVALIDATE_MARGIN: live edits take effect this far ahead of the audio clock. */
 export const MARGIN = 0.01;

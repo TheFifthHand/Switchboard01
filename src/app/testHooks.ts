@@ -24,5 +24,7 @@ export function installTestHooks(): void {
     },
     audioState: () => session.ctx?.state ?? 'none',
     position: () => session.transport?.getPosition() ?? null,
+    /** The position heard now (behind `position` by the output delay). */
+    audiblePosition: () => session.transport?.getAudiblePosition() ?? null,
   };
 }

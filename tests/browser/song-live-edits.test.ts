@@ -92,19 +92,42 @@ afterEach(async () => {
   await deleteDb();
 });
 
-/** A session playing `p` as a song, with every note it schedules recorded (transport tick, part). */
+/**
+ * A session playing `p` as a song, with every note it schedules and does not
+ * cancel recorded (transport tick, part): what is heard. Notes scheduled
+ * ahead (up to a second while the transport is braced) and cancelled by an
+ * edit or a pause before they start never sound, so they are left out.
+ */
 async function playing(p: Project): Promise<{ s: Session; notes: { tick: number; trackId: Id }[] }> {
   const s = new Session(p);
   live.push(s);
   expect(await s.startAudio()).toBe(true);
-  const notes: { tick: number; trackId: Id }[] = [];
+  const all: { tick: number; trackId: Id; cancelled: boolean }[] = [];
   const engine = s.engine!;
   const schedule = engine.scheduleNote.bind(engine);
   engine.scheduleNote = (trackId, n) => {
-    notes.push({ tick: Math.round(s.sequencer!.tickAt(n.time)), trackId });
-    return schedule(trackId, n);
+    const entry = { tick: Math.round(s.sequencer!.tickAt(n.time)), trackId, cancelled: false };
+    all.push(entry);
+    const h = schedule(trackId, n);
+    if (h) {
+      const cancel = h.cancel.bind(h);
+      Object.defineProperty(h, 'cancel', {
+        value: () => {
+          entry.cancelled = true;
+          cancel();
+        },
+      });
+    }
+    return h;
   };
   await s.playSong(0);
+  const notes = new Proxy([] as { tick: number; trackId: Id }[], {
+    get: (_t, k) => {
+      const heard = all.filter((n) => !n.cancelled);
+      const v = (heard as unknown as Record<string | symbol, unknown>)[k];
+      return typeof v === 'function' ? v.bind(heard) : v;
+    },
+  });
   return { s, notes };
 }
 

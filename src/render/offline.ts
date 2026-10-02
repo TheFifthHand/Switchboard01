@@ -7,8 +7,18 @@
  * look-ahead, progress is reported and cancellation is checked. All engine
  * calls happen at fixed render positions, so rendering the same request twice
  * gives bit-identical output (given a deterministic engine).
+ *
+ * Exports (`align`): the music starts RENDER_START_OFFSET into the render and
+ * every sound leaves the engine its output latency later (the limiter's
+ * look-ahead and the module latency every audible part has). Both are cut
+ * from the start, and as much more is rendered at the end, so musical time 0
+ * is sample 0 and the file is exactly the music plus the tail: a one-bar loop
+ * export repeats cleanly in another app. `mastering: false` renders with the
+ * project's mastering chain off; the output limiter and its ceiling stay.
  */
 import type { AudioEngineApi } from '../audio/contracts';
+import { truePeakKernels } from '../audio/worklets/loudness';
+import { engineLatencyFrames } from '../audio/worklets/limiter';
 import { TICKS_PER_BAR, type Id, type LauncherSnapshotEntry, type PerformanceEvent, type Project } from '../project/types';
 import { TempoMap, clampBpm, ticksToSeconds } from '../time/clock';
 import type { StartOptions } from '../time/contracts';
@@ -16,6 +26,7 @@ import { Sequencer, songBlocks, songLengthTicks } from '../time/sequencer';
 import { songLoopRange } from '../time/songLoop';
 import { projectFromSnapshot } from '../time/snapshot';
 import { EngineDispatcher } from '../time/transport';
+import { measureLoudness } from './loudness';
 
 export type RenderSource =
   | { kind: 'song' }
@@ -41,6 +52,15 @@ export interface RenderRequest {
   onProgress?: (fraction: number) => void;
   /** Seconds rendered between scheduling passes (default 1). */
   chunkSeconds?: number;
+  /**
+   * An export: the start offset and the engine's output latency are cut from
+   * the start (and rendered extra at the end), so musical time 0 is sample 0
+   * and the buffer is exactly `fileSeconds` long. Default false: the raw
+   * render (`totalSeconds`, the music starting RENDER_START_OFFSET in).
+   */
+  align?: boolean;
+  /** False: render with the project's mastering off (the limiter and ceiling stay). Default true. */
+  mastering?: boolean;
 }
 
 export interface RenderPlan {
@@ -48,6 +68,8 @@ export interface RenderPlan {
   musicSeconds: number;
   /** Rendered length: start offset + music + tail. */
   totalSeconds: number;
+  /** Length of an exported file (an aligned render): music + tail. */
+  fileSeconds: number;
   startTick: number;
   endTick: number;
 }
@@ -111,7 +133,7 @@ export function computeRenderPlan(project: Project, source: RenderSource, tailSe
       musicSeconds = ticksToSeconds(endTick, bpm);
       break;
   }
-  return { musicSeconds, totalSeconds: RENDER_START_OFFSET + musicSeconds + tail, startTick, endTick };
+  return { musicSeconds, totalSeconds: RENDER_START_OFFSET + musicSeconds + tail, fileSeconds: musicSeconds + tail, startTick, endTick };
 }
 
 function abortError(): Error {
@@ -212,9 +234,12 @@ export async function renderOffline(req: RenderRequest): Promise<AudioBuffer> {
   const plan = computeRenderPlan(project, source, req.tailSeconds);
   const sampleRate = req.sampleRate;
   const chunk = Math.max(QUANTUM / sampleRate, Number.isFinite(req.chunkSeconds) && req.chunkSeconds! > 0 ? req.chunkSeconds! : 1);
-  const total = plan.totalSeconds;
+  const align = !!req.align;
+  // An export renders as much more at the end as it cuts from the start (at most the engine's whole latency).
+  const extraFrames = align ? engineLatencyFrames(sampleRate) + 1 : 0;
+  const total = plan.totalSeconds + extraFrames / sampleRate;
 
-  const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil(total * sampleRate)), sampleRate);
+  const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil(plan.totalSeconds * sampleRate) + extraFrames), sampleRate);
   const engine = await req.createEngine(ctx);
   let disposed = false;
   const disposeEngine = (): void => {
@@ -243,7 +268,8 @@ export async function renderOffline(req: RenderRequest): Promise<AudioBuffer> {
     }
   };
   try {
-    const playProject = source.kind === 'performance' ? projectFromSnapshot(project, findPerformance(project, source.performanceId).snapshot) : project;
+    let playProject = source.kind === 'performance' ? projectFromSnapshot(project, findPerformance(project, source.performanceId).snapshot) : project;
+    if (req.mastering === false && playProject.mastering?.enabled) playProject = { ...playProject, mastering: { ...playProject.mastering, enabled: false } };
     engine.setProject(playProject);
 
     const dispatcher = new EngineDispatcher({
@@ -306,9 +332,13 @@ export async function renderOffline(req: RenderRequest): Promise<AudioBuffer> {
       throw err;
     },
   );
+  // What the export cuts from the start: the start offset plus the output latency of this project's engine.
+  const latency = (engine as AudioEngineApi & { outputLatencyFrames?: () => number }).outputLatencyFrames?.() ?? engineLatencyFrames(sampleRate);
+  const cut = Math.round(RENDER_START_OFFSET * sampleRate) + Math.max(0, Math.min(engineLatencyFrames(sampleRate), Math.round(latency)));
   try {
-    const buffer = await Promise.race([rendering, abortPromise]);
+    const rendered = await Promise.race([rendering, abortPromise]);
     if (scheduler.errors.length) throw scheduler.errors[0];
+    const buffer = align ? trimStart(rendered, cut, Math.max(1, Math.round(plan.fileSeconds * sampleRate))) : rendered;
     progress(1);
     return buffer;
   } catch (err) {
@@ -319,4 +349,82 @@ export async function renderOffline(req: RenderRequest): Promise<AudioBuffer> {
   } finally {
     if (signal && onAbort) signal.removeEventListener('abort', onAbort);
   }
+}
+
+/** `length` frames of `buf` from frame `start` (silence past its end). */
+function trimStart(buf: AudioBuffer, start: number, length: number): AudioBuffer {
+  const out = new AudioBuffer({ numberOfChannels: buf.numberOfChannels, length, sampleRate: buf.sampleRate });
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    const src = buf.getChannelData(ch);
+    out.copyToChannel(src.subarray(Math.min(start, src.length), Math.min(src.length, start + length)), ch);
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Loudness report                                                     */
+/* ------------------------------------------------------------------ */
+
+export interface ExportReport {
+  /** Gated integrated loudness, LUFS (−Infinity for silence). */
+  integratedLufs: number;
+  /** Highest true peak, dBTP (4× oversampled, the meter's kernels). */
+  truePeakDb: number;
+  /** Highest sample peak, dBFS. */
+  samplePeakDb: number;
+  /** Length in seconds. */
+  seconds: number;
+}
+
+/**
+ * Loudness of a rendered export (render/loudness: BS.1770 integrated
+ * loudness, sample and true peak). The true peak is searched only around
+ * samples loud enough to make an interpolated point exceed the sample peak
+ * (exact: no interpolated value can exceed Σ|kernel| times its loudest
+ * neighbour), yielding to the main thread between slices of a long song.
+ */
+export async function measureExport(buffer: AudioBuffer, opts: { sliceFrames?: number } = {}): Promise<ExportReport> {
+  const L = buffer.getChannelData(0);
+  const R = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : null;
+  const m = measureLoudness(L, R, buffer.sampleRate, { truePeak: false });
+  const sp = m.samplePeakDb > -Infinity ? Math.pow(10, m.samplePeakDb / 20) : 0;
+  let tp = sp;
+  if (sp > 0) {
+    const kernels = truePeakKernels().map((k) => Float64Array.from(k));
+    const len = kernels[0].length;
+    const half = len / 2;
+    let bound = 0;
+    for (const k of kernels) bound = Math.max(bound, k.reduce((a, v) => a + Math.abs(v), 0));
+    const threshold = sp / bound;
+    const slice = Math.max(4096, opts.sliceFrames ?? 1 << 18);
+    for (const x of R ? [L, R] : [L]) {
+      const n = x.length;
+      // Points between x[i] and x[i + 1], i from -1 to n - 1; window x[i - half + 1 .. i + half].
+      let done = -2;
+      for (let h = 0; h < n; h++) {
+        if (h % slice === slice - 1) await new Promise((r) => setTimeout(r, 0));
+        if (Math.abs(x[h]) < threshold) continue;
+        const last = Math.min(n - 1, h + half - 1);
+        for (let i = Math.max(done + 1, h - half); i <= last; i++) {
+          const base = i - half + 1;
+          for (const k of kernels) {
+            let v = 0;
+            for (let j = 0; j < len; j++) {
+              const idx = base + j;
+              if (idx >= 0 && idx < n) v += k[j] * x[idx];
+            }
+            const a = v < 0 ? -v : v;
+            if (a > tp) tp = a;
+          }
+        }
+        done = Math.max(done, last);
+      }
+    }
+  }
+  return {
+    integratedLufs: m.integrated,
+    truePeakDb: tp > 0 ? 20 * Math.log10(tp) : -Infinity,
+    samplePeakDb: m.samplePeakDb,
+    seconds: buffer.length / buffer.sampleRate,
+  };
 }

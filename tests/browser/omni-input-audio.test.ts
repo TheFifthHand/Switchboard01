@@ -190,7 +190,7 @@ describe('Recording a take', () => {
     const before = s.store.getState();
     const res = await c.record('t8');
     expect(res.ok, res.message).toBe(true);
-    expect(res.message).toMatch(/^Recorded “Recording 1” \(1\.2 s, 1 bar\): its clip on Sampler · .* plays it from the downbeat\. Undo removes it\.$/);
+    expect(res.message).toMatch(/^Recorded 1\.2 s \(1 bar\)\. Recording 1 plays in its own clip on Sampler · .*; other clips keep their recordings\.$/);
     const p = s.store.getState();
     expect(p.samples).toHaveLength(1);
     const meta = p.samples[0];
@@ -253,7 +253,9 @@ describe('Recording a take', () => {
       playAlong(estimate + 0.03);
       const res = await p;
       expect(res.ok, res.message).toBe(true);
-      const id = (t8(s).instrument as SamplerInstrument).sampleId!;
+      // Each take plays in its own clip (Clip.sample); the second leaves the part's recording as it was.
+      const id = s.store.getState().samples.at(-1)!.id;
+      expect(t8(s).clips.some((clip) => clip?.sample?.id === id)).toBe(true);
       created.push(id);
       s.stop();
       const x = await decodeStored(s, id);
@@ -292,7 +294,7 @@ describe('Recording a take', () => {
     expect(s.transport!.getPosition().tick).toBeGreaterThanOrEqual(-8);
     const r1 = await p;
     expect(r1.ok, r1.message).toBe(true);
-    created.push((t8(s).instrument as SamplerInstrument).sampleId!);
+    created.push(s.store.getState().samples.at(-1)!.id);
     // Playing now: the next take waits for the next bar line (no count-in).
     c.setCountIn(false);
     const tick = s.transport!.getPosition().tick;
@@ -303,7 +305,7 @@ describe('Recording a take', () => {
     expect(take.startTick).toBeGreaterThan(tick);
     const r2 = await p2;
     expect(r2.ok, r2.message).toBe(true);
-    created.push((t8(s).instrument as SamplerInstrument).sampleId!);
+    created.push(s.store.getState().samples.at(-1)!.id);
     expect(s.store.getState().samples.map((x) => x.name)).toEqual(['Recording 1', 'Recording 2']);
     s.stop();
   });
@@ -327,7 +329,7 @@ describe('Recording a take', () => {
     s.stop();
     const r1 = await p1;
     expect(r1.ok, r1.message).toBe(true);
-    expect(r1.message).toMatch(/^Stopped early\. Recorded “Recording 1” \(1\.\d s, 2 bars\)/);
+    expect(r1.message).toMatch(/^Stopped early\. Recorded 1\.\d s \(2 bars\)\. Recording 1 plays in its own clip/);
     const meta = s.store.getState().samples[0];
     created.push(meta.id);
     expect(meta.duration).toBeGreaterThan(1.3);
@@ -341,7 +343,7 @@ describe('Recording a take', () => {
     track.dispatchEvent(new Event('ended'));
     const r2 = await p2;
     expect(r2.ok, r2.message).toBe(true);
-    created.push((t8(s).instrument as SamplerInstrument).sampleId!);
+    created.push(s.store.getState().samples.at(-1)!.id);
     expect(c.state.getState()).toMatchObject({ status: 'off', message: INPUT_ENDED_MESSAGE });
     // Every track the app opened is stopped.
     for (const st of mic.streams) for (const t of st.getTracks()) expect(t.readyState).toBe('ended');
