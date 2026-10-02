@@ -189,6 +189,57 @@ describe('song moves, live (the real-time transport on an AudioContext)', () => 
     }
   });
 
+  it('Pause inside a Fade out: a key played while paused is heard at full level; after Play the fade goes on where it was', async () => {
+    const p = song(coreProject(), { B: [{ id: 'f', kind: 'fadeOut' }] });
+    const ctx = new AudioContext({ sampleRate: SR });
+    await ctx.resume();
+    const { factory } = makeFactory();
+    const engine = await AudioEngine.create(ctx, { samples: { get: () => null }, seed: 7, meters: true, instrumentFactory: factory });
+    engine.setProject(p);
+    const seq = new Sequencer({ getProject: () => p });
+    const transport = new RealtimeTransport({ ctx, engine, sequencer: seq });
+    const f: MeterFrame = { masterPeakL: 0, masterPeakR: 0, masterRms: 0, limiterReductionDb: 0, tracks: [] };
+    const level = () => {
+      engine.readMeters(f);
+      return f.masterRms / (VEL * Math.SQRT1_2);
+    };
+    const wait = async (time: number) => {
+      while (ctx.currentTime < time) await new Promise((r) => setTimeout(r, 5));
+    };
+    try {
+      transport.start({ mode: { kind: 'song', fromBlock: 0 } });
+      // B fades out over song time 2..6 s: pause about a fifth of the way in.
+      await wait(seq.timeAt(0) + 2.9);
+      expect(transport.pause()).toBe(true);
+      const pausedTick = seq.getPosition(ctx.currentTime).tick;
+      expect(pausedTick).toBeGreaterThan(384);
+      expect(pausedTick).toBeLessThan(768);
+      await wait(ctx.currentTime + 0.4);
+      // A key while paused (what the session does on every live note: restoreSongGain first).
+      transport.restoreSongGain();
+      engine.liveNoteOn('t3', TONE, VEL, 'k');
+      await wait(ctx.currentTime + 0.25 + LATENCY);
+      const key = level();
+      engine.liveNoteOff('t3', 'k');
+      await wait(ctx.currentTime + 0.4);
+      expect(transport.resume()).toBe(true);
+      // The tone held at the pause does not start again; the next one (B's second bar, tick 768) sounds
+      // where the fade is by then, not at the unity the key brought back.
+      const tick = 768 + 30;
+      await wait(seq.timeAt(tick) + LATENCY);
+      const resumed = level();
+      const fade = 1 - (tick / 384 - 1) / 2;
+      console.info(`[moves] key while paused ${key.toFixed(3)}; after Play at tick ${tick}: ${resumed.toFixed(3)} (the fade: ${fade.toFixed(3)})`);
+      expect(key).toBeGreaterThan(0.9);
+      expect(resumed).toBeGreaterThan(fade - 0.08);
+      expect(resumed).toBeLessThan(fade + 0.08);
+    } finally {
+      transport.dispose();
+      engine.dispose();
+      await ctx.close();
+    }
+  });
+
   it('started in the middle of a fade (a seek), it begins at the value the fade has there', async () => {
     const p = song(coreProject(), { B: [{ id: 'f', kind: 'fadeIn' }] });
     // Bar 2 of the song = half way through B's fade in (B spans song bars 1..3).

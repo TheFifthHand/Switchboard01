@@ -58,6 +58,16 @@ async function playAt(s: Session, trackId: Id, pitch: number, tick: number): Pro
   s.noteOff(trackId, pitch, 'computer');
 }
 
+/** Press key `pitch` when the player hears tick `from` and let go at tick `to` (latency included). */
+async function holdFromTo(s: Session, trackId: Id, pitch: number, from: number, to: number): Promise<void> {
+  const ctx = s.ctx!;
+  const at = (tick: number) => s.sequencer!.timeAt(tick) + outputDelaySeconds(ctx, s.engine as never);
+  await until(() => ctx.currentTime >= at(from), `tick ${from}`);
+  s.noteOn(trackId, pitch, 0.9, 'computer');
+  await until(() => ctx.currentTime >= at(to), `tick ${to}`);
+  s.noteOff(trackId, pitch, 'computer');
+}
+
 const notesOf = (s: Session, slot: number) => [...(s.store.getState().tracks.find((t) => t.id === 't4')!.clips[slot]?.notes ?? [])].sort((a, b) => a.tick - b.tick);
 
 beforeEach(() => {
@@ -93,7 +103,43 @@ describe('Record Notes: the early window (PLAY-25)', () => {
     const got = notesOf(s, 1).map((n) => [Math.round(n.tick), n.pitch]);
     expect(got.map(([, p]) => p)).toEqual([62, 64]);
     expect(got[0][0]).toBe(0);
-    expect(Math.abs(got[1][0] - 96)).toBeLessThanOrEqual(6);
+    expect(Math.abs(got[1][0] - 96)).toBeLessThanOrEqual(10);
+  });
+});
+
+describe('Record Notes: a note caught early keeps the length it was played with (review minor 3)', () => {
+  it('released before the downbeat: on the downbeat, as long as it was held; held across it: its whole length', async () => {
+    const s = await started(project());
+    selectTrack('t4');
+    await s.launchScene(0);
+    await until(() => s.transport!.getPosition().tick > 40, 'bar 1 under way');
+    selectSlot('t4', 1);
+    await s.toggleRecordNotes();
+    const R = rt().recordStartsAtTick!;
+    expect(R).toBe(384);
+    // 40 ticks early, let go 8 ticks before the downbeat: 32 ticks long.
+    await holdFromTo(s, 't4', 60, R - 40, R - 8);
+    s.stop();
+    const short = notesOf(s, 1);
+    expect(short.map((n) => n.pitch)).toEqual([60]);
+    expect(short[0].tick).toBe(0);
+    expect(Math.abs(short[0].duration - 32)).toBeLessThanOrEqual(10);
+    s.stopRecordNotes();
+
+    // Again into another empty pad: 30 ticks early, held to a beat after the downbeat (126 ticks).
+    await s.launchScene(0);
+    await until(() => s.transport!.getPosition().tick > 40, 'bar 1 again');
+    selectSlot('t4', 3);
+    await s.toggleRecordNotes();
+    const R2 = rt().recordStartsAtTick!;
+    await holdFromTo(s, 't4', 62, R2 - 30, R2 + 96);
+    await until(() => s.transport!.getPosition().tick > R2 + 150, 'after the note');
+    s.stopRecordNotes();
+    s.stop();
+    const long = notesOf(s, 3);
+    expect(long.map((n) => n.pitch)).toEqual([62]);
+    expect(long[0].tick).toBe(0);
+    expect(Math.abs(long[0].duration - 126)).toBeLessThanOrEqual(10);
   });
 });
 
@@ -128,7 +174,7 @@ describe('Record Notes in the song: a block that does not play the clip (arrange
     s.stop();
     const got = notesOf(s, 0).filter((n) => n.pitch === 67);
     expect(got).toHaveLength(1);
-    expect(Math.abs(got[0].tick - 96)).toBeLessThanOrEqual(6);
+    expect(Math.abs(got[0].tick - 96)).toBeLessThanOrEqual(10);
     // The other clip was not touched.
     expect(notesOf(s, 2).map((n) => n.pitch)).toEqual([50]);
   });

@@ -14,12 +14,14 @@
  */
 import type { AudioEngineApi, MeterFrame } from '../audio/contracts';
 import { AudioEngine } from '../audio/engine';
+import { drumVoiceJob, quantizeDrumDecay } from '../audio/instruments/drumSynth';
+import { resolveKitId } from '../audio/instruments/kits';
 import { SampleBank } from '../audio/instruments/sampleBank';
 import { BLANK_STARTER, JUMP_IN_SCENE_ROW, JUMP_IN_STARTER_ID, STARTERS, getStarter } from '../content/starters';
 import { snapToScale } from '../music/scales';
-import { uid } from '../project/factory';
-import { BASS_PARAMS, DRUM_KIT_PARAMS, INSTRUMENT_PARAMS, POLY_PARAMS, SAMPLER_PARAMS, specById } from '../project/params';
-import { specsForModule } from '../project/resolve';
+import { moduleId, uid } from '../project/factory';
+import { BASS_PARAMS, DRUM_KIT_PARAMS, DRUM_VOICE_PARAM_SPECS, INSTRUMENT_PARAMS, POLY_PARAMS, SAMPLER_PARAMS, clampParam, readParam, specById } from '../project/params';
+import { resolveAllParams, specsForModule } from '../project/resolve';
 import {
   MACRO_IDS,
   TICKS_PER_BAR,
@@ -27,6 +29,7 @@ import {
   type ClipBars,
   type Id,
   type MacroId,
+  type MacroTarget,
   type Performance,
   type PerformanceEvent,
   type Project,
@@ -133,8 +136,10 @@ interface HeldNote {
    * pressed), so its release goes there too, whatever the arp is set to by then.
    */
   viaArp: boolean;
-  /** Transport tick when pressed (for Record Notes), or null when not recording notes. */
+  /** Where Record Notes writes the note (the downbeat for one caught early), or null when not recording notes. */
   recTick: number | null;
+  /** Transport tick when it was pressed (Record Notes measures its length from there). */
+  recPressTick: number | null;
   /** Clip start tick when recording notes. */
   recClipStart: number | null;
 }
@@ -193,6 +198,10 @@ const SKIP_NOTICE_EVERY_MS = 60_000;
  */
 const BULK_EDIT = /^(Variation|Subtle variation|Bold variation|Clear|Delete clip|Delete scene|Replace|Build up|Strip down|Breakdown|Make song blocks|Make a scene from a block|Change kit|Change sound|Change recording|Import|Move the song)/;
 const SNAPSHOT_BEFORE_EVERY_MS = 2 * 60 * 1000;
+/** Shortest note Record Notes keeps (ticks; a 64th note): a tap is still a note you can see and hear. */
+const MIN_RECORDED_TICKS = 6;
+/** Sound edits during a gesture re-schedule what is scheduled at most this often (ms). */
+const SOUND_EDIT_MS = 80;
 
 export class Session {
   readonly store: ProjectStore;
@@ -233,6 +242,13 @@ export class Session {
   private exportsRunning = 0;
   /** When the last "skipped ahead" notice was shown (performance.now). */
   private lastSkipNotice = -Infinity;
+  /** Sound edits not yet applied to what is scheduled (see noteSoundEdits), and when the last batch went. */
+  private readonly soundEditsPending: { tracks: Set<Id>; beats: boolean; timer: ReturnType<typeof setTimeout> | null; at: number } = {
+    tracks: new Set(),
+    beats: false,
+    timer: null,
+    at: -Infinity,
+  };
   /** readMetersShared: one engine read per animation frame. */
   private readonly sharedFrame: MeterFrame = { masterPeakL: 0, masterPeakR: 0, masterRms: 0, limiterReductionDb: 0, tracks: [] };
   private sharedFrameAt = -Infinity;
@@ -519,8 +535,9 @@ export class Session {
       // Mute All pressed before audio started still holds; so does an A/B comparison.
       if (runtimeStore.getState().muteAll) engine.setMuteAll(true);
       if (this.masteringBypass) engine.setMasteringBypass(true);
-      // Warm up what the clips play first, in idle slices (the page keeps painting); the rest follows.
-      await engine.prepareInstruments({ incremental: true, scope: 'used' });
+      // perf-06: what the clips play is made ready first, in short tasks that let the page paint (not
+      // in idle time, which a busy page hands out slowly); the rest of the warm-up follows in idle time.
+      await warmSounds(this.store.getState(), bank, ctx.sampleRate);
       void engine.prepareInstruments({ incremental: true });
       this.preloadClipSamples(this.store.getState());
       const sequencer = new Sequencer({ getProject: () => this.store.getState() });
@@ -670,8 +687,6 @@ export class Session {
     // The edit and selected clips follow scene rows inserted, copied, deleted or moved (undo and redo too).
     if (p.scenes !== prev.scenes || p.id !== prev.id) this.followScenes(p, prev);
     if (this.engine && !this.replayingId) {
-      // A new instrument builds nodes and warms up voices: schedule further ahead first.
-      if (this.transport && instrumentsChanged(p, prev)) this.brace();
       this.engine.setProject(p);
       if (p.masterVolumeDb !== prev.masterVolumeDb) this.engine.setMasterVolume(p.masterVolumeDb);
     }
@@ -695,7 +710,19 @@ export class Session {
       // computer, a few at 4x CPU slowdown; see docs/ARCHITECTURE.md). The replan also regenerates.
       const replanned = this.followSongEdits(p, prev, loop);
       // Song moves (fades, filter rise, echo throw) edited while the song plays: re-sent from now, in phase.
-      if (!replanned && (musicChanged(p, prev) || movesChanged(p, prev))) this.transport.invalidate();
+      const regenerated = !replanned && (musicChanged(p, prev) || movesChanged(p, prev));
+      if (regenerated) this.transport.invalidate();
+      // Everything not started was scheduled again with the engine's new settings, or a sound edit
+      // schedules again what was scheduled for the parts it changed (M1: notes take an instrument's
+      // settings when they are scheduled, up to a second ahead).
+      const newInstrument = instrumentsChanged(p, prev);
+      if (replanned || regenerated) this.dropSoundEdits();
+      else this.noteSoundEdits(soundEdits(p, prev), newInstrument);
+      // A new instrument builds nodes and warms up voices: schedule further ahead (now on the new sound).
+      if (newInstrument) {
+        this.brace();
+        this.warmNewSounds(p, prev);
+      }
     }
     // Not replanned (stopped, live pads, a replay): the sequencer keeps the loop for the next song start.
     if (this.transport && this.sequencer && !sameSongLoop(this.sequencer.songLoop, loop)) this.transport.replanSong(loop);
@@ -703,6 +730,63 @@ export class Session {
     if (p.samples !== prev.samples) void this.loadProjectSamples(p).then(() => this.preloadClipSamples(this.store.getState()));
     else if (p.tracks !== prev.tracks) this.preloadClipSamples(p);
     if (p.tracks !== prev.tracks) this.stopPartsWithoutClip(p);
+  }
+
+  /**
+   * A sound edit while music plays (sound settings, a kit or preset, Pump,
+   * the metronome): what was already scheduled is scheduled again with the
+   * new settings, for the parts it changed (transport.revoice), or every
+   * beat-timed sound with everything else when Pump or the metronome changed
+   * (transport.invalidate). During a gesture (a knob drag) at most once every
+   * SOUND_EDIT_MS: the first change at once, the rest batched. `now`: at once
+   * (a new kit or preset is a single choice).
+   */
+  private noteSoundEdits(e: { tracks: readonly Id[]; beats: boolean }, now: boolean): void {
+    if (!e.tracks.length && !e.beats) return;
+    const pending = this.soundEditsPending;
+    for (const id of e.tracks) pending.tracks.add(id);
+    pending.beats ||= e.beats;
+    const wait = pending.at + SOUND_EDIT_MS - performance.now();
+    if (now || wait <= 0) this.flushSoundEdits();
+    else pending.timer ??= setTimeout(() => this.flushSoundEdits(), wait);
+  }
+
+  private flushSoundEdits(): void {
+    const pending = this.soundEditsPending;
+    const tracks = [...pending.tracks];
+    const beats = pending.beats;
+    this.dropSoundEdits();
+    pending.at = performance.now();
+    const transport = this.transport;
+    if (!transport || this.replayingId) return;
+    if (beats) transport.invalidate();
+    else if (tracks.length) transport.revoice(tracks);
+  }
+
+  /**
+   * A new kit or recording: until its drum voices are rendered (the engine
+   * does it in idle time), hits play the slot's previous sound. They are
+   * rendered now in short tasks (see warmSounds), and what is scheduled for
+   * those parts is scheduled again with them.
+   */
+  private warmNewSounds(p: Project, prev: Project): void {
+    const bank = this.bank;
+    const ctx = this.ctx;
+    if (!bank || !ctx) return;
+    const ids = p.tracks.filter((t, i) => soundIdentity(t) !== soundIdentity(prev.tracks[i])).map((t) => t.id);
+    if (!ids.length) return;
+    void warmSounds(p, bank, ctx.sampleRate, new Set(ids)).then(() => {
+      if (this.bank === bank && this.transport && !this.replayingId) this.transport.revoice(ids);
+    });
+  }
+
+  /** Sound edits waiting for their batch are covered (everything not started was generated again). */
+  private dropSoundEdits(): void {
+    const pending = this.soundEditsPending;
+    if (pending.timer !== null) clearTimeout(pending.timer);
+    pending.timer = null;
+    pending.tracks.clear();
+    pending.beats = false;
   }
 
   /**
@@ -1524,13 +1608,15 @@ export class Session {
     const pitch = !exact && p.assist ? snapToScale(rawPitch, p.root, p.scale) : rawPitch;
     const v = Math.max(0.05, Math.min(1, velocity));
     const viaArp = track.arp.enabled && kind !== 'drums' && !preview;
-    const note: HeldNote = { trackId, pitch, velocity: v, viaArp, recTick: null, recClipStart: null };
+    const note: HeldNote = { trackId, pitch, velocity: v, viaArp, recTick: null, recPressTick: null, recClipStart: null };
     // Record Notes keeps a played key as a note. With the arpeggiator on, the
     // notes it plays are recorded instead (recordArpNote), not the key held.
     if (!preview && !viaArp && this.noteRec && this.noteRec.trackId === trackId && this.transport?.playing) {
-      const at = this.recordWindow(this.noteRec, this.recordingTick());
+      const pressed = this.recordingTick();
+      const at = this.recordWindow(this.noteRec, pressed);
       if (at) {
         note.recTick = at.tick;
+        note.recPressTick = pressed;
         note.recClipStart = at.loopStart;
       }
     }
@@ -1802,7 +1888,8 @@ export class Session {
 
   private commitRecordedNote(n: HeldNote): void {
     if (!this.noteRec || n.recTick === null || n.recClipStart === null) return;
-    const duration = Math.max(6, this.recordingTick() - n.recTick);
+    // As long as it was held: a note caught early moves to the downbeat with its whole length.
+    const duration = Math.max(MIN_RECORDED_TICKS, this.recordingTick() - (n.recPressTick ?? n.recTick));
     this.addRecordedNote(n.recTick - n.recClipStart, n.pitch, n.velocity, duration, this.store.getState().settings.recordQuantize);
     n.recTick = null;
   }
@@ -2274,6 +2361,7 @@ export class Session {
 
   dispose(): void {
     this.stopEverything();
+    this.dropSoundEdits();
     this.uiUnsub();
     for (const u of this.unsubs) u();
     this.unsubs = [];
@@ -2317,15 +2405,21 @@ function songEdited(p: Project, prev: Project): boolean {
 /** Did a part's instrument change (a new kit, preset, recording or kind: nodes to build, voices to warm up)? */
 function instrumentsChanged(p: Project, prev: Project): boolean {
   if (p.tracks === prev.tracks) return false;
-  for (let i = 0; i < p.tracks.length; i++) {
-    const a = p.tracks[i].instrument;
-    const b = prev.tracks[i]?.instrument;
-    if (!b || a.kind !== b.kind) return true;
-    if (a.kind === 'drums' && b.kind === 'drums' && a.kitId !== b.kitId) return true;
-    if ((a.kind === 'bass' || a.kind === 'poly') && (b.kind === 'bass' || b.kind === 'poly') && a.presetId !== b.presetId) return true;
-    if (a.kind === 'sampler' && b.kind === 'sampler' && a.sampleId !== b.sampleId) return true;
+  return p.tracks.some((t, i) => soundIdentity(t) !== soundIdentity(prev.tracks[i]));
+}
+
+/** Which instrument a part plays: its kind and kit, preset or recording. */
+function soundIdentity(t: Track | undefined): string {
+  if (!t) return '';
+  const inst = t.instrument;
+  switch (inst.kind) {
+    case 'drums':
+      return `drums:${inst.kitId}`;
+    case 'sampler':
+      return `sampler:${inst.sampleId ?? ''}`;
+    default:
+      return `${inst.kind}:${inst.presetId ?? ''}`;
   }
-  return false;
 }
 
 /** Did any song block's moves (fades, filter rise, echo throw) change? */
@@ -2337,6 +2431,51 @@ function movesChanged(p: Project, prev: Project): boolean {
   return a.some((x, i) => x.moves !== b[i].moves || (x.moves?.length && x.id !== b[i].id));
 }
 
+/**
+ * What an edit changed in the sound of notes already scheduled (a note takes
+ * its instrument's settings when it is scheduled, and a beat its Pump and
+ * click): `tracks`, the parts whose instrument settings changed (params, drum
+ * voices, kit, preset, recording, or a big knob mapped onto the instrument);
+ * `beats`, a part's Pump or Pump Speed (or a big knob moving them, or a new
+ * mapping), or the metronome.
+ */
+function soundEdits(p: Project, prev: Project): { tracks: Id[]; beats: boolean } {
+  const tracks: Id[] = [];
+  let beats = p.settings.metronome !== prev.settings.metronome;
+  if (p.tracks !== prev.tracks) {
+    for (let i = 0; i < p.tracks.length; i++) {
+      const a = p.tracks[i];
+      const b = prev.tracks[i];
+      if (!b || a.id !== b.id) continue;
+      if (a.instrument !== b.instrument || macrosMoved(a, b, (t) => t.module === moduleId.inst(a.id))) tracks.push(a.id);
+      if (a.macroMap !== b.macroMap || macrosMoved(a, b, (t) => t.param === 'pump' || t.param === 'pumpDiv')) beats = true;
+    }
+  }
+  if (!beats && p.patch !== prev.patch) beats = pumpChanged(p, prev);
+  return { tracks, beats };
+}
+
+/** Did a big knob of the part move (or its mapping change) with a target that `hits`? */
+function macrosMoved(a: Track, b: Track, hits: (t: MacroTarget) => boolean): boolean {
+  if (a.macros === b.macros && a.macroMap === b.macroMap) return false;
+  for (const m of MACRO_IDS) {
+    if (a.macros[m] === b.macros[m] && a.macroMap[m] === b.macroMap[m]) continue;
+    if ((a.macroMap[m] ?? []).some(hits) || (b.macroMap[m] ?? []).some(hits)) return true;
+  }
+  return false;
+}
+
+/** Did a channel's Pump, Pump Speed or bypass change? */
+function pumpChanged(p: Project, prev: Project): boolean {
+  const before = new Map(prev.patch.modules.filter((m) => m.type === 'channel').map((m) => [m.id, m]));
+  for (const m of p.patch.modules) {
+    if (m.type !== 'channel') continue;
+    const b = before.get(m.id);
+    if (!b || b.bypass !== m.bypass || b.params.pump !== m.params.pump || b.params.pumpDiv !== m.params.pumpDiv) return true;
+  }
+  return false;
+}
+
 /** What an imported clip's pitch is, in words: as recorded, unless the part's own settings move it. */
 function importPitchWords(part: Track | undefined, partRecording: boolean): string {
   const inst = part?.instrument;
@@ -2346,6 +2485,76 @@ function importPitchWords(part: Track | undefined, partRecording: boolean): stri
   const how = [v('mode') >= 1 ? 'Loop mode' : '', v('pitch') !== 0 || v('fine') !== 0 ? 'transposed' : '', v('sync') >= 1 ? 'Tempo sync, which changes speed and pitch together' : ''].filter(Boolean);
   if (!how.length) return 'It plays at its recorded pitch.';
   return `It plays with ${part!.name}’s sampler settings (${how.join(', ')}): set them in Shape to hear it as recorded.`;
+}
+
+/** Longest stretch of start-up warm-up work between two yields (ms). */
+const WARM_SLICE_MS = 12;
+
+/**
+ * Make ready what the project's clips play (of the parts in `only`, when
+ * given) before the first note needs it, so nothing renders inside the
+ * scheduler: every drum voice a clip plays
+ * (rendered into the shared drum voice cache, at the kit's and voice's
+ * decay, as the kit will ask for it) and every built-in recording a sampler
+ * part with clips plays. Short units of work, yielding to the page between
+ * slices of about WARM_SLICE_MS (a task each, not idle time). The engine's
+ * own preparation (prepareInstruments) finds them ready.
+ */
+async function warmSounds(project: Project, bank: SampleBank, sampleRate: number, only?: ReadonlySet<Id>): Promise<void> {
+  const units: (() => boolean)[] = [];
+  const resolved = resolveAllParams(project);
+  for (const t of project.tracks) {
+    if (only && !only.has(t.id)) continue;
+    const inst = t.instrument;
+    const used = t.clips.filter((c): c is NonNullable<typeof c> => !!c && c.notes.length > 0);
+    if (!used.length) continue;
+    if (inst.kind === 'drums') {
+      const counts = new Map<number, number>();
+      for (const c of used) for (const n of c.notes) counts.set(n.pitch, (counts.get(n.pitch) ?? 0) + 1);
+      const kitId = resolveKitId(inst.kitId);
+      const kitDecay = readParam(DRUM_KIT_PARAMS, resolved.get(moduleId.inst(t.id)) ?? inst.params, 'decay');
+      // Most-played first, as the engine orders them.
+      for (const [slot] of [...counts].sort((a, b) => b[1] - a[1] || a[0] - b[0])) {
+        if (!Number.isInteger(slot) || slot < 0 || slot >= inst.voices.length) continue;
+        const voiceDecay = clampParam(DRUM_VOICE_PARAM_SPECS.decay, inst.voices[slot]?.decay ?? DRUM_VOICE_PARAM_SPECS.decay.default);
+        const job = drumVoiceJob(kitId, slot, sampleRate, quantizeDrumDecay(kitDecay * voiceDecay));
+        units.push(() => job.step());
+      }
+    } else if (inst.kind === 'sampler') {
+      const ids = new Set<string>();
+      if (inst.sampleId?.startsWith('builtin:')) ids.add(inst.sampleId);
+      for (const c of used) if (c.sample?.id.startsWith('builtin:')) ids.add(c.sample.id);
+      for (const id of ids) {
+        units.push(() => {
+          bank.get(id);
+          return false;
+        });
+      }
+    }
+  }
+  while (units.length) {
+    const start = performance.now();
+    do {
+      if (!units[0]()) units.shift();
+    } while (units.length && performance.now() - start < WARM_SLICE_MS);
+    if (units.length) await nextTask();
+  }
+}
+
+/** Let the page run (paint, input) before going on: a new task, not idle time. */
+function nextTask(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof MessageChannel === 'undefined') {
+      setTimeout(resolve, 0);
+      return;
+    }
+    const ch = new MessageChannel();
+    ch.port1.onmessage = () => {
+      ch.port1.close();
+      resolve();
+    };
+    ch.port2.postMessage(null);
+  });
 }
 
 /** The current animation frame's time (document.timeline), or null where there is none. */
