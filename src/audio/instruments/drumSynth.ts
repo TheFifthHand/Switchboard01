@@ -591,6 +591,8 @@ export function drumVoiceKey(kitId: string, slot: number, sampleRate: number, de
 const CACHE_BUDGET_BYTES = 48 * 1024 * 1024;
 const cache = new Map<string, Buf>();
 let cacheBytes = 0;
+/** Voices rendered so far (cache misses), for tests and diagnostics. */
+let renders = 0;
 
 /**
  * Cached `renderDrumVoice` with the decay snapped by `quantizeDrumDecay`.
@@ -606,6 +608,7 @@ export function getDrumVoice(kitId: string, slot: number, sampleRate: number, de
     return hit;
   }
   const data = renderDrumVoice(kitId, slot, sampleRate, quantizeDrumDecay(decayMul));
+  renders++;
   cache.set(key, data);
   cacheBytes += data.byteLength;
   for (const [k, old] of cache) {
@@ -616,11 +619,17 @@ export function getDrumVoice(kitId: string, slot: number, sampleRate: number, de
   return data;
 }
 
+/** The cached voice for these settings, or null when it would have to be rendered (never renders). */
+export function peekDrumVoice(kitId: string, slot: number, sampleRate: number, decayMul: number): Float32Array<ArrayBuffer> | null {
+  return cache.get(drumVoiceKey(kitId, slot, sampleRate, decayMul)) ?? null;
+}
+
 export function clearDrumVoiceCache(): void {
   cache.clear();
   cacheBytes = 0;
 }
 
-export function drumVoiceCacheStats(): { entries: number; bytes: number } {
-  return { entries: cache.size, bytes: cacheBytes };
+/** Cached voices, their bytes, and how many voices were rendered since the page loaded. */
+export function drumVoiceCacheStats(): { entries: number; bytes: number; renders: number } {
+  return { entries: cache.size, bytes: cacheBytes, renders };
 }

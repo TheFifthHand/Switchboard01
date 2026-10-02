@@ -4,8 +4,13 @@
  * Buffers: each slot's sound is rendered offline by renderDrumVoice for
  * (kit, slot, quantised effective decay = kit decay x voice decay, sample
  * rate), shared through the drumSynth cache and wrapped in an AudioBuffer
- * per engine. Buffers are (re)built lazily on the first hit after a change,
- * so update() stays cheap and a kit change only affects future hits.
+ * per engine. update() stays cheap and a kit change only affects future hits.
+ * Rendering never has to happen inside the scheduler: prepare() renders the
+ * voices ahead, at once or in idle slices (the engine starts that for a new
+ * kit, the slots the clips play first), and a hit scheduled ahead whose new
+ * voice is not rendered yet plays the slot's previous sound once more while
+ * the new one renders in idle time. A slot with no sound yet, an immediate
+ * (live) hit and every offline render still render in place.
  *
  * Per hit:
  *   AudioBufferSourceNode (playbackRate = 2^((kit tune + voice tune)/12),
@@ -28,9 +33,10 @@
  */
 import { DRUM_KIT_PARAMS, DRUM_VOICE_PARAM_SPECS, clampParam, dbToGain, readParam } from '../../project/params';
 import { DRUM_VOICES, type DrumVoiceSettings, type DrumsInstrument, type Instrument } from '../../project/types';
-import type { InstrumentContext, InstrumentEngine, NoteTrigger, VoiceHandle } from '../contracts';
+import type { InstrumentContext, InstrumentEngine, NoteTrigger, PrepareOptions, VoiceHandle } from '../contracts';
 import { PARAM_SMOOTHING } from '../modules/types';
-import { drumVoiceKey, getDrumVoice, quantizeDrumDecay } from './drumSynth';
+import { runWhenIdle } from '../idle';
+import { drumVoiceKey, getDrumVoice, peekDrumVoice, quantizeDrumDecay } from './drumSynth';
 import { DEFAULT_KIT_ID, getKitRecipe, resolveKitId } from './kits';
 
 /** Maximum simultaneously sounding hits per kit. */
@@ -57,6 +63,8 @@ const SELF_CHOKE_SLOTS: readonly number[] = [4, 5, 6];
 const RESTORE_MARGIN = 0.008;
 /** Stop time used to let a restored hit play to the end of its buffer (sources end there by themselves). */
 const NO_STOP_SECONDS = 1e5;
+/** A hit due sooner than this (live input) renders its new voice in place rather than play the old one. */
+const IMMEDIATE_HIT = 0.002;
 
 type ChokeTable = readonly (readonly boolean[])[];
 const chokeTables = new Map<string, ChokeTable>();
@@ -216,10 +224,15 @@ export class DrumKitEngine implements InstrumentEngine {
   /** True while kill() stops every hit. */
   private stoppingAll = false;
   private disposed = false;
+  private readonly offline: boolean;
+  /** Slots waiting for an idle render, in order. */
+  private pending: number[] = [];
+  private idleJob: Promise<void> | null = null;
 
   constructor(ictx: InstrumentContext, instrument: DrumsInstrument) {
     const ctx = ictx.ctx;
     this.ctx = ctx;
+    this.offline = ictx.offline ?? (typeof OfflineAudioContext !== 'undefined' && ctx instanceof OfflineAudioContext);
     this.bus = new GainNode(ctx, { gain: PAN_LAW_MAKEUP });
     this.filter = new BiquadFilterNode(ctx, { type: 'lowpass', Q: BUTTERWORTH_Q_DB });
     this.output = new GainNode(ctx, { gain: 1 });
@@ -274,22 +287,47 @@ export class DrumKitEngine implements InstrumentEngine {
     return quantizeDrumDecay(this.decay * this.voices[slot].decay);
   }
 
-  /** The AudioBuffer for a slot at the current settings; rendered on first use after a change. */
-  private bufferFor(slot: number): AudioBuffer {
+  /**
+   * The AudioBuffer for a slot at the current settings; rendered on first
+   * use after a change. With `stale`, a slot whose new voice would have to be
+   * rendered keeps its previous sound for now and queues the render for idle
+   * time (a voice already in the shared cache is used at once).
+   */
+  private bufferFor(slot: number, stale = false): AudioBuffer {
     const sr = this.ctx.sampleRate;
     const dm = this.slotDecay(slot);
     const key = drumVoiceKey(this.kitId, slot, sr, dm);
     const cur = this.slotBuffers[slot];
     if (cur && cur.key === key) return cur.buffer;
-    const data = getDrumVoice(this.kitId, slot, sr, dm);
+    let data = peekDrumVoice(this.kitId, slot, sr, dm);
+    if (!data && stale && cur) {
+      void this.renderLater([slot]);
+      return cur.buffer;
+    }
+    data ??= getDrumVoice(this.kitId, slot, sr, dm);
     const buffer = this.ctx.createBuffer(1, data.length, sr);
     buffer.copyToChannel(data, 0);
     this.slotBuffers[slot] = { key, buffer };
     return buffer;
   }
 
-  prepare(): void {
-    this.preload();
+  /**
+   * Render the kit's voices ahead of the hits. At once by default; with
+   * `incremental` (live engines) in idle slices, `order` first (the slots the
+   * clips play), only those with scope 'used'. Resolves when done.
+   */
+  prepare(opts?: PrepareOptions): void | Promise<void> {
+    if (!opts?.incremental || this.offline) {
+      this.preload();
+      return;
+    }
+    const order: number[] = [];
+    for (const v of opts.order ?? []) {
+      const s = Math.round(v);
+      if (Number.isFinite(s) && s >= 0 && s < DRUM_VOICES && !order.includes(s)) order.push(s);
+    }
+    if (opts.scope !== 'used') for (let s = 0; s < DRUM_VOICES; s++) if (!order.includes(s)) order.push(s);
+    return this.renderLater(order);
   }
 
   /** Render every slot's buffer now (optional warm-up, e.g. right after choosing a kit). */
@@ -298,14 +336,37 @@ export class DrumKitEngine implements InstrumentEngine {
     for (let s = 0; s < DRUM_VOICES; s++) this.bufferFor(s);
   }
 
+  /** Queue slots for idle rendering (these first); resolves when the queue is empty. */
+  private renderLater(slots: readonly number[]): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    this.pending = [...slots, ...this.pending.filter((s) => !slots.includes(s))];
+    this.idleJob ??= runWhenIdle(() => this.renderNext()).then(() => {
+      this.idleJob = null;
+    });
+    return this.idleJob;
+  }
+
+  /** One idle unit: render the next queued slot (at the settings in force now). */
+  private renderNext(): boolean {
+    if (this.disposed) {
+      this.pending = [];
+      return false;
+    }
+    const slot = this.pending.shift();
+    if (slot !== undefined) this.bufferFor(slot);
+    return this.pending.length > 0;
+  }
+
   trigger(note: NoteTrigger): VoiceHandle | null {
     if (this.disposed) return null;
     const slot = Math.round(finiteOr(note.pitch, -1));
     if (slot < 0 || slot >= DRUM_VOICES) return null;
     const ctx = this.ctx;
     const voice = this.voices[slot];
+    // A hit scheduled ahead never waits for a render: it may play the slot's previous sound.
+    const stale = !this.offline && finiteOr(note.time, 0) > ctx.currentTime + IMMEDIATE_HIT;
     // May render the slot's sound first (a few ms), so read the clock afterwards.
-    const buffer = this.bufferFor(slot);
+    const buffer = this.bufferFor(slot, stale);
     const now = ctx.currentTime;
     const time = Math.max(finiteOr(note.time, now), now);
     const level = drumVelocityGain(note.velocity, this.velocitySens) * voice.level;
@@ -404,6 +465,7 @@ export class DrumKitEngine implements InstrumentEngine {
     if (this.disposed) return;
     this.kill();
     this.disposed = true;
+    this.pending = [];
     this.slotBuffers.fill(null);
     this.cutoffMod.disconnect();
     this.pitchMod.disconnect();

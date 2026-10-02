@@ -2,7 +2,7 @@
  * Auto Pan module: tempo-synced panning or tremolo.
  *
  *   lfo (LfoModule: Sine / Triangle / Square, synced division, transport-aligned)
- *     ─ one-pole 120 Hz (rounds Square edges so they never click)
+ *     ─ smoother 120 Hz (critically damped two-pole: rounds Square edges so they never click)
  *     ─ ×depth ──> p (−1..1)
  *
  *   Pan:     in ─ split ─ M = (L+R)/2 ─┬─ ×√2·cos((1+p)·π/4) ─┐
@@ -21,13 +21,13 @@
  */
 import { AUTOPAN_PARAMS, readParam } from '../../project/params';
 import type { Id, ParamValues } from '../../project/types';
-import { ControlBus, EffectModule, SWITCH_TAU, makeControlCurve } from './fxutil';
+import { ControlBus, EffectModule, SWITCH_TAU, controlSmoother, makeControlCurve, shaperNode } from './fxutil';
 import { LfoModule, LfoWave } from './lfo';
 import type { ModuleEnv } from './types';
 
 /** AUTOPAN_SHAPES (Sine, Triangle, Square) as LFO waves. */
 const SHAPE_WAVES = [LfoWave.Sine, LfoWave.Triangle, LfoWave.Square] as const;
-/** Corner of the smoother on the LFO signal (Hz). */
+/** −3 dB corner of the smoother on the LFO signal (Hz). */
 export const AUTOPAN_SMOOTH_HZ = 120;
 const PAN_CURVE_POINTS = 4097;
 
@@ -38,7 +38,14 @@ export function autopanGains(p: number): [number, number] {
   return [Math.SQRT2 * Math.cos(theta), Math.SQRT2 * Math.sin(theta)];
 }
 
+const panCurves: (Float32Array<ArrayBuffer> | null)[] = [null, null];
+
+/** Pan law curve for one side (computed once; assigning a curve copies it). */
 function panCurve(side: 0 | 1): Float32Array<ArrayBuffer> {
+  return (panCurves[side] ??= buildPanCurve(side));
+}
+
+function buildPanCurve(side: 0 | 1): Float32Array<ArrayBuffer> {
   const c = new Float32Array(PAN_CURVE_POINTS);
   for (let i = 0; i < PAN_CURVE_POINTS; i++) {
     const u = (2 * i) / (PAN_CURVE_POINTS - 1) - 1;
@@ -67,8 +74,7 @@ export class AutoPanModule extends EffectModule {
     const mono = { channelCount: 1, channelCountMode: 'explicit' } as const;
 
     this.lfo = new LfoModule(env, `${id}:lfo`, { wave: SHAPE_WAVES[this.shape], division: this.division, depth: 1 });
-    const a = Math.exp((-2 * Math.PI * AUTOPAN_SMOOTH_HZ) / ctx.sampleRate);
-    const smoothed = this.own(new IIRFilterNode(ctx, { feedforward: [1 - a], feedback: [1, -a], ...mono }));
+    const smoothed = this.own(controlSmoother(ctx, AUTOPAN_SMOOTH_HZ));
     this.lfo.output('out')!.connect(smoothed);
 
     // Depth control: knob + modulation, clamped to 0..1.
@@ -86,8 +92,8 @@ export class AutoPanModule extends EffectModule {
     const p = this.own(new GainNode(ctx, { gain: 0, ...mono }));
     smoothed.connect(p);
     this.ctl.map(makeControlCurve((d) => d), p.gain);
-    const shapeL = this.own(new WaveShaperNode(ctx, { curve: panCurve(0), oversample: 'none', ...mono }));
-    const shapeR = this.own(new WaveShaperNode(ctx, { curve: panCurve(1), oversample: 'none', ...mono }));
+    const shapeL = this.own(shaperNode(ctx, panCurve(0), { oversample: 'none', ...mono }));
+    const shapeR = this.own(shaperNode(ctx, panCurve(1), { oversample: 'none', ...mono }));
     p.connect(shapeL);
     p.connect(shapeR);
     const split = this.own(new ChannelSplitterNode(ctx, { numberOfOutputs: 2 }));
