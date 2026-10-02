@@ -7,16 +7,40 @@
 }
 
 .grid {
+  /* The shortest a pad row gets before the rows scroll (under the sticky part headers). */
+  --row-min: 64px;
   flex: 1;
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr)) 104px;
-  grid-template-rows: auto repeat(4, minmax(52px, 1fr));
+  grid-template-rows: auto repeat(var(--rows, 4), minmax(var(--row-min), 1fr));
+  grid-auto-rows: auto;
   gap: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  /* Room for focus rings and drop outlines at the edges (the grid scrolls, so it clips). */
+  padding: 4px;
+  margin: -4px;
+  scroll-padding-top: 120px;
 }
 
 .row {
   display: contents;
+}
+
+/* The part headers and the scene column's head (Stop all): one row that stays on top while the pad rows scroll. */
+.head {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--surface);
+  /* Covers the gap under it, so pads scrolling up pass behind a clean edge. */
+  box-shadow: 0 8px 0 var(--surface);
 }
 
 /* ---------- Column headers ---------- */
@@ -32,7 +56,14 @@
   min-width: 0;
   transition:
     border-color var(--t-fast) var(--ease),
-    box-shadow var(--t-fast) var(--ease);
+    box-shadow var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
+}
+/* The pointer over a header: it lifts a little, like a key (selection stays teal). */
+.header:not(.headerSelected):hover {
+  border-color: var(--line);
+  background: linear-gradient(180deg, #ffffff, var(--surface-hi));
+  box-shadow: var(--shadow-raised);
 }
 .headerSelected {
   border-color: var(--teal);
@@ -44,9 +75,12 @@
   opacity: 0.55;
 }
 .headerMain {
+  /* Takes the header's spare height, so every column's keys line up whatever its names' lengths. */
+  flex: 1 0 auto;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-rows: auto auto;
+  align-content: start;
   column-gap: 4px;
   row-gap: 1px;
   min-width: 0;
@@ -65,6 +99,7 @@
   color: var(--ink-3);
 }
 .trackName {
+  grid-column: 2;
   font-size: var(--fs-lg);
   font-weight: 650;
   line-height: 18px;
@@ -73,13 +108,40 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A soloed part: a small amber tag beside its name (it keeps its meter). */
+.soloTag {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+  padding: 0 5px;
+  border-radius: 7px;
+  background: var(--amber-hi);
+  box-shadow: inset 0 0 0 1px var(--amber);
+  color: var(--amber-ink);
+  font-size: var(--fs-2xs);
+  font-weight: 650;
+  line-height: 14px;
+}
+/* The sound's name: up to two lines (then cut; the full name is in the header's title). */
 .trackSound {
+  grid-column: 2 / -1;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   font-size: var(--fs-sm);
   line-height: 15px;
+  max-height: 30px;
   color: var(--ink-2);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+/* Narrower columns: the part's name a size down, so more of it shows. */
+@container (max-width: 110px) {
+  .trackName {
+    font-size: var(--fs-md);
+    line-height: 17px;
+  }
 }
 /* Narrow columns: the number gives its room to the name. */
 @container (max-width: 70px) {
@@ -87,10 +149,16 @@
     display: none;
   }
   .headerMain {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
   }
   .trackName {
-    font-size: var(--fs-md);
+    grid-column: 1;
+  }
+  .trackSound {
+    grid-column: 1 / -1;
+  }
+  .soloTag {
+    grid-column: 2;
   }
 }
 
@@ -464,14 +532,21 @@
 .lift[data-kind='swap'] .liftIcon,
 .lift[data-kind='no'] .liftIcon,
 .lift[data-kind='none'] .liftIcon,
-.rowLift[data-kind='none'] .liftIcon {
+.rowLift[data-kind='none'] .liftIcon,
+.rowLift[data-kind='no'] .liftIcon {
   display: none;
 }
 .lift[data-kind='swap'] .liftIcon[data-for='swap'],
 .lift[data-kind='no'] .liftIcon[data-for='no'],
 .lift[data-kind='none'] .liftIcon[data-for='none'],
-.rowLift[data-kind='none'] .liftIcon[data-for='none'] {
+.rowLift[data-kind='none'] .liftIcon[data-for='none'],
+.rowLift[data-kind='no'] .liftIcon[data-for='no'] {
   display: inline-flex;
+}
+/* A row carried while a take records: it says Locked (coral), and nothing slides. */
+.rowLift[data-kind='no'] .liftLabel {
+  background: var(--coral);
+  color: #fff;
 }
 
 /* The word for the pad under the carried clip, on that pad's lower edge, above the lifted pad. */
@@ -636,6 +711,11 @@
   color: var(--ink-2);
   box-shadow: var(--shadow-raised);
 }
+.stopAll:hover {
+  border-color: var(--line-strong);
+  background: linear-gradient(180deg, #ffffff 0%, #f5f6f7 55%, #eceef0 100%);
+  color: var(--ink);
+}
 .stopAll:active {
   box-shadow: var(--shadow-pressed);
 }
@@ -672,6 +752,8 @@
   color: var(--teal-ink);
 }
 .scene {
+  position: relative;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -687,10 +769,29 @@
   touch-action: none;
   transition:
     box-shadow var(--t-fast) var(--ease),
-    background var(--t-fast) var(--ease);
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+.scene:hover:not(.sceneLit) {
+  border-color: var(--line-strong);
+  background: linear-gradient(180deg, #ffffff 0%, var(--shell-hi) 60%, var(--shell) 100%);
 }
 .scene:active {
   box-shadow: var(--shadow-pressed);
+}
+/* The playing scene: how far through its loop (the row's longest clip), as a 3 px amber bar along the bottom (--loop-progress, written by the grid's frame loop). */
+.scene::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--amber);
+  transform: scaleX(clamp(0, var(--loop-progress, -1), 1));
+  transform-origin: left;
+  opacity: clamp(0, calc((var(--loop-progress, -1) + 1) * 1000), 1);
+  pointer-events: none;
 }
 .sceneLit {
   border-color: var(--amber);
@@ -716,8 +817,53 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--font-ui);
   font-size: var(--fs-xs);
   color: var(--ink-3);
+}
+
+/* Under the grid: the pad actions, and under the scene column a quiet key that adds a scene (up to 8). */
+.bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+.bottom[data-add] {
+  grid-template-columns: minmax(0, 1fr) 104px;
+}
+.bottomBar {
+  min-width: 0;
+}
+.bottom > span:has(> .addScene) {
+  display: grid;
+}
+.addScene {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.addScene:hover:not(:disabled) {
+  border-style: solid;
+  background: var(--shell-hi);
+  color: var(--ink);
+  box-shadow: var(--shadow-raised);
+}
+.addScene:disabled {
+  opacity: 0.55;
+}
+.addScene:focus-visible {
+  box-shadow: var(--focus-ring);
 }
 
 /* ---------- Selected pad actions ---------- */
@@ -735,6 +881,32 @@
 .actions[data-moving] {
   border-color: var(--teal);
   background: var(--teal-wash);
+}
+/* While a performance take records: one coral line where the keys were. */
+.actions[data-locked] {
+  border-color: color-mix(in srgb, var(--coral) 40%, transparent);
+  background: var(--coral-wash);
+}
+.lockLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--coral-ink);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lockDot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 5px var(--coral-glow);
 }
 .actionsText {
   display: flex;
@@ -786,6 +958,20 @@
   .grid {
     grid-template-columns: repeat(8, minmax(0, 1fr)) 92px;
     gap: 6px;
+  }
+  .bottom {
+    gap: 6px;
+  }
+  .bottom[data-add] {
+    grid-template-columns: minmax(0, 1fr) 92px;
+  }
+  .head {
+    box-shadow: 0 6px 0 var(--surface);
+  }
+}
+@media (max-height: 640px) {
+  .grid {
+    --row-min: 56px;
   }
 }
 @media (max-width: 1179px) {

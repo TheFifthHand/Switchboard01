@@ -1,14 +1,28 @@
 /**
- * Loops mode: eight part columns x four clip rows. A pad starts or stops a
- * clip for its part (at the next bar); the side buttons launch a whole row
- * as a scene. State is shown with light AND text: Ready, Next bar (queued),
- * Playing, Stopping, Paused, Rec; an empty pad is a quiet "+" (Add clip).
+ * Loops mode: eight part columns x one clip row per scene (1 to 8; the rows
+ * scroll under sticky part headers when they do not fit, and "Add scene"
+ * under the last row adds one). A pad starts or stops a clip for its part
+ * (at the next bar); the side buttons launch a whole row as a scene. State is
+ * shown with light AND text: Ready, Next bar (with a beat countdown), Playing,
+ * Stopping, Paused, Rec; an empty pad is a quiet "+" (Add clip). A clip pad
+ * shows a small picture of its notes; the playing pad (and the playing scene)
+ * shows how far it is through its loop, drawn by one animation-frame loop
+ * that reads the audio clock (no React state per frame).
  *
  * Each column header has the part's name and sound, a play/stop key for the
  * part, labelled Mute and Solo toggles and a level meter; a muted part's
- * column dims and says Muted, and with any solo on the others say Not soloed.
- * M and S (with a pad or part focused; M anywhere) mute and solo the selected
- * part.
+ * column dims and says Muted, and with any solo on the others say Not soloed
+ * (a soloed part keeps its meter and shows a Solo tag). M mutes the selected
+ * part; Solo has no key (S plays a note).
+ *
+ * Keyboard: the pads (with the scene buttons) are one Tab stop, the part
+ * headers another (roving tabindex); arrow keys move inside, Home / End go to
+ * the row's ends and Ctrl+Home / Ctrl+End to the grid's corners.
+ *
+ * One selected clip: every control acts on the ringed pad (selection.ts).
+ * While a performance take records, the grid shows it is locked: a lifted pad
+ * says Locked, the pad actions become one coral line, and editing keys say
+ * why; pad taps and scene launches keep working (the take records them).
  *
  * Moving things: drag a clip pad onto another pad to move it (onto a clip:
  * the two swap); hold Ctrl or Alt while dropping to copy (onto a clip: it is
@@ -35,37 +49,44 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
   type CSSProperties,
+  type FocusEvent,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
-import { Button, DRUM_KEYS, Icon, IconButton, Meter, NOTE_KEYS, OCTAVE_KEYS, Pad, Tooltip, type PadState } from '../../ui/components';
+import { Button, ClipSketch, DRUM_KEYS, Icon, IconButton, Meter, NOTE_KEYS, OCTAVE_KEYS, Pad, Tooltip, useRafLoop, type PadState } from '../../ui/components';
 import { TAP_SLOP_PX } from '../../ui/components/Pad';
 import { MOTION, boxOf, flip, offsetBox, prefersReducedMotion, scaledBox, stopMotion, type Box } from '../../ui/motion';
-import { SCENE_ROWS, type Clip, type Id, type Project, type Scene } from '../../project/types';
-import { clipDropProblem } from '../../state/commands';
-import { selectSlot, selectTrack, slotFor } from '../../state/uiStore';
+import { BEATS_PER_BAR, MAX_SCENES, TICKS_PER_BAR, TICKS_PER_BEAT, type Clip, type Id, type Project, type Scene } from '../../project/types';
+import { clipDropProblem, insertScene } from '../../state/commands';
+import { selectSlot, selectTrack, slotFor, uiStore } from '../../state/uiStore';
+import type { ClipPhase } from '../../time/contracts';
 import { session, useProject, useUi } from '../instance';
-import { useRuntime, type TrackRuntime } from '../runtime';
+import { notify, useRuntime, type TrackRuntime } from '../runtime';
 import { barsLabel, soundName } from '../labels';
-import { readMeterFrame } from './TransportBar';
+import '../selection';
 import {
   ClipMenu,
+  LOCKED_TEXT,
   MOD_KEY,
   MoreIcon,
   anchorFromContextEvent,
   anchorFromElement,
   clipActions,
   isEchoOfKeyboardMenu,
+  isEditLocked,
   isMenuKey,
   noteKeyboardMenu,
+  useEditLocked,
   type MenuAnchor,
 } from './ClipMenu';
+import { useRovingPads } from './DrumPads';
 import { TrackMenu } from './TrackMenu';
 import { SceneMenu } from './SceneMenu';
 import { SoundBrowser } from './SoundBrowser';
@@ -102,7 +123,7 @@ function padState(clip: Clip | null, slot: number, rt: TrackRuntime | undefined,
   if (recording) return { state: 'recording' };
   const playingSlot = rt?.playingSlot ?? null;
   const queued = rt?.queued ?? null;
-  if (transport === 'stopped') return playingSlot === slot ? { state: 'queued', caption: 'Plays on ▶' } : { state: 'ready' };
+  if (transport === 'stopped') return playingSlot === slot ? { state: 'queued', caption: 'Starts on Play' } : { state: 'ready' };
   if (playingSlot === slot) {
     if (queued && queued.slot !== slot) return { state: 'stopping', caption: queued.slot === null ? 'Stops next bar' : 'Ends next bar' };
     if (transport === 'paused') return { state: 'queued', caption: 'Paused', paused: true };
@@ -136,6 +157,117 @@ function isActionsKey(e: KeyboardEvent<HTMLElement>): boolean {
 }
 
 const STATE_SPOKEN: Record<PadState, string> = { empty: 'Empty', ready: 'Ready', queued: 'Starts next bar', playing: 'Playing', recording: 'Recording', stopping: 'Stopping' };
+
+/* ------------------------------------------------------------------ */
+/* Loop progress and the beat countdown (display only)                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Beats until each part's queued change lands, for the "Next bar · 3" of a
+ * queued pad. Written by the grid's frame loop only when the whole number
+ * changes (once a beat), so a queued pad renders once a beat, never per frame.
+ */
+class Countdown {
+  private beats = new Map<Id, number>();
+  private listeners = new Map<Id, Set<() => void>>();
+  get = (trackId: Id): number | null => this.beats.get(trackId) ?? null;
+  set(trackId: Id, n: number | null): void {
+    if ((this.beats.get(trackId) ?? null) === n) return;
+    if (n === null) this.beats.delete(trackId);
+    else this.beats.set(trackId, n);
+    for (const fn of this.listeners.get(trackId) ?? []) fn();
+  }
+  subscribe(trackId: Id, fn: () => void): () => void {
+    let set = this.listeners.get(trackId);
+    if (!set) this.listeners.set(trackId, (set = new Set()));
+    set.add(fn);
+    return () => set.delete(fn);
+  }
+  clear(): void {
+    for (const id of [...this.beats.keys()]) this.set(id, null);
+  }
+}
+const countdown = new Countdown();
+const noSubscribe = () => () => {};
+
+/** The caption of a queued pad: "Next bar · 3" (beats to go) while the change is within the bar. */
+function queuedCaption(beats: number | null): string | undefined {
+  return beats !== null && beats <= BEATS_PER_BAR ? `Next bar · ${beats}` : undefined;
+}
+
+/**
+ * Paints loop progress: `--loop-progress` (0..1) on the pad of each part's
+ * sounding clip and on the lit scene button, and the beat countdown of
+ * queued parts. Reads the audible position from the transport (the audio
+ * clock); writes the DOM directly and only when a value changes. With
+ * reduced motion it moves once a beat.
+ */
+class ProgressPainter {
+  private pads = new Map<Id, { el: HTMLElement; value: number }>();
+  private scenes = new Map<HTMLElement, number>();
+  private phase: ClipPhase = { slot: 0, startTick: 0, lengthTicks: 0 };
+  private rows = new Map<number, { start: number; len: number }>();
+
+  paint(grid: HTMLElement | null, trackIds: readonly Id[]): void {
+    const tr = session.transport;
+    if (!grid || !tr) return this.clear();
+    const tick = tr.audibleTick();
+    const step = prefersReducedMotion() ? TICKS_PER_BEAT : 0;
+    const at = (start: number, len: number) => {
+      let pos = (((tick - start) % len) + len) % len;
+      if (step) pos = Math.floor(pos / step) * step;
+      return pos / len;
+    };
+    this.rows.clear();
+    for (const id of trackIds) {
+      const ph = tr.clipPhase(id, this.phase);
+      const el = ph && ph.lengthTicks > 0 ? document.getElementById(padId(id, ph.slot)) : null;
+      const old = this.pads.get(id);
+      if (old && old.el !== el) {
+        old.el.style.removeProperty('--loop-progress');
+        this.pads.delete(id);
+      }
+      if (ph && el) {
+        const value = at(ph.startTick, ph.lengthTicks);
+        const cur = this.pads.get(id);
+        if (!cur || Math.abs(cur.value - value) > 0.0005) {
+          el.style.setProperty('--loop-progress', value.toFixed(4));
+          this.pads.set(id, { el, value });
+        }
+        // The row's longest playing clip times the scene.
+        const row = this.rows.get(ph.slot);
+        if (!row || ph.lengthTicks > row.len) this.rows.set(ph.slot, { start: ph.startTick, len: ph.lengthTicks });
+      }
+      const q = tr.queuedAt(id);
+      countdown.set(id, q === null ? null : Math.max(1, Math.ceil((q - tick) / TICKS_PER_BEAT)));
+    }
+    // The playing scene's button (lit: every part of its row plays it).
+    for (const btn of grid.querySelectorAll<HTMLElement>('button[data-scene]')) {
+      const row = btn.dataset.lit !== undefined ? this.rows.get(Number(btn.dataset.row)) : undefined;
+      const old = this.scenes.get(btn);
+      if (!row) {
+        if (old !== undefined) {
+          btn.style.removeProperty('--loop-progress');
+          this.scenes.delete(btn);
+        }
+        continue;
+      }
+      const value = at(row.start, row.len);
+      if (old === undefined || Math.abs(old - value) > 0.0005) {
+        btn.style.setProperty('--loop-progress', value.toFixed(4));
+        this.scenes.set(btn, value);
+      }
+    }
+  }
+
+  clear(): void {
+    for (const { el } of this.pads.values()) el.style.removeProperty('--loop-progress');
+    for (const el of this.scenes.keys()) el.style.removeProperty('--loop-progress');
+    this.pads.clear();
+    this.scenes.clear();
+    countdown.clear();
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /* Moving clips: what a drop does                                      */
@@ -296,6 +428,8 @@ interface PadDrag extends Base {
   grabY: number;
   copy: boolean;
   refusal: string;
+  /** A performance take records: the clip cannot move (the lift says Locked, no pad is a target). */
+  locked: boolean;
   /** The window's width (for which side of the lifted pad its label sits) and the label's current place. */
   viewW: number;
   side: string;
@@ -317,6 +451,8 @@ interface RowDrag extends Base {
   /** Each row's current preview offset (px). */
   offsets: number[];
   scenes: readonly Scene[];
+  /** A performance take records: rows cannot move (the lift says Locked, nothing slides). */
+  locked: boolean;
 }
 
 /** After Esc or an outside change: the press stays ours until the pointer comes up, so its click does nothing. */
@@ -457,7 +593,8 @@ class GridGestures {
 
   private readRows(grid: HTMLElement, offsets: readonly number[] = []): RowGeo[] {
     const rows: RowGeo[] = [];
-    for (let r = 0; r < SCENE_ROWS; r++) {
+    const count = grid.querySelectorAll('[data-scene-row]').length;
+    for (let r = 0; r < count; r++) {
       const els = [...grid.querySelectorAll<HTMLElement>(`[data-pad-cell][data-slot="${r}"], [data-scene-row="${r}"]`)];
       for (const el of els) stopMotion(el);
       // Rows being previewed are measured where they belong (their offset taken off).
@@ -488,6 +625,7 @@ class GridGestures {
       grabY: p.startY - source.box.top,
       copy: false,
       refusal: refusalShort(project, p.from.trackId),
+      locked: isEditLocked(),
       viewW: document.documentElement.clientWidth,
       side: '',
       target: null,
@@ -497,11 +635,17 @@ class GridGestures {
     this.g = g;
     this.host.closeMenu();
     this.capture(g.pointerId);
-    // The pads are marked once: the clip's own pad becomes a placeholder, the others say whether it can go there.
+    // The pads are marked once: the clip's own pad becomes a placeholder, the others say whether it can go there
+    // (while a take records, none: the lifted pad says Locked).
     for (const c of cells) {
+      if (g.locked) {
+        if (c === source) c.el.dataset.drop = 'source';
+        continue;
+      }
       c.el.dataset.drop = c === source ? 'source' : c.trackId !== p.from.trackId && clipDropProblem(project, p.from.trackId, c.trackId) ? 'no' : 'ok';
     }
     grid.dataset.dragging = 'pad';
+    if (g.locked) grid.dataset.refused = '';
     this.watch();
     this.setUi({ kind: 'pad', from: p.from, clipName: clip.name, width: source.box.width, height: source.box.height, grabX: g.grabX, grabY: g.grabY });
     this.updatePad(g, true);
@@ -516,12 +660,13 @@ class GridGestures {
     if (!home?.els.length) return this.finish();
     const left = Math.min(...home.boxes.map((b) => b.left));
     const right = Math.max(...home.boxes.map((b) => b.left + b.width));
-    const g: RowDrag = { ...p, kind: 'row', rows, left, grabY: p.startY - home.top, slot: p.row, offsets: rows.map(() => 0), scenes: project.scenes };
+    const g: RowDrag = { ...p, kind: 'row', rows, left, grabY: p.startY - home.top, slot: p.row, offsets: rows.map(() => 0), scenes: project.scenes, locked: isEditLocked() };
     this.g = g;
     this.host.closeMenu();
     this.capture(g.pointerId);
     for (const el of home.els) el.dataset.rowDrag = 'source';
     grid.dataset.dragging = 'row';
+    if (g.locked) grid.dataset.refused = '';
     this.watch();
     const sceneBox = home.boxes[home.boxes.length - 1];
     const count = project.tracks.filter((t) => !!t.clips[p.row]).length;
@@ -688,6 +833,7 @@ class GridGestures {
   }
 
   private setCopy(g: PadDrag, copy: boolean): void {
+    if (g.locked) return;
     g.copy = copy;
     const grid = this.host.grid();
     const lift = this.host.liftEl();
@@ -713,7 +859,16 @@ class GridGestures {
         lift.dataset.side = side;
       }
     }
+    if (g.locked) {
+      // Locked: it follows the pointer and says so; no pad is a target.
+      if (lift) lift.dataset.kind = 'no';
+      const label = this.host.labelEl();
+      if (label && label.textContent !== 'Locked') label.textContent = 'Locked';
+      this.autoScroll(g);
+      return;
+    }
     const target = this.hit(g);
+    this.autoScroll(g);
     // Copy and project changes come with `force`: otherwise only a new pad under the pointer changes anything.
     if (!force && target === g.target) return;
     const kind = target ? dropKind(session.store.getState(), g.from, { trackId: target.trackId, slot: target.slot }, g.copy) : null;
@@ -773,6 +928,13 @@ class GridGestures {
     const lift = this.host.liftEl();
     const top = g.y - g.grabY;
     if (lift) lift.style.translate = `${g.left}px ${top}px`;
+    if (g.locked) {
+      if (lift) lift.dataset.kind = 'no';
+      const label = this.host.labelEl();
+      if (label && label.textContent !== 'Locked') label.textContent = 'Locked';
+      return;
+    }
+    this.autoScroll(g);
     const first = g.rows[0];
     const last = g.rows[g.rows.length - 1];
     let slot: number | null;
@@ -811,6 +973,17 @@ class GridGestures {
   /* Drops                                                            */
   /* ---------------------------------------------------------------- */
 
+  /** Near the grid's top or bottom edge, rows that do not fit scroll toward the pointer (the scroll re-measures the pads). */
+  private autoScroll(g: PadDrag | RowDrag): void {
+    const grid = this.host.grid();
+    if (!grid || grid.scrollHeight <= grid.clientHeight + 1) return;
+    const r = grid.getBoundingClientRect();
+    const head = grid.querySelector<HTMLElement>('[data-grid-head]')?.getBoundingClientRect().bottom ?? r.top;
+    const edge = 28;
+    const dy = g.y < head + edge ? -12 : g.y > r.bottom - edge ? 12 : 0;
+    if (dy) grid.scrollBy({ top: dy });
+  }
+
   /** Where the lifted pad is drawn now (its scale grows around the point it was picked up by). */
   private liftBox(g: PadDrag): Box {
     return scaledBox({ left: g.x - g.grabX, top: g.y - g.grabY, width: g.source.box.width, height: g.source.box.height }, LIFT_SCALE, g.grabX, g.grabY);
@@ -820,7 +993,7 @@ class GridGestures {
     const { target, drop: kind } = g;
     const lift = this.liftBox(g);
     const lean = target && kind === 'swap' && g.lean ? offsetBox(target.box, g.lean.x, g.lean.y) : null;
-    const to = target && kind && kind !== 'home' ? { trackId: target.trackId, slot: target.slot } : null;
+    const to = !g.locked && target && kind && kind !== 'home' ? { trackId: target.trackId, slot: target.slot } : null;
     this.endDrag(g, false);
     let ok = false;
     flushSync(() => {
@@ -840,7 +1013,7 @@ class GridGestures {
 
   private dropRow(g: RowDrag): void {
     const from = g.row;
-    const to = g.slot;
+    const to = g.locked ? null : g.slot;
     const firsts = this.rowFirsts(g);
     this.endDrag(g, false);
     let ok = false;
@@ -1066,7 +1239,14 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
   const trackId = col.id;
   const clip = col.clips[slot];
   const selected = useUi((s) => s.selectedTrackId === trackId && slotFor(s, trackId) === slot);
-  const { state, caption, paused } = usePadLook(trackId, slot, clip);
+  const look = usePadLook(trackId, slot, clip);
+  const { state, paused } = look;
+  // A queued pad counts down the beats to its start (re-rendered once a beat, only while queued).
+  const beats = useSyncExternalStore(
+    state === 'queued' && !look.caption ? (fn: () => void) => countdown.subscribe(trackId, fn) : noSubscribe,
+    () => (state === 'queued' && !look.caption ? countdown.get(trackId) : null),
+  );
+  const caption = look.caption ?? (state === 'queued' ? queuedCaption(beats) : undefined);
   const id = padId(trackId, slot);
   const onPress = () => {
     if (move) {
@@ -1106,7 +1286,8 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
       }
     }
   }
-  const stateWord = caption ?? STATE_SPOKEN[state];
+  // The spoken state stays "Starts next bar" (a countdown read out every beat would be noise).
+  const stateWord = look.caption ?? STATE_SPOKEN[state];
   const what = clip ? `clip ${clip.name}` : 'empty slot';
   const label = clip ? `${col.name}, ${sceneName}: ${clip.name}, ${barsLabel(clip.bars)}. ${stateWord}.${selected ? ' Selected.' : ''}` : `${col.name}, ${sceneName}: empty. Add clip.${selected ? ' Selected.' : ''}`;
   const moveSpoken =
@@ -1143,6 +1324,7 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
           quietEmpty
           cornerKey={selected && !move}
           shortcuts={clip ? CLIP_PAD_SHORTCUTS : PAD_SHORTCUTS}
+          sketch={clip ? <PadSketch clip={clip} drums={col.drums} /> : undefined}
           onPress={onPress}
           ariaLabel={move && drop ? `${label} ${moveSpoken}` : label}
           id={id}
@@ -1166,6 +1348,11 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
     </div>
   );
 });
+
+/** A clip's notes in miniature, for its pad's empty middle (redrawn only when its notes or length change). */
+function PadSketch({ clip, drums }: { clip: Clip; drums: boolean }) {
+  return <ClipSketch notes={clip.notes} lengthTicks={clip.bars * TICKS_PER_BAR} kind={drums ? 'drums' : 'notes'} />;
+}
 
 /** Two arrows, for the lifted pad's label when a drop would swap. */
 function SwapIcon({ size = 12 }: { size?: number }) {
@@ -1226,7 +1413,17 @@ function LiftedPad({ ui, liftRef, labelRef }: { ui: Extract<DragUi, { kind: 'pad
       inert
       style={{ width: ui.width, height: ui.height, transformOrigin: `${ui.grabX}px ${ui.grabY}px` }}
     >
-      <Pad state={state} label={clip.name} sublabel={barsLabel(clip.bars)} caption={caption} captionIcon={paused ? 'pause' : undefined} labelSize="lg" activateOn="release" onPress={() => {}} />
+      <Pad
+        state={state}
+        label={clip.name}
+        sublabel={barsLabel(clip.bars)}
+        caption={caption}
+        captionIcon={paused ? 'pause' : undefined}
+        labelSize="lg"
+        activateOn="release"
+        sketch={<PadSketch clip={clip} drums={session.store.getState().tracks.find((t) => t.id === ui.from.trackId)?.instrument.kind === 'drums'} />}
+        onPress={() => {}}
+      />
       <LiftLabel labelRef={labelRef} />
     </div>,
     document.body,
@@ -1252,7 +1449,7 @@ function LiftedRow({ ui, liftRef, labelRef }: { ui: Extract<DragUi, { kind: 'row
           <Icon name="play" size={12} />
         </span>
         <span className={styles.sceneName}>{ui.scene.name}</span>
-        <span className={`${styles.sceneCount} mono`}>{scenePartsText(ui.scene.count)}</span>
+        <span className={styles.sceneCount}>{scenePartsText(ui.scene.count)}</span>
         <LiftLabel labelRef={labelRef} />
       </div>
     </div>,
@@ -1279,24 +1476,26 @@ function DragLayer(props: { gestures: GridGestures; liftRef: (el: HTMLDivElement
 /* ------------------------------------------------------------------ */
 
 /**
- * The part's play/stop key: ▶ starts its selected clip at the next bar, ■
- * stops it at the next bar (or cancels a queued start). Stopped, ■ takes an
- * armed clip off the next Play.
+ * The part's play/stop key: ▶ starts its selected clip (the one its pad ring
+ * marks, see selection.ts) at the next bar, ■ stops it at the next bar (or
+ * cancels a queued start). Stopped, ■ takes an armed clip off the next Play.
  */
-function PartPlayButton({ col }: { col: ColumnSummary }) {
+function PartPlayButton({ col, id }: { col: ColumnSummary; id: string }) {
   const transport = useRuntime((s): Transport => (s.playing ? 'playing' : s.paused ? 'paused' : 'stopped'));
   const rt = useRuntime((s) => s.tracks[col.id]);
-  const selected = useUi((s) => slotFor(s, col.id));
+  const chosen = useUi((s) => s.selectedSlot[col.id] as number | undefined);
   const playingSlot = rt?.playingSlot ?? null;
   const queued = rt?.queued ?? null;
-  const target = col.clips[selected] ? selected : col.clips.findIndex((c) => !!c);
-  const clip = target >= 0 ? col.clips[target] : null;
+  // The chosen clip; a part never selected yet: the one it would be given when selected (its first clip).
+  const first = col.clips.findIndex((c) => !!c);
+  const target = chosen ?? (first < 0 ? 0 : first);
+  const clip = col.clips[target] ?? null;
   if (playingSlot !== null || (queued && queued.slot !== null)) {
     const stopping = playingSlot !== null && queued !== null && queued.slot === null;
     const queuedOnly = playingSlot === null;
     const label =
       transport === 'stopped'
-        ? `Don’t play ${col.name} on Play`
+        ? `Skip ${col.name} when Play starts`
         : queuedOnly
           ? `Cancel the start of ${col.name}`
           : stopping
@@ -1304,6 +1503,7 @@ function PartPlayButton({ col }: { col: ColumnSummary }) {
             : `Stop ${col.name} at the next bar`;
     return (
       <IconButton
+        id={id}
         icon="stop"
         label={label}
         tip={
@@ -1323,20 +1523,41 @@ function PartPlayButton({ col }: { col: ColumnSummary }) {
   }
   return (
     <IconButton
+      id={id}
       icon="play"
-      label={clip ? `Play ${col.name}: ${clip.name}` : `${col.name} has no clips`}
-      tip={clip ? `Starts ${clip.name} at the next bar (the clip selected on this part).` : 'Add a clip first: press an empty pad.'}
+      label={clip ? `Play ${col.name}: ${clip.name}` : first < 0 ? `${col.name} has no clips` : `${col.name}: the selected pad is empty`}
+      tip={
+        clip
+          ? `Starts ${clip.name} at the next bar (the clip selected on this part).`
+          : first < 0
+            ? 'Add a clip first: press an empty pad.'
+            : `Select one of ${col.name}'s clips first: this plays the selected one.`
+      }
       size="sm"
       variant="secondary"
       disabled={!clip}
       onClick={() => {
         if (!clip) return;
         selectTrack(col.id);
+        selectSlot(col.id, target);
         void session.pressClip(col.id, target);
       }}
       className={styles.partPlay}
     />
   );
+}
+
+/** Header keys, in their order inside a column (each header key's id is `part-head-<column x 5 + this>`). */
+const HEAD_KEYS = ['main', 'mute', 'solo', 'play', 'more'] as const;
+const HEAD_ID = 'part-head-';
+const headId = (column: number, key: (typeof HEAD_KEYS)[number]) => `${HEAD_ID}${column * HEAD_KEYS.length + HEAD_KEYS.indexOf(key)}`;
+
+/** A header's full names in its native title, only while one of them is cut on screen (checked as the pointer arrives). */
+function titleWhenCut(e: ReactPointerEvent<HTMLButtonElement>, full: string): void {
+  const el = e.currentTarget;
+  const cut = [...el.querySelectorAll<HTMLElement>('[data-cut-check]')].some((n) => n.scrollWidth > n.clientWidth + 0.5 || n.scrollHeight > n.clientHeight + 0.5);
+  if (cut) el.title = full;
+  else el.removeAttribute('title');
 }
 
 function TrackHeader(props: { col: ColumnSummary; index: number; anySolo: boolean; onMenu: OpenMenu; menuOpen: boolean }) {
@@ -1346,6 +1567,8 @@ function TrackHeader(props: { col: ColumnSummary; index: number; anySolo: boolea
   const mainRef = useRef<HTMLButtonElement>(null);
   const audible = !col.mute && (!anySolo || col.solo);
   const status = col.mute ? 'Muted' : anySolo && !col.solo ? 'Not soloed' : col.solo ? 'Solo' : null;
+  // Muted and Not soloed take the meter's place; a soloed part is heard, so it keeps its meter (and a Solo tag).
+  const silentWord = status === 'Muted' || status === 'Not soloed' ? status : null;
   const open = (anchor: MenuAnchor, returnFocus: HTMLElement | null, extra: Partial<MenuBase> = {}) => {
     selectTrack(col.id);
     onMenu({ kind: 'track', trackId: col.id, anchor, returnFocus, ...extra });
@@ -1370,21 +1593,29 @@ function TrackHeader(props: { col: ColumnSummary; index: number; anySolo: boolea
     >
       <button
         ref={mainRef}
+        id={headId(index, 'main')}
         type="button"
         className={styles.headerMain}
         onClick={() => selectTrack(col.id)}
         onKeyDown={onMainKey}
+        onPointerEnter={(e) => titleWhenCut(e, `${col.name}: ${col.sound}`)}
         aria-pressed={selected}
         aria-label={`Select ${col.name} (${col.sound})${status ? `, ${status}` : ''}`}
         aria-keyshortcuts="F2 Shift+F10"
       >
         <span className={`${styles.trackNum} mono`}>{index + 1}</span>
-        <span className={styles.trackName}>{col.name}</span>
-        <span className={styles.trackSound}>{col.sound}</span>
+        <span className={styles.trackName} data-cut-check="">
+          {col.name}
+        </span>
+        {col.solo && <span className={styles.soloTag}>Solo</span>}
+        <span className={styles.trackSound} data-cut-check="">
+          {col.sound}
+        </span>
       </button>
       <div className={styles.toggles}>
         <Tooltip tip={col.mute ? `Unmute ${col.name}.` : `Silence ${col.name} (it keeps playing in time).`} detail="M mutes the selected part.">
           <button
+            id={headId(index, 'mute')}
             type="button"
             className={styles.toggle}
             data-kind="mute"
@@ -1397,14 +1628,14 @@ function TrackHeader(props: { col: ColumnSummary; index: number; anySolo: boolea
             <span>Mute</span>
           </button>
         </Tooltip>
-        <Tooltip tip={col.solo ? `Stop soloing ${col.name}.` : `Hear only the soloed parts (${col.name} and any others you solo).`} detail="M mutes the selected part from the keyboard.">
+        <Tooltip tip={col.solo ? `Stop soloing ${col.name}.` : `Hear only the soloed parts (${col.name} and any others you solo).`} detail="Solo has no key: S plays a note. M mutes the selected part.">
           <button
+            id={headId(index, 'solo')}
             type="button"
             className={styles.toggle}
             data-kind="solo"
             aria-pressed={col.solo}
             aria-label={`Solo ${col.name}`}
-            aria-keyshortcuts={selected ? 'S' : undefined}
             onClick={() => session.setSolo(col.id, !col.solo)}
           >
             <Icon name="headphones" size={14} />
@@ -1413,18 +1644,19 @@ function TrackHeader(props: { col: ColumnSummary; index: number; anySolo: boolea
         </Tooltip>
       </div>
       <div className={styles.headBottom}>
-        <PartPlayButton col={col} />
-        {status ? (
-          <span className={styles.status} data-status={status === 'Solo' ? 'solo' : status === 'Muted' ? 'muted' : 'quiet'}>
-            {status}
+        <PartPlayButton col={col} id={headId(index, 'play')} />
+        {silentWord ? (
+          <span className={styles.status} data-status={silentWord === 'Muted' ? 'muted' : 'quiet'}>
+            {silentWord}
           </span>
         ) : (
           <div className={styles.meter}>
-            <Meter read={() => readMeterFrame().tracks.find((t) => t.trackId === col.id)?.peak ?? 0} label={`${col.name} level`} orientation="horizontal" length="100%" thickness={6} segments={10} />
+            <Meter read={() => session.readMetersShared()?.tracks.find((t) => t.trackId === col.id)?.peak ?? 0} label={`${col.name} level`} orientation="horizontal" length="100%" thickness={6} segments={10} />
           </div>
         )}
-        <Tooltip name="Part options" tip="Rename this part, change its instrument, or lock it against Variation." detail="Right-click the header, or press F2 to rename.">
+        <Tooltip name="Part options" tip="Rename this part, change its instrument, or keep its pattern (no Variation)." detail="Right-click the header, or press F2 to rename.">
           <button
+            id={headId(index, 'more')}
             type="button"
             className={styles.headerMore}
             aria-label={`Options for part ${col.name}`}
@@ -1457,6 +1689,7 @@ function scenePartsTip(n: number, of: number): string {
 
 function SceneButton(props: {
   row: number;
+  rows: number;
   scene: Scene;
   columns: ColumnSummary[];
   onMenu: OpenMenu;
@@ -1464,7 +1697,7 @@ function SceneButton(props: {
   onPointerDownScene(e: ReactPointerEvent<HTMLButtonElement>, row: number): void;
   consumeClick(): boolean;
 }) {
-  const { row, scene, columns, onMenu, menuOpen, onPointerDownScene, consumeClick } = props;
+  const { row, rows, scene, columns, onMenu, menuOpen, onPointerDownScene, consumeClick } = props;
   const btnRef = useRef<HTMLButtonElement>(null);
   const cellRef = useRef<HTMLDivElement>(null);
   const lit = useRuntime((s) => {
@@ -1482,6 +1715,7 @@ function SceneButton(props: {
   });
   const count = columns.filter((c) => c.clips[row]).length;
   const open = (anchor: MenuAnchor, returnFocus: HTMLElement | null, extra: Partial<MenuBase> = {}) => onMenu({ kind: 'scene', row, anchor, returnFocus, ...extra });
+  const focusPad = (column: number) => document.getElementById(padId(columns[Math.max(0, Math.min(columns.length - 1, column))].id, row))?.focus();
   const onKey = (e: KeyboardEvent<HTMLButtonElement>) => {
     if (isMenuKey(e)) {
       e.preventDefault();
@@ -1493,20 +1727,34 @@ function SceneButton(props: {
     } else if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       e.preventDefault();
       const to = row + (e.key === 'ArrowUp' ? -1 : 1);
-      if (to < 0 || to >= SCENE_ROWS) return;
+      if (to < 0 || to >= rows) return;
       if (moveSceneWithMotion(row, to)) document.querySelector<HTMLElement>(`[data-scene-row="${to}"] button[data-scene]`)?.focus();
+    } else if (!e.altKey && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      // The scene buttons are the grid's last column: arrows move along it, Left goes back to the pads.
+      e.preventDefault();
+      const to = row + (e.key === 'ArrowUp' ? -1 : 1);
+      if (to >= 0 && to < rows) document.querySelector<HTMLElement>(`[data-scene-row="${to}"] button[data-scene]`)?.focus();
+    } else if (!e.altKey && !e.shiftKey && e.key === 'ArrowLeft') {
+      e.preventDefault();
+      focusPad(columns.length - 1);
+    } else if (!e.altKey && !e.shiftKey && e.key === 'Home') {
+      e.preventDefault();
+      focusPad(0);
     }
   };
   return (
     <div ref={cellRef} className={styles.sceneCell} data-scene-row={row} onContextMenu={(e) => onContextMenuOpen(e, (a) => open(a, btnRef.current))}>
       <Tooltip
         tip={`Play the ${scene.name} scene: ${scenePartsTip(count, columns.length)}`}
-        detail="Scenes switch on the next bar. Drag the scene (or Alt+Up / Alt+Down) to reorder the rows; the clips move with it. Right-click or F2 to rename."
+        detail="Scenes switch on the next bar. Drag the scene (or Alt+Up / Alt+Down) to reorder the rows; the clips move with it. Right-click, Shift+F10 or F2 for its menu: rename, insert, duplicate, delete."
       >
         <button
           ref={btnRef}
+          id={`scene-btn-${row}`}
           type="button"
           data-scene=""
+          data-row={row}
+          data-lit={lit || undefined}
           className={`${styles.scene} ${lit ? styles.sceneLit : ''}`}
           onPointerDown={(e) => onPointerDownScene(e, row)}
           onClick={() => {
@@ -1521,16 +1769,18 @@ function SceneButton(props: {
             <Icon name="play" size={12} />
           </span>
           <span className={styles.sceneName}>{scene.name}</span>
-          <span className={`${styles.sceneCount} mono`}>{scenePartsText(count)}</span>
+          <span className={styles.sceneCount}>{scenePartsText(count)}</span>
         </button>
       </Tooltip>
-      <Tooltip name="Scene options" tip="Rename, move, add to the song or export this scene.">
+      <Tooltip name="Scene options" tip="Rename, move, insert, duplicate, capture, add to the song, export or delete this scene.">
         <button
           type="button"
           className={styles.sceneMore}
           aria-label={`Options for scene ${scene.name}`}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
+          // Not a Tab stop of its own: the scene button opens the same menu (Shift+F10, the menu key, F2).
+          tabIndex={-1}
           onClick={(e) => (menuOpen ? onMenu(null) : open(anchorFromElement(e.currentTarget), e.currentTarget, { ignore: e.currentTarget }))}
         >
           <MoreIcon size={14} />
@@ -1544,9 +1794,17 @@ function SceneButton(props: {
 /* Selected pad actions                                                */
 /* ------------------------------------------------------------------ */
 
-function PadActions(props: { move: MoveState | null; gestures: GridGestures; onMove(from: PadRef): void; onCancelMove(): void; onRename(at: PadRef): void }) {
-  const { move, gestures, onMove, onCancelMove, onRename } = props;
+function PadActions(props: {
+  move: MoveState | null;
+  gestures: GridGestures;
+  onMove(from: PadRef): void;
+  onCancelMove(): void;
+  onRename(at: PadRef): void;
+  onNewClip(at: PadRef, key: HTMLElement): void;
+}) {
+  const { move, gestures, onMove, onCancelMove, onRename, onNewClip } = props;
   const drag = useSyncExternalStore(gestures.subscribe, gestures.getUi);
+  const locked = useEditLocked();
   const trackId = useUi((s) => s.selectedTrackId);
   const slot = useUi((s) => slotFor(s, s.selectedTrackId));
   const info = useProject(
@@ -1557,9 +1815,20 @@ function PadActions(props: { move: MoveState | null; gestures: GridGestures; onM
     },
     (a, b) => a === b || (!!a && !!b && a.part === b.part && a.scene === b.scene && a.name === b.name && a.bars === b.bars && a.full === b.full),
   );
+  // While a performance take records the clips are locked: one coral line instead of keys that would be refused.
+  if (locked) {
+    return (
+      <div className={styles.actions} role="status" data-locked="" data-hint-avoid="">
+        <p className={styles.lockLine}>
+          <span className={styles.lockDot} aria-hidden="true" />
+          {LOCKED_TEXT}. Pads and scenes still play; stop the take to edit clips.
+        </p>
+      </div>
+    );
+  }
   if (move || drag?.kind === 'pad') {
     return (
-      <div className={styles.actions} role="region" aria-label="Moving a clip" data-moving="">
+      <div className={styles.actions} role="region" aria-label="Moving a clip" data-moving="" data-hint-avoid="">
         <p className={styles.actionsText} aria-live="polite">
           <Icon name="drag" size={14} />
           {move
@@ -1575,21 +1844,21 @@ function PadActions(props: { move: MoveState | null; gestures: GridGestures; onM
     );
   }
   if (!info) return null;
+  const at = { trackId, slot };
   if (info.name === null) {
     return (
-      <div className={styles.actions} role="region" aria-label="Selected pad">
+      <div className={styles.actions} role="region" aria-label="Selected pad" data-hint-avoid="">
         <p className={styles.actionsText}>
           <span className={styles.actionsWhat}>{`${info.part} · ${info.scene}`}</span> empty pad: tap it to add a clip.
         </p>
-        <Button size="sm" variant="secondary" icon="plus" onClick={() => clipActions.create(trackId, slot, 1)}>
+        <Button size="sm" variant="secondary" icon="plus" aria-haspopup="menu" onClick={(e) => onNewClip(at, e.currentTarget)} tip="Make a new clip here: choose its length (1 to 8 bars), or paste a copied clip.">
           New clip
         </Button>
       </div>
     );
   }
-  const at = { trackId, slot };
   return (
-    <div className={styles.actions} role="group" aria-label={`Selected clip ${info.name}`} data-pad-actions="">
+    <div className={styles.actions} role="group" aria-label={`Selected clip ${info.name}`} data-pad-actions="" data-hint-avoid="">
       <p className={styles.actionsText}>
         <span className={styles.actionsWhat}>{info.name}</span>
         <span className={styles.actionsWhere}>
@@ -1597,7 +1866,7 @@ function PadActions(props: { move: MoveState | null; gestures: GridGestures; onM
         </span>
       </p>
       <div className={styles.actionKeys}>
-        <Button size="sm" variant="secondary" onClick={() => clipActions.editSteps(trackId, slot)} tip="Edit this clip’s steps or notes.">
+        <Button size="sm" variant="secondary" data-edit-steps="" onClick={() => clipActions.editSteps(trackId, slot)} tip="Edit this clip’s steps or notes.">
           Edit steps
         </Button>
         <Button size="sm" variant="secondary" icon="duplicate" disabled={info.full} onClick={() => clipActions.duplicate(trackId, slot)} tip={info.full ? `${info.part} has no empty pad left.` : 'Copy this clip into the next empty pad of the part.'}>
@@ -1606,7 +1875,7 @@ function PadActions(props: { move: MoveState | null; gestures: GridGestures; onM
         <Button size="sm" variant="secondary" icon="drag" onClick={() => onMove(at)} tip="Move this clip to another pad with the arrow keys and Enter. You can also drag it.">
           Move…
         </Button>
-        <Button size="sm" variant="secondary" onClick={() => onRename(at)} tip="Rename this clip (F2 on the pad).">
+        <Button size="sm" variant="secondary" icon="pencil" onClick={() => onRename(at)} tip="Rename this clip (F2 on the pad).">
           Rename
         </Button>
         <Button size="sm" variant="danger" icon="trash" onClick={() => clipActions.remove(trackId, slot)} tip="Delete this clip. Undo brings it back.">
@@ -1621,10 +1890,69 @@ function PadActions(props: { move: MoveState | null; gestures: GridGestures; onM
 /* Grid                                                                */
 /* ------------------------------------------------------------------ */
 
+const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'];
+const countWords = (n: number, one: string, many: string) => `${NUMBER_WORDS[n] ?? String(n)} ${n === 1 ? one : many}`;
+
+/** The pads and the scene buttons in the grid's roving Tab stop. */
+const ROVING_SELECTOR = '[data-pad-cell] button[id^="pad-"], button[data-scene]';
+
+/**
+ * One Tab stop for the pads and the scene buttons (a roving tabindex): the
+ * pad focused last while focus is inside, else the selected (ringed) pad.
+ * Arrow keys, Home and End move focus (see onGridKey); the rest of the grid
+ * is skipped with one Tab.
+ */
+function usePadRoving(gridRef: { current: HTMLElement | null }) {
+  const homeOf = () => {
+    const s = uiStore.getState();
+    return padId(s.selectedTrackId, slotFor(s, s.selectedTrackId));
+  };
+  const current = useRef<string>(homeOf());
+  const apply = useCallback(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    let found = false;
+    const els = grid.querySelectorAll<HTMLElement>(ROVING_SELECTOR);
+    for (const el of els) {
+      const on = el.id === current.current;
+      el.tabIndex = on ? 0 : -1;
+      found ||= on;
+    }
+    // The stop's pad went away (a scene deleted, another part): the first pad keeps the grid reachable.
+    if (!found && els[0]) els[0].tabIndex = 0;
+  }, [gridRef]);
+  // After every render (rows come and go), and when the selection moves while focus is elsewhere.
+  useLayoutEffect(() => apply());
+  useEffect(
+    () =>
+      uiStore.subscribe(() => {
+        if (gridRef.current?.contains(document.activeElement)) return;
+        const home = homeOf();
+        if (home === current.current) return;
+        current.current = home;
+        apply();
+      }),
+    [apply, gridRef],
+  );
+  return useCallback(
+    (e: FocusEvent<HTMLElement>) => {
+      const el = e.target as HTMLElement;
+      if (!el.matches(ROVING_SELECTOR) || el.id === current.current) return;
+      current.current = el.id;
+      apply();
+    },
+    [apply],
+  );
+}
+
 export function LoopsGrid() {
   const columns = useProject(summarize, sameColumns);
   const scenes = useProject((p) => p.scenes);
+  const rows = scenes.length;
   const anySolo = columns.some((c) => c.solo);
+  const locked = useEditLocked();
+  const playing = useRuntime((s) => s.playing);
+  const paused = useRuntime((s) => s.paused);
   const gridRef = useRef<HTMLDivElement>(null);
   const liftRef = useRef<HTMLDivElement | null>(null);
   const labelRef = useRef<HTMLSpanElement | null>(null);
@@ -1636,6 +1964,10 @@ export function LoopsGrid() {
   const [move, setMove] = useState<MoveState | null>(null);
   const moveRef = useRef<MoveState | null>(null);
   moveRef.current = move;
+  const columnsRef = useRef(columns);
+  columnsRef.current = columns;
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
   const seq = useRef(0);
   const openMenu = useCallback<OpenMenu>((req) => {
     seq.current += 1;
@@ -1667,6 +1999,24 @@ export function LoopsGrid() {
     chipRef.current = el;
   }, []);
 
+  // Loop progress and countdowns: one frame loop for the whole grid while playing; paused holds the last picture.
+  const [painter] = useState(() => new ProgressPainter());
+  const trackIds = columns.map((c) => c.id);
+  const idsRef = useRef(trackIds);
+  idsRef.current = trackIds;
+  useRafLoop(() => painter.paint(gridRef.current, idsRef.current), playing);
+  useEffect(() => {
+    if (playing) return;
+    if (paused) painter.paint(gridRef.current, idsRef.current);
+    else painter.clear();
+  }, [playing, paused, painter]);
+  useEffect(() => () => painter.clear(), [painter]);
+
+  // One Tab stop for the pads (with the scene buttons), one for the part headers.
+  const onPadFocus = usePadRoving(gridRef);
+  const selectedColumn = useUi((s) => Math.max(0, columns.findIndex((c) => c.id === s.selectedTrackId)));
+  const { gridRef: headRef, onFocus: onHeadFocus } = useRovingPads(HEAD_ID, selectedColumn * HEAD_KEYS.length);
+
   const clipName = (at: PadRef) => clipAt(session.store.getState(), at)?.name ?? '';
 
   /** Drop the keyboard move's clip on `to`: move, or copy. One undo step; a refused drop says why. */
@@ -1687,6 +2037,10 @@ export function LoopsGrid() {
 
   const startKeyMove = useCallback((from: PadRef) => {
     setMenu(null);
+    if (isEditLocked()) {
+      notify('Locked while a performance records. Stop the take to move clips.', 'warn');
+      return;
+    }
     selectTrack(from.trackId);
     selectSlot(from.trackId, from.slot);
     setMove({ from, clipName: clipName(from), over: from });
@@ -1702,7 +2056,7 @@ export function LoopsGrid() {
   const onPointerDownPad = useCallback((e: ReactPointerEvent<HTMLElement>, from: PadRef) => gestures.pressPad(e.nativeEvent, from), [gestures]);
   const onPointerDownScene = useCallback((e: ReactPointerEvent<HTMLButtonElement>, row: number) => gestures.pressRow(e.nativeEvent, row), [gestures]);
 
-  // A keyboard move ends when the clip it moves goes away (undo, another part's edit) or focus leaves the grid for good.
+  // A keyboard move ends when the clip it moves goes away (undo, another part's edit), focus leaves the grid for good, or a take starts.
   useEffect(() => {
     if (!move) return;
     const onDown = (e: PointerEvent) => {
@@ -1714,15 +2068,15 @@ export function LoopsGrid() {
     return () => document.removeEventListener('pointerdown', onDown, true);
   }, [move]);
   useEffect(() => {
-    if (move && !columns.find((c) => c.id === move.from.trackId)?.clips[move.from.slot]) setMove(null);
-  }, [columns, move]);
+    if (move && (locked || !columns.find((c) => c.id === move.from.trackId)?.clips[move.from.slot])) setMove(null);
+  }, [columns, move, locked]);
 
   /** Keys while choosing where a clip goes: Enter / Space drop it (Ctrl copies), Esc cancels. */
   const onGridKeyCapture = useCallback(
     (e: KeyboardEvent<HTMLDivElement>) => {
       if (!moveRef.current) return;
       const el = e.target as HTMLElement;
-      const at = /^pad-(t\d+)-(\d)$/.exec(el.id);
+      const at = /^pad-(.+)-(\d+)$/.exec(el.id);
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
@@ -1736,12 +2090,12 @@ export function LoopsGrid() {
     [cancelMove, dropOn],
   );
 
-  /** Pad keys: arrows move focus (roving); menu key, F2, Delete, Ctrl+C / Ctrl+V act on the focused pad. */
+  /** Pad keys: arrows, Home and End move focus (roving); menu key, F2, Delete, Ctrl+C / Ctrl+V act on the focused pad. */
   const onGridKey = useCallback(
     (e: KeyboardEvent<HTMLDivElement>) => {
       const el = e.target as HTMLElement;
-      const m = /^pad-(t\d+)-(\d)$/.exec(el.id);
-      if (!m) return;
+      const m = /^pad-(.+)-(\d+)$/.exec(el.id);
+      if (!m || !el.closest('[data-pad-cell]')) return;
       const trackId = m[1];
       const row = Number(m[2]);
       const mod = e.ctrlKey || e.metaKey;
@@ -1762,7 +2116,7 @@ export function LoopsGrid() {
         e.preventDefault();
         select();
         const hasClip = !!session.store.getState().tracks.find((t) => t.id === trackId)?.clips[row];
-        openMenu({ kind: 'clip', trackId, slot: row, anchor: anchorFromElement(el), returnFocus: el, rename: hasClip });
+        openMenu({ kind: 'clip', trackId, slot: row, anchor: anchorFromElement(el), returnFocus: el, rename: hasClip && !isEditLocked() });
         return;
       }
       if (!moving && (e.key === 'Delete' || e.key === 'Backspace') && !mod && !e.altKey) {
@@ -1782,21 +2136,64 @@ export function LoopsGrid() {
         clipActions.paste(trackId, row);
         return;
       }
-      const col = Number(trackId.slice(1)) - 1;
+      if (e.altKey || e.shiftKey) return;
+      const ids = columnsRef.current.map((c) => c.id);
+      const last = ids.length - 1;
+      const lastRow = rowsRef.current - 1;
+      const col = ids.indexOf(trackId);
       let c = col;
       let r = row;
-      if (e.key === 'ArrowRight') c = Math.min(7, col + 1);
-      else if (e.key === 'ArrowLeft') c = Math.max(0, col - 1);
-      else if (e.key === 'ArrowDown') r = Math.min(SCENE_ROWS - 1, row + 1);
+      if (e.key === 'ArrowRight') {
+        if (col === last && !moving) {
+          // Past the last part: the row's scene button.
+          e.preventDefault();
+          document.querySelector<HTMLElement>(`[data-scene-row="${row}"] button[data-scene]`)?.focus();
+          return;
+        }
+        c = Math.min(last, col + 1);
+      } else if (e.key === 'ArrowLeft') c = Math.max(0, col - 1);
+      else if (e.key === 'ArrowDown') r = Math.min(lastRow, row + 1);
       else if (e.key === 'ArrowUp') r = Math.max(0, row - 1);
-      else return;
+      else if (e.key === 'Home') {
+        c = 0;
+        if (mod) r = 0;
+      } else if (e.key === 'End') {
+        c = last;
+        if (mod) r = lastRow;
+      } else return;
       e.preventDefault();
-      const next = { trackId: `t${c + 1}`, slot: r };
+      const next = { trackId: ids[c], slot: r };
       if (moving) setMove((mv) => (mv ? { ...mv, over: next } : mv));
       document.getElementById(padId(next.trackId, next.slot))?.focus();
     },
     [openMenu],
   );
+
+  /** Header keys: Left / Right go to the same key of the next part, Up / Down through a part's keys, Home / End to the first and last part. */
+  const onHeadKey = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    const el = e.target as HTMLElement;
+    if (!el.id.startsWith(HEAD_ID) || e.altKey || e.shiftKey) return;
+    const n = Number(el.id.slice(HEAD_ID.length));
+    if (!Number.isInteger(n)) return;
+    const per = HEAD_KEYS.length;
+    const parts = columnsRef.current.length;
+    const col = Math.floor(n / per);
+    const k = n % per;
+    const usable = (i: number) => {
+      const b = document.getElementById(`${HEAD_ID}${i}`) as HTMLButtonElement | null;
+      return b && !b.disabled && b.offsetParent !== null ? b : null;
+    };
+    let to: HTMLElement | null = null;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
+      const c = e.key === 'Home' ? 0 : e.key === 'End' ? parts - 1 : Math.max(0, Math.min(parts - 1, col + (e.key === 'ArrowRight' ? 1 : -1)));
+      to = usable(c * per + k) ?? usable(c * per);
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      const d = e.key === 'ArrowDown' ? 1 : -1;
+      for (let j = k + d; j >= 0 && j < per && !to; j += d) to = usable(col * per + j);
+    } else return;
+    e.preventDefault();
+    to?.focus();
+  }, []);
 
   const rename = useCallback(
     (at: PadRef) => {
@@ -1805,6 +2202,27 @@ export function LoopsGrid() {
     },
     [openMenu],
   );
+
+  /** The pad actions' New clip: the new-clip choices (1 to 8 bars, or paste) open at that key. */
+  const newClip = useCallback(
+    (at: PadRef, keyEl: HTMLElement) => {
+      openMenu({ kind: 'clip', trackId: at.trackId, slot: at.slot, anchor: anchorFromElement(keyEl), returnFocus: keyEl, ignore: keyEl });
+    },
+    [openMenu],
+  );
+
+  const addScene = () => {
+    const r = insertScene(session.store);
+    if (!session.accepted(r)) return;
+    const name = session.store.getState().scenes[r.row ?? rows]?.name ?? 'A new scene';
+    notify(`Added the empty scene ${name} under the others.`, 'info', 'undo');
+    const at = r.row ?? rows;
+    requestAnimationFrame(() => {
+      const btn = document.querySelector<HTMLElement>(`[data-scene-row="${at}"] button[data-scene]`);
+      btn?.scrollIntoView({ block: 'nearest' });
+      btn?.focus({ preventScroll: true });
+    });
+  };
 
   const moveCol = move ? columns.findIndex((c) => c.id === move.from.trackId) : -1;
 
@@ -1815,23 +2233,29 @@ export function LoopsGrid() {
         ref={gridRef}
         onKeyDown={onGridKey}
         onKeyDownCapture={onGridKeyCapture}
+        onFocus={onPadFocus}
         role="group"
-        aria-label="Clip pads: eight parts by four scenes"
+        aria-label={`Clip pads: ${countWords(columns.length, 'part', 'parts')} by ${countWords(rows, 'scene', 'scenes')}`}
         data-moving={move ? 'keys' : undefined}
+        data-locked={locked || undefined}
+        style={{ '--rows': rows } as CSSProperties}
       >
-        {columns.map((c, i) => (
-          <TrackHeader key={c.id} col={c} index={i} anySolo={anySolo} onMenu={openMenu} menuOpen={menu?.kind === 'track' && menu.trackId === c.id} />
-        ))}
-        <div className={styles.sceneHeader}>
-          <span className={styles.sceneHeaderText}>Scenes</span>
-          <Tooltip tip="Stop every part at the next bar (the transport keeps running).">
-            <button type="button" className={styles.stopAll} onClick={() => session.stopAllClips()} aria-label="Stop all parts at the next bar">
-              <Icon name="stop" size={12} />
-              <span>Stop all</span>
-            </button>
-          </Tooltip>
+        {/* The part headers and Stop all: one sticky row (the pad rows scroll under it). */}
+        <div className={styles.head} ref={headRef} onKeyDown={onHeadKey} onFocus={onHeadFocus} data-grid-head="">
+          {columns.map((c, i) => (
+            <TrackHeader key={c.id} col={c} index={i} anySolo={anySolo} onMenu={openMenu} menuOpen={menu?.kind === 'track' && menu.trackId === c.id} />
+          ))}
+          <div className={styles.sceneHeader}>
+            <span className={styles.sceneHeaderText}>Scenes</span>
+            <Tooltip tip="Stop every part at the next bar (the transport keeps running).">
+              <button type="button" className={styles.stopAll} onClick={() => session.stopAllClips()} aria-label="Stop all parts at the next bar">
+                <Icon name="stop" size={12} />
+                <span>Stop all</span>
+              </button>
+            </Tooltip>
+          </div>
         </div>
-        {scenes.slice(0, SCENE_ROWS).map((scene, row) => (
+        {scenes.map((scene, row) => (
           <div key={scene.id} className={styles.row}>
             {columns.map((c, i) => (
               <ClipPad
@@ -1851,6 +2275,7 @@ export function LoopsGrid() {
             ))}
             <SceneButton
               row={row}
+              rows={rows}
               scene={scene}
               columns={columns}
               onMenu={openMenu}
@@ -1861,8 +2286,19 @@ export function LoopsGrid() {
           </div>
         ))}
       </div>
-      <div data-move-bar="">
-        <PadActions move={move} gestures={gestures} onMove={startKeyMove} onCancelMove={cancelMove} onRename={rename} />
+      {/* Under the grid: the selected pad's actions, and under the scene column "Add scene" (until there are 8). */}
+      <div className={styles.bottom} data-add={rows < MAX_SCENES || undefined}>
+        <div data-move-bar="" className={styles.bottomBar}>
+          <PadActions move={move} gestures={gestures} onMove={startKeyMove} onCancelMove={cancelMove} onRename={rename} onNewClip={newClip} />
+        </div>
+        {rows < MAX_SCENES && (
+          <Tooltip tip={locked ? `${LOCKED_TEXT}.` : `Add an empty scene row under the others (up to ${MAX_SCENES}). The scene menu (⋯) can also insert, duplicate or capture one.`}>
+            <button type="button" className={styles.addScene} disabled={locked} onClick={addScene}>
+              <Icon name="plus" size={12} />
+              <span>Add scene</span>
+            </button>
+          </Tooltip>
+        )}
       </div>
 
       <DragLayer gestures={gestures} liftRef={setLift} labelRef={setLabel} chipRef={setChip} />
