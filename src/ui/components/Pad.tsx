@@ -9,8 +9,18 @@
  * dragged (`activateOn="release"`, the clip pads) presses on pointerup
  * instead, and only when the pointer moved less than TAP_SLOP_PX, so a drag
  * never launches it.
+ *
+ * Playing pads show an even amber wash (recording: coral). A caller can draw
+ * how far a playing clip is through its loop: write the CSS variable
+ * `--loop-progress` (a number 0..1) on the pad (`ref`) or any ancestor from an
+ * animation-frame loop that reads the audio clock (no React state per frame);
+ * the 3 px bar along the bottom appears only once it is written. `sketch` is
+ * a small picture of the pad's content (see ClipSketch), shown in the empty
+ * middle of pads at least 100 px tall. A long name fades out at its end
+ * instead of an ellipsis, and the full name is the pad's title. On large pads
+ * (about 150 x 120 px and up) a large name steps up to --fs-2xl.
  */
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref } from 'react';
 import { Icon, type IconName } from './Icon';
 import styles from './Pad.module.css';
 
@@ -59,6 +69,15 @@ export interface PadProps {
   cornerKey?: boolean;
   /** Keys that act on the focused pad, besides its own computer key (e.g. "Shift+F10 F2"). */
   shortcuts?: string;
+  /** A small picture of the content (e.g. a ClipSketch), drawn in the pad's empty middle when it is at least 100 px tall. */
+  sketch?: ReactNode;
+  /**
+   * Native title of the pad (its full name when the name is cut). Default: the label on clip pads
+   * (`labelSize` 'lg'), none elsewhere; null for none.
+   */
+  title?: string | null;
+  /** The pad's button, e.g. to write `--loop-progress` from an animation-frame loop. */
+  ref?: Ref<HTMLButtonElement>;
   /** Set by a Tooltip around the pad (its description). */
   'aria-describedby'?: string;
   id?: string;
@@ -120,6 +139,9 @@ export function Pad(props: PadProps) {
     captionIcon,
     cornerKey = false,
     shortcuts,
+    sketch,
+    title,
+    ref,
     id,
     className,
   } = props;
@@ -235,10 +257,14 @@ export function Pad(props: PadProps) {
 
   const cls = [styles.pad, className].filter(Boolean).join(' ');
 
+  const nativeTitle = title === null ? undefined : (title ?? (labelSize === 'lg' && state !== 'empty' ? label : undefined));
+
   return (
     <button
+      ref={ref}
       type="button"
       id={id}
+      title={nativeTitle}
       className={cls}
       data-state={state}
       data-light={light}
@@ -266,6 +292,7 @@ export function Pad(props: PadProps) {
       onContextMenu={(e) => e.preventDefault()}
     >
       <span className={styles.light} aria-hidden="true" />
+      <span className={styles.progress} aria-hidden="true" />
       <span className={styles.face} aria-hidden="true">
         {state === 'empty' && (
           <span className={styles.plus}>
@@ -276,6 +303,7 @@ export function Pad(props: PadProps) {
           <span className={styles.label}>{label}</span>
           {sublabel && <span className={styles.sublabel}>{sublabel}</span>}
         </span>
+        {sketch && state !== 'empty' && <span className={styles.sketch}>{sketch}</span>}
         {shownCaption && (
           <span className={styles.caption}>
             {icon && <Icon name={icon} size={10} className={styles.capIcon} />}

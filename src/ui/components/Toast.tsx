@@ -5,7 +5,13 @@
  *   with a Restore Connection action, or an autosave error with Retry).
  * - `ToastProvider` + `useToasts()`: transient messages stacked at the bottom
  *   of the screen, e.g. "Variation applied" [Undo]. Toasts pause while
- *   hovered or focused; errors stay until dismissed unless given a duration.
+ *   hovered or focused; errors stay until dismissed unless given a duration
+ *   (any caller may pass one, e.g. 3000 ms for "Undid: …").
+ * - Placement contract (Toast.module.css): the stack sits above the on-screen
+ *   keyboard (`--keyboard-h`, set by the KeyboardStrip); while a menu is open
+ *   (`body[data-popover-open]`, set by Popover) it moves to the top, under the
+ *   transport (`--transport-h`), below the menu; while a modal dialog is open
+ *   (`body[data-modal-open]`, set by Dialog) its action keys are hidden.
  *
  * Tone is shown by an icon and wording, not colour alone: coral marks
  * warnings and errors (attention); info/success are neutral.

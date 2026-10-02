@@ -1,7 +1,7 @@
 .knob {
-  --dial: 44px;
+  --dial: var(--knob-dial-md);
   --w: 68px;
-  --arc: var(--amber);
+  --arc: var(--knob-arc);
   --label-fs: var(--fs-sm);
   --label-lh: 15px;
   --label-lines: 1;
@@ -18,16 +18,24 @@
 /* Small knobs: 11 px labels, so the longest single word of the registry ("Resonance") fits the
    label box and longer names wrap to a second line ("Reverb / Amount"). */
 .knob[data-size='sm'] {
-  --dial: 34px;
+  --dial: var(--knob-dial-sm);
   --w: 54px;
   --label-fs: var(--fs-xs);
   --label-lh: 13px;
 }
 
 .knob[data-size='lg'] {
-  --dial: 60px;
+  --dial: var(--knob-dial-lg);
   --w: 84px;
   --label-fs: var(--fs-md);
+}
+
+/* Extra large: the big knobs on a big screen (a view picks it with a container query). */
+.knob[data-size='xl'] {
+  --dial: var(--knob-dial-xl);
+  --w: 104px;
+  --label-fs: var(--fs-lg);
+  --label-lh: 19px;
 }
 
 /* A row of small knobs where one label can wrap ([data-wraps]): every small knob of the row reserves
@@ -41,7 +49,7 @@
 }
 
 .knob[data-tone='teal'] {
-  --arc: var(--teal);
+  --arc: var(--knob-arc-teal);
 }
 
 .knob[data-tone='off'] {
@@ -53,11 +61,13 @@
   flex-direction: column;
   align-items: center;
   width: 100%;
-  padding: 2px 0 1px;
+  padding: 2px 0 0;
   border-radius: var(--r-md);
   outline: none;
   cursor: ns-resize;
-  touch-action: none;
+  /* A finger swipe scrolls the page; the knob takes the finger on its dial or after a short rest
+     (Knob.tsx), and then stops the panning itself. */
+  touch-action: pan-x pan-y;
 }
 
 .slider:focus-visible {
@@ -77,7 +87,14 @@
   transition: box-shadow var(--t-fast) var(--ease);
 }
 
-.slider:focus-visible .dial {
+/* Under the pointer (and while held) a knob that can be turned answers with a soft teal halo. */
+.knob:not([data-readonly]):not([data-disabled]) .slider:hover .dial,
+.knob[data-dragging] .dial {
+  box-shadow: 0 0 0 4px var(--teal-wash);
+}
+
+.slider:focus-visible .dial,
+.knob[data-dragging] .slider:focus-visible .dial {
   box-shadow: 0 0 0 2px var(--shell-hi), 0 0 0 4px var(--teal);
 }
 
@@ -89,15 +106,27 @@
   overflow: visible;
 }
 
+/* The track is a fine printed line under the value arc (both read 3:1 on the panel). */
 .track,
-.arc {
+.arc,
+.macroArc {
   fill: none;
-  stroke-width: 5.5;
   stroke-linecap: round;
 }
 
 .track {
-  stroke: #cfd3d7;
+  stroke: var(--knob-track);
+  stroke-width: 2;
+}
+
+.arc {
+  stroke-width: 5.5;
+}
+
+/* The span a macro sweeps, outside the dial's arc. */
+.macroArc {
+  stroke: var(--knob-arc-teal);
+  stroke-width: 4;
 }
 
 .arc {
@@ -191,6 +220,13 @@
   height: 32%;
 }
 
+.knob[data-size='xl'] .pointer {
+  width: 3px;
+  margin-left: -1.5px;
+  top: 8%;
+  height: 32%;
+}
+
 .knob[data-disabled] .body {
   opacity: 0.55;
 }
@@ -211,7 +247,7 @@
   margin-top: 5px;
   color: var(--ink-2);
   font-size: var(--label-fs);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
   line-height: var(--label-lh);
   text-align: center;
 }
@@ -227,18 +263,37 @@
   text-wrap: balance;
 }
 
-.knob[data-size='lg'] .label {
+.knob[data-size='lg'] .label,
+.knob[data-size='xl'] .label {
   color: var(--ink);
 }
 
+/*
+ * The value line. Under a number knob it is a key: a click opens typed entry. Its box is a full
+ * 32 x 32 px target that moves nothing: the label's last 8 px hang out of the slider's box (the
+ * slider ends where the value's box begins, so the two never overlap), the box starts there with
+ * the text 8 px down, and reaches 8 px past the knob's own bottom. Every knob's value line has the
+ * same box, so values still line up across a row.
+ */
+.knob[data-value] .label {
+  margin-bottom: -8px;
+}
+
 .value {
+  position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   gap: 2px;
+  min-width: var(--hit);
   max-width: calc(100% + 8px);
-  height: 15px;
+  height: 32px;
+  margin: 0 0 -8px;
+  padding: 8px 0 0;
   overflow: hidden;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   color: var(--ink-3);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -248,13 +303,50 @@
   white-space: nowrap;
 }
 
+.knob[data-size='xl'] .value {
+  margin-bottom: -5px;
+  font-size: var(--fs-sm);
+  line-height: 18px;
+}
+
+/* Marks before the value (the modulation wave, the macro chain) sit on the middle of its line. */
+.value > svg,
+.value > .badge {
+  margin-top: 2.5px;
+}
+
+.knob[data-size='xl'] .value > svg,
+.knob[data-size='xl'] .value > .badge {
+  margin-top: 4px;
+}
+
+.valueText {
+  min-width: 0;
+  padding: 0 3px;
+  overflow: hidden;
+  border-radius: 4px;
+  text-overflow: ellipsis;
+}
+
+button.value {
+  cursor: text;
+}
+
+button.value:hover {
+  color: var(--ink);
+}
+
+button.value:hover .valueText {
+  background: rgba(20, 24, 28, 0.06);
+}
+
 .value[data-kind='option'] {
   font-family: var(--font-ui);
   letter-spacing: 0;
 }
 
 .knob[data-dragging] .value,
-.slider:focus-visible .value {
+.knob:has(.slider:focus-visible) .value {
   color: var(--ink);
 }
 
@@ -265,42 +357,20 @@
 }
 
 .modMark {
+  flex: none;
   color: var(--teal);
 }
 
+/* Set by a macro: a teal chain before the value (the macro's name is in the value text and the tip). */
 .badge {
-  position: absolute;
-  left: 50%;
-  bottom: -3px;
   display: inline-flex;
+  flex: none;
   align-items: center;
-  gap: 2px;
-  height: 15px;
-  padding: 0 5px 0 3px;
-  border-radius: 8px;
-  background: var(--teal-ink);
-  color: #eaf6f4;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  line-height: 15px;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-  transform: translateX(-50%);
-  box-shadow: 0 0 0 1.5px var(--surface-hi);
+  color: var(--teal-key);
 }
 
-/* A long controller name ("Chords Space") never spreads over the neighbouring knobs; the full name
-   is in the value text and the tip. */
-.badgeText {
-  max-width: calc(var(--w) - 6px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.knob[data-size='lg'] .badge {
-  height: 16px;
-  padding: 0 6px 0 4px;
-  line-height: 16px;
+.value[data-macro] {
+  color: var(--teal-ink);
 }
 
 .entry {

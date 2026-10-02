@@ -1,5 +1,5 @@
 /*
- * SWITCHBOARD / 01 — design tokens.
+ * Omni Song (SWITCHBOARD / 01) — design tokens.
  *
  * Colour is information:
  *   amber  = sound is playing / signal present / "on" (playing clips, lit steps, audio cables, meters)
@@ -48,6 +48,8 @@
   --teal-ink: #0d5450;
   --teal-glow: rgba(35, 149, 142, 0.45);
   --teal-wash: rgba(35, 149, 142, 0.13);
+  /* A teal key or badge with a white legend (part numbers, the selected chip): white reads 5.07:1. */
+  --teal-key: #1d7b75;
 
   --coral: #dc5f47;
   --coral-hi: #f28b73;
@@ -63,14 +65,37 @@
   --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 1px 3px rgba(20, 24, 28, 0.08);
   --shadow-float: 0 8px 28px rgba(20, 24, 28, 0.18), 0 2px 6px rgba(20, 24, 28, 0.1);
 
+  /* Knob scale: the track and the value arc read 3:1 or better on --surface (WCAG 1.4.11). */
+  --knob-track: #787f86; /* 3.12:1 on --surface */
+  --knob-arc: #a86a10; /* amber value arc, 3.41:1 on --surface */
+  --knob-arc-teal: var(--teal-key); /* teal arc (modulated, teal accent), 3.90:1 on --surface */
+
   /* Type */
   --font-ui: 'Inter Variable', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', 'Cascadia Mono', Consolas, monospace;
+  /* Sizes: the only font sizes components use. --fs-2xl is the display step for names on large
+     pads (between lg and xl); --fs-2xs is the smallest legend (eyebrows, scale marks, units). */
+  --fs-2xs: 10px;
   --fs-xs: 11px;
   --fs-sm: 12px;
   --fs-md: 13px;
   --fs-lg: 15px;
+  --fs-2xl: 17px;
   --fs-xl: 19px;
+  /* Weights: the only four. */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  /* Letter spacing for capitals (eyebrows, hardware legends). */
+  --ls-caps: 0.08em;
+  /* Roles (font shorthand; pair with the .t-* classes below for case and spacing). */
+  --type-eyebrow: var(--fw-semibold) var(--fs-2xs) / 14px var(--font-ui);
+  --type-label: var(--fw-medium) var(--fs-sm) / 16px var(--font-ui);
+  --type-panel-title: var(--fw-semibold) var(--fs-lg) / 20px var(--font-ui);
+  --type-caption: var(--fw-regular) var(--fs-xs) / 14px var(--font-ui);
+  --type-value: var(--fw-medium) var(--fs-sm) / 16px var(--font-mono);
+  --type-readout: var(--fw-medium) 18px / 22px var(--font-mono);
 
   /* Spacing & radii */
   --sp-1: 4px;
@@ -93,6 +118,21 @@
 
   /* Minimum click target */
   --hit: 32px;
+
+  /* Sizes that grow on big screens: knob dials by size step, the widest a keyboard key gets. */
+  --knob-dial-sm: 34px;
+  --knob-dial-md: 44px;
+  --knob-dial-lg: 60px;
+  --knob-dial-xl: 80px;
+  --key-max-w: 44px;
+
+  /*
+   * Live layout measures (set by the views, read by fixed layers such as toasts):
+   * --keyboard-h: height of the on-screen keyboard strip at the bottom (KeyboardStrip; 0 when hidden);
+   * --transport-h: height of the transport bar at the top (TransportBar).
+   */
+  --keyboard-h: 0px;
+  --transport-h: 56px;
 
   color-scheme: light;
 }
@@ -143,6 +183,42 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/* Type roles: one look per level of text, the same in every view. Words in the UI font; mono only
+   for numbers and readouts. Write the words in sentence case: eyebrows get their capitals from CSS. */
+.t-eyebrow {
+  color: var(--ink-3);
+  font: var(--type-eyebrow);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+}
+
+.t-panel-title {
+  color: var(--ink);
+  font: var(--type-panel-title);
+}
+
+.t-label {
+  color: var(--ink-2);
+  font: var(--type-label);
+}
+
+.t-caption {
+  color: var(--ink-3);
+  font: var(--type-caption);
+}
+
+.t-value {
+  color: var(--ink);
+  font: var(--type-value);
+  font-variant-numeric: tabular-nums;
+}
+
+.t-readout {
+  color: var(--ink);
+  font: var(--type-readout);
+  font-variant-numeric: tabular-nums;
+}
+
 .visually-hidden {
   position: absolute !important;
   width: 1px;
@@ -163,11 +239,19 @@ button {
   }
 }
 
+/*
+ * Reduced motion: every animation plays once, at once, and rests in its base state; pulsing and
+ * blinking lights stay still (a solid record dot, no ring) instead of landing on a random point of
+ * their cycle each frame. Components with a looping light give it a static "on" look of its own.
+ */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
     transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
   }
 }
