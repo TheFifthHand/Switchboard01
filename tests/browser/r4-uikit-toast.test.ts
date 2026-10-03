@@ -1,8 +1,9 @@
 /**
  * Toasts never cover what is being played or chosen (real Chromium, real mouse):
- * - they sit above the on-screen keyboard, whose height the KeyboardStrip writes to --keyboard-h;
- * - while a menu is open (body[data-popover-open]) the stack moves to the top, under the transport
- *   (--transport-h), and below the menu, which is never covered; the toast keeps its Undo;
+ * - they sit at the top centre, just under the transport (--transport-h), clear of the keyboard,
+ *   pads, lanes and faders, which views keep in their body and at the bottom;
+ * - while a menu is open (body[data-popover-open]) the stack stays below the menu, which is never
+ *   covered; the toast keeps its Undo;
  * - while a modal dialog is open (Dialog sets body[data-modal-open]) the action key is hidden;
  * - a caller's duration wins over the 8 s default for a toast with an action.
  */
@@ -44,6 +45,9 @@ async function show(message: string, extra: Record<string, unknown> = {}) {
   });
   await act(async () => {
     await wait(200); // past the entrance
+    // On a busy machine the entrance can still be running: measure where the card comes to rest.
+    const t = toastWith(message);
+    if (t) await Promise.all(t.getAnimations().map((a) => a.finished.catch(() => undefined)));
   });
   return { toast: toastWith(message)!, undone: () => undone };
 }
@@ -53,29 +57,44 @@ function Keyboard({ height }: { height: number }) {
   return h('div', { 'data-testid': 'keys', style: { position: 'fixed', left: 0, right: 0, bottom: 0, height: `${height}px`, background: '#333' } });
 }
 
-describe('toasts and the keyboard strip', () => {
-  it('sit above the keyboard: never on the element at --keyboard-h', async () => {
-    mount(h(ToastProvider, null, h(Grab), h(Keyboard, { height: 101 })));
-    document.documentElement.style.setProperty('--keyboard-h', '101px');
-    const { toast } = await show('Moved Stabs to Groove.');
-    const keys = document.querySelector('[data-testid="keys"]')!.getBoundingClientRect();
+/** A stand-in for a view's playing surface: pads filling the body down to the keyboard, with a bottom action bar. */
+function Surface() {
+  return h(
+    'div',
+    { style: { position: 'fixed', left: '16px', right: '16px', top: '120px', bottom: '101px', display: 'grid', gridTemplateRows: '1fr 40px', gap: '8px' } },
+    h('div', { 'data-testid': 'pads', style: { background: '#ddd' } }),
+    h('button', { type: 'button', 'data-testid': 'bar' }, 'Duplicate'),
+  );
+}
+
+describe('where toasts sit', () => {
+  it('at the top centre under the transport: never on the keyboard, the pads or a bottom action bar, which stay clickable', async () => {
+    document.documentElement.style.setProperty('--transport-h', '64px');
+    let clicked = 0;
+    mount(h(ToastProvider, null, h(Grab), h(Keyboard, { height: 101 }), h(Surface)));
+    document.querySelector<HTMLElement>('[data-testid="bar"]')!.onclick = () => (clicked += 1);
+    const { toast } = await show('Duplicated Stabs.');
     const r = toast.getBoundingClientRect();
-    expect(overlaps(r, keys)).toBe(false);
-    expect(r.bottom).toBeLessThanOrEqual(keys.top - 8);
-    // What is under a key's centre is the key, not the toast.
+    expect(r.top).toBeCloseTo(64 + 8, 0);
+    expect(Math.abs((r.left + r.right) / 2 - innerWidth / 2)).toBeLessThanOrEqual(1);
+    for (const id of ['keys', 'pads', 'bar']) {
+      expect(overlaps(r, document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect()), id).toBe(false);
+    }
+    await click(centre(document.querySelector<HTMLElement>('[data-testid="bar"]')!));
+    expect(clicked).toBe(1);
     const p = centre(document.querySelector('[data-testid="keys"]')!, 0.5, 0.5);
     expect(document.elementFromPoint(p.x, p.y)?.getAttribute('data-testid')).toBe('keys');
   });
 
-  it('with no keyboard on screen they sit near the bottom edge', async () => {
+  it('without a transport measure they still sit near the top edge', async () => {
     mount(h(ToastProvider, null, h(Grab)));
     const { toast } = await show('Deleted clip.');
-    expect(innerHeight - toast.getBoundingClientRect().bottom).toBeLessThanOrEqual(16);
+    expect(toast.getBoundingClientRect().top).toBeLessThanOrEqual(56 + 8 + 1);
   });
 });
 
 describe('toasts and an open menu', () => {
-  it('move to the top under the transport and stay below the menu; Undo still works', async () => {
+  it('stay at the top under the transport and below the menu; Undo still works', async () => {
     mount(h(ToastProvider, null, h(Grab), h(Keyboard, { height: 101 })));
     document.documentElement.style.setProperty('--keyboard-h', '101px');
     // A menu that reaches down to where toasts sit, with its last row over the toast's place.
@@ -109,17 +128,19 @@ describe('toasts and an open menu', () => {
     }
   });
 
-  it('come back above the keyboard when the menu closes', async () => {
+  it('stay in place when the menu closes, and come back above other layers', async () => {
     mount(h(ToastProvider, null, h(Grab), h(Keyboard, { height: 90 })));
-    document.documentElement.style.setProperty('--keyboard-h', '90px');
+    document.documentElement.style.setProperty('--transport-h', '60px');
     document.body.setAttribute('data-popover-open', '');
     const { toast } = await show('Copied.');
-    expect(toast.getBoundingClientRect().top).toBeLessThan(200);
+    const before = toast.getBoundingClientRect().top;
+    expect(before).toBeCloseTo(68, 0);
     document.body.removeAttribute('data-popover-open');
     await act(async () => {
       await wait(50);
     });
-    expect(toast.getBoundingClientRect().bottom).toBeLessThanOrEqual(innerHeight - 90 - 8);
+    expect(toast.getBoundingClientRect().top).toBeCloseTo(before, 0);
+    expect(Number(getComputedStyle(toast.parentElement!).zIndex)).toBeGreaterThan(900);
   });
 });
 

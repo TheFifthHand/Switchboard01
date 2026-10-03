@@ -114,15 +114,14 @@
 
 /* ---------- toasts ---------- */
 /*
- * Toasts never cover what is being played or chosen:
- * - they sit above the on-screen keyboard: the KeyboardStrip writes --keyboard-h, the height the
- *   strip covers at the bottom of the window, and 0 when it is hidden or not docked there (e.g. a
- *   page that scrolls at 960 x 540 @2x);
- * - while a menu is open (a Popover sets body[data-popover-open]) the stack moves to the top,
- *   just under the transport (--transport-h, written by the TransportBar), and goes below menus,
- *   so an open menu is never covered and the toast keeps its Undo;
- * - both measures must be set on document.documentElement (:root): the toasts render into body,
- *   outside the app's own tree, so a value set on an app element would never reach them;
+ * Toasts never cover what is being played or chosen. Every view keeps its playing surfaces
+ * (keyboard, pads, drum and note lanes, faders, the song lane) in the body and at the bottom,
+ * and its headers at the top, so the stack always sits at the top centre, just under the
+ * transport (--transport-h, written by the TransportBar on document.documentElement: the toasts
+ * render into body, outside the app's own tree, so a value set on an app element would never
+ * reach them):
+ * - while a menu is open (a Popover sets body[data-popover-open]) the stack goes below menus, so
+ *   an open menu is never covered and the toast keeps its Undo;
  * - while a modal dialog is open (body[data-modal-open]) their action keys hide: an Undo must not
  *   change the project under a dialog (an export, for one). Ctrl+Z still works where it applies.
  * The region passes the pointer through; only the cards take it.
@@ -130,7 +129,7 @@
 .viewport {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--keyboard-h, 0px) + 12px);
+  top: calc(var(--transport-h, 56px) + 8px);
   z-index: 950;
   display: flex;
   flex-direction: column;
@@ -142,8 +141,6 @@
 }
 
 body[data-popover-open] .viewport {
-  top: calc(var(--transport-h, 56px) + 8px);
-  bottom: auto;
   z-index: 840;
 }
 
@@ -167,10 +164,6 @@ body[data-modal-open] .toast .action {
   font-size: var(--fs-md);
   pointer-events: auto;
   animation: toastIn var(--t-med) var(--ease);
-}
-
-body[data-popover-open] .toast {
-  animation-name: toastInTop;
 }
 
 .toast .icon {
@@ -223,13 +216,6 @@ body[data-popover-open] .toast {
 }
 
 @keyframes toastIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-}
-
-@keyframes toastInTop {
   from {
     opacity: 0;
     transform: translateY(-8px);

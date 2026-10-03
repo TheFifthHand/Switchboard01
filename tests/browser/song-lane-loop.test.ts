@@ -141,6 +141,10 @@ function menuItem(text: string): HTMLElement {
 }
 
 async function openMenu(id: Id) {
+  // A compact block (narrower than a full header) shows its ⋯ once the pointer is over it.
+  const name = blockEl(id).querySelector<HTMLElement>('[class*="name"]')!.getBoundingClientRect();
+  await mouse('mouseMoved', { x: name.left + 6, y: name.top + name.height / 2 });
+  await new Promise((r) => requestAnimationFrame(r));
   await clickAt(centre(blockEl(id).querySelector<HTMLElement>('[aria-haspopup="menu"]')!));
   expect(document.querySelector('[role="menu"]')).not.toBeNull();
 }
@@ -189,7 +193,11 @@ describe('the Loop button', () => {
     expect(loop()).toBeNull();
     act(() => patchRuntime({ playing: false, mode: 'live', songBlock: null, songBlockId: null }));
     // Blocks 2 and 4 selected (Ctrl+click): blocks 2 to 4.
-    const name = (id: Id) => centre(blockEl(id).querySelector<HTMLElement>('[class*="name"]')!);
+    // On the name's first letters (a compact block's ▶ and ⋯ appear over the right of its header on hover).
+    const name = (id: Id) => {
+      const r = blockEl(id).querySelector<HTMLElement>('[class*="name"]')!.getBoundingClientRect();
+      return { x: r.left + 8, y: r.top + r.height / 2 };
+    };
     await clickAt(name(ids[1]));
     await clickAt(name(ids[3]), 2);
     expect([...document.querySelectorAll<HTMLElement>('[data-block-id][data-selected]')].map((e) => e.dataset.blockId)).toEqual([ids[1], ids[3]]);
@@ -197,12 +205,17 @@ describe('the Loop button', () => {
     await clickAt(centre(toggle()));
     expect(loop()).toEqual({ fromBlockId: ids[1], toBlockId: ids[3] });
     expect(status()).toBe('Loop on: Groove to Break (blocks 2–4).');
-    // Another block selected while that loop is on: the button names it and moves the loop there.
+    // The loop on: a chip says so in words, with a key to stop it.
+    expect(document.querySelector('[data-testid="loop-chip"]')!.textContent).toContain('Loop: Groove–Break');
+    // Another block selected while that loop is on: the button offers to move the loop there (unpressed: the
+    // pressed look is only for the loop that is on), and does.
     await clickAt(name(ids[4]));
-    expect(toggle().getAttribute('aria-label')).toBe('Loop Lift (block 5)');
-    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+    expect(toggle().getAttribute('aria-label')).toBe('Move loop to Lift (block 5)');
+    expect(toggle().getAttribute('aria-pressed')).toBe('false');
     await clickAt(centre(toggle()));
     expect(loop()).toEqual({ fromBlockId: ids[4], toBlockId: ids[4] });
+    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+    expect(toggle().getAttribute('aria-label')).toBe('Loop Lift (block 5)');
     // The loop is playback state: no project edit, no undo step.
     expect(undoCount()).toBe(0);
   });
@@ -344,7 +357,10 @@ describe('the block menu', () => {
     await settle(60);
     expect(loop()).toBeNull();
     // Shift+click selects Groove to Lift: their menu loops both.
-    const name = (id: Id) => centre(blockEl(id).querySelector<HTMLElement>('[class*="name"]')!);
+    const name = (id: Id) => {
+      const r = blockEl(id).querySelector<HTMLElement>('[class*="name"]')!.getBoundingClientRect();
+      return { x: r.left + 8, y: r.top + r.height / 2 };
+    };
     await clickAt(name(ids[1]));
     await clickAt(name(ids[2]), 8);
     await openMenu(ids[2]);
@@ -375,7 +391,8 @@ describe('the block menu', () => {
       expect(r.height).toBeLessThanOrEqual(560);
       // The most used first: play from here, rename, duplicate, split, join, then one more time / one fewer.
       const items = [...m.querySelectorAll<HTMLElement>('[role^="menuitem"]')].map((x) => x.querySelector('[class*="itemText"]')?.textContent ?? x.textContent);
-      expect(items.slice(0, 7)).toEqual(['Play song from here', 'Rename…', 'Duplicate block', 'Split in half', 'Join with next', 'One more time', 'One time fewer']);
+      // (The starter has two Grooves and two Lifts: "Select blocks named …" selects both.)
+      expect(items.slice(0, 8)).toEqual(['Play song from here', 'Rename…', 'Duplicate block', `Select blocks named “${i === 1 ? 'Groove' : 'Lift'}”`, 'Split in half', 'Join with next', 'One more time', 'One time fewer']);
       expect(items.at(-1)).toBe('Remove from song');
       for (const text of ['One time fewer', 'Join with next', 'Split in half', 'Scenes and clips…', 'Copy, cut, move…']) {
         const t = menuItem(text).querySelector<HTMLElement>('[class*="itemText"]')!;

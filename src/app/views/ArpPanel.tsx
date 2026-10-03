@@ -6,8 +6,9 @@
  * (rate, pattern, octave range, latch, gate). The arp itself runs in the
  * sequencer on the audio clock, so it follows the transport and tempo; the
  * notes it receives are already snapped by Musical Assist (a sampler part's
- * are the keys as pressed: recordings are never re-pitched by Assist).
- * Record Notes records the notes it plays.
+ * are the keys as pressed: recordings are never re-pitched by Assist; a chord
+ * pad's are its chord, already in the key). Record Notes records the notes it
+ * plays.
  */
 import { useRef, useState, type RefObject } from 'react';
 import { Icon, Knob, SegmentedControl, Switch } from '../../ui/components';
@@ -136,8 +137,8 @@ export function ArpSettings({ trackId }: { trackId: Id }) {
         detail="Stopping playback or switching the arpeggiator off also ends a latched pattern."
       />
       <p className={styles.tip}>
-        Hold keys and the arpeggiator plays them one at a time, in time with the beat — it keeps time even while playback is stopped. {assistLine(assist, sampler, keyName)} Record Notes records the
-        notes it plays, exactly on its grid.
+        Hold keys (or a chord pad in Notes) and the arpeggiator plays them one at a time, in time with the beat — it keeps time even while playback is stopped. {assistLine(assist, sampler, keyName)}{' '}
+        Record Notes records the notes it plays, exactly on its grid.
       </p>
     </div>
   );
@@ -158,9 +159,11 @@ export function ArpStrip({ trackId, stripRef }: { trackId: Id; stripRef?: RefObj
 
   if (isDrums) {
     return (
-      <div className={styles.strip} role="group" aria-label="Arpeggiator">
+      <div className={styles.strip} role="group" aria-label="Arpeggiator" data-drums="">
         <span className={styles.stripTitle}>Arpeggiator</span>
-        <p className={styles.stripNote}>For melodic parts. {name} plays a drum kit: select a synth or sampler part to use it.</p>
+        <p className={styles.stripNote} title={`${name} plays a drum kit: select a synth or sampler part to use the arpeggiator.`}>
+          For melodic parts: select a synth or sampler part.
+        </p>
       </div>
     );
   }

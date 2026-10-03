@@ -39,6 +39,7 @@ import type { LayerMode } from '../../../state/commands/arrangement';
 import { orderAfterMove } from '../../../state/commands';
 import {
   DRAG_THRESHOLD_PX,
+  Dwell,
   NO_TARGET,
   autoScrollVelocity,
   badgePlacement,
@@ -61,10 +62,12 @@ import { EASE_SLIDE_CSS, EASE_SPRING_CSS, RESIZE_SLIDE_MS, SETTLE_MS, SLIDE_MS, 
 export const DROP_MARGIN = 40;
 /**
  * A scene card resting on a boundary for this long opens the insertion slot
- * (until then a line marks it). Passing over a boundary on the way to the
- * middle of a block therefore does not push that block away.
+ * (until then a line marks it). The rest starts again whenever the pointer
+ * moves (more than DWELL_SLOP_PX, or faster than DWELL_MAX_SPEED: see Dwell),
+ * so passing over a boundary on the way to the middle of a block, however
+ * slowly, never pushes that block away; only a deliberate rest does.
  */
-export const SLOT_DELAY_MS = 140;
+export const SLOT_DELAY_MS = 250;
 /** A finger resting this long (ms) on a block or a scene card lifts it. */
 export const HOLD_MS = 300;
 /** A finger that moves this far (px) before the hold is a swipe (the lane scrolls), not a lift. */
@@ -184,6 +187,10 @@ interface CardDrag extends Base, Geometry, Origin {
   target: CardTarget;
   /** The insertion slot is open (the blocks after it moved aside); before that a line marks it. */
   open: boolean;
+  /** Which way the pointer was going when the slot opened (see OpenSlot.dir). */
+  slotDir: -1 | 0 | 1;
+  /** Whether (and since when) the pointer rests; which way it goes. */
+  dwell: Dwell;
   outside: boolean;
   /** Shift held: layering replaces the block's parts instead of filling its silent ones. */
   replace: boolean;
@@ -673,6 +680,8 @@ export class LaneGestures {
       slotWidth: this.host.sceneWidth(p.id),
       target: NO_TARGET,
       open: false,
+      slotDir: 0,
+      dwell: new Dwell(),
       outside: true,
       replace: ev.shiftKey,
     };
@@ -1012,15 +1021,25 @@ export class LaneGestures {
     const layout = this.host.layout();
     const order = this.host.order();
     const blocks = layout.blocks.map((b, i) => ({ x: b.x, width: b.width, layerable: order[i]?.layerable ?? false }));
-    const next = outside ? NO_TARGET : cardTarget(blocks, this.contentX(g), g.target, g.open ? g.slotWidth : 0);
+    const x = this.contentX(g);
+    // The pointer moved on the lane (itself, or the lane scrolled under it): any rest starts again.
+    const restarted = g.dwell.sample(x, g.clientY, performance.now());
+    const next = outside ? NO_TARGET : cardTarget(blocks, x, g.target, g.open ? { width: g.slotWidth, dir: g.slotDir } : null, g.dwell.dir);
     const moved = !sameCardTarget(next, g.target);
     const changed = moved || outside !== g.outside;
     g.target = next;
     g.outside = outside;
-    if (moved) {
-      g.open = false;
+    if (moved) g.open = false;
+    // The slot opens only once the pointer has rested on the boundary for SLOT_DELAY_MS.
+    if (next.kind !== 'insert' || g.open) {
       window.clearTimeout(this.slotTimer);
-      if (next.kind === 'insert') this.slotTimer = window.setTimeout(() => this.openSlot(g), SLOT_DELAY_MS);
+      this.slotTimer = 0;
+    } else if (moved || restarted || !this.slotTimer) {
+      window.clearTimeout(this.slotTimer);
+      this.slotTimer = window.setTimeout(() => {
+        this.slotTimer = 0;
+        this.openSlot(g);
+      }, SLOT_DELAY_MS);
     }
     if (changed) {
       this.host.setDragUi({ kind: 'card', sceneId: g.sceneId, layerInto: this.layerInto(g), replace: g.replace, outside, held: g.held || undefined });
@@ -1044,8 +1063,9 @@ export class LaneGestures {
   }
 
   private openSlot(g: CardDrag): void {
-    if (this.g !== g || g.target.kind !== 'insert' || g.open) return;
+    if (this.g !== g || g.target.kind !== 'insert' || g.open || g.outside) return;
     g.open = true;
+    g.slotDir = g.dwell.dir;
     this.preview(g);
   }
 
@@ -1285,6 +1305,7 @@ export class LaneGestures {
     const g = this.g;
     this.g = null;
     window.clearTimeout(this.slotTimer);
+    this.slotTimer = 0;
     this.stopHold();
     if (this.touchOwned) {
       this.touchOwned = false;

@@ -96,7 +96,7 @@ describe('Mix view on the real engine', () => {
     const fader = strip(root, 't1').querySelector<HTMLElement>(`[role="slider"][aria-label="${name} level"]`)!;
     fader.focus();
     key(fader, 'keydown', { key: 'Home' });
-    expect(fader.getAttribute('aria-valuetext')).toMatch(/^Silent/);
+    expect(fader.getAttribute('aria-valuetext')).toBe('−60.0 dB, silent');
     await act(async () => wait(120));
     expect(await peakOver(500, 't1')).toBeLessThan(1e-3);
     fire(fader, new MouseEvent('dblclick', { bubbles: true }));

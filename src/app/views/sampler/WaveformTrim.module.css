@@ -1,3 +1,11 @@
+/* The waveform and its zoom row. */
+.frame {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
 /* The waveform "screen": a recessed tray on the working surface. */
 .wave {
   /* Canvas colours (read by the drawing code). */
@@ -8,6 +16,8 @@
   --wave-grid: rgba(38, 41, 45, 0.075);
   --wave-window: rgba(255, 255, 255, 0.55);
   --wave-ramp: rgba(38, 41, 45, 0.62);
+  /* Hits a Shift-drag snaps to (teal: where the selection can go). */
+  --wave-hit: rgba(13, 120, 112, 0.8);
 
   position: relative;
   height: clamp(108px, 30cqi, 172px);
@@ -44,11 +54,11 @@
   pointer-events: none;
 }
 
-.shade:first-of-type {
+.shade[data-side='left'] {
   border-radius: var(--r-md) 0 0 var(--r-md);
 }
 
-.shade + .shade {
+.shade[data-side='right'] {
   border-radius: 0 var(--r-md) var(--r-md) 0;
 }
 
@@ -102,8 +112,9 @@
   top: 0;
   bottom: 0;
   z-index: 1;
-  width: 22px;
-  margin-left: -11px;
+  /* A 32 px target around a 2 px line. */
+  width: 32px;
+  margin-left: -16px;
   border-radius: 6px;
   outline: none;
   cursor: ew-resize;
@@ -118,7 +129,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 10px;
+  left: 15px;
   width: 2px;
   border-radius: 1px;
   background: var(--teal);
@@ -146,19 +157,26 @@
 }
 
 .handle[data-handle='start'] .flag {
-  left: 10px;
+  left: 15px;
   border-radius: 1px 5px 5px 1px;
 }
 
 .handle[data-handle='end'] .flag {
-  right: 10px;
+  right: 15px;
   border-radius: 5px 1px 1px 5px;
+}
+
+/* The flag takes the pointer over a 32 px square (it matters where only the flags do: a narrow region). */
+.flag::before {
+  content: '';
+  position: absolute;
+  inset: -7px -8px -6px;
 }
 
 .handle:hover .line,
 .handle[data-dragging] .line,
 .handle:focus-visible .line {
-  left: 9.5px;
+  left: 14.5px;
   width: 3px;
   box-shadow: 0 0 0 3px var(--teal-glow);
 }
@@ -215,4 +233,91 @@
 
 .wave[data-empty] .handle {
   display: none;
+}
+
+/* Snapping (Shift-drag): the line shows it in a second, darker teal with a wider glow. */
+.handle[data-snapping] .line {
+  background: var(--teal-ink, var(--teal));
+  box-shadow: 0 0 0 4px var(--teal-glow);
+}
+
+/* A handle beyond the zoomed view waits at that edge: its flag points the way, its line is dashed. */
+.handle[data-offview] .line {
+  background: repeating-linear-gradient(180deg, var(--teal) 0 4px, transparent 4px 8px);
+}
+
+.handle[data-offview] .flag {
+  width: auto;
+  padding: 0 3px;
+}
+
+/* ---------- zoom row: − + · overview of the whole recording · zoom ---------- */
+
+.zoomRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mini {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 60px;
+  height: 32px;
+  border-radius: var(--r-sm, 6px);
+  background: linear-gradient(180deg, #dde0e3 0%, #e4e7e9 100%);
+  box-shadow: inset 0 0 0 1px rgba(20, 24, 28, 0.08);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.mini[data-zoomed] {
+  cursor: pointer;
+}
+
+.miniCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+/* The visible window: teal (it is a selection of what is shown). */
+.viewport {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 8px;
+  border: 2px solid var(--teal);
+  border-radius: 5px;
+  background: rgba(13, 120, 112, 0.08);
+  outline: none;
+}
+
+.mini[data-zoomed] .viewport {
+  cursor: grab;
+}
+
+.mini:not([data-zoomed]) .viewport {
+  border-color: rgba(13, 120, 112, 0.35);
+  background: transparent;
+}
+
+.viewport:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--shell-hi),
+    0 0 0 4px var(--teal);
+}
+
+.zoomText {
+  flex: none;
+  min-width: 4ch;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }

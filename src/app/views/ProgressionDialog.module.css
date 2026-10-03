@@ -1,0 +1,154 @@
+/* "Write a progression…" dialog. */
+
+.dialog {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.label {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* Progressions: two columns of choices (one on narrow windows), native radios (one tab stop, arrow keys). */
+.list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.list > legend {
+  grid-column: 1 / -1;
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'radio name numerals'
+    'radio chords chords';
+  align-items: center;
+  column-gap: 8px;
+  min-height: 48px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, #fbfaf7, var(--shell-hi));
+  cursor: pointer;
+}
+.choice:hover {
+  border-color: var(--ink-3);
+}
+.choice[data-on] {
+  border-color: var(--teal);
+  background: linear-gradient(180deg, var(--shell-hi), var(--teal-wash));
+  box-shadow: inset 0 0 0 1px var(--teal);
+}
+.choice:has(.radio:focus-visible) {
+  box-shadow: var(--focus-ring);
+}
+.radio {
+  grid-area: radio;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--teal);
+}
+.choiceName {
+  grid-area: name;
+  font-size: var(--fs-md);
+  font-weight: 650;
+  color: var(--ink);
+}
+.choiceChords {
+  grid-area: chords;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.choiceNumerals {
+  grid-area: numerals;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+}
+
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  margin-top: 14px;
+}
+.option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.unit {
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px 12px 12px;
+  border-radius: var(--r-md);
+  background: var(--surface-lo);
+  box-shadow: inset 0 1px 2px rgba(20, 24, 28, 0.12);
+}
+.previewHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.previewNote {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+}
+.sketch {
+  height: 56px;
+  color: var(--ink-2);
+}
+.hear {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  min-width: 48px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, var(--shell-hi), var(--shell));
+  box-shadow: var(--shadow-raised);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--ink);
+}
+.chip:active {
+  box-shadow: var(--shadow-pressed);
+}
+.refused {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--coral-ink);
+}
+
+@media (max-width: 700px) {
+  .list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -1,11 +1,15 @@
 /**
  * Delay module: tempo-synced stereo ping-pong echo with bounded feedback.
  *
- *   in ─┬─ dryGate (1 − mix) ───────────────────────────────────────┐
+ *   in ─┬─ dryGate (1 − mix; 0 as a send return) ───────────────────┐
  *       └─ comp ─ split ─ inject ─> sumL ─ lpL ─ lineL ─┬─ merge ─ wetGate ─┴─> out
  *                                  sumR ─ lpR ─ lineR ─┘
  *   lineL ─ fb·(1−w) ─> sumL      lineL ─ fb·w ─> sumR
  *   lineR ─ fb·(1−w) ─> sumR      lineR ─ fb·w ─> sumL
+ *
+ * As a send return (fed only by channel sends: setSendReturn) there is no
+ * dry path and Mix is the return level: the output is the echoes × Mix. As
+ * an insert the dry sound passes at 1 − Mix.
  *
  * Width w = 0 gives two parallel mono echoes; w = 1 feeds the input into the
  * left line only and fully crosses the feedback, so repeats alternate L/R.
@@ -154,6 +158,8 @@ export class DelayModule extends EffectModule {
   /** Last applied parameter values (registry-clamped on read). */
   private params: ParamValues;
   private plan: Plan;
+  /** Fed only by channel sends (no dry path); null until the engine says. */
+  private sendReturn: boolean | null = null;
 
   constructor(env: ModuleEnv, id: Id, params: ParamValues) {
     super(env, id);
@@ -267,10 +273,23 @@ export class DelayModule extends EffectModule {
     const t = this.at(time);
     this.params = { ...params };
     const mix = readParam(DELAY_PARAMS, params, 'mix');
-    this.smooth(this.dryGate.gain, 1 - mix, t);
+    this.smooth(this.dryGate.gain, this.dryLevel(), t);
     this.smooth(this.ctl.base.offset, mix, t);
     this.plan = this.computePlan();
     this.applyPlan(t, TIME_TAU);
+  }
+
+  /** Dry share: none as a send return, 1 − Mix as an insert. */
+  private dryLevel(): number {
+    return this.sendReturn ? 0 : 1 - readParam(DELAY_PARAMS, this.params, 'mix');
+  }
+
+  setSendReturn(isReturn: boolean, time: number): void {
+    if (this.disposed || isReturn === this.sendReturn) return;
+    const first = this.sendReturn === null;
+    this.sendReturn = isReturn;
+    if (first) this.setNow(this.dryGate.gain, this.dryLevel());
+    else this.smooth(this.dryGate.gain, this.dryLevel(), this.at(time));
   }
 
   setTempo(bpm: number, time: number): void {

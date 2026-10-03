@@ -43,15 +43,16 @@ async function importToneSample(page: Page): Promise<string> {
     const file = new File([buf], 'test-tone.wav', { type: 'audio/wav' });
     const res = await sb.session.importSample(file, 't8');
     if (!res.ok) throw new Error(res.message);
-    return sb.project().tracks.find((t: any) => t.id === 't8').instrument.sampleId as string;
+    // An import makes a new clip that plays the recording itself (Clip.sample); the part keeps its own.
+    return sb.project().tracks.find((t: any) => t.id === 't8').clips.find((c: any) => c?.sample)?.sample.id as string;
   });
 }
 
-/** Render the scene the sampler plays in (row 3 "Break" has a Vocal clip) and return RMS + a coarse fingerprint. */
-async function renderFingerprint(page: Page): Promise<{ rms: number; env: number[] }> {
-  return page.evaluate(async () => {
+/** Render the scene `row` (the row of the Vocal clip that plays the recording) and return RMS + a coarse fingerprint. */
+async function renderFingerprint(page: Page, row: number): Promise<{ rms: number; env: number[] }> {
+  return page.evaluate(async (row) => {
     const sb = (window as any).__switchboard;
-    const blob: Blob = await sb.session.renderWav({ source: { kind: 'scene', row: 3, bars: 2 }, sampleRate: 44100, bitDepth: 16, tailSeconds: 0.5 });
+    const blob: Blob = await sb.session.renderWav({ source: { kind: 'scene', row, bars: 2 }, sampleRate: 44100, bitDepth: 16, tailSeconds: 0.5 });
     const dv = new DataView(await blob.arrayBuffer());
     const frames = (dv.byteLength - 44) / 4;
     let sum = 0;
@@ -67,7 +68,7 @@ async function renderFingerprint(page: Page): Promise<{ rms: number; env: number
       sum += s;
     }
     return { rms: Math.sqrt(sum / (block * 32)), env };
-  });
+  }, row);
 }
 
 test('a project with an imported sample survives export and import into a fresh profile', async ({ browser }) => {
@@ -79,13 +80,14 @@ test('a project with an imported sample survives export and import into a fresh 
   await stopPlayback(page1);
   const sampleId = await importToneSample(page1);
   expect(sampleId).toMatch(/^smp_|^sample|^s_/);
-  // Make sure the Vocal part has a clip in the Break row that plays the recording.
-  await page1.evaluate(() => {
+  // The Vocal clip that plays the recording, and its row.
+  const row = await page1.evaluate((id) => {
     const sb = (window as any).__switchboard;
-    const clip = sb.project().tracks.find((t: any) => t.id === 't8').clips[3];
-    if (!clip) throw new Error('fixture: the starter has no Vocal clip in row 4');
-  });
-  const before = await renderFingerprint(page1);
+    const at = sb.project().tracks.find((t: any) => t.id === 't8').clips.findIndex((c: any) => c?.sample?.id === id);
+    if (at < 0) throw new Error('fixture: no Vocal clip plays the imported recording');
+    return at as number;
+  }, sampleId);
+  const before = await renderFingerprint(page1, row);
   expect(before.rms).toBeGreaterThan(0.005);
   const bundle = await page1.evaluate(async () => {
     const { blob, filename } = await (window as any).__switchboard.session.exportProjectFile();
@@ -114,7 +116,7 @@ test('a project with an imported sample survives export and import into a fresh 
   await page2.getByRole('button', { name: 'Just look around' }).click();
   await page2.getByRole('button', { name: 'Play', exact: true }).click();
   await stopPlayback(page2);
-  const after = await renderFingerprint(page2);
+  const after = await renderFingerprint(page2, row);
   expect(after.rms).toBeGreaterThan(0.005);
   expect(Math.abs(after.rms - before.rms) / before.rms).toBeLessThan(0.01);
   after.env.forEach((e, i) => expect(Math.abs(e - before.env[i])).toBeLessThan(0.002 + before.env[i] * 0.02));

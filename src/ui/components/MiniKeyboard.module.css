@@ -319,3 +319,65 @@
   text-align: center;
   text-transform: uppercase;
 }
+
+/* ---------- kit 'row': 16 sound keys in one row, four groups of four ---------- */
+
+.keyboard[data-layout='row'] {
+  container: kitrow / inline-size;
+}
+
+.keyboard[data-variant='kit'][data-layout='row'] .bed {
+  grid-template-rows: minmax(0, 1fr);
+  column-gap: 3px;
+}
+
+/* A tall, narrow key: the name from the top (up to three short lines), the letter at the bottom. */
+.keyboard[data-layout='row'] .pad {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 2px;
+  padding: 6px 4px 5px;
+  border-radius: 4px 4px 6px 6px;
+  box-shadow:
+    inset 0 -4px 0 #d6d9dc,
+    inset 0 0 0 1px rgba(20, 24, 28, 0.18);
+}
+
+.keyboard[data-layout='row'] .pad[data-pressed] {
+  box-shadow:
+    inset 0 -2px 0 #d6d9dc,
+    inset 0 1px 2px rgba(20, 24, 28, 0.2),
+    inset 0 0 0 1px rgba(20, 24, 28, 0.2);
+}
+
+.keyboard[data-layout='row'] .padName {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: auto;
+  text-align: center;
+}
+
+.keyboard[data-layout='row'] .padKey {
+  align-self: center;
+  margin-top: 0;
+  min-width: 16px;
+  height: 16px;
+  font-size: var(--fs-xs);
+  line-height: 14px;
+  color: var(--ink-2);
+}
+
+/* Narrow keys (under ~54 px): a size smaller and less padding, so "Cowbell" or "Closed" stays whole. */
+@container kitrow (max-width: 900px) {
+  .keyboard[data-layout='row'] .pad {
+    padding-inline: 1px;
+  }
+  .keyboard[data-layout='row'] .padName {
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-medium);
+    letter-spacing: -0.02em;
+  }
+}

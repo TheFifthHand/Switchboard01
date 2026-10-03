@@ -28,7 +28,7 @@ import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { ArrangeView } from '../../src/app/views/arrange/ArrangeView';
 import { FOLLOW_KEY_REST_MS, FOLLOW_POINTER_REST_MS } from '../../src/app/views/arrange/SongLane';
 import { clearBlockClipboard } from '../../src/app/views/arrange/songActions';
-import { COMPACT_BLOCK_WIDTH, MIN_PX_PER_BAR, minBlockWidth } from '../../src/app/views/arrange/songLayout';
+import { COMPACT_BLOCK_WIDTH, MIN_PX_PER_BAR, minBlockWidth, tailRoom } from '../../src/app/views/arrange/songLayout';
 import { getStarter } from '../../src/content/starters';
 import type { Id } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
@@ -77,10 +77,15 @@ const blockEl = (id: Id) => document.querySelector<HTMLElement>(`[data-block-id=
 const cellEl = (id: Id, track: Id) => blockEl(id).querySelector<HTMLElement>(`[data-cell][data-track="${track}"]`)!;
 const lane = () => document.querySelector<HTMLElement>('[data-testid="song-lane"]')!;
 const scroller = () => lane().children[1] as HTMLElement;
+/** On a block's name, near its start (a compact block's ▶ and ⋯ appear over the right of its header on hover). */
+const nameAt = (id: Id) => {
+  const r = blockEl(id).querySelector<HTMLElement>('[class*="name"]')!.getBoundingClientRect();
+  return { x: r.left + 8, y: r.top + r.height / 2 };
+};
 const notice = () => runtimeStore.getState().notice;
 const undoCount = () => session.store.historySize().undo;
 const selected = () => [...document.querySelectorAll<HTMLElement>('[data-block-id][data-selected]')].map((e) => e.dataset.blockId);
-const laneButton = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Song lane view"] button')].find((b) => (b.getAttribute('aria-label') ?? b.textContent) === name)!;
+const laneButton = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Song lane view"] button')].find((b) => (b.getAttribute('aria-label') ?? b.textContent ?? '').startsWith(name))!;
 const widthOf = (id: Id) => parseFloat(blockEl(id).style.width);
 
 /** Page coordinates of a point in this frame (the test frame may sit anywhere in the runner's page). */
@@ -223,7 +228,7 @@ describe('Undo and Redo keep the lane in hand', () => {
     await setup();
     const ids = blockIds();
     // Duplicate block 2 (selected by a click, focused).
-    await clickAt(centre(blockEl(ids[1]).querySelector('[class*="name"]')!));
+    await clickAt(nameAt(ids[1]));
     act(() => blockEl(ids[1]).focus());
     await press('d', 2);
     const copy = blockIds()[2];
@@ -244,7 +249,7 @@ describe('Undo and Redo keep the lane in hand', () => {
     await settle(400);
 
     // Delete block 4 (focused): focus moves on; Undo brings it back focused and selected.
-    await clickAt(centre(blockEl(ids[3]).querySelector('[class*="name"]')!));
+    await clickAt(nameAt(ids[3]));
     act(() => blockEl(ids[3]).focus());
     await press('Delete');
     expect(blockIds()).not.toContain(ids[3]);
@@ -289,17 +294,20 @@ describe('following the playhead', () => {
     act(() => {
       for (let i = 0; i < 12; i++) cmd.addBlock(session.store, project().scenes[i % 4].id, undefined, 4);
     });
-    await setup(750);
-    const sc = scroller();
-    expect(sc.scrollWidth).toBeGreaterThan(sc.clientWidth * 2);
-    const view = sc.getBoundingClientRect();
-    // The first block that starts in the right fifth of the view.
-    const id = blockIds().find((b) => {
-      const r = blockEl(b).getBoundingClientRect();
-      return r.left > view.left + view.width * 0.86 && r.left < view.right - 10;
-    })!;
-    expect(id).toBeTruthy();
-    return { id, sc };
+    // The first block that starts in the right fifth of the view (a lane width where one does).
+    for (const w of [750, 720, 780, 690, 810, 840, 660, 870]) {
+      await setup(w);
+      const sc = scroller();
+      expect(sc.scrollWidth).toBeGreaterThan(sc.clientWidth * 2);
+      const view = sc.getBoundingClientRect();
+      const id = blockIds().find((b) => {
+        const r = blockEl(b).getBoundingClientRect();
+        return r.left > view.left + view.width * 0.86 && r.left < view.right - 10;
+      });
+      if (id) return { id, sc };
+      cleanup();
+    }
+    throw new Error('No lane width puts a block start in the right fifth of the view.');
   }
 
   it('never turns the page while the pointer moves over the lane; once it has rested about 2 s, it follows', async () => {
@@ -379,11 +387,11 @@ describe('Fit song', () => {
     expect(blocks().length).toBe(24);
     // One part off in the first block (a compact block still says Off).
     act(() => void cmd.setBlockPart(session.store, blockIds()[0], trackId('Drums'), null));
-    await setup(1320);
+    await setup(1366);
     const sc = scroller();
     // Opened: the whole song fits; the narrow blocks have a compact header (their name), the rest of it on hover or focus.
     expect(sc.scrollWidth).toBeLessThanOrEqual(sc.clientWidth + 1);
-    const narrow = blockEls().filter((el) => el.getBoundingClientRect().width < 96);
+    const narrow = blockEls().filter((el) => el.getBoundingClientRect().width < 110);
     expect(narrow.length).toBeGreaterThan(20);
     for (const el of narrow) {
       expect(el.getBoundingClientRect().width).toBeGreaterThanOrEqual(COMPACT_BLOCK_WIDTH);
@@ -444,10 +452,10 @@ describe('compact blocks', () => {
       const four = blocks().map((b) => cmd.blockTemplate(b));
       for (let i = 0; i < 3; i++) cmd.insertBlocks(session.store, four);
     });
-    await setup(1320);
+    await setup(1366);
     const ids = blockIds();
     const b1 = blockEl(ids[1]);
-    expect(b1.getBoundingClientRect().width).toBeLessThan(96);
+    expect(b1.getBoundingClientRect().width).toBeLessThan(110);
     // Hover the header: ⋯ shows over its right part; press there and drag three blocks to the right.
     const name = b1.querySelector<HTMLElement>('[class*="name"]')!.getBoundingClientRect();
     const from = { x: b1.getBoundingClientRect().left + 22, y: name.top + name.height / 2 };
@@ -496,7 +504,7 @@ describe('the last block', () => {
     const last = blockIds().at(-1)!;
     const view = sc.getBoundingClientRect();
     const lr = blockEl(last).getBoundingClientRect();
-    expect(view.right - lr.right).toBeGreaterThanOrEqual(minBlockWidth(14) - 2);
+    expect(view.right - lr.right).toBeGreaterThanOrEqual(tailRoom(14) - 2);
     // Drag its edge to just inside the lane's visible edge and hold: the lane does not run away.
     const r0 = blocks().at(-1)!.repeats;
     const steps = undoCount();

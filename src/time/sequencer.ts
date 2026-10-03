@@ -2493,6 +2493,13 @@ export class Sequencer {
     return false;
   }
 
+  private _skippedNotes = 0;
+
+  /** How many notes the last skipTo left out (0 when it skipped nothing, or only beats and controls). */
+  get skippedNotes(): number {
+    return this._skippedNotes;
+  }
+
   /**
    * Playing, the driver fell behind (the main thread was busy): move
    * generation on to `time` without handing out what should already have
@@ -2507,6 +2514,7 @@ export class Sequencer {
    * usual (takeCuts). Like `skipIdleTo` for the idle arpeggiator.
    */
   skipTo(time: number): SeqEvent[] {
+    this._skippedNotes = 0;
     if (!this._playing || !Number.isFinite(time)) return [];
     if (this.cursor >= this.clock.tickAt(time)) return [];
     const project = this.activeProject();
@@ -2526,6 +2534,9 @@ export class Sequencer {
     this.dropped.clear();
     // The stretch's notes never sound: they end nothing later and no mono note glides from them.
     for (const rt of this.tracks.values()) for (const e of rt.recent) if (e.batch === this.batch) e.dropped = true;
+    let notes = 0;
+    for (const e of scratch) if (e.kind === 'note') notes++;
+    this._skippedNotes = notes;
     scratch = scratch.filter((e) => e.kind !== 'note' && e.kind !== 'beat' && e.kind !== 'songGain' && e.kind !== 'macroRamp');
     scratch.sort(compareEvents);
     this.moveSync = time;
