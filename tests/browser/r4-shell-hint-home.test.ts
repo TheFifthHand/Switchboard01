@@ -6,7 +6,9 @@
  *   with the home's start and centred on its line;
  * - never covers what a view marks [data-hint-avoid] (Mix: the spectrum's
  *   labels and axis, the loudness readings and status) or any control;
- * - goes elsewhere when something now sits on the home's spot.
+ * - goes elsewhere when something now sits on the home's spot;
+ * - the quick guide (a tour of the Play view) waits on the home too, as one
+ *   line, while another view is open.
  */
 import { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -79,6 +81,40 @@ describe('the hint home', () => {
       // Above the strips, over nothing to press or read.
       expect(covered()).toEqual([]);
       for (const s of document.querySelectorAll('[data-testid^="strip-"]')) expect(overlaps(c, s.getBoundingClientRect()), 'over a channel strip').toBe(false);
+    });
+  }
+
+  for (const [w, hh] of [
+    [1280, 800],
+    [1366, 768],
+    [1920, 1080],
+  ] as const) {
+    it(`in Mix at ${w} x ${hh} the quick guide waits as one line on the home, over no control, heading or reading`, async () => {
+      await openShell({ width: w, height: hh, guideDone: false });
+      await click(button('Jump In')!);
+      const guide = await until(() => document.querySelector<HTMLElement>('[data-guide-step]'), 'the quick guide');
+      await click(tab('Mix'));
+      await until(() => guide.dataset.layout === 'waiting', 'the guide to wait');
+      await settle(900);
+      expect(guide.textContent).toContain('This is on the Play view.');
+      // Where placement put it (its left / top: it glides there, and the glide is not what is tested).
+      const left = parseFloat(guide.style.left);
+      const topY = parseFloat(guide.style.top);
+      const g = new DOMRect(left, topY, guide.offsetWidth, guide.offsetHeight);
+      const hr = (await until(home, 'the Mix hint home')).getBoundingClientRect();
+      const middle = (hr.top + hr.bottom) / 2;
+      expect(g.top, 'on the home line').toBeLessThanOrEqual(middle);
+      expect(g.bottom, 'on the home line').toBeGreaterThanOrEqual(middle);
+      const under: string[] = [];
+      for (const el of document.querySelectorAll<HTMLElement>(`${CONTROLS}, h2, h3, [data-hint-avoid]`)) {
+        if (guide.contains(el) || el.closest('header[aria-label="Transport"]') || el.querySelector('[data-hint-home]')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width >= 1 && r.height >= 1 && overlaps(g, r)) under.push(el.getAttribute('aria-label') ?? el.textContent?.trim().slice(0, 30) ?? el.tagName);
+      }
+      expect(under).toEqual([]);
+      // Show the Play view takes the tour back there.
+      await click(button('Show the Play view', guide)!);
+      await until(() => guide.dataset.layout !== 'waiting', 'the guide back on Play');
     });
   }
 

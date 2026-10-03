@@ -36,6 +36,8 @@ export interface HintContext {
   exportAt?: 'strip' | 'menu';
   /** The pads play (live), so Play is Pause for now. Absent: no. */
   padsPlaying?: boolean;
+  /** The song has blocks (an empty song has nothing to play, lengthen or switch off). Absent: yes. */
+  hasBlocks?: boolean;
 }
 
 export interface HintGo {
@@ -261,6 +263,7 @@ export const HINT_STEPS: readonly HintStep[] = [
   {
     id: 'song-play',
     track: 'song',
+    available: (c) => c.hasBlocks !== false,
     // While the pads play, Play is Pause: the song starts from a block's ▶ (or after Stop).
     text: (c) => (c.padsPlaying ? 'Press ▶ on a block to hear your song from there.' : 'Press Play to hear your song.'),
     more: (c) => (c.padsPlaying ? 'Or Stop, then Play (or Space) plays the blocks in order.' : 'In Arrange, Play (or Space) plays the blocks in order.'),
@@ -272,6 +275,7 @@ export const HINT_STEPS: readonly HintStep[] = [
   {
     id: 'song-repeats',
     track: 'song',
+    available: (c) => c.hasBlocks !== false,
     text: () => 'Drag a block’s right edge to play it more times.',
     more: () => 'With the keyboard, + and − do the same.',
     here: (c) => c.view === 'arrange',
@@ -282,6 +286,7 @@ export const HINT_STEPS: readonly HintStep[] = [
   {
     id: 'song-part',
     track: 'song',
+    available: (c) => c.hasBlocks !== false,
     text: () => 'Click a part in a block to switch it off there.',
     more: () => 'Click it again to bring it back.',
     here: (c) => c.view === 'arrange',
@@ -332,14 +337,24 @@ export interface CurrentHint {
 /**
  * The first step that is neither done nor impossible in this project, or
  * null when all are done. Once the song track was offered (`song`), its
- * steps come first and the basics follow.
+ * steps come first and the basics follow; but where the song's step cannot
+ * be done in the view on screen (it is about Arrange), the first basics step
+ * that can be done there comes first, so the song track never crowds out
+ * the view on screen.
  */
 export function currentHint(done: readonly HintId[], ctx: HintContext, opts: { song?: boolean } = {}): CurrentHint | null {
-  const tracks: HintTrack[] = opts.song ? ['song', 'basics'] : ['basics'];
-  for (const track of tracks) {
-    const steps = HINT_STEPS.filter((s) => s.track === track && (!s.available || s.available(ctx)));
-    const i = steps.findIndex((s) => !done.includes(s.id));
-    if (i >= 0) return { step: steps[i], index: HINT_STEPS.indexOf(steps[i]), position: i + 1, total: steps.length };
+  const steps = (track: HintTrack) => HINT_STEPS.filter((s) => s.track === track && (!s.available || s.available(ctx)));
+  const at = (list: HintStep[], i: number): CurrentHint => ({ step: list[i], index: HINT_STEPS.indexOf(list[i]), position: i + 1, total: list.length });
+  const basics = steps('basics');
+  const nextBasics = basics.findIndex((s) => !done.includes(s.id));
+  if (opts.song) {
+    const song = steps('song');
+    const i = song.findIndex((s) => !done.includes(s.id));
+    if (i >= 0) {
+      if (song[i].here(ctx)) return at(song, i);
+      const here = basics.findIndex((s) => !done.includes(s.id) && s.here(ctx));
+      return here >= 0 ? at(basics, here) : at(song, i);
+    }
   }
-  return null;
+  return nextBasics >= 0 ? at(basics, nextBasics) : null;
 }

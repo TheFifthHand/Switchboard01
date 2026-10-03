@@ -421,15 +421,18 @@
  *   1280-1365  + the word "Stop" (Simple)
  *   1366-1439  + the Simple · Advanced switch, Export (with its word), the word
  *              "Stop" in Advanced too
- *   1440-1599  + Projects (its folder), the offline state, "Not saved" in words
- *   1600 up    + the words of Undo and Redo, a waiting Update key, roomier spacing
- *   1700 up    + the save word; from 1800 the project's name
- * Advanced takes the room for Swing from the bar.beat readout (with its state
- * word; Play / Pause still says Play or Pause) from 1366 to 1799 px, and at
- * 1366-1439 px (1440-1599 px beside the MIDI & audio key) Swing is a narrow
- * field.
- * Below 1600 px Undo and Redo are icon keys (named "Undo …" / "Redo …", with
- * tooltips) and a waiting update is a coral dot on More (Update is its first row).
+ *   1440-1599  + the offline state, "Not saved" in words, and in Advanced the
+ *              bar.beat readout again
+ *   1600 up    + Projects (its folder; the save state and More open your
+ *              projects too), a waiting Update key, roomier spacing
+ *   1700 up    + the save word
+ *   1800 up    + the words of Undo and Redo, the project's name
+ * Advanced takes the room for Swing from a narrow Swing field (1366-1599 px)
+ * and, at 1366-1439 px only, from the bar.beat readout (with its state word;
+ * Play / Pause still says Play or Pause).
+ * Below 1800 px Undo and Redo are icon keys (named "Undo …" / "Redo …", with
+ * tooltips); below 1600 px a waiting update is a coral dot on More (Update is
+ * its first row).
  * Things that come and go take room from the least important first:
  * - a waiting Update key or a failed save: Projects and the words of Undo and
  *   Redo ("Not saved" shows as the coral warning key beside an Update key);
@@ -438,7 +441,7 @@
  *   of the view, Record and Mute All keys' padding (Advanced).
  * Never the save state, Undo, Redo, Export or Stop, nor the switch from 1366 px.
  */
-@media (max-width: 1439px) {
+@media (max-width: 1599px) {
   .right .projectKey {
     display: none;
   }
@@ -544,31 +547,21 @@
 /*
  * Advanced (Swing beside Tempo) keeps Export and the word "Stop" from 1366 px,
  * and the right-hand group is as wide as in Simple (so the Simple · Advanced
- * switch never moves under the pointer): the bar.beat readout gives way
- * instead (from 1366 px; the state word goes with it, Play/Pause still says
- * Play or Pause), and at 1366-1439 px Swing is a narrow field.
+ * switch never moves under the pointer): Swing is a narrow field to 1599 px,
+ * and at 1366-1439 px only the bar.beat readout gives way (the state word
+ * goes with it; Play/Pause still says Play or Pause).
  */
-@media (min-width: 1366px) and (max-width: 1799px) {
+@media (min-width: 1366px) and (max-width: 1439px) {
   .bar[data-mode='advanced'] .position {
     display: none;
   }
 }
-@media (min-width: 1366px) and (max-width: 1439px) {
+@media (min-width: 1366px) and (max-width: 1599px) {
   .bar[data-mode='advanced'] .swing > span {
     padding: 0 5px 0 4px;
     gap: 2px;
   }
   .bar[data-mode='advanced'] .swing input {
-    width: 32px !important;
-  }
-}
-/* 1440-1599 px with the MIDI & audio key on the strip: Swing is narrow there too. */
-@media (min-width: 1440px) and (max-width: 1599px) {
-  .bar[data-mode='advanced']:has(.devicesKey) .swing > span {
-    padding: 0 5px 0 4px;
-    gap: 2px;
-  }
-  .bar[data-mode='advanced']:has(.devicesKey) .swing input {
     width: 32px !important;
   }
 }
@@ -659,10 +652,10 @@
 
 /*
  * Undo and Redo as icon keys (their names stay "Undo …" / "Redo …", their
- * tooltips say what they undo): below 1600 px, and to 1919 px where a waiting
+ * tooltips say what they undo): below 1800 px, and to 1919 px where a waiting
  * Update key, a failed save or the MIDI & audio key needs their words' room.
  */
-@media (max-width: 1599px) {
+@media (max-width: 1799px) {
   .history .historyKey[data-size] {
     width: var(--h);
     padding: 0;
@@ -677,7 +670,7 @@
     white-space: nowrap;
   }
 }
-@media (min-width: 1600px) and (max-width: 1919px) {
+@media (min-width: 1800px) and (max-width: 1919px) {
   .right:has(.update) .history .historyKey[data-size],
   .right:has(.saveError) .history .historyKey[data-size],
   .right:has(.devicesKey) .history .historyKey[data-size] {

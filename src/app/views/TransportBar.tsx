@@ -7,7 +7,7 @@
  * (it always holds Tips), so every control stays one press away without
  * squeezing the always-visible ones.
  */
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { Button, Icon, Knob, Meter, NumberField, SegmentedControl, Tooltip, useRafLoop } from '../../ui/components';
 import { BPM_SPEC, MASTER_VOLUME_SPEC, SWING_SPEC } from '../../project/params';
 import { setTipsEnabled, setUiMode, setView, type UiMode, type View } from '../../state/uiStore';
@@ -57,6 +57,25 @@ export function nothingToPlay(s: Pick<RuntimeState, 'tracks'>): boolean {
 /** "Nothing to play yet" waits this long, so the moment between Play and the first clip starting never shows it. */
 const NOTHING_DELAY_MS = 600;
 
+/**
+ * True while the transport plays the pads with nothing sounding or about to
+ * ("Nothing to play yet"), once that has lasted NOTHING_DELAY_MS. The tab's
+ * title reads it too, so its ▶ agrees with the strip.
+ */
+export function useNothingToPlay(): boolean {
+  const silent = useRuntime((s) => s.playing && s.mode === 'live' && nothingToPlay(s));
+  const [empty, setEmpty] = useState(false);
+  useEffect(() => {
+    if (!silent) {
+      setEmpty(false);
+      return;
+    }
+    const t = window.setTimeout(() => setEmpty(nothingToPlay(runtimeStore.getState())), NOTHING_DELAY_MS);
+    return () => window.clearTimeout(t);
+  }, [silent]);
+  return silent && empty;
+}
+
 /** "3.2" (bar.beat, from 1), or "Count" during a count-in. */
 function positionText(tick: number, bar: number, beat: number): string {
   return tick < 0 ? 'Count' : `${bar + 1}.${beat + 1}`;
@@ -89,17 +108,7 @@ function Position() {
   const playing = useRuntime((s) => s.playing);
   const paused = useRuntime((s) => s.paused);
   const mode = useRuntime((s) => s.mode);
-  const silent = useRuntime((s) => s.playing && s.mode === 'live' && nothingToPlay(s));
-  const [empty, setEmpty] = useState(false);
-  useEffect(() => {
-    if (!silent) {
-      setEmpty(false);
-      return;
-    }
-    const t = window.setTimeout(() => setEmpty(nothingToPlay(runtimeStore.getState())), NOTHING_DELAY_MS);
-    return () => window.clearTimeout(t);
-  }, [silent]);
-  const nothing = silent && empty;
+  const nothing = useNothingToPlay();
   const word = nothing ? 'Nothing to play yet' : transportWord({ playing, paused, mode });
   // A song edited while paused moves the paused position on the timeline: show it again.
   useSongPlan();
@@ -262,6 +271,7 @@ function SaveStatus(props: { onOpenLibrary(): void }) {
   const preview = useRuntime((s) => s.preview);
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
+  const actionId = useId();
   // Set from a failed save until a save succeeds (also while Try again or the export is writing).
   const failing = save.lastError !== null;
   // Saving works again: the popover closes, and a later failure does not reopen it by itself.
@@ -288,7 +298,8 @@ function SaveStatus(props: { onOpenLibrary(): void }) {
           className={`${styles.save} ${tone}`}
           aria-live="polite"
           aria-label={idlePreview ? 'Autosave: Preview, not stored until you change it' : `Autosave: ${text}`}
-          aria-haspopup={error ? 'dialog' : undefined}
+          aria-describedby={actionId}
+          aria-haspopup="dialog"
           aria-expanded={error ? open : undefined}
           data-save={state}
           onClick={() => {
@@ -300,6 +311,10 @@ function SaveStatus(props: { onOpenLibrary(): void }) {
           <span className={styles.saveText}>{text}</span>
         </button>
       </Tooltip>
+      {/* What pressing it does (the library opens, or why saving failed). */}
+      <span id={actionId} hidden>
+        {error ? 'Opens why it was not saved and how to recover.' : 'Opens your projects.'}
+      </span>
       {failing && open && <SaveFailedPopover message={save.lastError?.message} anchor={btnRef.current} onClose={() => setOpen(false)} />}
     </div>
   );
@@ -437,6 +452,21 @@ function RecordGroup() {
  * action below 1600 px, which the key marks with a coral dot), so each is
  * one place to look whatever the width.
  */
+/**
+ * Opening a menu gives focus to its first item that can be used (Undo comes
+ * first and often has nothing to undo). It runs before the menu's own
+ * focusing, which then leaves it be.
+ */
+function FocusFirstUsable() {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const menu = ref.current?.closest<HTMLElement>('[role="menu"]');
+    if (!menu || menu.contains(document.activeElement)) return;
+    menu.querySelector<HTMLElement>('[role^="menuitem"]:not([aria-disabled="true"])')?.focus({ preventScroll: true });
+  }, []);
+  return <span ref={ref} hidden />;
+}
+
 function MoreMenu(props: { onOpenLibrary(): void; onNewProject(): void; onOpenExport(): void; onOpenDevices(): void; onOpenHelp(): void; projectName: string }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -468,6 +498,7 @@ function MoreMenu(props: { onOpenLibrary(): void; onNewProject(): void; onOpenEx
       </Tooltip>
       {open && (
         <Popover anchor={anchorFromElement(btnRef.current)} label="More" align="end" onClose={close} returnFocus={btnRef.current} ignore={btnRef.current}>
+          <FocusFirstUsable />
           <OfflineMenuItems onDone={close} />
           <MenuItem
             icon="undo"
@@ -604,12 +635,15 @@ export interface TransportBarProps {
 }
 
 /**
- * How far down the top chrome reaches, on the page root (--transport-h): the
- * strip's height, plus the banners the shell shows right under it (a project
- * open in another tab, playback stopped: [data-banners], the strip's next
- * sibling), so toasts, which sit just under it (Toast.module.css), never hide
- * a banner's keys. Kept up to date as the strip wraps or grows (narrow
- * windows, 200 % zoom) and as banners come and go.
+ * How far down the top chrome reaches on screen, on the page root
+ * (--transport-h): the strip's bottom edge, or the bottom of the banners the
+ * shell shows right under it (a project open in another tab, playback
+ * stopped: [data-banners], the strip's next sibling) while they are in view.
+ * Toasts sit just under it (Toast.module.css), so they never hide a banner's
+ * keys, and never float down where a banner was once the page has scrolled
+ * it away (below 1024 px the strip is sticky and the banners scroll). Kept
+ * up to date as the strip wraps or grows, as banners come and go, and as
+ * the page scrolls.
  */
 function useTransportHeight(ref: RefObject<HTMLElement | null>): void {
   useLayoutEffect(() => {
@@ -618,18 +652,28 @@ function useTransportHeight(ref: RefObject<HTMLElement | null>): void {
     const root = document.documentElement;
     const below = el.nextElementSibling instanceof HTMLElement && el.nextElementSibling.matches('[data-banners]') ? el.nextElementSibling : null;
     let last = -1;
+    let frame = 0;
     const write = () => {
-      const h = Math.ceil(el.getBoundingClientRect().height + (below?.getBoundingClientRect().height ?? 0));
+      frame = 0;
+      const bar = el.getBoundingClientRect().bottom;
+      const banners = below && below.getBoundingClientRect().height > 0 ? below.getBoundingClientRect().bottom : bar;
+      const h = Math.max(0, Math.ceil(Math.max(bar, banners)));
       if (h === last) return;
       last = h;
       root.style.setProperty('--transport-h', `${h}px`);
+    };
+    const soon = () => {
+      if (!frame) frame = requestAnimationFrame(write);
     };
     write();
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(write) : null;
     ro?.observe(el);
     if (below) ro?.observe(below);
+    window.addEventListener('scroll', soon, { capture: true, passive: true });
     return () => {
       ro?.disconnect();
+      window.removeEventListener('scroll', soon, { capture: true });
+      cancelAnimationFrame(frame);
       root.style.removeProperty('--transport-h');
     };
   }, [ref]);

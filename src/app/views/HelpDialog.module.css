@@ -62,6 +62,23 @@
   display: flex;
   flex-wrap: wrap;
   gap: 2px 0;
+  min-width: 0;
+}
+
+/* One way to press it: its keys stay together, and a long row of keys wraps inside the column. */
+.alt {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
+  max-width: 100%;
+}
+.seq {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .kbd {

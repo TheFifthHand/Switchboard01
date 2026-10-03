@@ -55,6 +55,10 @@ describe('the save state', () => {
     expect(save().querySelector('svg path')?.getAttribute('d')).toMatch(/^M8 2\.6 A/);
     await until(() => save().getAttribute('aria-label') === 'Autosave: Saved', 'Saved');
     expect(save().dataset.save).toBe('saved');
+    // Pressing it opens a dialog (your projects), and its description says so.
+    expect(save().getAttribute('aria-haspopup')).toBe('dialog');
+    const described = (save().getAttribute('aria-describedby') ?? '').split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? '').join(' ');
+    expect(described).toContain('Opens your projects.');
     // Neutral ink: neither teal (selection) nor amber (playing).
     const probe = document.createElement('span');
     probe.style.color = 'var(--ink-3)';
@@ -111,20 +115,47 @@ describe('the save state', () => {
 });
 
 describe('titles and headings', () => {
-  it('the tab says the project (▶ while playing); each view has one h1 naming it and the project', async () => {
+  it('the tab says the project (▶ while something plays); each view has one h1 naming it and the project', async () => {
     await openShell();
     expect(document.title).toBe('Omni Song');
     await keys('{Escape}');
     const name = session.store.getState().name;
     await until(() => document.title === `${name} — Omni Song`, 'the title');
-    act(() => patchRuntime({ playing: true }));
+    act(() => patchRuntime({ playing: true, mode: 'live', tracks: { t1: { playingSlot: 1, queued: null } } }));
     await until(() => document.title === `▶ ${name} — Omni Song`, 'the playing title');
-    act(() => patchRuntime({ playing: false }));
+    // Playing with nothing to play (the strip says "Nothing to play yet"): no ▶ either.
+    act(() => patchRuntime({ tracks: { t1: { playingSlot: null, queued: null } } }));
+    await until(() => document.title === `${name} — Omni Song`, 'the title without ▶', 3000);
+    act(() => patchRuntime({ playing: false, tracks: {} }));
     const h1 = () => [...document.querySelectorAll('h1')].map((x) => x.textContent);
     expect(h1()).toEqual([`Omni Song — Play · ${name}`]);
     act(() => setView('mix'));
     await settle();
     expect(h1()).toEqual([`Omni Song — Mix · ${name}`]);
+  });
+});
+
+describe('leaving the page', () => {
+  it('asks only while leaving would lose something: a performance take, not Record Notes or plain playing', async () => {
+    await openShell();
+    await keys('{Escape}');
+    const asks = () => {
+      const e = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    act(() => patchRuntime({ playing: true }));
+    await settle(50);
+    expect(asks(), 'playing').toBe(false);
+    act(() => patchRuntime({ recording: 'notes' }));
+    await settle(50);
+    expect(asks(), 'Record Notes (its notes are edits the autosave keeps)').toBe(false);
+    act(() => patchRuntime({ recording: 'performance' }));
+    await settle(50);
+    expect(asks(), 'a performance take').toBe(true);
+    act(() => patchRuntime({ recording: 'off', playing: false }));
+    await settle(50);
+    expect(asks(), 'after the take').toBe(false);
   });
 });
 

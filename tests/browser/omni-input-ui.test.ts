@@ -394,7 +394,7 @@ describe('MIDI & audio dialog', () => {
       await midi.connect();
       await audioInput.open();
     });
-    for (const w of [1024, 1100, 1180, 1250, 1320, 1366, 1440, 1600, 1700, 1920]) {
+    for (const w of [1024, 1100, 1180, 1250, 1320, 1366, 1440, 1520, 1599, 1600, 1700, 1799, 1800, 1920]) {
       await page.viewport(w, 800);
       for (const mode of ['simple', 'advanced'] as const) {
         act(() => setUiMode(mode));

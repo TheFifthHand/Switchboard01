@@ -8,8 +8,9 @@
  * - opening Arrange makes the song track current: play the song in Arrange, a
  *   block's length, a part switched off in a block, an export finished, each
  *   done when the real state says so;
- * - in another view the song step collapses to one line, "Next, in Arrange:
- *   …", with Open Arrange;
+ * - in another view a basics step that can be done there comes first; with
+ *   none left the song step collapses to one line, "Next, in Arrange: …",
+ *   with Open Arrange;
  * - Hide hints points to Help.
  */
 import { act } from 'react';
@@ -17,7 +18,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { session } from '../../src/app/instance';
 import { patchRuntime } from '../../src/app/runtime';
 import { Session } from '../../src/app/session';
-import { exportsDone, hintsStore } from '../../src/app/views/hints/hintsState';
+import { hintsStore, markHintDone } from '../../src/app/views/hints/hintsState';
 import { setBlockPart, setBlockRepeats } from '../../src/state/commands';
 import { uiStore } from '../../src/state/uiStore';
 import { button, click, closeShell, keys, openShell, settle, toasts, transport, until } from './r4-shell-harness';
@@ -83,24 +84,30 @@ describe('the song track', () => {
     c = await until(() => (chip()?.dataset.hint === 'song-export' ? chip() : null), 'the export step');
     expect(c.textContent).toMatch(/Export/);
     // An export that finishes (the session's export, its rendering stubbed) is the last song step.
-    const before = exportsDone.getState();
+    const before = session.exportsFinished.getState();
     vi.spyOn(Session.prototype as unknown as { renderExport: () => Promise<unknown> }, 'renderExport').mockResolvedValue({ blob: new Blob([]), report: null });
     await act(async () => {
       await session.renderWav({ source: { kind: 'song' }, sampleRate: 44100, bitDepth: 16, tailSeconds: 0 } as Parameters<typeof session.renderWav>[0]);
     });
-    expect(exportsDone.getState()).toBe(before + 1);
+    expect(session.exportsFinished.getState()).toBe(before + 1);
     // Then the basics carry on where they were.
     c = await until(() => (chip()?.dataset.hint === 'pad' ? chip() : null), 'the basics');
     expect(hintsStore.getState().done).toEqual(expect.arrayContaining(['song-play', 'song-repeats', 'song-part', 'song-export']));
   });
 
-  it('in another view a song step is one line, "Next, in Arrange: …", with Open Arrange', async () => {
+  it('in another view a basics step that can be done there comes first; with none left, the song step is one line, "Next, in Arrange: …", with Open Arrange', async () => {
     await openShell();
     await click(button('Just look around')!);
     await shownChip();
     await click(tab('Arrange'));
     await until(() => chip()?.dataset.hint === 'song-play', 'the song track');
     await click(tab('Play'));
+    // Play: the song track does not crowd out what can be done here (the pad step).
+    await until(() => (chip()?.dataset.hint === 'pad' && !chip()?.hasAttribute('data-collapsed') ? chip() : null), 'a basics step in Play');
+    // The basics done: the song step, collapsed.
+    act(() => {
+      for (const id of ['pad', 'mute', 'drag', 'tone', 'instrument', 'master', 'record'] as const) markHintDone(id);
+    });
     const c = await until(() => (chip()?.hasAttribute('data-collapsed') && chip()?.hasAttribute('data-ready') ? chip() : null), 'the collapsed chip');
     expect(c.textContent).toContain('Next, in Arrange:');
     expect(c.textContent).toContain('Press Play to hear your song.');

@@ -75,9 +75,10 @@ describe('which step comes next', () => {
     expect(currentHint([], ctx())!).toMatchObject({ position: 1, total: 7 });
   });
 
-  it('once offered, the song track comes first; then the basics carry on', () => {
-    expect(currentHint(['pad'], ctx(), { song: true })!.step.id).toBe('song-play');
-    expect(currentHint(['pad', 'song-play'], ctx(), { song: true })).toMatchObject({ position: 2, total: 4 });
+  it('once offered, the song track comes first in Arrange; then the basics carry on', () => {
+    const arrange = ctx({ view: 'arrange' });
+    expect(currentHint(['pad'], arrange, { song: true })!.step.id).toBe('song-play');
+    expect(currentHint(['pad', 'song-play'], arrange, { song: true })).toMatchObject({ position: 2, total: 4 });
     const songDone: HintId[] = ['pad', 'song-play', 'song-repeats', 'song-part', 'song-export'];
     expect(currentHint(songDone, ctx(), { song: true })!.step.id).toBe('mute');
     expect(currentHint([...HINT_IDS], ctx(), { song: true })).toBeNull();
@@ -86,6 +87,22 @@ describe('which step comes next', () => {
       expect(s.here(ctx({ view: 'arrange' }))).toBe(true);
       expect(s.go).toMatchObject({ label: 'Open Arrange', view: 'arrange' });
     }
+  });
+
+  it('elsewhere the song track does not crowd out the view on screen: a basics step that can be done there comes first', () => {
+    // In Play the song's next step (Arrange) waits while a basics step can be done in Play.
+    expect(currentHint(['pad'], ctx(), { song: true })).toMatchObject({ step: { id: 'mute' }, position: 2, total: 7 });
+    // In Mix: the mastering step.
+    expect(currentHint(['pad', 'mute', 'drag', 'tone', 'instrument'], ctx({ view: 'mix' }), { song: true })!.step.id).toBe('master');
+    // Nothing of the basics left to do in Play: the song step, collapsed to "Next, in Arrange".
+    const basics = HINT_STEPS.filter((x) => x.track === 'basics').map((x) => x.id);
+    expect(currentHint(basics, ctx(), { song: true })!.step.id).toBe('song-play');
+  });
+
+  it('in a song with no blocks, the song steps about blocks are passed over', () => {
+    const empty = ctx({ view: 'arrange', hasBlocks: false });
+    expect(currentHint(['pad'], empty, { song: true })!.step.id).toBe('song-export');
+    expect(currentHint(['pad'], empty, { song: true })).toMatchObject({ position: 1, total: 1 });
   });
 
   it('a step done elsewhere names the view, or the pad tab when its view is open', () => {

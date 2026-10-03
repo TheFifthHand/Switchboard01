@@ -71,12 +71,27 @@ function HelpBody({ onClose, initialTab = 'shortcuts', onShowGuide, onShowHints 
                   {g.items.map((s) => (
                     <div key={s.id} className={styles.row} data-shortcut={s.id}>
                       <dt className={styles.keys}>
-                        {s.keys.map((k, i) => (
-                          <span key={k}>
-                            {i > 0 && <span className={styles.or}> or </span>}
-                            <kbd className={styles.kbd}>{showKeys(k, mac)}</kbd>
-                          </span>
-                        ))}
+                        {s.keys.map((k, i) => {
+                          const shown = showKeys(k, mac);
+                          // A row of keys ("A S D F …"): one key cap each, wrapping in the column rather than running into the words beside it.
+                          const row = shown.includes(' ') && !shown.includes('+') ? shown.split(' ') : null;
+                          return (
+                            <span key={k} className={styles.alt}>
+                              {i > 0 && <span className={styles.or}> or </span>}
+                              {row ? (
+                                <kbd className={styles.seq}>
+                                  {row.map((key, j) => (
+                                    <kbd key={j} className={styles.kbd}>
+                                      {key}
+                                    </kbd>
+                                  ))}
+                                </kbd>
+                              ) : (
+                                <kbd className={styles.kbd}>{shown}</kbd>
+                              )}
+                            </span>
+                          );
+                        })}
                       </dt>
                       <dd className={styles.does}>{s.does}</dd>
                     </div>

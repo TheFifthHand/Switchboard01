@@ -5,15 +5,17 @@
  * the toasts the shell itself raises, and global keys, focus and drops.
  */
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
-import { Button, TipsProvider, ToastProvider, useToasts, type ToastApi } from '../ui/components';
+import { Button, TipsProvider, ToastProvider, useToasts, type ToastApi, type ToastOptions } from '../ui/components';
 import { DRUM_KEYS, NOTE_KEYS, isTypingTarget } from '../ui/hooks/useComputerKeyboard';
 import { setTipsEnabled, uiStore } from '../state/uiStore';
 import * as library from '../persistence/library';
 import { BUNDLE_EXTENSION, LEGACY_BUNDLE_EXTENSIONS } from '../persistence/bundle';
-import { session, useAutosave, useProject, useUi } from './instance';
+import { session, useProject, useUi } from './instance';
+import { IDLE_AUTOSAVE_STATE, type AutosaveState } from '../persistence/autosave';
+import { createStore, useStore } from '../state/store';
 import { notify, runtimeStore, setNoticeHistory, useRuntime, type NoticeAction } from './runtime';
 import type { BootInfo } from './session';
-import { TransportBar } from './views/TransportBar';
+import { TransportBar, useNothingToPlay } from './views/TransportBar';
 import { PlayView } from './views/PlayView';
 import { KeyboardStrip } from './views/KeyboardStrip';
 import { Welcome } from './views/Welcome';
@@ -21,7 +23,7 @@ import { ExportDialog } from './views/ExportDialog';
 import { Library, storageMessage, type LibraryTab } from './views/Library';
 import { Guide } from './views/Guide';
 import { HelpDialog, APP_VERSION, type HelpTab } from './views/HelpDialog';
-import { Hints, VIEW_NAMES, noteExportDone, showHintsAgain, startHints } from './views/hints';
+import { Hints, VIEW_NAMES, showHintsAgain, startHints } from './views/hints';
 import { SEEN_VERSION_KEY, notesToShow } from './views/hints/guides';
 import { useAudioInput } from './views/devices';
 import { ShapeView } from './views/shape/ShapeView';
@@ -88,35 +90,16 @@ function exportProjectFile(): void {
 /** Open a stored project and say so (or why not). */
 async function openStored(id: string): Promise<void> {
   try {
+    // Opening a project stops what plays: say so, so the silence is not a surprise.
+    const wasPlaying = runtimeStore.getState().playing;
     await session.openProject(id);
-    notify(`Opened “${session.store.getState().name}”.`);
+    const name = session.store.getState().name;
+    notify(wasPlaying ? `Opened “${name}”. Playback stopped: press Play (or Space) to hear it.` : `Opened “${name}”.`);
   } catch (e) {
     notify(storageMessage(e, 'Opening the project'), 'error');
   }
 }
 
-/**
- * Exports that finish (a WAV was made) are counted for the hints' "Export a
- * WAV" step. Both of the session's export calls are wrapped once.
- */
-function countFinishedExports(): void {
-  const s = session as typeof session & { __exportsCounted?: boolean };
-  if (s.__exportsCounted) return;
-  s.__exportsCounted = true;
-  const renderWav = s.renderWav.bind(s);
-  const renderWavWithReport = s.renderWavWithReport.bind(s);
-  s.renderWav = async (opts) => {
-    const blob = await renderWav(opts);
-    noteExportDone();
-    return blob;
-  };
-  s.renderWavWithReport = async (opts) => {
-    const r = await renderWavWithReport(opts);
-    noteExportDone();
-    return r;
-  };
-}
-countFinishedExports();
 
 /**
  * The toast for runtime notices. A message about an edit ("Moved … " [Undo],
@@ -200,11 +183,10 @@ export function saveFailedText(kind: string | undefined): string {
 }
 
 function SaveFailureToast() {
-  const save = useAutosave();
+  const streak = useSave((s) => ((s.failures ?? 0) > 0 ? (s.firstFailureAt ?? null) : null));
   const toasts = useToasts();
   /** The run of failures already told about (its start time). */
   const told = useRef<number | null>(null);
-  const streak = (save.failures ?? 0) > 0 ? (save.firstFailureAt ?? null) : null;
   useEffect(() => {
     if (streak === null) {
       // Saving works again: a toast about the failure would be stale now.
@@ -214,7 +196,8 @@ function SaveFailureToast() {
     }
     if (told.current === streak) return;
     told.current = streak;
-    toasts.show({ id: 'save-failed', tone: 'error', message: saveFailedText(save.lastError?.kind), action: { label: 'Export project file', onAction: exportProjectFile } });
+    const kind = session.autosaver?.status.getState().lastError?.kind;
+    toasts.show({ id: 'save-failed', tone: 'error', message: saveFailedText(kind), action: { label: 'Export project file', onAction: exportProjectFile } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streak]);
   return null;
@@ -226,7 +209,7 @@ function SaveFailureToast() {
  * one opened it ('conflict': Open the latest / Open a copy).
  */
 function ReadonlyBanner() {
-  const readonly = useAutosave().readonly ?? null;
+  const readonly = useSave((s) => s.readonly ?? null);
   const [busy, setBusy] = useState(false);
   if (!readonly) return null;
   const run = (fn: () => Promise<void>) => {
@@ -331,31 +314,49 @@ function Workspace({ view }: { view: View }) {
   }
 }
 
-/** The tab's title: "<project> — Omni Song", with ▶ while playing; just "Omni Song" behind the Welcome card. */
-function useDocumentTitle(welcome: boolean): void {
+/**
+ * The autosave state, narrowed by `selector`: a component re-renders only
+ * when what it reads changes (the whole state changes on every save).
+ */
+const noSaver = createStore<AutosaveState>({ ...IDLE_AUTOSAVE_STATE });
+function useSave<S>(selector: (s: AutosaveState) => S): S {
+  return useStore(session.autosaver?.status ?? noSaver, selector);
+}
+
+/**
+ * The tab's title: "<project> — Omni Song", with ▶ while something plays
+ * (not while the transport says "Nothing to play yet"); just "Omni Song"
+ * behind the Welcome card. A leaf of its own, so Play / Pause re-renders
+ * only this, never the app.
+ */
+function DocumentTitle({ welcome }: { welcome: boolean }): null {
   const name = useProject((p) => p.name);
   const playing = useRuntime((s) => s.playing);
+  const nothing = useNothingToPlay();
+  const sounding = playing && !nothing;
   useEffect(() => {
-    document.title = welcome ? 'Omni Song' : `${playing ? '▶ ' : ''}${name} — Omni Song`;
-  }, [welcome, name, playing]);
+    document.title = welcome ? 'Omni Song' : `${sounding ? '▶ ' : ''}${name} — Omni Song`;
+  }, [welcome, name, sounding]);
+  return null;
 }
 
 /**
  * Ask before leaving only when leaving would lose something: a performance
  * or audio take recording, an export rendering, or edits that could not be
- * saved. Not while merely playing (an intentional reload must not nag).
+ * saved. Not while merely playing (an intentional reload must not nag), nor
+ * for Record Notes (its notes are edits: the save state covers them). A leaf
+ * of its own, reading narrow booleans: saves do not re-render the app.
  */
-function useLeaveGuard(exportOpen: boolean): void {
-  const recording = useRuntime((s) => s.recording !== 'off');
+function LeaveGuard({ exportOpen }: { exportOpen: boolean }): null {
+  const takeRecording = useRuntime((s) => s.recording === 'performance');
   const audioTake = useAudioInput((s) => s.take !== null);
-  const save = useAutosave();
-  const unsaved = save.dirty && save.status === 'error';
-  const armed = recording || audioTake || exportOpen || unsaved;
+  const unsaved = useSave((s) => s.dirty && s.status === 'error');
+  const armed = takeRecording || audioTake || exportOpen || unsaved;
   useEffect(() => {
     if (!armed) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       const st = session.autosaver?.status.getState();
-      const losing = runtimeStore.getState().recording !== 'off' || audioTake || session.exporting || (!!st && st.dirty && st.status === 'error');
+      const losing = runtimeStore.getState().recording === 'performance' || audioTake || session.exporting || (!!st && st.dirty && st.status === 'error');
       if (!losing) return;
       e.preventDefault();
       // Older browsers need a value to show the prompt.
@@ -364,6 +365,7 @@ function useLeaveGuard(exportOpen: boolean): void {
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [armed, audioTake]);
+  return null;
 }
 
 export function App({ boot }: { boot: BootInfo }) {
@@ -377,7 +379,26 @@ export function App({ boot }: { boot: BootInfo }) {
   const projectName = useProject((p) => p.name);
   // Project library (transport project button → My projects; Welcome → Starters) and the quick guide.
   const [library, setLibrary] = useState<{ tab: LibraryTab; fromWelcome: boolean } | null>(null);
-  const [guide, setGuide] = useState(false);
+  const [guide, setGuideState] = useState(false);
+  /**
+   * The quick guide takes the stage first: toasts about the start (which
+   * project this one took the place of, what is new) wait until it is closed,
+   * so they never sit over its words.
+   */
+  const guideOpen = useRef(false);
+  const waiting = useRef<ToastOptions[]>([]);
+  const setGuide = (on: boolean) => {
+    guideOpen.current = on;
+    setGuideState(on);
+    if (on) return;
+    const list = waiting.current;
+    waiting.current = [];
+    for (const t of list) toastsRef.current?.show(t);
+  };
+  const stageToast = (t: ToastOptions) => {
+    if (guideOpen.current) waiting.current.push(t);
+    else toastsRef.current?.show(t);
+  };
   const [help, setHelp] = useState<HelpTab | null>(null);
   // Each replay starts from step 1, even when the guide is still open.
   const [guideRun, setGuideRun] = useState(0);
@@ -385,8 +406,6 @@ export function App({ boot }: { boot: BootInfo }) {
   const [focusGuide, setFocusGuide] = useState(false);
   const [focusPlay, setFocusPlay] = useState(false);
   const toastsRef = useRef<ToastApi | null>(null);
-  useDocumentTitle(welcome);
-  useLeaveGuard(exportOpen);
 
   // The guide is offered once, for the first project; the hints start with it (they show after the guide).
   const offerGuide = (): boolean => {
@@ -406,7 +425,7 @@ export function App({ boot }: { boot: BootInfo }) {
     const replaced = rt.starterReplaced !== undefined ? rt.starterReplaced : boot.lastProject;
     if (!replaced || replaced.id === session.store.getState().id) return;
     const name = session.store.getState().name;
-    toastsRef.current?.show({
+    stageToast({
       id: 'starter-replaced',
       tone: 'info',
       message: `Started a new ${name}. Your earlier “${replaced.name}” is in My projects.`,
@@ -435,7 +454,7 @@ export function App({ boot }: { boot: BootInfo }) {
     const notes = notesToShow(APP_VERSION, seen ?? (boot.lastProject ? 'earlier' : null));
     writeStorage(SEEN_VERSION_KEY, APP_VERSION);
     if (!notes) return;
-    toastsRef.current?.show({
+    stageToast({
       id: 'whats-new',
       tone: 'info',
       message: `Omni Song is updated to version ${notes.version}.`,
@@ -540,7 +559,8 @@ export function App({ boot }: { boot: BootInfo }) {
       if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.defaultPrevented) return;
       if (isTypingTarget(e.target) || document.querySelector('[aria-modal="true"]')) return;
       const t = e.target;
-      if (!e.shiftKey && t instanceof Element && t.closest(SPACE_CONTROLS) && viaKeyboard.get(t) !== false) return;
+      // (Except a control that says Space plays there: the quick guide's Next on its Play step.)
+      if (!e.shiftKey && t instanceof Element && t.closest(SPACE_CONTROLS) && !t.closest('[data-space-plays]') && viaKeyboard.get(t) !== false) return;
       // Neither the browser (it would press the focused button) nor the control's own handler gets it.
       e.preventDefault();
       e.stopPropagation();
@@ -731,6 +751,8 @@ export function App({ boot }: { boot: BootInfo }) {
         <HelpDialog open={help !== null} initialTab={help ?? undefined} onClose={() => setHelp(null)} onShowGuide={showGuide} onShowHints={showHints} />
         <Notices />
         <SaveFailureToast />
+        <DocumentTitle welcome={welcome} />
+        <LeaveGuard exportOpen={exportOpen} />
       </ToastProvider>
     </TipsProvider>
   );

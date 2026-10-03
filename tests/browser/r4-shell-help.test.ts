@@ -6,7 +6,10 @@
  *   version and what is new;
  * - the More menu: a waiting Update first, then the actions (with New
  *   project… and Help…), and the offline state last as plain text that takes
- *   no focus and is never cut off; focus starts on the first action.
+ *   no focus and is never cut off; focus starts on the first action that
+ *   can be used (not on Undo with nothing to undo);
+ * - in the Shortcuts tab no key cap runs into the words beside it, at 1024,
+ *   1366, 1920 and 960 px wide.
  */
 import { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -84,15 +87,47 @@ describe('Help', () => {
   });
 });
 
+describe('the Shortcuts tab', () => {
+  for (const [w, hh] of [
+    [1024, 768],
+    [1366, 768],
+    [1920, 1080],
+    [960, 540],
+  ] as const) {
+    it(`at ${w} x ${hh} no key cap runs into the words beside it`, async () => {
+      await openShell({ width: w, height: hh });
+      await keys('{Escape}');
+      await keys('?');
+      const dialog = await until(helpDialog, 'Help');
+      await settle(200);
+      const over: string[] = [];
+      for (const row of dialog.querySelectorAll<HTMLElement>('[data-shortcut]')) {
+        const words = row.querySelector('dd')!.getBoundingClientRect();
+        for (const k of row.querySelectorAll('dt kbd')) {
+          const r = k.getBoundingClientRect();
+          if (r.right > words.left + 1 && r.top < words.bottom && r.bottom > words.top) over.push(`${row.dataset.shortcut}: "${k.textContent}"`);
+          if (r.right > row.getBoundingClientRect().right + 1) over.push(`${row.dataset.shortcut}: "${k.textContent}" past the row`);
+        }
+      }
+      expect(over).toEqual([]);
+      await keys('{Escape}');
+    });
+  }
+});
+
 describe('the More menu', () => {
-  it('focus starts on the first action; New project… opens the Starters; the offline state closes the menu as plain text', async () => {
+  it('focus starts on the first action that can be used; New project… opens the Starters; the offline state closes the menu as plain text', async () => {
     await openShell();
     await keys('{Escape}');
     act(() => offlineStore.setState({ state: 'ready', apply: null }));
     await openMore();
     const list = items();
     expect(list[0].textContent).toContain('Undo');
-    await until(() => document.activeElement === list[0], 'focus on the first action');
+    // Nothing to undo or redo yet: focus starts past them, on the first item that does something.
+    expect(list[0].getAttribute('aria-disabled')).toBe('true');
+    const usable = list.find((i) => i.getAttribute('aria-disabled') !== 'true')!;
+    expect(usable.textContent).toContain('Show every control (Advanced)');
+    await until(() => document.activeElement === usable, 'focus on the first usable action');
     const words = list.map((i) => i.textContent ?? '');
     for (const w of ['Redo', 'Show every control (Advanced)', 'Tips', 'New project…', 'Projects…', 'Export WAV…', 'MIDI & audio…', 'Help…']) expect(words.some((x) => x.includes(w)), w).toBe(true);
     // The offline state: the menu's last line, a status (not a menu item), its words whole.

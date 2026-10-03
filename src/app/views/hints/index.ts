@@ -10,8 +10,6 @@ export {
   finishHints,
   markHintDone,
   startSongHints,
-  exportsDone,
-  noteExportDone,
   createHintsStore,
   readHints,
   type HintId,
