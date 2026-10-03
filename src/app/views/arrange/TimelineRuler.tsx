@@ -10,7 +10,7 @@ import { memo, type CSSProperties, type Ref } from 'react';
 import { LaneIcon } from './laneIcons';
 import type { BarRange } from './laneGestures';
 import { rangeWords } from './laneLoop';
-import { labelStep } from './songLayout';
+import { rulerMarks } from './songLayout';
 import styles from './SongView.module.css';
 
 export interface TimelineRulerProps {
@@ -24,16 +24,17 @@ export interface TimelineRulerProps {
 }
 
 const Numbers = memo(function Numbers({ pxPerBar, bars }: { pxPerBar: number; bars: number }) {
-  const step = labelStep(pxPerBar);
-  const out = [];
-  for (let bar = 0; bar <= bars; bar += step) {
-    out.push(
-      <span key={bar} className={styles.rulerNum} style={{ '--s': bar } as CSSProperties}>
-        {bar + 1}
-      </span>,
-    );
-  }
-  return <>{out}</>;
+  return (
+    <>
+      {rulerMarks(pxPerBar, 0, bars)
+        .filter((m) => m.label)
+        .map((m) => (
+          <span key={m.bar} className={styles.rulerNum} style={{ '--s': m.bar } as CSSProperties}>
+            {m.bar + 1}
+          </span>
+        ))}
+    </>
+  );
 });
 
 export function TimelineRuler({ pxPerBar, bars, range, looping, dragging, headRef }: TimelineRulerProps) {

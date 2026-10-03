@@ -188,7 +188,8 @@ export class LaneController {
       g = { kind: 'marquee', base: add ? selectionStore.getState() : EMPTY_SELECTION, additive: add };
     }
     if (!g) return false;
-    this.begin(e, g, e.currentTarget instanceof Element ? e.currentTarget : t);
+    // Captured by the scroller: the drag keeps its events (and the cursor the scroller shows) wherever the pointer goes.
+    this.begin(e, g, this.host.scroller() ?? t);
     if (g.kind === 'ruler') g.bar0 = this.bar(e.clientX);
     return true;
   }

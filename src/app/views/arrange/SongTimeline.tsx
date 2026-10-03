@@ -35,13 +35,14 @@ import { anchorFromContextEvent, anchorFromElement, isEchoOfKeyboardMenu, noteKe
 import { isMac } from '../hints/shortcuts';
 import { DragOverlay } from './DragOverlay';
 import { LaneController, type Carry, type LaneHost } from './laneController';
+import type { BarRange } from './laneGestures';
 import { laneKey } from './laneKeys';
 import { sameRange } from './laneLoop';
 import { neighbour, pruneSelection, selectAll } from './laneSelection';
-import { dragStore, hoverStore, ppbStore, rangeStore, selectionStore, setSelection, useDragView, usePxPerBar, useRange } from './laneStore';
+import { dragStore, hoverStore, ppbStore, rangeStore, selectionStore, setSelection, usePxPerBar, useRange, type DragView } from './laneStore';
 import { readZoom, writeZoom } from './laneSettings';
 import { PartRow, partKeysNav } from './PartRow';
-import { SectionStrip } from './SectionStrip';
+import { SectionStrip, type SectionStripProps } from './SectionStrip';
 import { songPlayheadBar, songRuntime, songSession, useSongPlaying, useSongRuntime } from './songApi';
 import * as act from './songActions';
 import { LoopPicker, RegionMenu, SectionMenu, type MenuHost } from './SongMenus';
@@ -103,7 +104,8 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   const looping = useSongRuntime((s) => !!s.songLoop);
   const cursor = useSongRuntime((s) => s.songCursor ?? 0);
   const songOn = useSongPlaying();
-  const drag = useDragView();
+  // Only whether a drag runs (the empty note steps aside); what it shows is the overlay's, the ruler's and the strip's.
+  const dragging = useStore(dragStore, (d) => d !== null);
   const size = useElementSize(scrollerRef);
   const headW = size.width && size.width < 980 ? HEADER_W_NARROW : HEADER_W;
   const viewW = Math.max(0, size.width - headW);
@@ -591,8 +593,13 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   const menuSection = menu?.kind === 'section' ? sections.find((s) => s.id === menu.id) : undefined;
   const menuTargets = menu?.kind === 'region' ? (selectionStore.getState().ids.includes(menu.id) ? selectionStore.getState().ids : [menu.id]) : [];
 
-  const sectionsShown = drag?.kind === 'section' && drag.sections ? drag.sections : sections;
-  const rangeShown = drag?.kind === 'range' && drag.range ? drag.range : range;
+  const onFocusKey = useCallback((row: number, col: 0 | 1) => setHeadTab((t) => (t.row === row && t.col === col ? t : { row, col })), []);
+  const onRenameDone = useCallback(() => setRenaming(null), []);
+  const onRename = useCallback((id: Id) => setRenaming(id), []);
+  const onSectionMenu = useCallback((id: Id, trigger: HTMLElement) => {
+    noteKeyboardMenu(trigger);
+    setMenu({ kind: 'section', id, anchor: anchorFromElement(trigger), returnFocus: trigger });
+  }, []);
   const style = {
     '--ppb': ppb,
     '--row-h': `${rowH}px`,
@@ -619,30 +626,18 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
         <div className={styles.canvas}>
           <div className={styles.top}>
             <div className={styles.corner} aria-hidden="true" />
-            <TimelineRuler pxPerBar={ppb} bars={bars} range={rangeShown} looping={looping} dragging={drag?.kind === 'range'} headRef={headRef} />
+            <RulerLayer pxPerBar={ppb} bars={bars} range={range} looping={looping} headRef={headRef} />
             <div className={styles.corner} data-under="" aria-hidden="true">
               <span className={styles.cornerLabel}>Sections</span>
             </div>
-            <SectionStrip
-              sections={sectionsShown}
-              songBars={songBars}
-              dragged={drag?.kind === 'section' ? (drag.section ?? null) : null}
-              newSection={drag?.kind === 'drop' ? (drag.newSection ?? null) : null}
-              renaming={renaming}
-              onRenameDone={() => setRenaming(null)}
-              onRename={(id) => setRenaming(id)}
-              onMenu={(id, trigger) => {
-                noteKeyboardMenu(trigger);
-                setMenu({ kind: 'section', id, anchor: anchorFromElement(trigger), returnFocus: trigger });
-              }}
-            />
+            <SectionsLayer sections={sections} songBars={songBars} renaming={renaming} onRenameDone={onRenameDone} onRename={onRename} onMenu={onSectionMenu} />
           </div>
           <div className={styles.rows} role="group" aria-label="The song: a row of loops for each part" aria-describedby="song-keys-help" onKeyDown={onRowsKeyDown} tabIndex={hasRegions ? -1 : 0}>
             <span id="song-keys-help" hidden>
               Arrow keys: ↑ ↓ the part above or below, Ctrl+← → the previous or next loop, ← → move the selected loops a bar, Alt+← → change their length. Delete removes, Ctrl+D duplicates, Ctrl+C and Ctrl+V copy and paste at the playhead, Shift+F10 opens a loop’s actions.
             </span>
             {rows.map((r) => (
-              <PartRow key={r.id} row={r} anySolo={anySolo} tab={headTab.row === r.index ? headTab.col : headTab.row >= rows.length && r.index === 0 ? 0 : null} onFocusKey={(row, col) => setHeadTab({ row, col })} />
+              <PartRow key={r.id} row={r} anySolo={anySolo} tab={headTab.row === r.index ? headTab.col : headTab.row >= rows.length && r.index === 0 ? 0 : null} onFocusKey={onFocusKey} />
             ))}
           </div>
           <div ref={originRef} className={styles.origin}>
@@ -655,7 +650,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
           <div ref={lineRef} className={styles.playhead} data-on={songOn || undefined} aria-hidden="true" />
         </div>
       </div>
-      {!hasRegions && !drag && (
+      {!hasRegions && !dragging && (
         <div className={styles.empty} data-testid="song-empty">
           <p className={styles.emptyText}>{hasScenes ? 'Drag a scene or a loop here — or' : 'Make some loops on the pads in Play, then drag them here.'}</p>
           {hasScenes && (
@@ -669,6 +664,30 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
       {menu?.kind === 'section' && menuSection && <SectionMenu section={menuSection} anchor={menu.anchor} returnFocus={menu.returnFocus} host={menuHost} onClose={() => setMenu(null)} />}
       {menu?.kind === 'picker' && <LoopPicker trackId={menu.trackId} bar={menu.bar} anchor={menu.anchor} returnFocus={menu.returnFocus} onClose={() => setMenu(null)} />}
     </div>
+  );
+}
+
+/** The ruler, with the loop range a ruler drag would set while one runs (only this re-renders meanwhile). */
+function RulerLayer(props: { pxPerBar: number; bars: number; range: BarRange | null; looping: boolean; headRef: Ref<HTMLDivElement> }) {
+  const dragRange = useStore(dragStore, (d) => (d?.kind === 'range' && d.range ? d.range : null), (a, b) => sameRange(a, b));
+  return <TimelineRuler pxPerBar={props.pxPerBar} bars={props.bars} range={dragRange ?? props.range} looping={props.looping} dragging={dragRange !== null} headRef={props.headRef} />;
+}
+
+function sameNewSection(a: DragView['newSection'] | null, b: DragView['newSection'] | null): boolean {
+  return a === b || (!!a && !!b && a.start === b.start && a.bars === b.bars && a.name === b.name);
+}
+
+/** The sections strip, with the sections a section drag would leave (and a scene drop's new section) while one runs. */
+function SectionsLayer(props: Omit<SectionStripProps, 'dragged' | 'newSection'>) {
+  const sectionDrag = useStore(dragStore, (d) => (d?.kind === 'section' ? d : null));
+  const newSection = useStore(dragStore, (d) => (d?.kind === 'drop' ? (d.newSection ?? null) : null), sameNewSection);
+  return (
+    <SectionStrip
+      {...props}
+      sections={sectionDrag?.sections ?? props.sections}
+      dragged={sectionDrag?.section ?? null}
+      newSection={newSection}
+    />
   );
 }
 

@@ -100,7 +100,7 @@ export const SectionStrip = memo(function SectionStrip({ sections, songBars, dra
     (e.currentTarget.parentElement?.querySelector(`[data-section-id="${to.id}"]`) as HTMLElement | null)?.focus();
   };
   return (
-    <div className={styles.sections} data-sections="" role="group" aria-label="Sections of the song (← → move between them, F2 renames, Shift+F10 for actions)">
+    <div className={styles.sections} data-sections="" data-space-plays="" role="group" aria-label="Sections of the song (← → move between them, F2 renames, Shift+F10 for actions)">
       {sections.map((s) => {
         const isDragged = dragged?.id === s.id;
         const moves = s.moves ?? [];

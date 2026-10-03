@@ -260,9 +260,11 @@
 .playheadHead {
   position: absolute;
   top: 0;
-  bottom: 0;
   left: 0;
-  width: 0;
+  width: 2px;
+  margin-left: -1px;
+  height: calc(var(--ruler-h) + var(--sections-h) + 1px);
+  background: var(--ink-3);
   z-index: 2;
   pointer-events: none;
   will-change: transform;
@@ -271,9 +273,12 @@
   content: '';
   position: absolute;
   top: 0;
-  left: -6px;
+  left: -5px;
   border: 6px solid transparent;
   border-top: 8px solid var(--ink-3);
+}
+.timeline[data-playing] .playheadHead {
+  background: var(--amber);
 }
 .timeline[data-playing] .playheadHead::before {
   border-top-color: var(--amber);

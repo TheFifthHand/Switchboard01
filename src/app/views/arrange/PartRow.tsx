@@ -51,7 +51,7 @@ function useRowKind(trackId: Id): 'notes' | 'drums' {
 function PartHeader({ row, anySolo, tab, onFocusKey }: { row: RowView; anySolo: boolean; tab: 0 | 1 | null; onFocusKey(row: number, col: 0 | 1): void }) {
   const status = partStatus(row, anySolo);
   return (
-    <div className={styles.partHead} data-status={status === 'Muted' ? 'muted' : status === 'Solo' ? 'solo' : status ? 'quiet' : undefined}>
+    <div className={styles.partHead} data-part-head="" data-status={status === 'Muted' ? 'muted' : status === 'Solo' ? 'solo' : status ? 'quiet' : undefined}>
       <span className={styles.partNum} aria-hidden="true">
         {row.number}
       </span>
@@ -123,7 +123,7 @@ export const PartRow = memo(function PartRow({ row, anySolo, tab, onFocusKey }: 
       data-quiet={status === 'Muted' || status === 'Not soloed' || undefined}
     >
       <PartHeader row={row} anySolo={anySolo} tab={tab} onFocusKey={onFocusKey} />
-      <div className={styles.lane} data-lane={row.id} role="group" aria-label={`${row.name}${status ? ` (${status.toLowerCase()})` : ''}: ${regions.length === 1 ? '1 loop' : `${regions.length} loops`}`}>
+      <div className={styles.lane} data-lane={row.id} data-space-plays="" role="group" aria-label={`${row.name}${status ? ` (${status.toLowerCase()})` : ''}: ${regions.length === 1 ? '1 loop' : `${regions.length} loops`}`}>
         {regions.map((r) => (
           <RegionView key={r.id} region={r} clip={clips.find((c) => c?.id === r.clipId) ?? null} partName={row.name} kind={kind} />
         ))}

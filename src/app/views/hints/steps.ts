@@ -314,8 +314,15 @@ export const HINT_STEPS: readonly HintStep[] = [
     more: () => 'The playhead moves there, and Play starts from it.',
     here: (c) => c.view === 'arrange',
     go: SONG,
-    // The song cursor moved (a click on the ruler while stopped).
-    detect: (c) => c.source === 'runtime' && songCursor(c.runtime) !== undefined && songCursor(c.runtime) !== songCursor(c.prevRuntime),
+    // The song cursor moved by itself: a click on the ruler (stopped), or a jump there while the song plays. Play and
+    // Stop also set the cursor (where playback starts, and back to it), so a change as playback starts or ends is not it.
+    detect: (c) =>
+      c.source === 'runtime' &&
+      songCursor(c.runtime) !== undefined &&
+      songCursor(c.runtime) !== songCursor(c.prevRuntime) &&
+      c.runtime.playing === c.prevRuntime.playing &&
+      c.runtime.paused === c.prevRuntime.paused &&
+      c.runtime.mode === c.prevRuntime.mode,
   },
   {
     id: 'song-play',
