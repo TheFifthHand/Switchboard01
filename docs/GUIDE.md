@@ -34,7 +34,7 @@ walkthroughs as short steps, and can show the quick guide and the hints again.
    **Cancel** puts the part back exactly as you had it. Then turn the **big knobs** under it:
    **Tone** (darker ↔ brighter), **Space** (room around the sound), **Echo**, **Motion**, **Drive**
    and **Pump** (ducks in time with the beat). Drag a knob up or down (Shift for fine steps), or
-   focus it and use the arrow keys; double-click puts it back where the sound had it.
+   focus it and use the arrow keys; double-click resets it.
 5. **Drag a clip.** Drag a clip pad onto another pad to **move** it (onto a pad that has a clip, the
    two swap). Hold **Ctrl** (or Alt) while you drop to **copy** it instead. Esc cancels a drag, and
    one Undo puts it back. Drum clips go to drum parts and note clips to melodic parts; the app says

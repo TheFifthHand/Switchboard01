@@ -222,8 +222,10 @@ editing items of the clip, scene and part menus are unavailable with the reason 
 - Header: part name with a fixed status line, **Mute**, **Solo**, **Volume** (big), Pan (Advanced).
 - **Instrument card**: type icon and name ("Drum kit", "Bass synth", "Synth", "Sampler"), sound
   name, **Change instrument**.
-- The six **big knobs** with a one-line caption each; on a big panel they grow to xl, and a picture
-  of the selected clip shows where there is room. A panel too short for everything shows a fade at
+- The six **big knobs** with a one-line caption each ("Moves nothing yet" when a big knob has no
+  mappings; their tip lists what they really move); double-click here returns to the plain default
+  (Shape returns to the sound's own position). On a big panel they grow to xl, and a picture of the
+  selected clip shows where there is room. A panel too short for everything shows a fade at
   its foot while more is below.
 - **Variation** is a split key. The main press makes a subtle variation of the selected clip; its
   menu (**More Variation choices**) offers **Subtle variation**, **Bold variation** and **Back to
