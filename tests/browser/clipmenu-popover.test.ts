@@ -236,6 +236,8 @@ describe('menus in the app', () => {
     const dots = block.querySelector<HTMLElement>('button[aria-haspopup="menu"]')!;
     const before = JSON.stringify(session.store.getState().arrangement);
     const notice = runtimeStore.getState().notice;
+    // A narrow block shows its ▶ and ⋯ while the pointer is over it.
+    await real(() => userEvent.hover(block));
     await real(() => userEvent.click(dots));
     const m = menu();
     expect(m, 'the block menu').not.toBeNull();
