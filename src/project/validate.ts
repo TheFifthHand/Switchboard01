@@ -4,10 +4,12 @@
  *
  * `validateProject` migrates first, then rebuilds a fresh Project field by
  * field, so the result never shares objects with the input and contains only
- * known fields. Structural problems (wrong track/scene/slot counts, missing
- * master, malformed tracks) are errors. Recoverable problems (out-of-range
- * values, dangling references, invalid notes or cables) are repaired and
- * reported as warnings. A valid project comes out deep-equal to what went in.
+ * known fields. Structural problems (wrong track or scene counts, a part
+ * whose clip slots do not match the scenes, a missing master, malformed
+ * tracks) are errors. Recoverable problems (out-of-range values, dangling
+ * references such as a clip's recording that is gone, invalid notes, cables
+ * or song moves) are repaired and reported as warnings. A valid project
+ * comes out deep-equal to what went in.
  *
  * It never throws: anything unexpected becomes an error result.
  */
@@ -23,26 +25,35 @@ import {
   MASTER_VOLUME_SPEC,
   MASTERING_PARAMS,
   MODULE_PARAMS,
+  SAMPLER_PARAMS,
   SWING_SPEC,
   clampParam,
   specById,
   type ParamSpec,
 } from './params';
 import {
+  BLOCK_MOVE_KINDS,
   DRUM_VOICES,
   MACRO_IDS,
+  MAX_BLOCK_LABEL,
+  MAX_BLOCK_REPEATS,
+  MAX_CLIP_BARS,
+  MAX_SCENES,
   MAX_TRACKS,
+  MIN_SCENES,
   PROJECT_SCHEMA,
   PROJECT_VERSION,
-  SCENE_ROWS,
   TICKS_PER_BAR,
   type ArpDivision,
   type ArpMode,
   type ArpSettings,
   type Arrangement,
   type ArrangementBlock,
+  type BlockMove,
+  type BlockMoveKind,
   type Clip,
   type ClipBars,
+  type ClipSample,
   type Connection,
   type DrumVoiceSettings,
   type Id,
@@ -88,8 +99,8 @@ export const VALIDATION_LIMITS = {
   maxSampleBytes: 256 * 1024 * 1024,
   maxSampleSeconds: 600,
   maxNameLength: 120,
-  /** Longest note: four bars. */
-  maxNoteTicks: TICKS_PER_BAR * 4,
+  /** Longest note: as long as the longest clip (eight bars). */
+  maxNoteTicks: TICKS_PER_BAR * MAX_CLIP_BARS,
   minNoteTicks: 1,
 } as const;
 
@@ -323,14 +334,48 @@ function validateNote(raw: unknown, clipTicks: number, range: PitchRange, ids: S
   return { id: id as string, tick, pitch: p, velocity: v, duration: d };
 }
 
-function validateClipInner(raw: unknown, range: PitchRange, clipIds: Set<Id>, issues: Issues): Clip | null {
+/** A recording id a project can play: one of its imported recordings, or a built-in one. */
+function knownSampleId(id: string, sampleIds: ReadonlySet<Id>): boolean {
+  return id.startsWith('builtin:') ? BUILTIN_SAMPLES.some((b) => b.id === id) : sampleIds.has(id);
+}
+
+const ROOT_NOTE_SPEC = specById(SAMPLER_PARAMS, 'rootNote')!;
+
+/**
+ * A clip's own recording reference. `sampleIds` null: the project's
+ * recordings are not known here (a clip from the clipboard), so any
+ * well-formed id is kept. An unknown recording, or a region that is not
+ * valid, never fails the clip: the reference is dropped or the region reset.
+ */
+function validateClipSample(raw: unknown, sampleIds: ReadonlySet<Id> | null, issues: Issues): ClipSample | null {
+  if (!isObj(raw) || typeof raw.id !== 'string') {
+    issues.warn('Removed a damaged recording reference from a clip (it plays its part’s recording).');
+    return null;
+  }
+  const id = raw.id;
+  const wellFormed = id.startsWith('builtin:') ? BUILTIN_SAMPLES.some((b) => b.id === id) : isSimpleId(id);
+  if (!wellFormed || (sampleIds !== null && !knownSampleId(id, sampleIds))) {
+    issues.warn('A clip referred to a recording that is not in the project; it plays its part’s recording instead.');
+    return null;
+  }
+  let start = isNum(raw.start) ? clamp(raw.start, 0, 1) : NaN;
+  let end = isNum(raw.end) ? clamp(raw.end, 0, 1) : NaN;
+  if (!(start < end)) {
+    issues.warn('Reset a clip’s recording region that was not valid (it plays the whole recording).');
+    start = 0;
+    end = 1;
+  } else if (start !== raw.start || end !== raw.end) issues.warn('Adjusted a clip’s recording region.');
+  return { id, start, end, rootNote: specNum(raw.rootNote, ROOT_NOTE_SPEC, issues) };
+}
+
+function validateClipInner(raw: unknown, range: PitchRange, clipIds: Set<Id>, sampleIds: ReadonlySet<Id> | null, issues: Issues): Clip | null {
   if (!isObj(raw)) {
     issues.error('A clip is damaged.');
     return null;
   }
   const bars = raw.bars;
-  if (!isNum(bars) || !Number.isInteger(bars) || bars < 1 || bars > 4) {
-    issues.error('A clip has an invalid length (clips are 1 to 4 bars).');
+  if (!isNum(bars) || !Number.isInteger(bars) || bars < 1 || bars > MAX_CLIP_BARS) {
+    issues.error(`A clip has an invalid length (clips are 1 to ${MAX_CLIP_BARS} bars).`);
     return null;
   }
   if (!Array.isArray(raw.notes)) {
@@ -363,18 +408,24 @@ function validateClipInner(raw: unknown, range: PitchRange, clipIds: Set<Id>, is
       issues.warn('Removed damaged Variation information from a clip.');
     }
   }
+  if (raw.sample !== undefined) {
+    const sample = validateClipSample(raw.sample, sampleIds, issues);
+    if (sample) clip.sample = sample;
+  }
   return clip;
 }
 
 /**
  * Sanitize a clip from outside the store (clipboard, paste between parts).
  * Notes that cannot play on `kind` are dropped. Returns null when the clip is
- * structurally invalid. Ids are kept; callers re-id as needed.
+ * structurally invalid. Ids are kept; callers re-id as needed. With
+ * `sampleIds` (the target project's recordings), a reference to a recording
+ * the project does not have is dropped (the clip plays its part's recording).
  */
-export function sanitizeClip(raw: unknown, kind: InstrumentKind): { clip: Clip | null; warnings: string[] } {
+export function sanitizeClip(raw: unknown, kind: InstrumentKind, sampleIds?: ReadonlySet<Id>): { clip: Clip | null; warnings: string[] } {
   try {
     const issues = new Issues();
-    const clip = validateClipInner(raw, playableRange(kind), new Set(), issues);
+    const clip = validateClipInner(raw, playableRange(kind), new Set(), sampleIds ?? null, issues);
     return { clip: issues.failed ? null : clip, warnings: [...issues.errors, ...issues.warnings()] };
   } catch {
     return { clip: null, warnings: ['The clip could not be read.'] };
@@ -554,7 +605,30 @@ interface TrackDraft {
   rawMacroMap: unknown;
 }
 
-function validateTrack(raw: unknown, index: number, trackIds: Set<Id>, clipIds: Set<Id>, sampleIds: ReadonlySet<Id>, issues: Issues): TrackDraft | null {
+/** Designed macro positions: known macros only, each 0..1; nothing usable leaves it out. */
+function validateMacroHome(raw: unknown, issues: Issues): Partial<Record<MacroId, number>> | undefined {
+  if (!isObj(raw)) {
+    issues.warn('Removed damaged designed big-knob positions (double-click returns knobs to their defaults).');
+    return undefined;
+  }
+  const out: Partial<Record<MacroId, number>> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!has(MACRO_IDS, k) || !isNum(v)) {
+      issues.warn('Removed an invalid designed big-knob position.');
+      continue;
+    }
+    out[k] = clamp(v, 0, 1);
+    if (out[k] !== v) issues.warn('Adjusted an out-of-range designed big-knob position.');
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * One part. `rows` is the number of scenes (its clip slots must match it), or
+ * null when the scenes themselves are damaged (the project fails anyway; the
+ * part is still checked so every problem is reported).
+ */
+function validateTrack(raw: unknown, index: number, rows: number | null, trackIds: Set<Id>, clipIds: Set<Id>, sampleIds: ReadonlySet<Id>, issues: Issues): TrackDraft | null {
   if (!isObj(raw)) {
     issues.error(`Part ${index + 1} is damaged.`);
     return null;
@@ -570,8 +644,12 @@ function validateTrack(raw: unknown, index: number, trackIds: Set<Id>, clipIds: 
   else issues.warn('Reset an unknown part role.');
   const instrument = validateInstrument(raw.instrument, sampleIds, issues);
   if (!instrument) return null;
-  if (!Array.isArray(raw.clips) || raw.clips.length !== SCENE_ROWS) {
-    issues.error(`Part ${index + 1} must have exactly ${SCENE_ROWS} clip slots.`);
+  if (!Array.isArray(raw.clips) || raw.clips.length < MIN_SCENES || raw.clips.length > MAX_SCENES) {
+    issues.error(`Part ${index + 1} must have ${MIN_SCENES} to ${MAX_SCENES} clip slots, one per scene.`);
+    return null;
+  }
+  if (rows !== null && raw.clips.length !== rows) {
+    issues.error(`Part ${index + 1} has ${raw.clips.length} clip slots but the project has ${rows} scenes: every part needs one slot per scene.`);
     return null;
   }
   const clips: (Clip | null)[] = [];
@@ -582,10 +660,11 @@ function validateTrack(raw: unknown, index: number, trackIds: Set<Id>, clipIds: 
     }
     // Any MIDI pitch is kept on load: a part whose instrument changed (for example
     // bass -> drums) keeps notes it cannot play, so switching back restores them.
-    const clip = validateClipInner(c, MIDI_RANGE, clipIds, issues);
+    const clip = validateClipInner(c, MIDI_RANGE, clipIds, sampleIds, issues);
     if (!clip) return null;
     clips.push(clip);
   }
+  const macroHome = raw.macroHome === undefined ? undefined : validateMacroHome(raw.macroHome, issues);
   return {
     track: {
       id,
@@ -598,14 +677,15 @@ function validateTrack(raw: unknown, index: number, trackIds: Set<Id>, clipIds: 
       locked: bool(raw.locked, false, issues, 'lock'),
       arp: validateArp(raw.arp, issues),
       macros: validateMacros(raw.macros, issues),
+      ...(macroHome ? { macroHome } : {}),
     },
     rawMacroMap: raw.macroMap,
   };
 }
 
 function validateScenes(raw: unknown, issues: Issues): Scene[] | null {
-  if (!Array.isArray(raw) || raw.length !== SCENE_ROWS) {
-    issues.error(`The project must have exactly ${SCENE_ROWS} scenes.`);
+  if (!Array.isArray(raw) || raw.length < MIN_SCENES || raw.length > MAX_SCENES) {
+    issues.error(`The project must have ${MIN_SCENES} to ${MAX_SCENES} scenes.`);
     return null;
   }
   const ids = new Set<Id>();
@@ -756,7 +836,7 @@ function validateMusicCore(raw: Obj, sampleIds: ReadonlySet<Id>, issues: Issues)
   const clipIds = new Set<Id>();
   const drafts: TrackDraft[] = [];
   for (let i = 0; i < raw.tracks.length; i++) {
-    const d = validateTrack(raw.tracks[i], i, trackIds, clipIds, sampleIds, issues);
+    const d = validateTrack(raw.tracks[i], i, scenes ? scenes.length : null, trackIds, clipIds, sampleIds, issues);
     if (!d) return null;
     drafts.push(d);
   }
@@ -772,14 +852,62 @@ function validateMusicCore(raw: Obj, sampleIds: ReadonlySet<Id>, issues: Issues)
 /* Arrangement                                                         */
 /* ------------------------------------------------------------------ */
 
-function validateArrangement(raw: unknown, scenes: readonly Scene[], issues: Issues): Arrangement {
+/**
+ * A block's song moves: known kinds only, at most one of each (the first is
+ * kept), ids unique across the song, `parts` limited to existing parts
+ * (fades never carry parts; an empty list is removed, so the move acts on
+ * every melodic part, as the commands store it). Nothing usable (an empty
+ * list included) leaves the field out. Every change is reported, so stored
+ * data comes back exactly as it went in or with a warning.
+ */
+function validateMoves(raw: unknown, trackIds: ReadonlySet<Id>, moveIds: Set<Id>, issues: Issues): BlockMove[] | undefined {
+  if (!Array.isArray(raw)) {
+    issues.warn('Removed damaged song moves from a block.');
+    return undefined;
+  }
+  const out: BlockMove[] = [];
+  const kinds = new Set<BlockMoveKind>();
+  for (const m of raw as unknown[]) {
+    if (!isObj(m) || !has(BLOCK_MOVE_KINDS, m.kind)) {
+      issues.warn('Removed an unknown song move from a block.');
+      continue;
+    }
+    if (kinds.has(m.kind)) {
+      issues.warn('Removed a repeated song move from a block (one of each kind per block).');
+      continue;
+    }
+    kinds.add(m.kind);
+    let id = m.id;
+    if (!isId(id) || moveIds.has(id)) {
+      issues.warn('Gave a song move a new id.');
+      id = uid('mv');
+    }
+    moveIds.add(id as string);
+    const move: BlockMove = { id: id as string, kind: m.kind };
+    if (m.parts !== undefined) {
+      const fade = m.kind === 'fadeIn' || m.kind === 'fadeOut';
+      const list = Array.isArray(m.parts) ? (m.parts as unknown[]) : [];
+      const parts: Id[] = [];
+      for (const t of list) if (typeof t === 'string' && trackIds.has(t) && !parts.includes(t)) parts.push(t);
+      if (fade || !Array.isArray(m.parts) || parts.length !== list.length || !parts.length) issues.warn('Adjusted the parts a song move acts on.');
+      if (!fade && parts.length) move.parts = parts;
+    }
+    out.push(move);
+  }
+  if (!out.length && !(raw as unknown[]).length) issues.warn('Removed an empty list of song moves from a block.');
+  return out.length ? out : undefined;
+}
+
+function validateArrangement(raw: unknown, scenes: readonly Scene[], tracks: readonly Track[], issues: Issues): Arrangement {
   if (!isObj(raw)) {
     issues.warn('Reset a missing arrangement.');
     return { blocks: [], tailSeconds: 3 };
   }
   const sceneIds = new Set(scenes.map((s) => s.id));
+  const trackIds = new Set(tracks.map((t) => t.id));
   const blocks: ArrangementBlock[] = [];
   const ids = new Set<Id>();
+  const moveIds = new Set<Id>();
   const rawBlocks = Array.isArray(raw.blocks) ? (raw.blocks as unknown[]) : [];
   if (!Array.isArray(raw.blocks)) issues.warn('Reset a damaged arrangement.');
   for (const b of rawBlocks) {
@@ -797,9 +925,36 @@ function validateArrangement(raw: unknown, scenes: readonly Scene[], issues: Iss
       id = uid('blk');
     }
     ids.add(id as string);
-    const repeats = isNum(b.repeats) ? clamp(Math.round(b.repeats), 1, 8) : 1;
+    const repeats = isNum(b.repeats) ? clamp(Math.round(b.repeats), 1, MAX_BLOCK_REPEATS) : 1;
     if (repeats !== b.repeats) issues.warn('Adjusted an invalid repeat count.');
-    blocks.push({ id: id as string, sceneId: b.sceneId, repeats });
+    const block: ArrangementBlock = { id: id as string, sceneId: b.sceneId, repeats };
+    if (b.label !== undefined) {
+      const label = typeof b.label === 'string' ? b.label.replace(/\s+/g, ' ').trim().slice(0, MAX_BLOCK_LABEL) : '';
+      if (label) block.label = label;
+      if (label !== b.label) issues.warn('Adjusted a song block name.');
+    }
+    if (b.parts !== undefined) {
+      const parts: Record<Id, Id | null> = {};
+      let dropped = !isObj(b.parts);
+      if (isObj(b.parts)) {
+        for (const [trackId, v] of Object.entries(b.parts)) {
+          // A part change for a deleted part, or pointing at a deleted scene, is dropped (the part follows the block's scene).
+          if (!trackIds.has(trackId) || !(v === null || (typeof v === 'string' && sceneIds.has(v)))) {
+            dropped = true;
+            continue;
+          }
+          if (v === b.sceneId) continue;
+          parts[trackId] = v;
+        }
+      }
+      if (dropped) issues.warn('Removed part changes for parts or scenes that no longer exist.');
+      if (Object.keys(parts).length) block.parts = parts;
+    }
+    if (b.moves !== undefined) {
+      const moves = validateMoves(b.moves, trackIds, moveIds, issues);
+      if (moves) block.moves = moves;
+    }
+    blocks.push(block);
   }
   let tailSeconds = 3;
   if (isNum(raw.tailSeconds)) {
@@ -813,7 +968,8 @@ function validateArrangement(raw: unknown, scenes: readonly Scene[], issues: Iss
 /* Performances                                                        */
 /* ------------------------------------------------------------------ */
 
-function validateEvent(raw: unknown, trackIds: ReadonlySet<Id>, moduleIds: ReadonlySet<Id>): PerformanceEvent | null {
+/** One recorded event; `rows` is the number of scenes in the take's own snapshot. */
+function validateEvent(raw: unknown, trackIds: ReadonlySet<Id>, moduleIds: ReadonlySet<Id>, rows: number): PerformanceEvent | null {
   if (!isObj(raw) || !isNum(raw.t)) return null;
   const t = raw.t;
   const track = (): Id | null => (typeof raw.trackId === 'string' && trackIds.has(raw.trackId) ? raw.trackId : null);
@@ -821,13 +977,13 @@ function validateEvent(raw: unknown, trackIds: ReadonlySet<Id>, moduleIds: Reado
     case 'launch': {
       const trackId = track();
       const slot = raw.slot;
-      const okSlot = slot === null || (isNum(slot) && Number.isInteger(slot) && slot >= 0 && slot < SCENE_ROWS);
+      const okSlot = slot === null || (isNum(slot) && Number.isInteger(slot) && slot >= 0 && slot < rows);
       if (!trackId || !okSlot || !isNum(raw.atTick)) return null;
       return { t, type: 'launch', trackId, slot: slot as number | null, atTick: raw.atTick };
     }
     case 'scene': {
       const row = raw.row;
-      if (!isNum(row) || !Number.isInteger(row) || row < 0 || row >= SCENE_ROWS || !isNum(raw.atTick)) return null;
+      if (!isNum(row) || !Number.isInteger(row) || row < 0 || row >= rows || !isNum(raw.atTick)) return null;
       return { t, type: 'scene', row, atTick: raw.atTick };
     }
     case 'stopAll':
@@ -887,7 +1043,7 @@ function validateSnapshot(raw: unknown, sampleIds: ReadonlySet<Id>, issues: Issu
     }
     const p = e.playing;
     if (p === null) launcher.push({ trackId: e.trackId, playing: null });
-    else if (isObj(p) && isNum(p.slot) && Number.isInteger(p.slot) && p.slot >= 0 && p.slot < SCENE_ROWS && isNum(p.startTick)) {
+    else if (isObj(p) && isNum(p.slot) && Number.isInteger(p.slot) && p.slot >= 0 && p.slot < core.scenes.length && isNum(p.startTick)) {
       launcher.push({ trackId: e.trackId, playing: { slot: p.slot, startTick: p.startTick } });
     } else issues.warn('Removed a damaged launcher entry from a performance.');
   }
@@ -930,7 +1086,7 @@ function validatePerformanceInner(raw: unknown, sampleIds: ReadonlySet<Id>, perf
   let dropped = 0;
   let sorted = true;
   for (const e of raw.events as unknown[]) {
-    const ev = validateEvent(e, trackIds, moduleIds);
+    const ev = validateEvent(e, trackIds, moduleIds, snapshot.scenes.length);
     if (!ev) {
       dropped++;
       continue;
@@ -1096,7 +1252,7 @@ function validateProjectInner(input: unknown, issues: Issues): Project | null {
     tracks: core.tracks,
     scenes: core.scenes,
     patch: core.patch,
-    arrangement: validateArrangement(raw.arrangement, core.scenes, issues),
+    arrangement: validateArrangement(raw.arrangement, core.scenes, core.tracks, issues),
     performances,
     samples,
     seed,

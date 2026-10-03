@@ -9,6 +9,7 @@
  */
 import { createStore, useStore, shallowEqual } from '../state/store';
 import type { Id } from '../project/types';
+import type { SongLoop } from '../time/contracts';
 
 export type AudioStatus = 'off' | 'starting' | 'running' | 'suspended' | 'error';
 
@@ -34,6 +35,12 @@ export interface RuntimeState {
   mode: PlayMode;
   replayId: Id | null;
   songBlock: number | null;
+  /** Id of the song block playing now (stable across edits made while the song plays). */
+  songBlockId: Id | null;
+  /** The looped part of the song (Arrange), or null: the song plays through. */
+  songLoop: SongLoop | null;
+  /** The song is playing (or paused) inside the loop and will repeat it; false while it plays towards it or on to the end. */
+  songLooping: boolean;
   tracks: Record<Id, TrackRuntime>;
   recording: RecordingState;
   /** Clip that Record Notes writes into. */
@@ -49,6 +56,20 @@ export interface RuntimeState {
   held: Record<Id, readonly number[]>;
   /** One-line status message shown as a toast (e.g. "Variation: 5 notes changed" [Undo]). */
   notice: Notice | null;
+  /**
+   * Record Notes is waiting for its clip to start (the next bar, or the end
+   * of the count-in): the transport tick recording starts at, so the
+   * transport can count the beats down; null (or absent) when not waiting.
+   */
+  recordStartsAtTick?: number | null;
+  /**
+   * Record Notes in the song: false while the song plays a block that does
+   * not play the clip being recorded into (notes still go into it). True
+   * (or absent) otherwise.
+   */
+  recordTargetAudible?: boolean;
+  /** The project the last starter (Jump In, a new project) replaced on screen; it stays in My projects. Null (or absent): none. */
+  starterReplaced?: { id: Id; name: string } | null;
 }
 
 /** What a notice's button does: Undo (or Redo) the history step the message is about. */
@@ -77,6 +98,9 @@ export const runtimeStore = createStore<RuntimeState>({
   mode: 'live',
   replayId: null,
   songBlock: null,
+  songBlockId: null,
+  songLoop: null,
+  songLooping: false,
   tracks: {},
   recording: 'off',
   recordTarget: null,
@@ -86,6 +110,9 @@ export const runtimeStore = createStore<RuntimeState>({
   preview: false,
   held: {},
   notice: null,
+  recordStartsAtTick: null,
+  recordTargetAudible: true,
+  starterReplaced: null,
 });
 
 export function patchRuntime(partial: Partial<RuntimeState>): void {

@@ -2,15 +2,31 @@
  * A knob bound to one patch-module or instrument parameter.
  *
  * - Shows the effective value (after macros).
- * - A parameter moved by a macro is read-only and badged with the macro name.
+ * - A parameter moved by a big knob (macro) is read-only: the knob's chain
+ *   mark, its teal outer arc over the span the macro sweeps (`macroRange`)
+ *   and its tip say which one.
  * - A parameter reached by a modulation cable shows the teal modulation mark.
+ * - Double-click (and Delete) return it to the value the part's sound was
+ *   designed with (knobHome: a preset's own value, a kit's matched level,
+ *   where an added effect starts); Alt+double-click to the plain default.
+ * - A control that does nothing until another one is raised (ParamSpec.gate)
+ *   is dimmed, and its tip starts with the reason. It still turns.
+ * - Right-click, a long press, Shift+F10 or the menu key: Assign to big knob.
  * - Changes go through the session so Record Performance captures them.
  */
-import { Knob, type KnobSize } from '../../../ui/components';
+import { useId, useMemo, useState } from 'react';
+import { Knob, newGestureId, type KnobSize } from '../../../ui/components';
 import type { ParamSpec } from '../../../project/params';
+import { findModule } from '../../../project/graph';
 import type { Id } from '../../../project/types';
+import { shallowEqual } from '../../../state/store';
 import { session, useProject } from '../../instance';
-import { controllerName, effectiveValue, isModulated } from './paramState';
+import type { MenuAnchor } from '../ClipMenu';
+import { AssignMenu } from './AssignMenu';
+import { useKnobExtras } from './knobExtras';
+import { controllerName, controllingTarget, effectiveValue, gateReason, homeNote, isModulated, knobHome, moduleName, type KnobHome } from './paramState';
+import { undoWords, usePartWords } from './shared';
+import shared from './shared.module.css';
 
 export interface ParamKnobProps {
   /** Patch module id, e.g. "t3:filter", or "t3:inst" for the instrument. */
@@ -28,37 +44,100 @@ export interface ParamKnobProps {
   detail?: string;
   disabled?: boolean;
   className?: string;
+  /** Id of the knob's slider (default: a generated one). */
+  id?: string;
+  /** No Assign to big knob menu. */
+  noMenu?: boolean;
+}
+
+interface KnobState {
+  value: number;
+  controlledBy: string | null;
+  modulated: boolean;
+  home: number;
+  homeKind: KnobHome['kind'];
+  gate: string | null;
+  lo: number | null;
+  hi: number | null;
 }
 
 export function ParamKnob(props: ParamKnobProps) {
-  const { moduleId, param, spec, ownerTrackId, instrumentTrackId, size = 'sm', label, tip, detail, disabled, className } = props;
-  const value = useProject((p) => {
-    const v = effectiveValue(p, moduleId, param);
-    if (v !== undefined) return v;
+  const { moduleId, param, spec, ownerTrackId, instrumentTrackId, size = 'sm', label, tip, detail, disabled, className, id, noMenu } = props;
+  const autoId = useId();
+  const sliderId = id ?? `pk${autoId}`;
+  const st = useProject<KnobState>((p) => {
+    let value = effectiveValue(p, moduleId, param);
+    if (value === undefined && instrumentTrackId) value = p.tracks.find((t) => t.id === instrumentTrackId)?.instrument.params[param];
+    const target = controllingTarget(p, moduleId, param);
+    const h = knobHome(p, moduleId, param, spec);
+    return {
+      value: value ?? spec.default,
+      controlledBy: controllerName(p, moduleId, param, ownerTrackId),
+      modulated: isModulated(p, moduleId, param),
+      home: h.home,
+      homeKind: h.kind,
+      gate: gateReason(p, moduleId, spec),
+      lo: target ? target.min : null,
+      hi: target ? target.max : null,
+    };
+  }, shallowEqual);
+  const [menu, setMenu] = useState<MenuAnchor | null>(null);
+
+  const homeSpec = useMemo(() => (st.home === spec.default ? spec : { ...spec, default: st.home }), [spec, st.home]);
+  const note = homeNote(spec, { home: st.home, kind: st.homeKind });
+  const baseTip = tip ?? spec.tip;
+  const shownTip = st.gate ? `${st.gate} ${baseTip}` : baseTip;
+  const shownDetail = [detail ?? spec.detail, note].filter(Boolean).join(' ') || undefined;
+  const partWords = usePartWords();
+  const set = (v: number, gesture: string) => {
     if (instrumentTrackId) {
-      const stored = p.tracks.find((t) => t.id === instrumentTrackId)?.instrument.params[param];
-      if (stored !== undefined) return stored;
+      session.setInstrumentParam(instrumentTrackId, param, v, gesture);
+      return;
     }
-    return spec.default;
+    // Shown outside Shape (Mix's channel drawer): the undo step names the part ("Drums filter cutoff").
+    let display: string | undefined;
+    if (partWords !== null) {
+      const p = session.store.getState();
+      const m = findModule(p.patch, moduleId);
+      if (m && m.type !== 'channel') display = undoWords(partWords, moduleName(p, m), spec.label, !m.trackId);
+    }
+    session.setModuleParam(moduleId, param, v, gesture, display !== undefined ? { display } : {});
+  };
+  const interactive = !disabled && !st.controlledBy;
+
+  useKnobExtras(sliderId, {
+    onAltReset: interactive ? () => set(spec.default, newGestureId('knob-reset')) : undefined,
+    onMenu: noMenu || disabled ? undefined : setMenu,
   });
-  const controlledBy = useProject((p) => controllerName(p, moduleId, param, ownerTrackId));
-  const modulated = useProject((p) => isModulated(p, moduleId, param));
+
   return (
-    <Knob
-      spec={spec}
-      value={value}
-      size={size}
-      label={label}
-      tip={tip}
-      detail={detail}
-      disabled={disabled}
-      className={className}
-      controlledBy={controlledBy ?? undefined}
-      modulated={modulated}
-      onChange={(v, info) => {
-        if (instrumentTrackId) session.setInstrumentParam(instrumentTrackId, param, v, info.gesture);
-        else session.setModuleParam(moduleId, param, v, info.gesture);
-      }}
-    />
+    <>
+      <Knob
+        id={sliderId}
+        spec={homeSpec}
+        value={st.value}
+        size={size}
+        label={label}
+        tip={shownTip}
+        detail={shownDetail}
+        disabled={disabled}
+        className={[className, st.gate ? shared.gated : null].filter(Boolean).join(' ') || undefined}
+        controlledBy={st.controlledBy ?? undefined}
+        macroRange={st.lo !== null && st.hi !== null ? [st.lo, st.hi] : undefined}
+        modulated={st.modulated}
+        onChange={(v, info) => set(v, info.gesture)}
+      />
+      {menu && (
+        <AssignMenu
+          moduleId={moduleId}
+          param={param}
+          spec={spec}
+          ownerTrackId={ownerTrackId}
+          anchor={menu}
+          returnFocus={document.getElementById(sliderId)}
+          onClose={() => setMenu(null)}
+        />
+      )}
+    </>
   );
 }

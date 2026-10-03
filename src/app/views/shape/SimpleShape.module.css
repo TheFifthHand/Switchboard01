@@ -11,9 +11,12 @@
 .left {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
   min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 /* Primary actions: at least 40 px tall. */
@@ -48,8 +51,8 @@
   flex: none;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 14px;
-  padding: 10px 12px;
+  gap: 6px 14px;
+  padding: 8px 12px 4px;
   border-radius: var(--r-lg);
   background: linear-gradient(180deg, var(--surface-hi) 0%, var(--surface) 100%);
   box-shadow:
@@ -109,40 +112,70 @@
 /* ---------- macros ---------- */
 
 .macroPanel {
-  flex: 0 1 auto;
+  flex: 1 0 auto;
 }
 
 .macroBody {
   position: relative;
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 10px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
   container-type: inline-size;
 }
 
 .macros {
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px 8px;
+  grid-auto-rows: minmax(min-content, auto);
+  align-content: start;
+  gap: 8px;
 }
 
-/* Wide enough for every caption on one line: all six in one row. */
+/* Wide enough for every caption on one line, but not tall enough for 'xl' knobs: all six in one row. */
 @container (min-width: 880px) {
-  .macros {
+  .macros:not([data-xl]) {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
+}
+
+/* Short on room under the instrument card (a sampler on a short window): all six in one row, 'md'. */
+.macros[data-row] {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.macros[data-row] .macroCaption {
+  font-size: var(--fs-xs);
+  line-height: 14px;
+  white-space: normal;
+  text-wrap: balance;
+}
+
+/* A big panel: three 'xl' knobs across, two rows that share the height (the knobs sit in the middle). */
+.macros[data-xl] {
+  grid-auto-rows: minmax(min-content, 1fr);
+  align-content: stretch;
+  --knob-value-h: 32px;
+}
+
+.macros[data-xl] .macro {
+  justify-content: center;
+}
+
+.macros[data-xl] .macroCaption {
+  font-size: var(--fs-md);
+  line-height: 20px;
 }
 
 .macro {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
-  padding: 6px 4px 8px;
+  padding: 4px 4px 5px;
   border-radius: var(--r-md);
   background: var(--surface-hi);
   box-shadow: inset 0 0 0 1px var(--line-soft);
@@ -167,6 +200,10 @@
 
 .fxPanel {
   min-height: 0;
+}
+
+.macro[data-inert] {
+  background: var(--surface);
 }
 
 .fxBody {
@@ -226,7 +263,7 @@
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 12px;
 }
 
@@ -298,6 +335,12 @@
   gap: 12px;
 }
 
+.cardKnobs {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
 .cardKnob {
   flex: none;
 }
@@ -305,6 +348,26 @@
 .card[data-bypassed] .cardKnob,
 .card[data-bypassed] .sentence {
   opacity: 0.55;
+}
+
+/* The Filter's Resonance line: what it does while offered, when it comes in otherwise. */
+.extraNote {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+}
+
+.gr {
+  padding: 0 2px;
+}
+
+.fxActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .cardText {

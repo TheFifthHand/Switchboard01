@@ -246,3 +246,44 @@
   align-self: center;
   margin: 0 0 0 4px;
 }
+
+/*
+ * ---------- waiting: one line while another view is open ----------
+ * The tour is about the Play view: elsewhere the callout shrinks to "Quick
+ * guide 1 of 3 | This is on the Play view [Show the Play view] Skip Next" and
+ * waits on the view's hint home (or wherever it covers least).
+ */
+.callout[data-layout='waiting'] {
+  grid-template-columns: auto auto 1px minmax(0, auto) auto;
+  grid-template-areas: 'label count divider missing buttons';
+  column-gap: 12px;
+  width: max-content;
+  max-width: min(760px, calc(100vw - 24px));
+  padding: 5px 8px 5px 14px;
+  border-radius: 10px;
+}
+.callout[data-layout='waiting'] .title,
+.callout[data-layout='waiting'] .body,
+.callout[data-layout='waiting'] .dots {
+  display: none;
+}
+.callout[data-layout='waiting'] .stepCount {
+  justify-self: start;
+}
+.callout[data-layout='waiting'] .divider {
+  display: block;
+  grid-area: divider;
+  align-self: stretch;
+  width: 1px;
+  background: var(--line-soft);
+}
+.callout[data-layout='waiting'] .missing {
+  margin: 0;
+  padding: 0;
+  background: none;
+  box-shadow: none;
+}
+.callout[data-layout='waiting'] .buttons {
+  align-self: center;
+  margin: 0;
+}

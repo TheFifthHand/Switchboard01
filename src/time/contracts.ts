@@ -16,14 +16,29 @@
  *   plays; at the switch tick the old clip's notes are cut (their duration is
  *   truncated to end at the switch tick) and the new clip starts at local
  *   position 0.
+ * - Song mode: parts switch at block starts. An edit to what the block
+ *   playing plays switches its parts at the edit point instead (the playhead
+ *   at now + the invalidate margin), in phase with the block start; see
+ *   Sequencer.replanSong. A 'launch' event then lies off the bar line.
+ * - A song loop (SongLoop) repeats its blocks: the transport tick keeps
+ *   running, each pass is a new stretch of the timeline whose clips start at
+ *   its own start (block ends are bar lines), so swing and the arpeggiator
+ *   run on through the seam. See Sequencer.setSongLoop.
  * - A clip that started at tick S with length L plays note n at
  *   S + k*L + n.tick for k = 0, 1, 2 ...
  * - Events are generated for windows of ticks. Each event belongs to exactly
  *   one window (by its un-swung tick). `invalidate(fromTime)` rewinds the
  *   generation cursor so later events are regenerated from current state;
  *   the driver cancels voices that start at or after `fromTime` first.
+ * - Song moves (ArrangementBlock.moves) are ramps of the song gain and of
+ *   parts' big knobs ('songGain', 'macroRamp' events), sent when generation
+ *   reaches their start and again, from the value they have reached, where
+ *   playback starts, resumes or is regenerated in the middle of one (see
+ *   src/time/moves.ts).
+ * - A driver that fell behind skips the missed stretch (Sequencer.skipTo):
+ *   its notes never sound late, its state changes still apply.
  */
-import type { Id, LauncherSnapshotEntry, MacroId } from '../project/types';
+import type { ClipSample, Id, LauncherSnapshotEntry, MacroId } from '../project/types';
 
 export type SeqEvent =
   | {
@@ -40,7 +55,16 @@ export type SeqEvent =
       legato: boolean;
       source: 'clip' | 'arp' | 'replay';
       clipId?: Id;
+      /** Sampler parts: the clip's own recording (Clip.sample), played instead of the part's. */
+      sample?: ClipSample;
     }
+  /**
+   * Song moves: the song gain is `from` at `time` and goes linearly to
+   * `value` at `endTime` (equal times: it is set to `value` there).
+   */
+  | { kind: 'songGain'; tick: number; time: number; from: number; value: number; endTick: number; endTime: number }
+  /** Song moves: a part's big knob is `from` at `time` and goes linearly (in macro space) to `value` at `endTime`. */
+  | { kind: 'macroRamp'; tick: number; time: number; trackId: Id; macro: MacroId; from: number; value: number; endTick: number; endTime: number }
   | { kind: 'launch'; tick: number; time: number; trackId: Id; slot: number | null; clipId: Id | null }
   | { kind: 'beat'; tick: number; time: number; bar: number; beat: number; beatSeconds: number; countIn: boolean }
   | { kind: 'param'; tick: number; time: number; module: Id; param: string; value: number }
@@ -49,8 +73,19 @@ export type SeqEvent =
   | { kind: 'tempo'; tick: number; time: number; bpm: number }
   | { kind: 'swing'; tick: number; time: number; swing: number }
   | { kind: 'master'; tick: number; time: number; volumeDb: number }
-  | { kind: 'block'; tick: number; time: number; blockIndex: number; sceneRow: number }
+  | { kind: 'block'; tick: number; time: number; blockIndex: number; blockId: Id; sceneRow: number }
   | { kind: 'end'; tick: number; time: number };
+
+/**
+ * A looped part of the song: the blocks from `fromBlockId` to `toBlockId`
+ * (inclusive, either way round, in the song's current order) play again and
+ * again until the loop is cleared. Runtime only (not saved with the project);
+ * the session owns it (see src/time/songLoop.ts for how edits change it).
+ */
+export interface SongLoop {
+  fromBlockId: Id;
+  toBlockId: Id;
+}
 
 export type PlayMode =
   | { kind: 'live' }
@@ -58,6 +93,18 @@ export type PlayMode =
   | { kind: 'song'; fromBlock: number }
   /** Replay a recorded performance (uses its snapshot + events). */
   | { kind: 'replay'; performanceId: Id };
+
+/** The clip a part sounds now and where its loop started (see RealtimeTransport.clipPhase). */
+export interface ClipPhase {
+  slot: number;
+  /**
+   * Transport tick its loop counts from (where it was launched, or its song
+   * block's start): at tick t it is ((t − startTick) mod lengthTicks) into its loop.
+   */
+  startTick: number;
+  /** Loop length in ticks (the clip's bars). */
+  lengthTicks: number;
+}
 
 export interface TrackLaunchState {
   playing: { slot: number; clipId: Id; startTick: number } | null;

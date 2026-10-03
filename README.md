@@ -5,31 +5,49 @@ beat plays; tap pads to change it, swap instruments, mix it, record what you pla
 WAV file. Everything runs on your own device: no account, no uploads, no internet needed once it is
 loaded. All sounds are synthesized by the app itself.
 
-Omni Song is version 2.0 of the app that was called **SWITCHBOARD / 01**. Projects, settings and
-project files from 1.0 carry over (see [Coming from SWITCHBOARD / 01](#coming-from-switchboard--01)).
+Omni Song is the app that was called **SWITCHBOARD / 01**, renamed with version 2.0; this is version
+2.2. Projects, settings and project files from 1.0 carry over (see
+[Coming from SWITCHBOARD / 01](#coming-from-switchboard--01)).
 
 ## What it does
 
-- **Play** — eight parts (Drums, Bass, Chords …) by four rows of loops. Tap a pad to switch a part
-  to another loop; it joins on the next bar, in time. **Play / Pause** keeps your place, **Stop**
-  goes back to the start. Each part has labelled **Mute** and **Solo** keys. **Drag a clip** onto
-  another pad to move it (hold Ctrl to copy). A small keyboard (or your computer keys) plays along,
-  and **Musical Assist** keeps every note in the song's key.
+- **Play** — eight parts (Drums, Bass, Chords …) by up to eight rows of loops (scenes), each clip
+  1 to 8 bars. Tap a pad to switch a part to another loop; it joins on the next bar, in time, and
+  every playing pad shows where it is in its loop. **Play / Pause** keeps your place, **Stop** goes
+  back to the start. Each part has labelled **Mute** and **Solo** keys. **Drag a clip** onto another
+  pad to move it (hold Ctrl to copy). **Variation** tries new takes on a pattern (Subtle, Bold, Back
+  to original).
+- **Play along** — a keyboard (or your computer keys, each letter shown on its key) with **Musical
+  Assist** keeping every note in the song's key; one key per drum sound on a kit. **Chord pads**
+  play whole chords of the key, **Write a progression…** writes one into a clip, and changing the
+  key can move the whole song with it.
+- **Steps** — edit a clip note by note: select, drag (across bars), copy and paste notes, finer and
+  triplet grids, **Tighten timing** and **Loosen**; paint drum steps with a drag, fill or shift a
+  sound.
 - **Change instrument** — a sound browser with 15 drum kits, more than 60 synth sounds and your own
   recordings, sorted into Drums & Percussion, Bass, Keys, Pads & Strings, Leads, Plucks & Bells,
-  Textures & FX and Recordings. Six big knobs shape the selected part: Tone, Space, Echo, Motion,
-  Drive and Pump.
-- **Shape** — the selected part in detail: the six knobs, its instrument and its effects as cards
-  (EQ, filter, compressor, gate, reverb, delay, chorus, phaser, flanger, auto pan, drive, tape,
-  bit crusher, stereo width). In Advanced, every setting and the real cable routing.
-- **Arrange** — put rows (scenes) in order as a song; replay, trim and export recorded performances.
-- **Mix** — a channel strip per part (fader, meter, Mute, Solo, Pan) and the master, with
-  **mastering**: presets (Clean, Gentle, Warm, Punchy, Bright, Wide, Loud, Lo-fi), a loudness
-  target (Streaming −14 LUFS, Gentle −18, Loud −9) with live loudness readings and **Match target**,
-  a spectrum display, and A/B to hear the mix without mastering.
+  Textures & FX and Recordings. Try sounds freely; **Cancel** puts the part back as you had it. Six
+  big knobs shape the selected part: Tone, Space, Echo, Motion, Drive and Pump.
+- **Shape** — the selected part in detail: friendly **Sound** knobs (or a **Drum mix**), the six big
+  knobs, and its effects as cards whose knob always changes the sound (EQ, filter, compressor with
+  **Squeeze**, gate, reverb, echo, chorus, phaser, flanger, auto pan, drive, tape, bit crusher, stereo
+  width). Give any knob to a big knob, copy effects to another part. In Advanced, every setting and
+  the real cable routing.
+- **Arrange** — put scenes in order as a song of blocks, to scale; layer and switch parts per block,
+  loop a section, add fades, a filter rise or an echo throw, add an intro or an ending, and turn a
+  recorded performance into song blocks.
+- **Mix** — a channel strip per part, Reverb and Echo return strips, a **Channel** drawer for a
+  part's effects, and the master, with **mastering**: presets (Clean, Gentle, Warm, Punchy, Bright,
+  Wide, Loud, Lo-fi), a loudness target (Streaming −14 LUFS, Gentle −18, Loud −9) with live readings
+  and **Match target**, a spectrum, and a level-matched A/B to hear the mix without mastering.
 - **Record and export** — **Performance** records everything you do and replays it exactly;
-  **Notes** records what you play into a clip. **Export** renders a WAV (the song, a row, the clips
-  playing now or a performance) with the same engine you hear.
+  **Notes** records what you play into a clip; recorded audio takes and imported loops each get their
+  own clip. **Export** renders a WAV (the song, a loop, a row, the clips playing now or a
+  performance) with the same engine you hear, starting exactly on the first beat, with or without
+  mastering, and reports its loudness.
+- **Keep it** — saves by itself in this browser (Ctrl+S saves at once), keeps versions you can
+  restore, recovers the last edits after a reload, lets only one tab save a project, and exports a
+  portable project file (drop it on the window to open it again).
 
 ### Simple and Advanced
 
@@ -42,15 +60,37 @@ cable panel. Switching never changes your music, and it is remembered.
 
 After **Jump In**, a three-step **quick guide** points at Play / Pause, the pads with Mute and Solo,
 and Change instrument with the big knobs. Then small **"Try this"** hints suggest one next thing at a
-time (tap a pad in the Bass column, press Mute on Drums, drag a clip, turn Tone, change the
-instrument, try a mastering preset, record a performance) and move on when you do it. They never
-block anything; **Hide hints** closes them, and **Show hints again** in the Project library brings
-them back. Pointing at any control explains it; **Tips** in the More menu turns explanations and
-hints on or off.
+time and move on when you do it; once you open Arrange they also teach the song. They never block
+anything. **Help** (press **?**, or ⋯ → Help…) lists every keyboard shortcut, has short
+walkthroughs and the version, and can start the guide and the hints again. Pointing at any control
+explains it; **Tips** in the More menu turns explanations and hints on or off.
 
-Knobs: drag up or down (hold Shift for fine steps), double-click to go back to the default, or click
-a knob and type a value such as `2.5k` or `-6`. Arrow keys, Page Up/Down and Home/End work once a
-knob has focus. Space plays and pauses, Shift+Space stops, M mutes the selected part, Ctrl+Z undoes.
+Knobs: drag up or down (hold Shift for fine steps), double-click to reset (in Shape: to where the
+sound had it), or click the value and type (`2.5k`, `-6`); in Shape, right-click a knob to give it
+to a big knob. Arrow keys, Page Up/Down and Home/End work once a knob has focus. Space plays and
+pauses, Shift+Space stops, M mutes the selected part, Ctrl+Z undoes, Ctrl+S saves, ? opens Help.
+
+### New in 2.2: the whole app, deeper and steadier
+
+Up to eight scenes and 8-bar clips; chord pads, Write a progression and moving the song to a new
+key; a piano roll you can select, move, tighten and loosen in, and drum steps you paint; per-clip
+recordings and imports; friendlier Shape (Sound knobs, any knob on a big knob, copy effects); song
+moves, intros and endings, and song blocks from a take; Reverb and Echo returns, a Channel drawer,
+a Match that keeps correcting and a level-matched A/B; exports that start on the beat, with or
+without mastering and with a loudness report; a true-peak limiter; Help (?), versions, recovery
+after a reload, and one tab per project. Playback no longer stops when the computer is busy for a
+moment. All of it is in the list above and in [`docs/GUIDE.md`](docs/GUIDE.md).
+
+### New in 2.1: build a song by moving blocks
+
+**Arrange** shows the song as one strip of blocks (a scene played a number of passes), with a row
+per part under each block. Drag a block and the others slide aside to make room; let go and it
+clicks into place. Drag a block's right edge to make it longer or shorter, hold Ctrl (or Alt) while
+dragging to copy it, and click a pass line to split it. Click a part in a block to switch it off or
+on just there, or drop a scene card onto a block to layer that scene's parts in. Click the ruler to
+play from any bar. Everything can be undone, works with the keyboard too, and changes what you hear
+right away, even while the song plays. The Loops pads and scene rows move the same smooth way.
+Step-by-step: "Build a song" in [`docs/GUIDE.md`](docs/GUIDE.md).
 
 ### New in 2.0: MIDI keyboards and audio input
 
@@ -103,8 +143,8 @@ from disk is not supported (browsers block modules, storage and offline caching 
 
 - **Your projects are still there.** Omni Song opens at the same address
   (`http://127.0.0.1:4173/`) and uses the same browser storage, so My projects shows everything you
-  saved. Projects are upgraded to the 2.0 format when opened (mastering starts neutral, so they
-  sound exactly as before).
+  saved. Projects are upgraded to the current format when opened (mastering starts neutral, so they
+  sound exactly as before). A project saved by this version will not open in an older one.
 - **Project files:** new ones are saved as `.omnisong.zip`; your `.sb01.zip` files still open with
   **Import project file…**.
 - **Windows launcher:** `Start SWITCHBOARD.bat` is now `Start Omni Song.bat`. If an older copy is
@@ -128,8 +168,9 @@ Local test runs need Playwright's Chromium once: `npx playwright install chromiu
 
 ## Documentation
 
-- [`docs/GUIDE.md`](docs/GUIDE.md) — make your first loop; record and export; MIDI keyboards;
-  recording your voice or a guitar.
+- [`docs/GUIDE.md`](docs/GUIDE.md) — make your first loop; chords and keys; editing notes and drum
+  steps; shaping sounds; building a song; mixing, mastering and export; keeping your work safe; MIDI
+  keyboards; recording your voice or a guitar.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — where Omni Song is going (plans, not promises).
 - `docs/OMNI_UX.md` — the interface rulebook. `docs/ARCHITECTURE.md` — layers, contracts, timing.
 - `PRODUCT_BRIEF.md` — the original product brief. `BUILD_STATUS.md` — progress.

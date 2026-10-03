@@ -1,23 +1,27 @@
 /**
- * Song: the arrangement as a lane of scene blocks.
+ * Song: the arrangement as a magnetic, part-aware timeline.
  *
- *   [ SONG · Playback follows: …        Length · Tail · Play song · Stop · Export ]
- *   [ ruler 1   5   9 …                                                          ]
- *   [ [Intro 8 bars][Groove 16 bars      ][Lift …]              ← playhead       ]
+ *   [ SONG · Now playing: …                         Length · Echo tail · Loop ]
+ *   [ Parts │ ruler, blocks edge to edge, one cell per part, playhead           ]
  *   [ SCENES  [Intro +] [Groove +] [Lift +] [Break +]                   hints     ]
  *
- * - Block width is proportional to its length (scene bars × repeats); tiny
- *   blocks are widened to stay usable and the ruler follows the same geometry.
- * - Reorder by dragging (an insertion marker shows where it lands) or with
- *   Alt+Left/Right on a focused block; the block menu has Move left/right too.
- * - Drag a scene from the palette into the lane, or press its + to append.
- * - The playhead and the current block follow the plan that is playing
- *   (captured when the song started), read from the transport in a rAF loop.
+ * One Play per screen: the transport's Play (and Space) plays the song here,
+ * and its Export starts from the song; ▶ on a block and a click on the bar
+ * numbers play from there. The mode box says what plays and how to play;
+ * while the pads play (say, straight after Jump In) it offers an amber
+ * "▶ Play the song" key, so the song is one press away without changing what
+ * Space and the transport do. While Record Notes writes into a clip it says
+ * which ("Recording notes into Chords · Stabs (Groove)"), and when the block
+ * playing does not play that clip, says so.
+ *
+ * The lane itself (blocks, gestures, keyboard, menus, the Loop button) is
+ * SongLane. Edits apply live while the song plays or is paused: playback
+ * re-plans from the block playing now (see Sequencer.replanSong), so the lane
+ * is always what plays.
  */
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { createPortal } from 'react-dom';
-import { Button, Icon, Led, NumberField, Tooltip, useElementSize, useRafLoop } from '../../../ui/components';
-import { TICKS_PER_BAR, type Id } from '../../../project/types';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Button, Led, NumberField, Tooltip, useRafLoop } from '../../../ui/components';
+import { TICKS_PER_BAR, type ArrangementBlock, type Id, type Project } from '../../../project/types';
 import { clampBpm, ticksToSeconds } from '../../../time/clock';
 import { sceneBars, songLengthTicks } from '../../../time/sequencer';
 import * as cmd from '../../../state/commands';
@@ -27,43 +31,117 @@ import { session, useProject } from '../../instance';
 import { notify, useRuntime } from '../../runtime';
 import { formatSeconds } from '../../session';
 import { barsLabel } from '../../labels';
-import { MenuHeader, MenuItem, MenuSeparator, Popover, anchorFromElement, isMenuKey, noteKeyboardMenu, type MenuAnchor } from '../ClipMenu';
-import { BLOCK_GAP, gapAt, gapX, layoutSong, moveTarget, rulerMarks, type SongLayout } from './songLayout';
-import { getSongPlan, planSignature, projectSongSignature, startSong, useSongPlan } from './songPlan';
+import type { SceneSummary } from './BlockMenu';
+import { loopName, loopSpan } from './laneLoop';
+import { SongLane } from './SongLane';
+import { blockView, viewKey, type BlockView } from './songModel';
+import { getSongPlan, startSong, useSongPlan } from './songPlan';
 import styles from './SongPanel.module.css';
 
 /* ------------------------------------------------------------------ */
 /* Data                                                                */
 /* ------------------------------------------------------------------ */
 
-interface SceneSummary {
-  id: Id;
-  row: number;
-  name: string;
-  bars: number;
-  parts: number;
-}
+// Stable selectors: the store keeps their last selection between renders.
+const selectScenes = (p: Project) => p.scenes;
+const selectSceneBars = (p: Project) => p.scenes.map((_, r) => sceneBars(p, r));
+const selectSceneParts = (p: Project) => p.scenes.map((_, r) => p.tracks.reduce((n, t) => n + (t.clips[r] ? 1 : 0), 0));
 
 function useSceneSummaries(): SceneSummary[] {
-  const scenes = useProject((p) => p.scenes);
-  const bars = useProject((p) => p.scenes.map((_, r) => sceneBars(p, r)), shallowEqual);
-  const parts = useProject((p) => p.scenes.map((_, r) => p.tracks.reduce((n, t) => n + (t.clips[r] ? 1 : 0), 0)), shallowEqual);
+  const scenes = useProject(selectScenes);
+  const bars = useProject(selectSceneBars, shallowEqual);
+  const parts = useProject(selectSceneParts, shallowEqual);
   return useMemo(() => scenes.map((s, row) => ({ id: s.id, row, name: s.name, bars: bars[row] ?? 1, parts: parts[row] ?? 0 })), [scenes, bars, parts]);
 }
 
-interface BlockView {
-  id: Id;
+interface CachedView {
+  /** What the view was made from: the block (immer keeps an unchanged block's object), its place, and the scenes and parts it reads. */
+  block: ArrangementBlock;
   index: number;
-  sceneId: Id;
-  /** Scene row, or -1 when the scene no longer exists (the song skips the block). */
-  row: number;
-  name: string;
-  bars: number;
-  repeats: number;
+  scenes: Project['scenes'];
+  tracks: Project['tracks'];
+  key: string;
+  view: BlockView;
 }
 
-function partsText(n: number): string {
-  return n === 0 ? 'no clips' : n === 1 ? '1 part' : `${n} parts`;
+/**
+ * The lane's blocks. A view object keeps its identity while what it shows is
+ * unchanged, so a knob turned elsewhere re-renders no block, and an edit to
+ * one block re-renders only that block. A block whose object, place, scenes
+ * and parts are the ones its view was made from is not even looked at again
+ * (a move rebuilds only the blocks whose position changed).
+ */
+function useBlockViews(): readonly BlockView[] {
+  const cache = useRef(new Map<Id, CachedView>());
+  const last = useRef<readonly BlockView[]>([]);
+  // Stable, so the store keeps its memo of the last selection between renders.
+  const select = useCallback((p: Project): readonly BlockView[] => {
+    const next = p.arrangement.blocks.map((b, index) => {
+      const hit = cache.current.get(b.id);
+      if (hit && hit.block === b && hit.index === index && hit.scenes === p.scenes && hit.tracks === p.tracks) return hit.view;
+      const v = blockView(p, b, index);
+      const key = viewKey(v);
+      const view = hit && hit.key === key ? hit.view : v;
+      cache.current.set(b.id, { block: b, index, scenes: p.scenes, tracks: p.tracks, key, view });
+      return view;
+    });
+    if (cache.current.size > next.length * 2 + 16) {
+      const keep = new Set(next.map((v) => v.id));
+      for (const id of cache.current.keys()) if (!keep.has(id)) cache.current.delete(id);
+    }
+    if (next.length === last.current.length && next.every((v, i) => v === last.current[i])) return last.current;
+    last.current = next;
+    return next;
+  }, []);
+  return useProject(select);
+}
+
+/**
+ * A block removed from the lane while it plays sounds on to the next bar
+ * line, then the block after it takes over. While that is so, this says
+ * which block was removed and which one takes over (null when nothing
+ * follows), from the song as it plays: the plan keeps the removed block until
+ * it hands over, and the transport says whether the playhead is still in it.
+ * Without a transport position, a runtime block that is no longer on the lane
+ * counts as that removed block.
+ */
+function useHandover(views: readonly BlockView[], songOn: boolean, playingId: Id | null): { removed: Id; next: BlockView | null } | null {
+  const plan = useSongPlan();
+  const ids = useMemo(() => new Set(views.map((v) => v.id)), [views]);
+  const idsRef = useRef(ids);
+  idsRef.current = ids;
+  const [sounding, setSounding] = useState<Id | null>(null);
+  const soundingRef = useRef<Id | null>(null);
+  const watch = songOn && !!plan && plan.some((b) => !ids.has(b.blockId));
+  const look = useCallback(() => {
+    const t = session.transport;
+    const p = getSongPlan();
+    let found: Id | null = null;
+    if (t && p) {
+      const tick = t.getPosition().tick;
+      const e = p.find((b) => tick < b.endTick);
+      if (e && !idsRef.current.has(e.blockId)) found = e.blockId;
+    }
+    if (found !== soundingRef.current) {
+      soundingRef.current = found;
+      setSounding(found);
+    }
+  }, []);
+  // At once when a block that plays goes away (before the next paint: the next block says Next in the same frame),
+  // then every frame until the bar line hands over.
+  useLayoutEffect(() => {
+    if (watch) look();
+  }, [watch, plan, ids, look]);
+  useRafLoop(look, watch);
+  const removed = (watch ? sounding : null) ?? (songOn && playingId && !ids.has(playingId) ? playingId : null);
+  if (!removed || !plan) return null;
+  const i = plan.findIndex((b) => b.blockId === removed);
+  const byId = new Map(views.map((v) => [v.id, v]));
+  for (const b of i >= 0 ? plan.slice(i + 1) : []) {
+    const v = byId.get(b.blockId);
+    if (v) return { removed, next: v };
+  }
+  return { removed, next: null };
 }
 
 /** Show a scene row's clips in the Play view (Loops), with the row's first clip (or first pad, when it has none) selected. */
@@ -90,84 +168,155 @@ export function editSceneClips(row: number): void {
   });
 }
 
-function removeBlockWithUndo(block: BlockView): boolean {
-  if (!session.accepted(cmd.removeBlock(session.store, block.id))) return false;
-  notify(`Removed ${block.name} (block ${block.index + 1}) from the song.`, 'info', 'undo');
-  return true;
-}
-
-/** pendingFocus value meaning "the song is now empty: focus Add all scenes". */
-const EMPTY_FOCUS = '\u0000empty';
-
-function changeRepeats(block: BlockView, repeats: number): void {
-  if (repeats < 1 || repeats > 8 || repeats === block.repeats) return;
-  session.accepted(cmd.setBlockRepeats(session.store, block.id, repeats));
-}
-
 /* ------------------------------------------------------------------ */
 /* Header                                                              */
 /* ------------------------------------------------------------------ */
 
-function ModeIndicator(props: { current: BlockView | null; blockCount: number }) {
-  const { current, blockCount } = props;
+function capitalize(text: string): string {
+  return text ? text[0].toUpperCase() + text.slice(1) : text;
+}
+
+/**
+ * What plays now, in plain words ("Now playing: the song"), where it is, the
+ * loop ("looping Groove (block 2)" only while playback is inside the loop and
+ * will repeat it, else "loop set: …"), and a line on how to play.
+ */
+/** The clip Record Notes writes into, in words: "Chords · Stabs (Groove)". */
+function recordTargetWords(p: Project, target: { trackId: Id; slot: number } | null): string {
+  if (!target) return '';
+  const t = p.tracks.find((x) => x.id === target.trackId);
+  const clip = t?.clips[target.slot];
+  const scene = p.scenes[target.slot]?.name ?? `row ${target.slot + 1}`;
+  return `${t?.name ?? 'a part'} · ${clip?.name ?? 'a new clip'} (${scene})`;
+}
+
+/** Switch from the pads to the song (one press; Space and the transport keep their meaning). */
+function playTheSong(): void {
+  void startSong().then(() => {
+    if (session.store.getState().arrangement.blocks.length) notify('Switched to the song');
+  });
+}
+
+function ModeIndicator(props: { current: BlockView | null; next: BlockView | null; removed: boolean; blockCount: number; loop: string | null }) {
+  const { current, next, removed, blockCount, loop } = props;
   const mode = useRuntime((s) => s.mode);
   const playing = useRuntime((s) => s.playing);
+  const paused = useRuntime((s) => s.paused);
   const replayId = useRuntime((s) => s.replayId);
+  const songLooping = useRuntime((s) => s.songLooping);
   const recordingTake = useRuntime((s) => s.recording === 'performance');
+  const recordTarget = useRuntime((s) => (s.recording === 'notes' ? s.recordTarget : null));
+  const targetAudible = useRuntime((s) => s.recordTargetAudible !== false);
+  const recordingInto = useProject((p) => recordTargetWords(p, recordTarget));
   const replayName = useProject((p) => (replayId ? (p.performances.find((x) => x.id === replayId)?.name ?? 'a take') : ''));
-  let follows: string;
+  const songOn = (playing || paused) && mode === 'song';
+  const loopText = loop ? (songOn && songLooping ? `looping ${loop}` : `loop set: ${loop}`) : '';
+  let label = 'Now playing:';
+  let value: string;
   let where = '';
   let caption: string;
   if (recordingTake) {
     // A take records live pad playing; the project is locked except for what it records.
-    follows = 'Live pads';
+    value = 'your pads';
     where = 'recording a take';
-    caption = 'The song and your takes cannot be edited until you stop recording. Play song or Replay ends the take first.';
-  } else if (playing && mode === 'song') {
-    follows = 'Arrangement';
-    where = current ? `Block ${current.index + 1} of ${blockCount} · ${current.name}` : '';
-    caption = 'Pads still work: a tapped clip joins at the next bar and plays until the next block starts. Stop brings back the pads you had before the song.';
+    caption = 'The song and your takes cannot be edited until you stop recording. Playing the song or a take ends the recording first.';
+  } else if (songOn) {
+    if (paused) label = 'Paused:';
+    value = 'the song';
+    where = current
+      ? `${paused ? 'Paused in block' : 'Block'} ${current.index + 1} of ${blockCount} · ${current.name}`
+      : removed
+        ? next
+          ? `Removed block ends at the bar · next: ${next.name} (block ${next.index + 1})`
+          : 'Removed block ends at the bar · then the song ends'
+        : '';
+    if (loopText) where = where ? `${where} · ${loopText}` : capitalize(loopText);
+    caption = 'Edits play right away: move, lengthen or change blocks while the song plays. Pads still work: a tapped clip joins at the next bar until the next block starts.';
   } else if (playing && mode === 'replay') {
-    follows = 'Performance';
+    value = 'a recorded take';
     where = `“${replayName}”`;
     caption = 'The take plays back exactly as recorded. Pads and keys are ignored until you stop it.';
+  } else if (playing || paused) {
+    if (paused) label = 'Paused:';
+    value = 'your pads';
+    where = capitalize(loopText);
+    caption = paused
+      ? 'Play goes on with your pads from where they paused. Stop first, and Play (or Space) plays the song.'
+      : 'Your Loops pads decide what plays. ▶ on a block, or a click on the bar numbers, plays the song from there; your pads come back when it stops.';
   } else {
-    follows = 'Live pads';
-    caption = playing
-      ? 'The Loops pads decide what plays. Play song hands playback to the blocks below; your pads come back when it stops.'
-      : 'Stopped. Play song plays the blocks below in order; Play in the transport plays your pads.';
+    label = '';
+    value = 'Stopped';
+    where = capitalize(loopText);
+    caption = blockCount
+      ? `Play (or Space) plays the song from ${loop ? 'the loop' : 'the first block'}. ▶ on a block, or a click on the bar numbers, plays it from there.`
+      : 'Add scenes below to build a song, then press Play.';
   }
+  // Record Notes writes into a clip: say which (and, in the song, whether the block playing plays it).
+  const notesIn = !!recordTarget && !recordingTake;
+  let recLine: string | null = null;
+  if (notesIn) {
+    recLine = `Recording notes into ${recordingInto}`;
+    if (songOn && !targetAudible) caption = `This block does not play it. ${caption}`;
+  }
+  // The pads play in Arrange: one press switches to the song (Space and the transport key are unchanged).
+  const offerSong = !recordingTake && !notesIn && (playing || paused) && mode === 'live' && blockCount > 0;
+  if (offerSong) caption = 'Your Loops pads decide what plays. ▶ Play the song switches to the song; ▶ on a block, or a click on the bar numbers, plays it from there.';
+  const on = playing || paused;
   return (
-    <div className={styles.mode} data-mode={playing ? mode : 'stopped'} data-recording={recordingTake || undefined} role="status" aria-live="polite" data-testid="playback-mode">
-      <div className={styles.modeLine}>
-        <Led on={playing || recordingTake} tone={recordingTake ? 'coral' : playing ? 'amber' : 'neutral'} label={recordingTake ? 'Recording' : playing ? 'Playing' : 'Stopped'} hideLabel size="sm" />
-        <span className={styles.modeLabel}>Playback follows:</span>
-        <strong className={styles.modeValue}>{follows}</strong>
-        {where && <span className={styles.modeWhere}>{where}</span>}
+    <div className={styles.mode} data-mode={on ? mode : 'stopped'} data-recording={recordingTake || notesIn || undefined} role="status" aria-live="polite" data-testid="playback-mode">
+      <div className={styles.modeText}>
+        <div className={styles.modeLine}>
+          <Led on={playing || recordingTake || notesIn} tone={recordingTake || notesIn ? 'coral' : playing ? 'amber' : 'neutral'} label={recordingTake || notesIn ? 'Recording' : playing ? 'Playing' : paused ? 'Paused' : 'Stopped'} hideLabel size="sm" />
+          {recLine ? (
+            <>
+              <span className={styles.modeLabel}>Recording notes into</span>
+              <strong className={`${styles.modeValue} ${styles.modeRec}`} data-testid="recording-into">
+                {recordingInto}
+              </strong>
+            </>
+          ) : (
+            <>
+              {label && <span className={styles.modeLabel}>{label}</span>}
+              <strong className={styles.modeValue}>{value}</strong>
+            </>
+          )}
+          {where && <span className={styles.modeWhere}>{where}</span>}
+        </div>
+        <p className={styles.modeCaption} data-hint-avoid="" data-testid="mode-caption">
+          {caption}
+        </p>
       </div>
-      <p className={styles.modeCaption}>{caption}</p>
+      {offerSong && (
+        <Button className={styles.playSong} variant="secondary" icon="play" onClick={playTheSong} data-testid="play-the-song" tip="Switch from your pads to the song: it plays from the loop, or from the first block." detail="Space and the transport’s Play still pause and resume what plays now.">
+          Play the song
+        </Button>
+      )}
     </div>
   );
 }
 
+const selectSongTicks = (p: Project) => songLengthTicks(p);
+const selectBpm = (p: Project) => clampBpm(p.bpm);
+const selectTail = (p: Project) => p.arrangement.tailSeconds;
+
 function SongTotals() {
-  const ticks = useProject((p) => songLengthTicks(p));
-  const bpm = useProject((p) => clampBpm(p.bpm));
-  const tail = useProject((p) => p.arrangement.tailSeconds);
+  const ticks = useProject(selectSongTicks);
+  const bpm = useProject(selectBpm);
+  const tail = useProject(selectTail);
   const bars = Math.round(ticks / TICKS_PER_BAR);
   const secs = ticksToSeconds(ticks, bpm);
   return (
     <div className={styles.totals}>
-      <Tooltip tip="How long the song plays: every block's scene length times its repeats." detail={`Estimated at ${Math.round(bpm)} BPM. Exports add the tail on top so echoes and reverb can ring out.`}>
+      <Tooltip tip="How long the song plays: every block's length, added up." detail={`Estimated at ${Math.round(bpm)} BPM. Exports add the echo tail on top so echoes and reverb can ring out.`}>
         <div className={styles.readout} tabIndex={0} role="group" aria-label={`Song length: ${barsLabel(bars)}, about ${formatSeconds(secs)} at ${Math.round(bpm)} BPM`}>
-          <span className={styles.readoutLabel}>LENGTH</span>
-          <span className={`${styles.readoutValue} mono`} data-testid="song-length">
+          <span className={styles.readoutLabel}>Length</span>
+          <span className={styles.readoutValue} data-testid="song-length">
             {barsLabel(bars)} · {formatSeconds(secs)}
           </span>
         </div>
       </Tooltip>
       <NumberField
-        label="Export tail"
+        label="Echo tail"
         value={tail}
         min={0}
         max={10}
@@ -176,7 +325,7 @@ function SongTotals() {
         chars={3}
         size="sm"
         onChange={(v, info) => session.accepted(cmd.setTailSeconds(session.store, v, info.gesture))}
-        tip="Extra seconds after the last block in song exports, so echoes and reverb can ring out."
+        tip="Extra seconds after the last block when you export the song, so echoes and reverb can ring out."
         detail="Saved with the project. The export dialog starts from this value."
       />
     </div>
@@ -184,756 +333,58 @@ function SongTotals() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Blocks                                                              */
-/* ------------------------------------------------------------------ */
-
-interface BlockProps {
-  block: BlockView;
-  x: number;
-  width: number;
-  count: number;
-  current: boolean;
-  tabbable: boolean;
-  lifted: boolean;
-  menuOpen: boolean;
-  onOpenMenu(block: BlockView, trigger: HTMLElement): void;
-  onKeyDown(e: KeyboardEvent<HTMLDivElement>, block: BlockView): void;
-  onPointerDown(e: ReactPointerEvent<HTMLDivElement>, block: BlockView): void;
-  onFocusBlock(id: Id): void;
-  onRemove(block: BlockView): void;
-  helpId: string;
-}
-
-const SongBlock = memo(function SongBlock(props: BlockProps) {
-  const { block, x, width, count, current, tabbable, lifted, menuOpen, onOpenMenu, onKeyDown, onPointerDown, onFocusBlock, onRemove, helpId } = props;
-  const nameRef = useRef<HTMLButtonElement>(null);
-  const total = block.row >= 0 ? block.bars * block.repeats : 0;
-  const inner = tabbable ? 0 : -1;
-  const missing = block.row < 0;
-  const label = missing
-    ? `Block ${block.index + 1} of ${count}: its scene no longer exists, so the song skips it`
-    : `Block ${block.index + 1} of ${count}: ${block.name}, ${barsLabel(block.bars)} × ${block.repeats} = ${barsLabel(total)}${current ? ', playing now' : ''}`;
-  return (
-    <div
-      role="listitem"
-      id={`song-block-${block.id}`}
-      data-block-id={block.id}
-      className={styles.block}
-      data-current={current || undefined}
-      data-lifted={lifted || undefined}
-      data-missing={missing || undefined}
-      style={{ left: x, width }}
-      tabIndex={tabbable ? 0 : -1}
-      aria-label={label}
-      aria-describedby={helpId}
-      onKeyDown={(e) => onKeyDown(e, block)}
-      onPointerDown={(e) => onPointerDown(e, block)}
-      onFocus={() => onFocusBlock(block.id)}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        if (nameRef.current) onOpenMenu(block, nameRef.current);
-      }}
-    >
-      <div className={styles.blockTop}>
-        <span className={styles.grip} aria-hidden="true">
-          <Icon name="drag" size={12} />
-        </span>
-        <button
-          ref={nameRef}
-          type="button"
-          className={styles.blockName}
-          tabIndex={inner}
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          aria-label={`${block.name}: block options (edit clips, change scene, move, remove)`}
-          onClick={(e) => onOpenMenu(block, e.currentTarget)}
-        >
-          <span className={styles.blockNameText}>{block.name}</span>
-          <Icon name="chevronDown" size={12} />
-        </button>
-        <Tooltip name={`Play from block ${block.index + 1}`} tip="Start the song here.">
-          <button type="button" className={styles.blockPlay} tabIndex={inner} aria-label={`Play song from block ${block.index + 1} (${block.name})`} onClick={() => void startSong(block.index)} disabled={missing}>
-            <Icon name="play" size={12} />
-          </button>
-        </Tooltip>
-      </div>
-      <div className={styles.blockMeta}>
-        {missing ? (
-          <span className={styles.blockSkipped}>Skipped: scene missing</span>
-        ) : (
-          <>
-            <span className={`${styles.blockTotal} mono`}>{barsLabel(total)}</span>
-            {current ? (
-              <span className={styles.nowTag}>
-                <Icon name="play" size={9} /> Playing
-              </span>
-            ) : (
-              <span className={`${styles.blockCalc} mono`}>
-                {block.bars} × {block.repeats}
-              </span>
-            )}
-          </>
-        )}
-      </div>
-      <div className={styles.blockBottom}>
-        <div className={styles.stepper} role="group" aria-label={`Repeats of ${block.name}`}>
-          <button
-            type="button"
-            className={styles.stepBtn}
-            tabIndex={inner}
-            aria-label={`Fewer repeats of ${block.name} (now ${block.repeats})`}
-            aria-disabled={block.repeats <= 1 || undefined}
-            onClick={() => changeRepeats(block, block.repeats - 1)}
-          >
-            <Icon name="minus" size={12} />
-          </button>
-          <span className={`${styles.stepValue} mono`} aria-hidden="true">
-            ×{block.repeats}
-          </span>
-          <button
-            type="button"
-            className={styles.stepBtn}
-            tabIndex={inner}
-            aria-label={`More repeats of ${block.name} (now ${block.repeats})`}
-            aria-disabled={block.repeats >= 8 || undefined}
-            onClick={() => changeRepeats(block, block.repeats + 1)}
-          >
-            <Icon name="plus" size={12} />
-          </button>
-        </div>
-        <Tooltip name="Remove block" tip="Take this block out of the song. Undo brings it back.">
-          <button type="button" className={styles.blockRemove} tabIndex={inner} aria-label={`Remove block ${block.index + 1} (${block.name}) from the song`} onClick={() => onRemove(block)}>
-            <Icon name="trash" size={13} />
-          </button>
-        </Tooltip>
-      </div>
-      {!missing && (
-        <div className={styles.repeatStrip} aria-hidden="true">
-          {Array.from({ length: block.repeats }, (_, i) => (
-            <span key={i} className={styles.repeatCell} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-});
-
-function BlockMenu(props: {
-  block: BlockView;
-  count: number;
-  scenes: SceneSummary[];
-  anchor: MenuAnchor;
-  returnFocus: HTMLElement | null;
-  onClose(): void;
-  onMove(block: BlockView, to: number): void;
-  onRemove(block: BlockView): void;
-}) {
-  const { block, count, scenes, anchor, returnFocus, onClose, onMove, onRemove } = props;
-  const total = block.bars * block.repeats;
-  return (
-    <Popover anchor={anchor} label={`Block ${block.index + 1}: ${block.name}`} onClose={onClose} returnFocus={returnFocus}>
-      <MenuHeader eyebrow={`Block ${block.index + 1} of ${count} · ${block.row >= 0 ? barsLabel(total) : 'skipped'}`} title={block.name} />
-      <MenuItem
-        icon="link"
-        disabled={block.row < 0}
-        disabledReason="Scene missing"
-        onSelect={() => {
-          onClose();
-          editSceneClips(block.row);
-        }}
-      >
-        Edit clips in Play
-      </MenuItem>
-      <MenuItem
-        icon="play"
-        disabled={block.row < 0}
-        onSelect={() => {
-          onClose();
-          void startSong(block.index);
-        }}
-      >
-        Play song from here
-      </MenuItem>
-      <MenuSeparator />
-      <div className={styles.menuLabel} role="presentation">
-        Scene for this block
-      </div>
-      {scenes.map((s) => (
-        <MenuItem
-          key={s.id}
-          role="menuitemcheckbox"
-          checked={s.id === block.sceneId}
-          icon={s.id === block.sceneId ? 'check' : undefined}
-          hint={`${barsLabel(s.bars)} · ${partsText(s.parts)}`}
-          onSelect={() => {
-            if (s.id !== block.sceneId) session.accepted(cmd.setBlockScene(session.store, block.id, s.id));
-            onClose();
-          }}
-        >
-          {s.name}
-        </MenuItem>
-      ))}
-      <MenuSeparator />
-      <MenuItem icon="chevronLeft" hint="Alt+←" disabled={block.index === 0} disabledReason="First" keyShortcut="Alt+ArrowLeft" onSelect={() => onMove(block, block.index - 1)}>
-        Move earlier
-      </MenuItem>
-      <MenuItem icon="chevronRight" hint="Alt+→" disabled={block.index >= count - 1} disabledReason="Last" keyShortcut="Alt+ArrowRight" onSelect={() => onMove(block, block.index + 1)}>
-        Move later
-      </MenuItem>
-      <MenuItem
-        icon="trash"
-        tone="danger"
-        hint="Del"
-        keyShortcut="Delete"
-        onSelect={() => {
-          onClose();
-          onRemove(block);
-        }}
-      >
-        Remove from song
-      </MenuItem>
-    </Popover>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Drag & drop                                                         */
-/* ------------------------------------------------------------------ */
-
-type DragSource = { kind: 'block'; id: Id; from: number; name: string; bars: number } | { kind: 'scene'; sceneId: Id; name: string; bars: number };
-
-interface DragSession {
-  source: DragSource;
-  pointerId: number;
-  startX: number;
-  startY: number;
-  x: number;
-  y: number;
-  started: boolean;
-  gap: number | null;
-}
-
-const DRAG_THRESHOLD = 4;
-
-function ghostText(source: DragSource, gap: number | null): string {
-  if (gap === null) return 'Release here to cancel';
-  if (source.kind === 'scene') return `Add as block ${gap + 1}`;
-  const to = moveTarget(source.from, gap);
-  return to === null ? 'Stays in place' : `Move to position ${to + 1}`;
-}
-/** How far above/below the lane a drop still counts. */
-const DROP_MARGIN = 48;
-
-/* ------------------------------------------------------------------ */
 /* Panel                                                               */
 /* ------------------------------------------------------------------ */
 
-export function SongPanel() {
-  const blocks = useProject((p) => p.arrangement.blocks);
+export function SongPanel(props: { folded?: boolean; onUnfold?(): void } = {}) {
+  const { folded = false, onUnfold } = props;
+  const views = useBlockViews();
   const scenes = useSceneSummaries();
   const mode = useRuntime((s) => s.mode);
   const playing = useRuntime((s) => s.playing);
+  const paused = useRuntime((s) => s.paused);
+  const songBlockId = useRuntime((s) => s.songBlockId);
   const songBlock = useRuntime((s) => s.songBlock);
-  const songMode = playing && mode === 'song';
-  const plan = useSongPlan();
-  const currentSig = useProject((p) => projectSongSignature(p));
-  const helpId = useId();
+  const songOn = (playing || paused) && mode === 'song';
+  const songPlaying = playing && mode === 'song';
 
-  const views: BlockView[] = useMemo(
-    () =>
-      blocks.map((b, index) => {
-        const s = scenes.find((x) => x.id === b.sceneId);
-        return { id: b.id, index, sceneId: b.sceneId, row: s ? s.row : -1, name: s ? s.name : 'Missing scene', bars: s ? s.bars : 0, repeats: b.repeats };
-      }),
-    [blocks, scenes],
-  );
-
-  // Lane geometry.
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const size = useElementSize(scrollerRef);
-  // Blocks appear once the lane has a width, so they do not animate in from a zero-width layout.
-  const measured = size.width > 0;
-  const layout: SongLayout = useMemo(() => layoutSong(views.map((v) => ({ id: v.id, bars: v.bars, repeats: v.repeats })), Math.max(0, size.width - BLOCK_GAP)), [views, size.width]);
-  const marks = useMemo(() => rulerMarks(layout), [layout]);
-  const layoutRef = useRef(layout);
-  layoutRef.current = layout;
-
-  // Fade the lane edges when there are more blocks to scroll to.
-  const [edges, setEdges] = useState({ left: false, right: false });
-  const updateEdges = useCallback(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    const left = el.scrollLeft > 2;
-    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 2;
-    setEdges((e) => (e.left === left && e.right === right ? e : { left, right }));
-  }, []);
-  useEffect(updateEdges, [layout, size.width, updateEdges]);
-
-  // What is playing now (by block id, so it survives edits made while the song plays).
-  const currentId = songMode && plan ? (plan.find((b) => b.index === songBlock)?.blockId ?? null) : null;
-  const current = currentId ? (views.find((v) => v.id === currentId) ?? null) : null;
-  const stale = songMode && plan !== null && planSignature(plan) !== currentSig;
-
-  // Roving focus between blocks: one tab stop for the lane.
-  const [activeId, setActiveId] = useState<Id | null>(null);
-  const tabId = views.some((v) => v.id === activeId) ? activeId : (views[0]?.id ?? null);
-  const pendingFocus = useRef<Id | null>(null);
-  useLayoutEffect(() => {
-    const id = pendingFocus.current;
-    if (!id || id === EMPTY_FOCUS) return;
-    const el = document.getElementById(`song-block-${id}`);
-    // Blocks appear once the lane is measured: wait for that render rather than dropping the request.
-    if (!el && !measured) return;
-    pendingFocus.current = null;
-    el?.focus({ preventScroll: false });
-  });
-  const addAllRef = useRef<HTMLButtonElement>(null);
-  useLayoutEffect(() => {
-    const id = pendingFocus.current;
-    if (id !== EMPTY_FOCUS) return;
-    pendingFocus.current = null;
-    addAllRef.current?.focus({ preventScroll: true });
-  });
-  const focusBlock = (id: Id | undefined) => {
-    if (!id) return;
-    setActiveId(id);
-    pendingFocus.current = id;
-  };
-  /** Remove a block (with Undo) and keep keyboard focus in the lane: its neighbour, or "Add all scenes" when the song is now empty. */
-  const removeAndFocus = useCallback((block: BlockView) => {
-    const list = session.store.getState().arrangement.blocks;
-    const neighbour = list[block.index + 1] ?? list[block.index - 1];
-    if (!removeBlockWithUndo(block)) return;
-    if (neighbour) {
-      setActiveId(neighbour.id);
-      pendingFocus.current = neighbour.id;
-    } else {
-      pendingFocus.current = EMPTY_FOCUS;
-    }
-  }, []);
-
-  // Block menu.
-  const [menu, setMenu] = useState<{ blockId: Id; anchor: MenuAnchor; returnFocus: HTMLElement | null } | null>(null);
-  const onOpenMenu = useCallback((block: BlockView, trigger: HTMLElement) => {
-    setActiveId(block.id);
-    setMenu((m) => (m && m.blockId === block.id ? null : { blockId: block.id, anchor: anchorFromElement(trigger), returnFocus: document.getElementById(`song-block-${block.id}`) }));
-  }, []);
-  const menuBlock = menu ? views.find((v) => v.id === menu.blockId) : undefined;
-
-  const move = useCallback((block: BlockView, to: number) => {
-    setMenu(null);
-    if (to < 0 || to >= session.store.getState().arrangement.blocks.length || to === block.index) return;
-    if (session.accepted(cmd.moveBlock(session.store, block.index, to))) {
-      setActiveId(block.id);
-      pendingFocus.current = block.id;
-    }
-  }, []);
-
-  const onBlockKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLDivElement>, block: BlockView) => {
-      const onBlock = e.target === e.currentTarget;
-      const list = session.store.getState().arrangement.blocks;
-      if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-        e.preventDefault();
-        move(block, block.index + (e.key === 'ArrowLeft' ? -1 : 1));
-        return;
-      }
-      if (!onBlock) return;
-      if (isMenuKey(e) || e.key === 'Enter') {
-        e.preventDefault();
-        const trigger = e.currentTarget.querySelector<HTMLElement>('[aria-haspopup="menu"]');
-        if (trigger) {
-          noteKeyboardMenu(e.currentTarget);
-          onOpenMenu(block, trigger);
-        }
-        return;
-      }
-      switch (e.key) {
-        case 'ArrowLeft':
-        case 'ArrowRight': {
-          e.preventDefault();
-          const next = list[block.index + (e.key === 'ArrowLeft' ? -1 : 1)];
-          focusBlock(next?.id);
-          break;
-        }
-        case 'Home':
-          e.preventDefault();
-          focusBlock(list[0]?.id);
-          break;
-        case 'End':
-          e.preventDefault();
-          focusBlock(list[list.length - 1]?.id);
-          break;
-        case 'Delete':
-        case 'Backspace':
-          e.preventDefault();
-          removeAndFocus(block);
-          break;
-        case '+':
-        case '=':
-          e.preventDefault();
-          changeRepeats(block, block.repeats + 1);
-          break;
-        case '-':
-        case '_':
-          e.preventDefault();
-          changeRepeats(block, block.repeats - 1);
-          break;
-      }
-    },
-    [move, onOpenMenu, removeAndFocus],
-  );
-
-  /* ---- drag ---- */
-  const dragRef = useRef<DragSession | null>(null);
-  const ghostRef = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<{ source: DragSource; gap: number | null } | null>(null);
-  const cleanupDrag = useRef<(() => void) | null>(null);
-  useEffect(() => () => cleanupDrag.current?.(), []);
-
-  const placeGhost = () => {
-    const d = dragRef.current;
-    const g = ghostRef.current;
-    if (d && g) g.style.transform = `translate(${Math.round(d.x + 12)}px, ${Math.round(d.y + 10)}px)`;
-  };
-  useLayoutEffect(placeGhost, [drag]);
-
-  const gapFor = (x: number, y: number): number | null => {
-    const scroller = scrollerRef.current;
-    const content = contentRef.current;
-    if (!scroller || !content) return null;
-    const r = scroller.getBoundingClientRect();
-    if (y < r.top - DROP_MARGIN || y > r.bottom + DROP_MARGIN || x < r.left - DROP_MARGIN || x > r.right + DROP_MARGIN) return null;
-    const c = content.getBoundingClientRect();
-    return gapAt(layoutRef.current, x - c.left);
-  };
-
-  const beginDrag = (e: ReactPointerEvent<HTMLElement>, source: DragSource) => {
-    if (e.button !== 0 || dragRef.current) return;
-    const t = e.target as HTMLElement;
-    if (t.closest('button, input, a, [role="menuitem"]')) return;
-    dragRef.current = { source, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY, started: false, gap: null };
-    // Capture, so a release outside the window still ends the drag (moves still bubble to the window listeners).
-    const captureEl = e.currentTarget;
-    const pointerId = e.pointerId;
-    try {
-      captureEl.setPointerCapture(pointerId);
-    } catch {
-      /* not an active pointer (e.g. a synthetic event) */
-    }
-    const onMove = (ev: PointerEvent) => {
-      const d = dragRef.current;
-      if (!d || ev.pointerId !== d.pointerId) return;
-      d.x = ev.clientX;
-      d.y = ev.clientY;
-      let first = false;
-      if (!d.started) {
-        if (Math.hypot(d.x - d.startX, d.y - d.startY) < DRAG_THRESHOLD) return;
-        d.started = true;
-        first = true;
-        setMenu(null);
-      }
-      ev.preventDefault();
-      // Scroll the lane when the pointer nears its edges.
-      const scroller = scrollerRef.current;
-      if (scroller) {
-        const r = scroller.getBoundingClientRect();
-        if (d.y > r.top - DROP_MARGIN && d.y < r.bottom + DROP_MARGIN) {
-          if (d.x < r.left + 36) scroller.scrollLeft -= 14;
-          else if (d.x > r.right - 36) scroller.scrollLeft += 14;
-        }
-      }
-      const gap = gapFor(d.x, d.y);
-      placeGhost();
-      if (first || gap !== d.gap) {
-        d.gap = gap;
-        setDrag({ source: d.source, gap });
-      }
-    };
-    const finish = (ev: PointerEvent | null, cancel: boolean) => {
-      const d = dragRef.current;
-      if (ev && d && ev.pointerId !== d.pointerId) return;
-      cleanupDrag.current?.();
-      if (!d || !d.started || cancel) return;
-      const gap = d.gap;
-      if (gap === null) return;
-      if (d.source.kind === 'block') {
-        const to = moveTarget(d.source.from, gap);
-        if (to !== null && session.accepted(cmd.moveBlock(session.store, d.source.from, to))) {
-          setActiveId(d.source.id);
-          pendingFocus.current = d.source.id;
-        }
-      } else {
-        const r = cmd.addBlock(session.store, d.source.sceneId, gap);
-        if (session.accepted(r) && r.blockId) {
-          setActiveId(r.blockId);
-          pendingFocus.current = r.blockId;
-        }
-      }
-    };
-    const onUp = (ev: PointerEvent) => finish(ev, false);
-    const onCancel = (ev: PointerEvent) => finish(ev, true);
-    const onKey = (ev: globalThis.KeyboardEvent) => {
-      if (ev.key !== 'Escape' || !dragRef.current?.started) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      finish(null, true);
-    };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    window.addEventListener('pointercancel', onCancel);
-    window.addEventListener('keydown', onKey, true);
-    cleanupDrag.current = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onCancel);
-      window.removeEventListener('keydown', onKey, true);
-      try {
-        if (captureEl.hasPointerCapture(pointerId)) captureEl.releasePointerCapture(pointerId);
-      } catch {
-        /* element already gone */
-      }
-      cleanupDrag.current = null;
-      dragRef.current = null;
-      setDrag(null);
-    };
-  };
-
-  const onBlockPointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>, block: BlockView) => {
-    if (e.button !== 0) return;
-    if (!(e.target as HTMLElement).closest('button')) {
-      setActiveId(block.id);
-      e.currentTarget.focus({ preventScroll: true });
-    }
-    beginDrag(e, { kind: 'block', id: block.id, from: block.index, name: block.name, bars: block.bars * block.repeats });
-    // beginDrag only reads refs and stable setters.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  /* ---- playhead ---- */
-  const playheadRef = useRef<HTMLDivElement>(null);
-  useRafLoop(() => {
-    const el = playheadRef.current;
-    const t = session.transport;
-    const p = getSongPlan();
-    if (!el || !t || !p) return;
-    const tick = t.getPosition().tick;
-    const pb = p.find((b) => tick >= b.startTick && tick < b.endTick) ?? (tick >= (p[p.length - 1]?.endTick ?? 0) ? p[p.length - 1] : undefined);
-    const lb = pb ? layoutRef.current.blocks.find((b) => b.id === pb.blockId) : undefined;
-    if (!pb || !lb) {
-      el.style.opacity = '0';
-      return;
-    }
-    const f = Math.min(1, Math.max(0, (tick - pb.startTick) / Math.max(1, pb.endTick - pb.startTick)));
-    const x = lb.x + f * lb.width;
-    el.style.opacity = '1';
-    el.style.transform = `translateX(${x.toFixed(1)}px)`;
-    // Keep the playhead in view when the song is wider than the lane.
-    const scroller = scrollerRef.current;
-    if (scroller && !dragRef.current && scroller.scrollWidth > scroller.clientWidth) {
-      if (x < scroller.scrollLeft + 8 || x > scroller.scrollLeft + scroller.clientWidth - 24) scroller.scrollLeft = Math.max(0, x - 48);
-    }
-  }, songMode);
-
-  // A block added at the end of a song that scrolls is brought into view (focus stays on the + button).
-  const pendingReveal = useRef<Id | null>(null);
-  useLayoutEffect(() => {
-    const id = pendingReveal.current;
-    const scroller = scrollerRef.current;
-    if (!id || !scroller || !measured) return;
-    pendingReveal.current = null;
-    const lb = layout.blocks.find((b) => b.id === id);
-    if (!lb) return;
-    const view = scroller.clientWidth;
-    if (lb.x < scroller.scrollLeft || lb.x + lb.width > scroller.scrollLeft + view) {
-      scroller.scrollTo({ left: Math.max(0, lb.x + lb.width + BLOCK_GAP * 2 - view), behavior: 'smooth' });
-    }
-  });
-
-  const addScene = (s: SceneSummary) => {
-    const r = cmd.addBlock(session.store, s.id);
-    if (session.accepted(r) && r.blockId) {
-      setActiveId(r.blockId);
-      pendingReveal.current = r.blockId;
-      notify(`Added ${s.name} at the end of the song (block ${session.store.getState().arrangement.blocks.length}).`);
-    }
-  };
-  const addAll = () => {
-    let first: Id | null = null;
-    // One gesture id: adding every scene is a single undo step.
-    const gesture = `add-all-${Date.now()}`;
-    for (const s of scenes) {
-      const r = cmd.addBlock(session.store, s.id, undefined, undefined, gesture);
-      if (session.accepted(r) && r.blockId) first ??= r.blockId;
-    }
-    if (!first) return;
-    notify(`Added ${scenes.map((s) => s.name).join(', ')} in order. Change repeats or drag blocks to shape the song.`);
-    // The button that was pressed is gone with the empty state: keyboard focus moves to the first block.
-    setActiveId(first);
-    pendingFocus.current = first;
-  };
-
-  const empty = views.length === 0;
-  const markerX = drag && drag.gap !== null && !empty ? gapX(layout, drag.gap) : null;
-  const dropEnd = drag && drag.gap !== null && drag.gap >= views.length;
-  const endZoneWidth = drag?.source.kind === 'scene' ? 150 : 0;
+  // What is playing now, by block id (stable across edits made while the song plays).
+  const playingId = songOn ? (songBlockId ?? (songBlock !== null ? (views[songBlock]?.id ?? null) : null)) : null;
+  // The block playing now was removed: it plays to the next bar, then the block after it takes over.
+  // Until then nothing on the lane says Playing; the block taking over says Next.
+  const handover = useHandover(views, songOn, playingId);
+  const removed = !!handover;
+  const next = handover?.next ?? null;
+  const current = !handover && playingId ? (views.find((v) => v.id === playingId) ?? null) : null;
+  const currentId = current?.id ?? null;
+  // The loop (playback state), as the lane draws it: ignored when its blocks are gone.
+  const songLoop = useRuntime((s) => s.songLoop);
+  const loop = useMemo(() => loopSpan(views.map((v) => v.id), songLoop), [views, songLoop]);
+  const looped = loop ? loopName(views.map((v) => v.name), loop) : null;
+  // The lane renders the Loop button here (it knows what the button acts on).
+  const [loopSlot, setLoopSlot] = useState<HTMLDivElement | null>(null);
 
   return (
-    <section className={styles.panel} aria-labelledby="song-title">
+    <section className={styles.panel} aria-labelledby="song-title" data-folded={folded || undefined}>
       <header className={styles.head}>
         <div className={styles.titleBlock}>
           <h2 id="song-title" className={styles.title}>
             Song
           </h2>
-          <ModeIndicator current={current} blockCount={views.length} />
+          <ModeIndicator current={current} next={next} removed={removed} blockCount={views.length} loop={looped} />
         </div>
         <div className={styles.headRight}>
           <SongTotals />
-          <div className={styles.buttons}>
-            <Button
-              variant="primary"
-              icon="play"
-              pressed={songMode}
-              onClick={() => void startSong(0)}
-              disabled={empty}
-              aria-label={songMode ? 'Play song from the start (playing now)' : 'Play song'}
-              tip={empty ? 'Add scene blocks first.' : 'Play the blocks in order from the first one. Pressing it while the song plays starts it again from the top.'}
-              detail="Starting the song ends a performance recording in progress."
-            >
-              Play song
+          <div ref={setLoopSlot} className={styles.buttons} />
+          {folded && (
+            <Button variant="secondary" icon="chevronDown" onClick={onUnfold} data-testid="show-song" tip="Close the take’s events and show the song lane again.">
+              Show the song
             </Button>
-            <Button icon="stop" onClick={() => session.stop()} disabled={!playing} tip="Stop playback (song, replay or pads).">
-              Stop
-            </Button>
-            <Button
-              icon="download"
-              onClick={() => window.dispatchEvent(new CustomEvent('sb:open-export', { detail: { source: 'song' } }))}
-              disabled={empty}
-              tip={empty ? 'Add scene blocks first.' : 'Render the whole song to a WAV file.'}
-              detail="Same sounds, effects and timing as playback, plus the export tail."
-            >
-              Export song
-            </Button>
-          </div>
+          )}
         </div>
       </header>
 
-      {stale && (
-        <div className={styles.stale} role="status">
-          <Icon name="info" size={14} />
-          <span>You changed the song while it plays. Playback keeps the blocks, order and lengths it started with until you start the song again.</span>
-          <Button size="sm" variant="ghost" icon="play" onClick={() => void startSong(current ? current.index : 0)}>
-            {current ? `Restart from block ${current.index + 1}` : 'Restart song'}
-          </Button>
-        </div>
-      )}
-
-      <div className={styles.lane} data-dragging={drag ? drag.source.kind : undefined}>
-        <div ref={scrollerRef} className={styles.scroller} onScroll={updateEdges} data-fade-left={edges.left || undefined} data-fade-right={edges.right || undefined}>
-          <div ref={contentRef} className={styles.content} style={{ width: empty ? '100%' : layout.contentWidth + endZoneWidth + BLOCK_GAP }}>
-            {!empty && (
-              <div className={styles.ruler} aria-hidden="true">
-                {marks.map((m) => (
-                  <span key={m.bar} className={styles.mark} data-label={m.label || undefined} data-start={m.blockStart || undefined} style={{ left: m.x }}>
-                    {m.label && <span className={`${styles.markNum} mono`}>{m.bar + 1}</span>}
-                  </span>
-                ))}
-                <span className={styles.endMark} style={{ left: layout.contentWidth - 1 }} />
-              </div>
-            )}
-            <div className={styles.track} role={empty ? undefined : 'list'} aria-label={empty ? undefined : `Song: ${views.length} block${views.length === 1 ? '' : 's'} in play order`}>
-              {empty ? (
-                <div className={styles.empty} data-drop={dropEnd || undefined}>
-                  <Icon name="plus" size={20} />
-                  <div className={styles.emptyText}>
-                    <strong>Your song is empty.</strong>
-                    <span>Add scenes in the order they should play: press + on a scene below, or drag it here.</span>
-                  </div>
-                  <Button ref={addAllRef} size="sm" icon="plus" onClick={addAll} tip="Adds every scene once, in row order, with 2 repeats each.">
-                    Add all {scenes.length} scenes
-                  </Button>
-                </div>
-              ) : !measured ? null : (
-                views.map((v) => {
-                  const lb = layout.blocks[v.index];
-                  return (
-                    <SongBlock
-                      key={v.id}
-                      block={v}
-                      x={lb?.x ?? 0}
-                      width={lb?.width ?? 120}
-                      count={views.length}
-                      current={v.id === currentId}
-                      tabbable={v.id === tabId}
-                      lifted={drag?.source.kind === 'block' && drag.source.id === v.id}
-                      menuOpen={menu?.blockId === v.id}
-                      onOpenMenu={onOpenMenu}
-                      onKeyDown={onBlockKeyDown}
-                      onPointerDown={onBlockPointerDown}
-                      onFocusBlock={setActiveId}
-                      onRemove={removeAndFocus}
-                      helpId={helpId}
-                    />
-                  );
-                })
-              )}
-              {drag?.source.kind === 'scene' && !empty && (
-                <div className={styles.endZone} data-drop={dropEnd || undefined} style={{ left: layout.contentWidth + BLOCK_GAP, width: endZoneWidth - BLOCK_GAP }} aria-hidden="true">
-                  Drop to add at the end
-                </div>
-              )}
-              {markerX !== null && <div className={styles.marker} style={{ left: markerX }} aria-hidden="true" data-testid="insert-marker" />}
-            </div>
-            {!empty && <div ref={playheadRef} className={styles.playhead} aria-hidden="true" data-on={songMode || undefined} data-testid="playhead" />}
-          </div>
-        </div>
-      </div>
-
-      <div className={styles.palette}>
-        <span className={styles.paletteLabel}>SCENES</span>
-        <div className={styles.cards} role="list" aria-label="Scenes you can add to the song">
-          {scenes.map((s) => (
-            <div
-              key={s.id}
-              role="listitem"
-              className={styles.card}
-              data-lifted={(drag?.source.kind === 'scene' && drag.source.sceneId === s.id) || undefined}
-              onPointerDown={(e) => beginDrag(e, { kind: 'scene', sceneId: s.id, name: s.name, bars: s.bars * 2 })}
-              aria-label={`Scene ${s.name}: ${barsLabel(s.bars)}, ${partsText(s.parts)}`}
-            >
-              <span className={styles.grip} aria-hidden="true">
-                <Icon name="drag" size={12} />
-              </span>
-              <span className={styles.cardText}>
-                <span className={styles.cardName}>{s.name}</span>
-                <span className={`${styles.cardMeta} mono`}>
-                  {barsLabel(s.bars)} · {partsText(s.parts)}
-                </span>
-              </span>
-              <Tooltip name={`Add ${s.name}`} tip="Add this scene at the end of the song (2 repeats). You can also drag the card into the lane.">
-                <button type="button" className={styles.cardAdd} aria-label={`Add ${s.name} to the end of the song`} onClick={() => addScene(s)}>
-                  <Icon name="plus" size={14} />
-                </button>
-              </Tooltip>
-            </div>
-          ))}
-        </div>
-        <p id={helpId} className={styles.hint}>
-          Drag or Alt+←/→ to reorder · +/− repeats · Del removes · Enter for options
-        </p>
-      </div>
-
-      {drag &&
-        createPortal(
-          <div ref={ghostRef} className={styles.ghost} aria-hidden="true" data-drop={drag.gap !== null || undefined}>
-            <span className={styles.ghostName}>{drag.source.name}</span>
-            <span className={`${styles.ghostMeta} mono`}>{ghostText(drag.source, drag.gap)}</span>
-          </div>,
-          document.body,
-        )}
-
-      {menu && menuBlock && <BlockMenu block={menuBlock} count={views.length} scenes={scenes} anchor={menu.anchor} returnFocus={menu.returnFocus} onClose={() => setMenu(null)} onMove={move} onRemove={removeAndFocus} />}
+      <SongLane views={views} scenes={scenes} currentId={currentId} nextId={next?.id ?? null} songActive={songOn} songPlaying={songPlaying} editClips={editSceneClips} loopSlot={loopSlot} />
     </section>
   );
 }

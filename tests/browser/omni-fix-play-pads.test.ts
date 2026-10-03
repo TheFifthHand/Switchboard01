@@ -177,7 +177,8 @@ describe('reaching a clip pad’s actions without playing it', () => {
     expect(description(p)).toContain('Right-click or Shift+F10 for actions');
     expect(p.getAttribute('aria-keyshortcuts')).toContain('Shift+F10');
     // Hovering shows the same words.
-    pointer(p, 'pointerover', pointIn(p));
+    pointer(p, 'pointerover', { ...pointIn(p), buttons: 0 });
+    pointer(p, 'pointermove', { ...pointIn(p), buttons: 0 });
     await settle(500);
     const bubble = [...document.querySelectorAll<HTMLElement>('body > div[aria-hidden="true"]')].find((d) => d.textContent?.includes('Right-click or Shift+F10 for actions'));
     expect(bubble, 'tooltip').toBeTruthy();
@@ -249,7 +250,8 @@ describe('colour says what it means', () => {
     const said = description(meters);
     expect(said).toContain('red light at the top');
     expect(said).toContain('does not mean distortion');
-    pointer(meters, 'pointerover', pointIn(meters));
+    pointer(meters, 'pointerover', { ...pointIn(meters), buttons: 0 });
+    pointer(meters, 'pointermove', { ...pointIn(meters), buttons: 0 });
     await settle(500);
     expect([...document.querySelectorAll<HTMLElement>('body > div[aria-hidden="true"]')].some((d) => d.textContent?.includes('Master level'))).toBe(true);
   });

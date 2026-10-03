@@ -13,12 +13,15 @@
 import { BUILTIN_SAMPLES, KITS, SYNTH_PRESETS } from '../catalog';
 import { applyKitToProject, applyPresetToProject, applySamplerToProject } from '../presets';
 import { DELAY_ID, REVERB_ID, createClip, createProject, moduleId, uid } from '../../project/factory';
-import { DRUM_VOICE_PARAM_SPECS, INSTRUMENT_PARAMS, MODULE_PARAMS, clampParam, specById } from '../../project/params';
+import { CHANNEL_PARAMS, DRUM_VOICE_PARAM_SPECS, INSTRUMENT_PARAMS, MASTER_VOLUME_SPEC, MODULE_PARAMS, clampParam, specById } from '../../project/params';
 import { hashString } from '../../project/rng';
+import { keyLabel } from '../../music/scales';
 import {
   DRUM_VOICES,
   MACRO_IDS,
-  SCENE_ROWS,
+  MAX_CLIP_BARS,
+  MAX_SCENES,
+  MIN_SCENES,
   STEPS_PER_BAR,
   TICKS_PER_BAR,
   TICKS_PER_STEP,
@@ -82,25 +85,11 @@ export function voicing(names: string): number[] {
   return parts.map(midi);
 }
 
-const KEY_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
-const SCALE_LABELS: Record<ScaleId, string> = {
-  major: 'major',
-  minor: 'minor',
-  dorian: 'dorian',
-  phrygian: 'phrygian',
-  lydian: 'lydian',
-  mixolydian: 'mixolydian',
-  harmonicMinor: 'harmonic minor',
-  majorPentatonic: 'major pentatonic',
-  minorPentatonic: 'minor pentatonic',
-  blues: 'blues',
-  chromatic: 'chromatic',
-};
-
-/** Human-readable key, e.g. keyLabel(9, 'minor') === 'A minor'. */
-export function keyLabel(root: number, scale: ScaleId): string {
-  return `${KEY_NAMES[((root % 12) + 12) % 12]} ${SCALE_LABELS[scale]}`;
-}
+/**
+ * Human-readable key, spelled the way the rest of the app writes it (one spelling everywhere):
+ * keyLabel(9, 'minor') === 'A minor', keyLabel(7, 'dorian') === 'G Dorian', keyLabel(3, 'major') === 'E♭ major'.
+ */
+export { keyLabel };
 
 /* ------------------------------------------------------------------ */
 /* Grids (drums, rhythms)                                              */
@@ -407,7 +396,7 @@ const round3 = (v: number) => Math.round(v * 1000) / 1000;
  * duplicates (keeping the louder hit) and sorts notes by time then pitch.
  */
 export function clip(name: string, bars: number, ...parts: readonly (readonly NoteData[])[]): ClipDef {
-  if (!Number.isInteger(bars) || bars < 1 || bars > 4) throw new Error(`Starter DSL: clip "${name}" must be 1 to 4 bars.`);
+  if (!Number.isInteger(bars) || bars < 1 || bars > MAX_CLIP_BARS) throw new Error(`Starter DSL: clip "${name}" must be 1 to ${MAX_CLIP_BARS} bars.`);
   const length = bars * TICKS_PER_BAR;
   const byKey = new Map<string, NoteData>();
   for (const n of parts.flat()) {
@@ -547,8 +536,10 @@ export interface StarterSpec {
   /** Pitch class 0..11. */
   root: number;
   scale: ScaleId;
+  /** The mix's overall level before the output trim (dB); it ends up on the part faders (see buildStarter). */
   masterVolumeDb?: number;
-  scenes: readonly [string, string, string, string];
+  /** Scene names, MIN_SCENES to MAX_SCENES (the curated starters have four). */
+  scenes: readonly string[];
   parts: Record<TrackRole, PartDef>;
   reverb?: ParamValues;
   delay?: ParamValues;
@@ -563,7 +554,21 @@ export interface StarterSpec {
  * level (about -20 dBFS RMS) with the limiter barely touching the peaks.
  */
 export const STARTER_OUTPUT_TRIM_DB = 4;
-const MASTER_MAX_DB = 6;
+
+/**
+ * How a starter's overall level (its master volume plus the output trim) is
+ * placed: as much as fits goes onto every part's fader alike, so the master
+ * opens at 0 dB with room above it; what the loudest fader cannot take (they
+ * top out at +6 dB) stays on the master. Sends are taken after the fader and
+ * effects sit before it, so the result sounds exactly like the lift on the
+ * master alone.
+ */
+export function starterGainStaging(overallDb: number, partLevels: readonly number[]): { channelLiftDb: number; masterDb: number } {
+  const faderMax = specById(CHANNEL_PARAMS, 'level')!.max;
+  const loudest = partLevels.length ? Math.max(...partLevels) : 0;
+  const channelLiftDb = Math.min(overallDb, faderMax - loudest);
+  return { channelLiftDb, masterDb: clampParam(MASTER_VOLUME_SPEC, overallDb - channelLiftDb) };
+}
 
 /** Deterministic, per-starter project seed so Variation results reproduce. */
 export function starterSeed(id: string): number {
@@ -572,19 +577,17 @@ export function starterSeed(id: string): number {
 
 /** Build a complete project from a starter spec. Every call returns fresh ids and objects. */
 export function buildStarter(spec: StarterSpec): Project {
-  const project = createProject({ name: `${spec.name} Starter`, bpm: spec.bpm });
+  if (spec.scenes.length < MIN_SCENES || spec.scenes.length > MAX_SCENES) throw new Error(`Starter DSL: ${spec.id} needs ${MIN_SCENES} to ${MAX_SCENES} scenes.`);
+  const project = createProject({ name: `${spec.name} Starter`, bpm: spec.bpm, scenes: spec.scenes });
+  const rows = project.scenes.length;
   project.starterId = spec.id;
   project.seed = starterSeed(spec.id);
   project.swing = spec.swing ?? 0;
   project.root = spec.root;
   project.scale = spec.scale;
-  const master = (spec.masterVolumeDb ?? project.masterVolumeDb) + STARTER_OUTPUT_TRIM_DB;
-  project.masterVolumeDb = Math.min(MASTER_MAX_DB, master);
-  // Whatever the master cannot take goes onto every channel equally, keeping the balance.
-  const channelLift = Math.max(0, master - MASTER_MAX_DB);
-  spec.scenes.forEach((name, i) => {
-    project.scenes[i].name = name;
-  });
+  const overall = (spec.masterVolumeDb ?? project.masterVolumeDb) + STARTER_OUTPUT_TRIM_DB;
+  const { channelLiftDb: channelLift, masterDb } = starterGainStaging(overall, project.tracks.map((t) => spec.parts[t.role].level));
+  project.masterVolumeDb = masterDb;
 
   for (const track of project.tracks) {
     const part = spec.parts[track.role];
@@ -601,9 +604,11 @@ export function buildStarter(spec: StarterSpec): Project {
     if (part.channel) setModuleParams(project, moduleId.channel(id), part.channel);
     setChannel(project, id, { level: part.level + channelLift, pan: part.pan ?? 0 });
     if (part.macros) setMacros(project, id, part.macros);
+    // The starter's big-knob positions are the part's designed ones (where double-click returns them).
+    t.macroHome = { ...t.macros };
     if (part.arp) t.arp = { ...t.arp, ...part.arp };
-    if (part.clips.length > SCENE_ROWS) throw new Error(`Starter DSL: ${spec.id} ${track.role} has more than ${SCENE_ROWS} clips.`);
-    t.clips = Array.from({ length: SCENE_ROWS }, (_, row) => {
+    if (part.clips.length > rows) throw new Error(`Starter DSL: ${spec.id} ${track.role} has more than ${rows} clips.`);
+    t.clips = Array.from({ length: rows }, (_, row) => {
       const def = part.clips[row];
       if (!def) return null;
       if (t.instrument.kind === 'drums' && def.notes.some((n) => n.pitch < 0 || n.pitch >= DRUM_VOICES)) {

@@ -25,7 +25,7 @@ const SCALE_STEPS: Record<ScaleId, readonly number[]> = {
   chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
 };
 
-const KEY_PC: Record<string, number> = { C: 0, 'C#': 1, D: 2, Eb: 3, E: 4, F: 5, 'F#': 6, G: 7, Ab: 8, A: 9, Bb: 10, B: 11 };
+const KEY_PC: Record<string, number> = { C: 0, 'C#': 1, 'D♭': 1, D: 2, 'D#': 3, 'E♭': 3, E: 4, F: 5, 'F#': 6, 'G♭': 6, G: 7, 'G#': 8, 'A♭': 8, A: 9, 'A#': 10, 'B♭': 10, B: 11 };
 
 /** Product brief section 5, in order. */
 const BRIEF = [
@@ -402,15 +402,18 @@ describe.each(STARTERS.map((s) => [s.name, s] as const))('%s starter', (_name, s
     }
   });
 
-  it('sets every channel level in -24..0 dB, with the percussion fader under the drums', () => {
+  it('opens with the master at 0 dB and every fader in -24..+6 dB, with the percussion fader under the drums', () => {
+    // The starter's overall level sits on the faders (MIX-12), so the master has room above it.
+    expect(project.masterVolumeDb).toBe(0);
     for (const t of project.tracks) {
       const level = channelParam(project, t.id, 'level');
       expect(level, t.role).toBeGreaterThanOrEqual(-24);
-      expect(level, t.role).toBeLessThan(0);
+      expect(level, t.role).toBeLessThanOrEqual(6);
     }
     const level = (role: TrackRole) => channelParam(project, byRole(project, role).id, 'level');
     expect(level('percussion')).toBeLessThan(level('drums'));
-    expect(level('drums')).toBeGreaterThanOrEqual(-4);
+    // The drums are the reference the others are balanced against: their fader sits near unity.
+    expect(level('drums')).toBeGreaterThanOrEqual(-6);
   });
 
   it('sets musical macro positions: ambience on the pad, echo on a melodic part', () => {
@@ -551,7 +554,8 @@ describe('Blank project', () => {
   const blank = BLANK_STARTER.build();
 
   it('is an empty 120 BPM C minor project with default sounds', () => {
-    expect(blank.name).toBe('Blank Project');
+    expect(blank.name).toBe('Blank project');
+    expect(blank.masterVolumeDb).toBe(0);
     expect(blank.starterId).toBe('blank');
     expect(blank.bpm).toBe(120);
     expect(blank.root).toBe(0);
@@ -571,17 +575,19 @@ describe('Blank project', () => {
 
   it('is mixed like the starters, so newly written parts balance without re-mixing', () => {
     // The starters' faders and kit trims were set from rendered loudness. The synthesized kits play
-    // far hotter than the synths, so an untrimmed kit would bury every part a user writes.
+    // far hotter than the synths, so an untrimmed kit would bury every part a user writes. Every
+    // project carries its overall level on its faders, so the balance is each part against the drums.
     const gain = (p: Project, role: TrackRole) => {
       const t = byRole(p, role);
       const kitTrim = t.instrument.kind === 'drums' ? t.instrument.params.level : 0;
-      return channelParam(p, t.id, 'level') + kitTrim;
+      return channelParam(p, t.id, 'level') + kitTrim + p.masterVolumeDb;
     };
+    const balance = (p: Project, role: TrackRole) => gain(p, role) - gain(p, 'drums');
     const starters = STARTERS.map((s) => s.build());
-    for (const role of ['drums', 'percussion', 'bass', 'chords', 'lead', 'pad', 'texture', 'sampler'] as const) {
-      const used = starters.map((p) => gain(p, role));
-      expect(gain(blank, role), role).toBeGreaterThanOrEqual(Math.min(...used) - 2);
-      expect(gain(blank, role), role).toBeLessThanOrEqual(Math.max(...used) + 2);
+    for (const role of ['percussion', 'bass', 'chords', 'lead', 'pad', 'texture', 'sampler'] as const) {
+      const used = starters.map((p) => balance(p, role));
+      expect(balance(blank, role), role).toBeGreaterThanOrEqual(Math.min(...used) - 2);
+      expect(balance(blank, role), role).toBeLessThanOrEqual(Math.max(...used) + 2);
     }
   });
 });
@@ -651,6 +657,7 @@ describe('starter DSL', () => {
       [300, 64, 0.9, TICKS_PER_BAR - 300],
     ]);
     expect(() => clip('Bad', 1, [{ tick: TICKS_PER_BAR, pitch: 60, velocity: 1, duration: 10 }])).toThrow();
-    expect(() => clip('Bad', 5, [])).toThrow();
+    expect(() => clip('Bad', 9, [])).toThrow();
+    expect(clip('Long', 8, []).bars).toBe(8);
   });
 });

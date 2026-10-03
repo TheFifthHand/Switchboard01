@@ -11,24 +11,45 @@ afterEach(cleanup);
 /* Meter                                                               */
 /* ------------------------------------------------------------------ */
 
+/** What a meter's canvas shows: for each segment (from the bottom or the left), its colour, or null when unlit. */
+function drawnSegments(meter: Element): (string | null)[] {
+  const canvas = meter.querySelector<HTMLCanvasElement>('canvas[data-meter-bar]')!;
+  const n = Number(canvas.dataset.segments);
+  const vertical = meter.getAttribute('data-orientation') === 'vertical';
+  const ctx = canvas.getContext('2d')!;
+  const len = vertical ? canvas.height : canvas.width;
+  const gap = Math.max(1, Math.round(2 * devicePixelRatio));
+  const pitch = (len + gap) / n;
+  const out: (string | null)[] = [];
+  for (let i = 0; i < n; i++) {
+    const mid = Math.floor(i * pitch + (pitch - gap) / 2);
+    const [r, g, b] = vertical ? ctx.getImageData(Math.floor(canvas.width / 2), canvas.height - 1 - mid, 1, 1).data : ctx.getImageData(mid, Math.floor(canvas.height / 2), 1, 1).data;
+    const hex = `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+    out.push(hex === '#b6bcc2' ? null : hex);
+  }
+  return out;
+}
+
 describe('Meter', () => {
-  it('polls read() in its own animation-frame loop without React renders, and stops on unmount', async () => {
+  it('polls read() in the shared animation-frame loop without React renders, and stops on unmount', async () => {
     let reads = 0;
-    let level = 0.5;
+    const level = 0.5;
     let renders = 0;
     function Host() {
       renders += 1;
       return h(Meter, { read: () => (reads++, level), label: 'Test meter', segments: 10, floorDb: -40 });
     }
     const m = mount(h(Host));
-    await frames(6);
+    await frames(10);
     expect(reads).toBeGreaterThanOrEqual(4);
     expect(renders).toBe(1);
 
-    const segs = [...m.container.querySelectorAll<HTMLElement>('[data-on]')].filter((el) => el.hasAttribute('data-band'));
-    expect(segs).toHaveLength(10);
+    // One drawn element, no element per segment.
+    const meter = m.container.querySelector<HTMLElement>('[role="meter"]')!;
+    expect(meter.querySelectorAll('[data-meter-bar]')).toHaveLength(1);
+    expect(meter.querySelectorAll('*').length).toBeLessThanOrEqual(2);
     // 0.5 = -6 dB on a -40..0 dB scale -> 34/40 of 10 segments -> 9 lit
-    expect(segs.filter((s) => s.dataset.on === '1')).toHaveLength(9);
+    expect(drawnSegments(meter).filter(Boolean)).toHaveLength(9);
 
     m.unmount();
     const after = reads;
@@ -39,26 +60,30 @@ describe('Meter', () => {
   it('lights the clip lamp near full scale and holds the peak', async () => {
     let level = 1.05;
     const m = mount(h(Meter, { read: () => level, label: 'Clip meter', segments: 12 }));
-    await frames(3);
+    await frames(4);
     const root = m.container.querySelector<HTMLElement>('[role="meter"]')!;
-    const clip = [...root.querySelectorAll<HTMLElement>('[data-on]')].find((el) => !el.hasAttribute('data-band'))!;
+    const clip = root.querySelector<HTMLElement>('[data-meter-clip]')!;
     expect(clip.dataset.on).toBe('1');
     level = 0;
-    await frames(3);
-    // The level falls away but the clip lamp latches and the peak segment holds.
-    const segs = [...root.querySelectorAll<HTMLElement>('[data-band]')];
+    await frames(4);
+    // The level falls away but the clip lamp latches and the peak segment holds at the top, in coral.
     expect(clip.dataset.on).toBe('1');
-    expect(segs[segs.length - 1].dataset.on).toBe('1');
+    const segs = drawnSegments(root);
+    expect(segs[11]).not.toBeNull();
+    expect(segs[11]).not.toBe(segs[0]);
     await wait(300);
     expect(root.getAttribute('aria-valuetext')).not.toBe('Silent');
+    // Clipping is said in the value text; there is no separate "Clip" text.
+    expect(root.textContent).toBe('');
   });
 
   it('shows silence as no lit segments', async () => {
     const m = mount(h(Meter, { read: () => 0, label: 'Quiet', segments: 8 }));
     await frames(3);
-    expect(m.container.querySelectorAll('[data-band][data-on="1"]')).toHaveLength(0);
+    const meter = m.container.querySelector('[role="meter"]')!;
+    expect(drawnSegments(meter).filter(Boolean)).toHaveLength(0);
     await wait(300);
-    expect(m.container.querySelector('[role="meter"]')!.getAttribute('aria-valuetext')).toBe('Silent');
+    expect(meter.getAttribute('aria-valuetext')).toBe('Silent');
   });
 });
 
@@ -213,7 +238,9 @@ describe('Tooltip', () => {
   it('appears after a hover delay, and describes the trigger for screen readers', async () => {
     const m = mount(h(TipHost, { enabled: true }));
     const trigger = m.container.querySelector<HTMLElement>('[data-testid="trigger"]')!;
+    // Hover: the pointer moves over the control (a tip never opens for a control that merely appears under a resting pointer).
     pointer(trigger, 'pointerover', { ...pointIn(trigger), buttons: 0 });
+    pointer(trigger, 'pointermove', { ...pointIn(trigger), buttons: 0 });
     await wait(120);
     expect(bubble()).toBeNull();
     await wait(400);
@@ -228,7 +255,10 @@ describe('Tooltip', () => {
   it('Escape dismisses a hover tooltip wherever focus is; it returns only after the pointer leaves', async () => {
     const m = mount(h(TipHost, { enabled: true }));
     const trigger = m.container.querySelector<HTMLElement>('[data-testid="trigger"]')!;
-    const hover = () => pointer(trigger, 'pointerover', { ...pointIn(trigger), buttons: 0 });
+    const hover = () => {
+      pointer(trigger, 'pointerover', { ...pointIn(trigger), buttons: 0 });
+      pointer(trigger, 'pointermove', { ...pointIn(trigger), buttons: 0 });
+    };
     hover();
     await wait(TOOLTIP_DELAY_MS + 100);
     await actFrame();

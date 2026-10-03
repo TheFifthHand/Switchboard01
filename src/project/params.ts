@@ -11,6 +11,20 @@ import type { InstrumentKind, ModuleType, ParamValues } from './types';
 export type ParamUnit = '' | 'Hz' | 'dB' | 's' | 'ms' | '%' | 'st' | 'ct' | 'x' | 'bpm' | 'bits';
 export type ParamCurve = 'lin' | 'exp' | 'enum' | 'int' | 'bool';
 
+/**
+ * A control that does nothing until another control of the same instrument
+ * or module is raised (Unison Detune with Unison 1, an EQ band's pitch with
+ * its gain at 0 dB). `when: 'above'` opens it while the other control is
+ * above `value` (default 0); `'nonzero'` while it is not 0. `reason` says,
+ * in plain words, what turns it on.
+ */
+export interface ParamGate {
+  param: string;
+  when: 'above' | 'nonzero';
+  value?: number;
+  reason: string;
+}
+
 export interface ParamSpec {
   id: string;
   label: string;
@@ -26,6 +40,14 @@ export interface ParamSpec {
   tip: string;
   /** Technical detail (shown second in Tips). */
   detail?: string;
+  /** The control only acts while another control is raised (see ParamGate and gateOpen). */
+  gate?: ParamGate;
+  /**
+   * Shown (and typed) as minus the stored number: Gate Depth stores 60 and
+   * reads "-60.0 dB" (it turns the closed gate down by 60 dB). See
+   * displayValue / fromDisplayValue.
+   */
+  negate?: boolean;
 }
 
 const p = (s: ParamSpec): ParamSpec => s;
@@ -47,7 +69,7 @@ const FM_AMOUNT = p({ id: 'fmAmount', label: 'FM Amount', min: 0, max: 1, defaul
 const FM_RATIO = p({ id: 'fmRatio', label: 'FM Ratio', min: 0.5, max: 16, default: 1, unit: 'x', curve: 'exp', tip: 'The colour of the FM tone: whole numbers (1, 2, 3) sound like pianos and organs, in-between values like bells and metal.', detail: 'Modulator frequency as a multiple of the note frequency.' });
 const FM_DECAY = p({ id: 'fmDecay', label: 'FM Decay', min: 0.02, max: 8, default: 0.8, unit: 's', curve: 'exp', tip: 'How long the bright FM strike lasts. Long settings keep the tone bright while a note is held.', detail: 'FM depth envelope: from its peak toward 20% of it over this time.' });
 const PITCH_SWEEP = p({ id: 'pitchEnv', label: 'Pitch Sweep', min: -24, max: 24, default: 0, unit: 'st', curve: 'lin', tip: 'Each note starts this far above (or, if negative, below) its pitch and slides onto it: drops, zaps, scoops and risers.', detail: 'Pitch envelope in semitones on every oscillator. Turned away from zero, it starts with the next note.' });
-const SWEEP_TIME = p({ id: 'pitchDecay', label: 'Sweep Time', min: 0.005, max: 8, default: 0.1, unit: 's', curve: 'exp', tip: 'How long the pitch sweep takes to arrive on the note.', detail: 'Exponential glide of the pitch envelope (about 95% of the way after this time).' });
+const SWEEP_TIME = p({ id: 'pitchDecay', label: 'Sweep Time', min: 0.005, max: 8, default: 0.1, unit: 's', curve: 'exp', tip: 'How long the pitch sweep takes to arrive on the note.', detail: 'Exponential glide of the pitch envelope (about 95% of the way after this time).', gate: { param: 'pitchEnv', when: 'nonzero', reason: 'Does nothing while Pitch Sweep is at 0.' } });
 
 export const BASS_PARAMS: readonly ParamSpec[] = [
   p({ id: 'wave', label: 'Wave', min: 0, max: 3, default: 0, unit: '', curve: 'enum', options: WAVE_OPTIONS, tip: 'Changes the basic character: Saw is buzzy, Square is hollow, Triangle and Sine are round.', detail: 'Main oscillator waveform.' }),
@@ -83,15 +105,15 @@ export const POLY_PARAMS: readonly ParamSpec[] = [
   p({ id: 'noise', label: 'Noise', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'Adds breath and air.', detail: 'White noise level into the filter.' }),
   p({ id: 'width', label: 'Width', min: 0, max: 1, default: 0.3, unit: '%', curve: 'lin', tip: 'Spreads the sound between left and right.', detail: 'Stereo spread of the two oscillators (and of the Unison copies).' }),
   p({ id: 'unison', label: 'Unison', min: 1, max: 7, default: 1, unit: '', curve: 'int', tip: 'Stacks copies of Tone 1 for a thick, wide sound: 1 is a single tone, 5 to 7 make a huge "supersaw".', detail: 'Unison voices of oscillator 1, tuned apart by Unison Detune, spread by Width, each starting at a different phase. Starts with the next note. Above 4 copies (or together with FM) the part plays fewer notes at once, never fewer than 6.' }),
-  p({ id: 'unisonDetune', label: 'Unison Detune', min: 0, max: 60, default: 20, unit: 'ct', curve: 'lin', tip: 'How far apart the stacked copies are tuned: a little shimmers, a lot sounds huge and wobbly.', detail: 'Spread of the unison voices in cents (the outermost at ± this value). No effect with Unison 1.' }),
+  p({ id: 'unisonDetune', label: 'Unison Detune', min: 0, max: 60, default: 20, unit: 'ct', curve: 'lin', tip: 'How far apart the stacked copies are tuned: a little shimmers, a lot sounds huge and wobbly.', detail: 'Spread of the unison voices in cents (the outermost at ± this value). No effect with Unison 1.', gate: { param: 'unison', when: 'above', value: 1, reason: 'Does nothing until Unison is above 1.' } }),
   FM_AMOUNT,
   FM_RATIO,
   FM_DECAY,
-  p({ id: 'noiseColor', label: 'Noise Colour', min: 0, max: 1, default: 0.5, unit: '%', curve: 'lin', tip: 'Darker noise rumbles like wind and sea; brighter noise hisses like breath. 50% is plain white noise.', detail: 'Below 50%: low-pass on the noise down to 300 Hz; above: high-pass up to 8 kHz (level partly compensated). Moved away from 50%, it starts with the next note.' }),
+  p({ id: 'noiseColor', label: 'Noise Colour', min: 0, max: 1, default: 0.5, unit: '%', curve: 'lin', tip: 'Darker noise rumbles like wind and sea; brighter noise hisses like breath. 50% is plain white noise.', detail: 'Below 50%: low-pass on the noise down to 300 Hz; above: high-pass up to 8 kHz (level partly compensated). Moved away from 50%, it starts with the next note.', gate: { param: 'noise', when: 'above', reason: 'Does nothing while Noise is at 0.' } }),
   PITCH_SWEEP,
   SWEEP_TIME,
   p({ id: 'vibrato', label: 'Vibrato', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'A gentle pitch wobble that fades in on held notes, like a singer or a string player.', detail: 'Per-note sine vibrato up to ±50 cents, fading in over 0.35 s. Turned up from zero, it starts with the next note.' }),
-  p({ id: 'vibratoRate', label: 'Vibrato Speed', min: 1, max: 12, default: 5.5, unit: 'Hz', curve: 'exp', tip: 'How fast the vibrato wobbles.', detail: 'Vibrato rate.' }),
+  p({ id: 'vibratoRate', label: 'Vibrato Speed', min: 1, max: 12, default: 5.5, unit: 'Hz', curve: 'exp', tip: 'How fast the vibrato wobbles.', detail: 'Vibrato rate.', gate: { param: 'vibrato', when: 'above', reason: 'Does nothing while Vibrato is at 0.' } }),
   p({ id: 'drift', label: 'Drift', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'Makes every note slightly different in tuning and brightness, like an old analogue synth.', detail: 'Per-note random detune (up to ±10 cents per oscillator) and filter offset (up to ±1/4 octave), seeded from the note so renders repeat exactly.' }),
   p({ id: 'cutoff', label: 'Cutoff', min: 60, max: 18000, default: 3200, unit: 'Hz', curve: 'exp', tip: 'Brighter or darker: opens or closes the synth filter.', detail: '12 dB/oct low-pass cutoff.' }),
   p({ id: 'resonance', label: 'Resonance', min: 0, max: 1, default: 0.15, unit: '%', curve: 'lin', tip: 'Emphasises the filter edge for a more resonant tone.', detail: 'Filter Q, limited to a controlled maximum.' }),
@@ -163,8 +185,8 @@ export const PUMP_DIVISION_BEATS = [1, 2, 0.5] as const;
 export const CHANNEL_PARAMS: readonly ParamSpec[] = [
   p({ id: 'level', label: 'Level', min: -60, max: 6, default: 0, unit: 'dB', curve: 'lin', tip: 'How loud this part is in the mix.', detail: 'Channel fader gain.' }),
   p({ id: 'pan', label: 'Pan', min: -1, max: 1, default: 0, unit: '', curve: 'lin', tip: 'Places the part left or right.', detail: 'Equal-power stereo pan.' }),
-  p({ id: 'sendA', label: 'Reverb Amount', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'How much of this part goes into the shared room.', detail: 'Post-fader send A (default patch: Reverb).' }),
-  p({ id: 'sendB', label: 'Echo Amount', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'How much of this part goes into the echo.', detail: 'Post-fader send B (default patch: Delay).' }),
+  p({ id: 'sendA', label: 'Reverb Amount', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'How much of this part goes to the shared Reverb.', detail: 'Taken after the part’s level, so its reverb follows when you turn the part up or down.' }),
+  p({ id: 'sendB', label: 'Echo Amount', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'How much of this part goes to the shared Echo.', detail: 'Taken after the part’s level, so its echoes follow when you turn the part up or down.' }),
   p({ id: 'pump', label: 'Pump', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'Makes the part duck and swell in time with the beat.', detail: 'Tempo-synced ducking envelope on the channel gain. It follows the transport grid; it does not listen to other tracks (no audio sidechain).' }),
   p({ id: 'pumpDiv', label: 'Pump Speed', min: 0, max: 2, default: 0, unit: '', curve: 'enum', options: PUMP_DIVISIONS, tip: 'How often the part ducks.', detail: 'Ducking envelope period.' }),
 ];
@@ -176,26 +198,30 @@ export const FILTER_PARAMS: readonly ParamSpec[] = [
   p({ id: 'bright', label: 'Brightness', min: -12, max: 12, default: 0, unit: 'dB', curve: 'lin', tip: 'Adds or removes sparkle at the top.', detail: 'High-shelf at 3.5 kHz.' }),
 ];
 
+const DRIVE_GATE: ParamGate = { param: 'amount', when: 'above', reason: 'Does nothing while Drive is at 0.' };
+
 export const DRIVE_PARAMS: readonly ParamSpec[] = [
   p({ id: 'amount', label: 'Drive', min: 0, max: 1, default: 0, unit: '%', curve: 'lin', tip: 'Warms up and then distorts the sound. Zero is clean.', detail: 'Pre-gain into a soft clipper, level-compensated.' }),
-  p({ id: 'character', label: 'Character', min: 0, max: 2, default: 0, unit: '', curve: 'enum', options: ['Warm', 'Hard', 'Fold'], tip: 'Warm is tape-like, Hard is crunchy, Fold is metallic.', detail: 'Waveshaper transfer curve.' }),
-  p({ id: 'tone', label: 'Tone', min: 0, max: 1, default: 0.7, unit: '%', curve: 'lin', tip: 'Tames or keeps the fizz that drive adds.', detail: 'Post-drive low-pass from 1.5 kHz to 18 kHz.' }),
-  p({ id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '%', curve: 'lin', tip: 'Blend between clean and driven sound.', detail: 'Dry/wet balance.' }),
+  p({ id: 'character', label: 'Character', min: 0, max: 2, default: 0, unit: '', curve: 'enum', options: ['Warm', 'Hard', 'Fold'], tip: 'Warm is tape-like, Hard is crunchy, Fold is metallic.', detail: 'Waveshaper transfer curve.', gate: DRIVE_GATE }),
+  // Stored as "tone"; called Fizz so it is not confused with the Tone big knob or the Reverb and Echo Tone.
+  p({ id: 'tone', label: 'Fizz', min: 0, max: 1, default: 0.7, unit: '%', curve: 'lin', tip: 'How much of the bright fizz the drive adds is kept: lower is smoother and darker.', detail: 'A low-pass after the drive, from 1.5 kHz (smooth) to 18 kHz (all the fizz). It shapes only the drive, not the Tone big knob.', gate: DRIVE_GATE }),
+  p({ id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '%', curve: 'lin', tip: 'Blend between clean and driven sound.', detail: 'Dry/wet balance.', gate: DRIVE_GATE }),
 ];
 
 export const DELAY_PARAMS: readonly ParamSpec[] = [
   p({ id: 'division', label: 'Time', min: 0, max: 5, default: 2, unit: '', curve: 'enum', options: DELAY_DIVISIONS, tip: 'Echo timing, locked to the tempo.', detail: 'Tempo-synced delay time.' }),
   p({ id: 'feedback', label: 'Feedback', min: 0, max: 0.85, default: 0.38, unit: '%', curve: 'lin', tip: 'How many times the echo repeats.', detail: 'Internal feedback, bounded below unity.' }),
   p({ id: 'tone', label: 'Tone', min: 500, max: 12000, default: 3800, unit: 'Hz', curve: 'exp', tip: 'Darker echoes sit further back.', detail: 'Low-pass in the feedback path.' }),
-  p({ id: 'width', label: 'Width', min: 0, max: 1, default: 0.6, unit: '%', curve: 'lin', tip: 'Bounces echoes between left and right.', detail: 'Ping-pong amount.' }),
-  p({ id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '%', curve: 'lin', tip: 'Echo level. As a send return, leave at 100%.', detail: 'Wet level (dry passes at 1 - mix when used as an insert).' }),
+  // Stored as "width".
+  p({ id: 'width', label: 'Ping-pong', min: 0, max: 1, default: 0.6, unit: '%', curve: 'lin', tip: 'Bounces the echoes between left and right.', detail: 'How far each repeat swings to the other side: 0% keeps the echoes where the sound is.' }),
+  p({ id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '%', curve: 'lin', tip: 'Echo level. As a send return this is the return level.', detail: 'Wet level. As a return fed only by sends there is no dry sound; as an insert the dry sound passes at 1 - mix.' }),
 ];
 
 export const REVERB_PARAMS: readonly ParamSpec[] = [
   p({ id: 'decay', label: 'Size', min: 0.3, max: 9, default: 2.4, unit: 's', curve: 'exp', tip: 'Small rooms to huge halls.', detail: 'Impulse-response decay time (RT60 approx.).' }),
   p({ id: 'predelay', label: 'Pre-delay', min: 0, max: 120, default: 12, unit: 'ms', curve: 'lin', tip: 'A short gap before the room answers keeps sounds clear.', detail: 'Pre-delay before the convolver.' }),
   p({ id: 'tone', label: 'Tone', min: 1000, max: 16000, default: 6500, unit: 'Hz', curve: 'exp', tip: 'Darker rooms feel softer and further away.', detail: 'Low-pass on the reverb output.' }),
-  p({ id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '%', curve: 'lin', tip: 'Room level. As a send return, leave at 100%.', detail: 'Wet level (dry passes at 1 - mix when used as an insert).' }),
+  p({ id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '%', curve: 'lin', tip: 'Room level. As a send return this is the return level.', detail: 'Wet level. As a return fed only by sends there is no dry sound; as an insert the dry sound passes at 1 - mix.' }),
 ];
 
 export const CHORUS_PARAMS: readonly ParamSpec[] = [
@@ -226,15 +252,19 @@ export const LFO_PARAMS: readonly ParamSpec[] = [
 export const AUTOPAN_SHAPES = ['Sine', 'Triangle', 'Square'] as const;
 export const AUTOPAN_MODES = ['Pan', 'Tremolo'] as const;
 
+const EQ_LOWS_GATE: ParamGate = { param: 'lowGain', when: 'nonzero', reason: 'Does nothing while Lows is at 0 dB.' };
+const EQ_MIDS_GATE: ParamGate = { param: 'midGain', when: 'nonzero', reason: 'Does nothing while Mids is at 0 dB.' };
+const EQ_HIGHS_GATE: ParamGate = { param: 'highGain', when: 'nonzero', reason: 'Does nothing while Highs is at 0 dB.' };
+
 export const EQ_PARAMS: readonly ParamSpec[] = [
   p({ id: 'lowCut', label: 'Low Cut', min: 20, max: 1000, default: 20, unit: 'Hz', curve: 'exp', tip: 'Removes rumble and mud below this pitch. All the way down is off.', detail: '12 dB/oct high-pass; 20 Hz = off.' }),
   p({ id: 'lowGain', label: 'Lows', min: -15, max: 15, default: 0, unit: 'dB', curve: 'lin', tip: 'More or less bass and weight.', detail: 'Low shelf gain.' }),
-  p({ id: 'lowFreq', label: 'Lows Pitch', min: 40, max: 500, default: 120, unit: 'Hz', curve: 'exp', tip: 'Where the bass control starts.', detail: 'Low shelf corner frequency.' }),
+  p({ id: 'lowFreq', label: 'Lows Pitch', min: 40, max: 500, default: 120, unit: 'Hz', curve: 'exp', tip: 'Where the bass control starts.', detail: 'Low shelf corner frequency.', gate: EQ_LOWS_GATE }),
   p({ id: 'midGain', label: 'Mids', min: -15, max: 15, default: 0, unit: 'dB', curve: 'lin', tip: 'Pushes the body of the sound forward or back.', detail: 'Peaking band gain.' }),
-  p({ id: 'midFreq', label: 'Mids Pitch', min: 150, max: 8000, default: 1000, unit: 'Hz', curve: 'exp', tip: 'Which middle range the Mids control moves.', detail: 'Peaking band centre frequency.' }),
-  p({ id: 'midQ', label: 'Mids Width', min: 0.3, max: 6, default: 0.9, unit: 'x', curve: 'exp', tip: 'Wide changes sound natural; narrow ones pick out a single ring.', detail: 'Peaking band Q.' }),
+  p({ id: 'midFreq', label: 'Mids Pitch', min: 150, max: 8000, default: 1000, unit: 'Hz', curve: 'exp', tip: 'Which middle range the Mids control moves.', detail: 'Peaking band centre frequency.', gate: EQ_MIDS_GATE }),
+  p({ id: 'midQ', label: 'Mids Width', min: 0.3, max: 6, default: 0.9, unit: 'x', curve: 'exp', tip: 'Wide changes sound natural; narrow ones pick out a single ring.', detail: 'Peaking band Q.', gate: EQ_MIDS_GATE }),
   p({ id: 'highGain', label: 'Highs', min: -15, max: 15, default: 0, unit: 'dB', curve: 'lin', tip: 'More or less sparkle and air.', detail: 'High shelf gain.' }),
-  p({ id: 'highFreq', label: 'Highs Pitch', min: 1500, max: 16000, default: 6000, unit: 'Hz', curve: 'exp', tip: 'Where the treble control starts.', detail: 'High shelf corner frequency.' }),
+  p({ id: 'highFreq', label: 'Highs Pitch', min: 1500, max: 16000, default: 6000, unit: 'Hz', curve: 'exp', tip: 'Where the treble control starts.', detail: 'High shelf corner frequency.', gate: EQ_HIGHS_GATE }),
   p({ id: 'highCut', label: 'High Cut', min: 1000, max: 20000, default: 20000, unit: 'Hz', curve: 'exp', tip: 'Removes hiss and harshness above this pitch. All the way up is off.', detail: '12 dB/oct low-pass; 20 kHz = off.' }),
 ];
 
@@ -249,7 +279,8 @@ export const COMPRESSOR_PARAMS: readonly ParamSpec[] = [
 
 export const GATE_PARAMS: readonly ParamSpec[] = [
   p({ id: 'threshold', label: 'Threshold', min: -80, max: 0, default: -50, unit: 'dB', curve: 'lin', tip: 'Quieter sounds than this are silenced: cleans up noise and tails.', detail: 'Gate opening threshold.' }),
-  p({ id: 'range', label: 'Depth', min: 0, max: 80, default: 60, unit: 'dB', curve: 'lin', tip: 'How much quieter the closed gate makes things.', detail: 'Attenuation when closed.' }),
+  // Stored as a positive attenuation; shown as the level change it makes ("-60.0 dB").
+  p({ id: 'range', label: 'Depth', min: 0, max: 80, default: 60, unit: 'dB', curve: 'lin', negate: true, tip: 'How far the closed gate turns things down: -60 dB makes them 60 dB quieter.', detail: 'Attenuation while the gate is closed.' }),
   p({ id: 'attack', label: 'Attack', min: 0.1, max: 50, default: 1, unit: 'ms', curve: 'exp', tip: 'How fast the gate opens.', detail: 'Opening time.' }),
   p({ id: 'release', label: 'Release', min: 5, max: 1000, default: 80, unit: 'ms', curve: 'exp', tip: 'How fast the gate closes once the sound drops.', detail: 'Closing time.' }),
 ];
@@ -338,7 +369,7 @@ export function neutralMasteringParams(): ParamValues {
 }
 
 export const MASTER_VOLUME_SPEC = p({
-  id: 'masterVolume', label: 'Master', min: -60, max: 6, default: -3, unit: 'dB', curve: 'lin',
+  id: 'masterVolume', label: 'Master', min: -60, max: 6, default: 0, unit: 'dB', curve: 'lin',
   tip: 'Overall volume of everything.', detail: 'Master gain before the output limiter (ceiling -1 dBFS).',
 });
 export const BPM_SPEC = p({ id: 'bpm', label: 'Tempo', min: 40, max: 220, default: 120, unit: 'bpm', curve: 'lin', tip: 'Speed of the music in beats per minute.' });
@@ -392,6 +423,37 @@ export function fromNormalized(spec: ParamSpec, n: number): number {
   return clampParam(spec, v);
 }
 
+/**
+ * Whether a gated control acts (see ParamGate): true for controls without a
+ * gate. Pass the instrument's or module's effective values (with big knobs
+ * applied, e.g. resolveModuleParams), so a macro-driven value counts. A value
+ * missing from `params` reads as its default from `specs` (0 without specs).
+ */
+export function gateOpen(spec: ParamSpec, params: ParamValues | undefined, specs?: readonly ParamSpec[]): boolean {
+  const g = spec.gate;
+  if (!g) return true;
+  const raw = params?.[g.param];
+  const v = typeof raw === 'number' && Number.isFinite(raw) ? raw : (specs ? specById(specs, g.param)?.default : undefined) ?? 0;
+  return g.when === 'nonzero' ? v !== 0 : v > (g.value ?? 0);
+}
+
+/** The number a control shows for a stored value (minus it for `negate` controls such as Gate Depth). */
+export function displayValue(spec: ParamSpec, value: number): number {
+  return spec.negate ? -value : value;
+}
+
+/** The stored value for a number typed in a control's display units (inverse of displayValue). */
+export function fromDisplayValue(spec: ParamSpec, shown: number): number {
+  return spec.negate ? -shown : shown;
+}
+
+/** Milliseconds: one decimal below 10 ms, so short times read every step ("2.3 ms"; 0 is "0 ms"). */
+function formatMs(ms: number): string {
+  const tenths = Math.round(ms * 10) / 10;
+  if (tenths === 0) return '0 ms';
+  return tenths < 10 ? `${tenths.toFixed(1)} ms` : `${Math.round(ms)} ms`;
+}
+
 export function formatParam(spec: ParamSpec, value: number): string {
   const v = clampParam(spec, value);
   if (spec.curve === 'enum' && spec.options) return spec.options[v] ?? String(v);
@@ -399,12 +461,14 @@ export function formatParam(spec: ParamSpec, value: number): string {
   switch (spec.unit) {
     case 'Hz':
       return v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 1 : 2)} kHz` : `${Math.round(v)} Hz`;
-    case 'dB':
-      return `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`;
+    case 'dB': {
+      const d = displayValue(spec, v);
+      return `${d > 0 ? '+' : ''}${d.toFixed(1)} dB`;
+    }
     case 's':
-      return v < 1 ? `${Math.round(v * 1000)} ms` : `${v.toFixed(2)} s`;
+      return v < 1 ? formatMs(v * 1000) : `${v.toFixed(2)} s`;
     case 'ms':
-      return `${Math.round(v)} ms`;
+      return formatMs(v);
     case '%':
       return `${Math.round(v * 100)}%`;
     case 'st':

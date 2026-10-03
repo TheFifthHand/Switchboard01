@@ -38,10 +38,10 @@ describe('Omni Song: the name people see', () => {
     expect(cfg).not.toMatch(/SWITCHBOARD|Switchboard/);
   });
 
-  it('the package is omni-song 2.0.0', () => {
+  it('the package is omni-song 2.2.0', () => {
     const pkg = JSON.parse(read('package.json'));
     expect(pkg.name).toBe('omni-song');
-    expect(pkg.version).toBe('2.0.0');
+    expect(pkg.version).toBe('2.2.0');
     expect(pkg.description).toMatch(/^Omni Song/);
   });
 

@@ -1,14 +1,20 @@
-/* Mixer strips. Each strip is a size container so its controls adapt to its width. */
+/*
+ * Mixer strips (parts, returns, master). Each strip spans three rows of the mixer's grid
+ * (MixView.module.css: name / controls / fader) through subgrid: every strip's controls end, and its
+ * fader starts, at the same height, so the faders are equally long and the parts' 0 dB marks line up
+ * across the mixer (the returns' 0 dB is the top of their travel: their level is the return's Mix,
+ * 100 % at the top). Size containment would stop a subgrid, so each of the three rows is the size
+ * container its controls adapt to (the strip's width less its 6 px of padding).
+ */
 
 .strip {
-  container-type: inline-size;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
+  display: grid;
+  grid-row: 1 / span 3;
+  grid-template-rows: subgrid;
+  row-gap: 5px;
   min-width: 0;
-  min-height: 0;
-  padding: 6px 6px 8px;
+  /* The same padding at every width, so the subgrid rows line up. */
+  padding: 5px 3px 7px;
   border-radius: var(--r-md);
   background: linear-gradient(180deg, var(--surface-hi), var(--surface));
   box-shadow:
@@ -16,9 +22,20 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 
-/* Only the fader grows or shrinks with the strip's height. */
-.strip > * {
-  flex-shrink: 0;
+/* The three rows: each a size container for what it holds. */
+.top,
+.middle,
+.faderRow {
+  container-type: inline-size;
+}
+
+/* Between the name and the fader: sits on the fader (Mute and Solo line up across the strips). */
+.middle {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 5px;
+  min-width: 0;
 }
 
 .strip[data-selected] {
@@ -31,17 +48,27 @@
   background: linear-gradient(180deg, var(--shell-hi), var(--shell));
 }
 
-/* ---------- head ---------- */
+/* A return strip: the shared effects every part sends to, set apart by a cooler tray. */
+.returnStrip {
+  background: linear-gradient(180deg, var(--surface), var(--surface-lo));
+}
+
+/* ---------- top: number + state, name (two lines at most), sound ---------- */
+
+.top {
+  position: relative;
+  min-width: 0;
+}
 
 .head {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  display: grid;
+  grid-template-rows: 14px auto auto;
+  align-content: start;
   gap: 1px;
+  width: 100%;
   min-width: 0;
-  min-height: 40px;
   margin: 0;
-  padding: 4px 6px;
+  padding: 3px 4px 4px;
   border: 0;
   border-radius: var(--r-sm);
   background: transparent;
@@ -57,20 +84,17 @@ button.head:hover {
   background: var(--surface-lo);
 }
 
+button.head:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
 .head[aria-pressed='true'] {
   background: var(--teal-wash);
 }
 
-.headTop {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  min-width: 0;
-}
-
 .num {
-  flex: none;
   font-size: var(--fs-xs);
+  line-height: 14px;
   color: var(--ink-3);
 }
 
@@ -78,34 +102,55 @@ button.head:hover {
   color: var(--teal-ink);
 }
 
+.returnTag {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Names wrap to two lines (never "Percu…"); both lines are kept on every strip so the controls line up. */
 .name {
+  display: -webkit-box;
   min-width: 0;
+  min-height: calc(2 * 16px);
   overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   font-size: var(--fs-md);
   font-weight: 650;
+  line-height: 16px;
   color: var(--ink);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: break-word;
+  hyphens: auto;
 }
 
 .sound {
   min-width: 0;
   overflow: hidden;
   font-size: var(--fs-xs);
+  line-height: 14px;
   color: var(--ink-2);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* ---------- state words ---------- */
+/* ---------- state words (in the number's row) ---------- */
 
 .state {
-  min-height: 16px;
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  max-width: calc(100% - 22px);
+  overflow: hidden;
   font-size: var(--fs-xs);
   font-weight: 650;
-  line-height: 16px;
-  text-align: center;
+  line-height: 14px;
   letter-spacing: 0.02em;
+  text-align: right;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
 }
 
 .state[data-tone='coral'] {
@@ -124,7 +169,8 @@ button.head:hover {
 .strip[data-dimmed] .head,
 .strip[data-dimmed] .faderRow,
 .strip[data-dimmed] .pan,
-.strip[data-dimmed] .sends {
+.strip[data-dimmed] .sends,
+.strip[data-dimmed] .returnKnobs {
   opacity: 0.55;
 }
 
@@ -132,12 +178,20 @@ button.head:hover {
 
 .sectionLabel {
   display: block;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 650;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-3);
   text-align: center;
+}
+
+/* Advanced: the Sends and effects row. */
+.sendsRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
 }
 
 .effects {
@@ -171,7 +225,7 @@ button.head:hover {
   gap: 4px;
   width: 100%;
   min-height: 32px;
-  padding: 0 6px;
+  padding: 0 4px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--pad);
@@ -194,9 +248,12 @@ button.head:hover {
   border-style: dashed;
 }
 
-.effect[data-off] .effectName {
+/* An effect that changes nothing right now (switched off, Drive at 0, a flat EQ): quieter, and "(off)" says so. */
+.effect[data-off] {
+  border-style: dashed;
+  background: transparent;
   color: var(--ink-3);
-  text-decoration: line-through;
+  font-weight: 500;
 }
 
 .effectName {
@@ -204,12 +261,6 @@ button.head:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.effectOff {
-  flex: none;
-  font-size: 10px;
-  color: var(--ink-3);
 }
 
 .sends {
@@ -223,6 +274,29 @@ button.head:hover {
   align-self: center;
 }
 
+/* Return strips: the two character knobs, one above the other. */
+.returnKnobs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+@container (min-width: 126px) {
+  .returnKnobs {
+    flex-direction: row;
+    justify-content: center;
+  }
+}
+
+.missing {
+  grid-row: 2 / span 2;
+  margin: 0;
+  padding: 0 4px;
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
+
 /* ---------- mute / solo ---------- */
 
 .ms {
@@ -232,7 +306,7 @@ button.head:hover {
 }
 
 /* Side by side once the strip is wide enough: icon above the word, then icon beside it. */
-@container (min-width: 92px) {
+@container (min-width: 66px) {
   .ms {
     grid-template-columns: 1fr 1fr;
   }
@@ -242,14 +316,19 @@ button.head:hover {
     padding: 0 2px;
     font-size: var(--fs-xs);
   }
-  .muteAll {
+  .muteAll,
+  .muteWide {
     flex-direction: row;
     gap: 5px;
     font-size: var(--fs-sm);
   }
+  .ms > :only-child,
+  .ms > :only-child > .muteWide {
+    grid-column: 1 / -1;
+  }
 }
 
-@container (min-width: 128px) {
+@container (min-width: 122px) {
   .msButton {
     flex-direction: row;
     gap: 5px;
@@ -286,13 +365,14 @@ button.head:hover {
 }
 
 .mute[aria-pressed='true'] {
-  background: var(--coral);
+  background: var(--coral-key);
   color: #fff;
   box-shadow: inset 0 1px 2px rgba(20, 24, 28, 0.25);
 }
 
 .solo[aria-pressed='true'] {
-  background: var(--amber);
+  /* The lighter amber keeps the amber-ink word at 4.5:1 or better. */
+  background: var(--amber-hi);
   color: var(--amber-ink);
   box-shadow: inset 0 1px 2px rgba(20, 24, 28, 0.2);
 }
@@ -302,7 +382,8 @@ button.head:hover {
   box-shadow: var(--focus-ring);
 }
 
-.muteAll {
+.muteAll,
+.muteWide {
   width: 100%;
 }
 
@@ -311,21 +392,93 @@ button.head:hover {
 .faderRow {
   display: flex;
   justify-content: center;
-  gap: 4px;
-  flex: 1 1 auto;
-  min-height: 132px;
+  gap: 0;
+  min-height: 0;
 }
 
+/*
+ * The meter beside a fader is lined up with the fader's travel, so its scale is the fader's: the
+ * lit top of a −16 dBFS reading sits next to the fader's −16. The fader's travel runs from 19 px
+ * under its top to 19 px over its slider's bottom (4 px padding + half the 30 px cap), and the
+ * slider ends 22 px over the fader's bottom (the value row). The meter's own box adds 3 px of
+ * padding at both ends, its clip lamp (1.2 x the thickness, 6 px) with a 1 px margin and a 3 px gap
+ * at the top; the peak number under it takes 16 px plus a 2 px gap. So: 19 - 13 = 6 px over it,
+ * 22 + 19 - 3 - 18 = 20 px under it.
+ */
 .meterWell {
-  display: flex;
   flex: none;
-  padding: 6px 0 26px;
+  align-self: stretch;
+  box-sizing: border-box;
+  /* As wide as the meter (5 px + its 3 px padding each side); the peak number under it may reach a
+     little past it on both sides. */
+  width: 11px;
+  min-width: 11px;
+  height: auto;
+  padding: 6px 0 20px;
 }
 
+/*
+ * A return's fader and meter: the part of the row a part's fader gives to −60…0 dB (--reach), from the
+ * same bottom, so their marks line up with the parts'. 60 px: the value row (22 px) and the cap's
+ * half-height plus padding at each end of the travel (2 x 19 px), which do not scale.
+ */
+.returnStrip .faderRow > * {
+  align-self: flex-end;
+  height: calc(60px + (100% - 60px) * var(--reach, 1));
+  min-height: 0;
+}
+
+/* The master's two meters (no peak number): 19 - 13 = 6 px over, 22 + 19 - 3 = 38 px under. */
 .masterMeters {
+  position: relative;
   display: flex;
   flex: none;
-  gap: 4px;
+  gap: 3px;
+  padding: 6px 0 38px 2px;
+}
+
+.masterMeter {
+  height: 100%;
+}
+
+/* The −1 dBFS ceiling: a line across both meters at that level on the fader's scale. */
+.ceilingTrack {
+  position: absolute;
+  top: 19px;
+  bottom: 41px;
+  left: 0;
+  right: -2px;
+  pointer-events: none;
+}
+
+.ceiling {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--at) * 100%);
+  height: 0;
+  border-top: 1.5px solid var(--coral);
+}
+
+.ceilingText {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: -6px;
+  padding-left: 2px;
+  font-size: var(--fs-2xs);
+  line-height: 10px;
+  color: var(--coral-ink);
+}
+
+/* Wide enough for the ceiling's number: the meters keep its room on their right, so it stays inside the strip. */
+@container (min-width: 98px) {
+  .ceilingText {
+    display: block;
+  }
+  .masterMeters {
+    margin-right: 14px;
+  }
 }
 
 /* ---------- limiter (master, Advanced) ---------- */
@@ -352,4 +505,69 @@ button.head:hover {
 .limiterValue[data-active='1'] {
   color: var(--amber-ink);
   font-weight: 600;
+}
+
+/* Narrow strips (eight parts, two returns and the master beside the mastering at 1366 px): one step
+   smaller names, so "Percussion" stays one word. */
+@container (max-width: 89px) {
+  .head {
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+  .name {
+    font-size: var(--fs-sm);
+  }
+  /* The sound's name may take a second line here too ("Hand / Percussion"); every strip keeps both. */
+  .sound {
+    display: -webkit-box;
+    min-height: calc(2 * 13px);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    font-size: var(--fs-2xs);
+    line-height: 13px;
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
+  /* Fader and meter start at the strip's edge, so the peak number under the meter stays inside it. */
+  .faderRow > :first-child {
+    margin-left: -3px;
+  }
+  .faderRow > :last-child {
+    margin-right: auto;
+  }
+  /* The peak number's 32 px press target ends under the meter's right edge (not centred under the
+     11 px meter), so the number and its target stay inside the strip. */
+  .meterWell > [data-meter-hold] {
+    align-self: flex-end;
+  }
+}
+
+/*
+ * The Sends and effects row on a window shorter than the one it is shown on by default: the strips
+ * drop the sound names and the Effects label and tighten up, so the faders keep about 120 px or more
+ * (at 1366 x 768) and the meters stay in sight. The sound is still in each strip's name for assistive
+ * technology and its tooltip.
+ */
+@media (max-height: 999px) {
+  :global([data-mix-sends]) .sound,
+  :global([data-mix-sends]) .effects > .sectionLabel {
+    display: none;
+  }
+  /* One line kept for the names (a longer one still takes two). */
+  :global([data-mix-sends]) .name {
+    min-height: 16px;
+  }
+  :global([data-mix-sends]) > .strip {
+    row-gap: 3px;
+    padding-top: 3px;
+    padding-bottom: 5px;
+  }
+  :global([data-mix-sends]) .head {
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+  :global([data-mix-sends]) .sendsRow,
+  :global([data-mix-sends]) .middle {
+    gap: 3px;
+  }
 }

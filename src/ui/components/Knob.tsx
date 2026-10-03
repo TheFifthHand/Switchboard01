@@ -6,11 +6,16 @@
  *   control. 200 px of travel covers the full range in normalised space
  *   (exp curves feel even across the range); Shift is 10x finer. Stepped
  *   parameters (options, small integer ranges) use a shorter throw.
+ * - Touch (see touchDrag.ts): a finger drags at once only from the dial (at
+ *   least 44 px around it), or anywhere on the knob after resting still for
+ *   250 ms; a finger that moves first scrolls the page and changes nothing.
  * - Double-click (or Delete/Backspace) resets to the registry default.
  * - Arrow keys: 1% of travel, Shift 0.1%; PageUp/PageDown 10%; Home/End.
  *   Stepped parameters always move by at least one step.
  * - Enter, or typing a digit, opens inline numeric entry ("2.5k", "-6",
- *   "220 ms", "L20", an option name). Enter commits, Escape cancels.
+ *   "220 ms", "L20", an option name). Enter commits, Escape cancels. A click
+ *   on the value under a number knob opens the same entry; a mouse drag that
+ *   starts there turns the knob, as a drag from the dial or the label does.
  * - The mouse wheel only acts once the knob has keyboard focus (reached with
  *   Tab, or used with its own keys), so page scrolling never changes a sound
  *   by accident — not after a click, a right-click, or Space for Play.
@@ -26,11 +31,19 @@
  *   that row reserves two label lines, so the values stay aligned; rows of
  *   short labels and lone knobs (a compact strip) stay one line tall.
  *   `labelLines` sets it explicitly.
+ * - A knob set by a macro is read-only: a teal chain mark beside the dial's
+ *   top corner, a teal outer arc over the span the macro sweeps (`macroRange`,
+ *   else the whole travel), teal value text, and "set by <macro>" in its spoken
+ *   value (aria-valuetext) and tip. The macro's name is not drawn on the knob:
+ *   a view that wants it on screen shows it beside the knob (e.g. its row).
+ *   Nothing covers the dial and the value keeps its whole line.
+ * - Sizes sm (34 px dial), md (44), lg (60) and xl (80, for big screens).
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import { clampParam, formatParam, fromNormalized, toNormalized, type ParamSpec } from '../../project/params';
 import { Icon } from './Icon';
 import { Tooltip } from './Tooltip';
+import { TOUCH_HOLD_MS, TOUCH_SLOP_PX, onTouchGrip, type PendingTouch } from './touchDrag';
 import { newGestureId, paramEditText, parseParamInput } from './valueInput';
 import styles from './Knob.module.css';
 
@@ -46,6 +59,8 @@ const SWEEP = 270;
 const START_ANGLE = -135;
 const WHEEL_NOTCH_PX = 100;
 const WHEEL_STEP = 0.02;
+/** Movement after which a press on the value key turns the knob instead of typing. */
+const VALUE_DRAG_START_PX = 3;
 
 export interface KnobChangeInfo {
   /** Same id for every call belonging to one drag / key burst / entry. */
@@ -54,7 +69,7 @@ export interface KnobChangeInfo {
   final: boolean;
 }
 
-export type KnobSize = 'sm' | 'md' | 'lg';
+export type KnobSize = 'sm' | 'md' | 'lg' | 'xl';
 
 export interface KnobProps {
   spec: ParamSpec;
@@ -66,8 +81,10 @@ export interface KnobProps {
   accent?: 'amber' | 'teal';
   /** A modulation cable reaches this parameter: teal arc plus a wave mark. */
   modulated?: boolean;
-  /** Name of the macro controlling this parameter; the knob becomes read-only and shows it. */
+  /** Name of the macro controlling this parameter; the knob becomes read-only and says so. */
   controlledBy?: string;
+  /** With `controlledBy`: the values the macro sweeps between (spec units), drawn as a teal outer arc. */
+  macroRange?: readonly [number, number];
   disabled?: boolean;
   /** Plain-language tip (defaults to spec.tip). */
   tip?: string;
@@ -120,7 +137,7 @@ const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 function knobGestureHint(spec: ParamSpec): string {
   const home = formatParam(spec, clampParam(spec, spec.default));
   if (spec.curve === 'enum' || spec.curve === 'bool') return `Drag up or down, or use the arrow keys. Double-click resets it to ${home}.`;
-  return `Drag up or down, or use the arrow keys; hold Shift for fine steps. Double-click resets it to ${home}. For an exact value, click the knob and type a number.`;
+  return `Drag up or down, or use the arrow keys; hold Shift for fine steps. Double-click resets it to ${home}. For an exact value, click the value under it, or click the knob and type a number.`;
 }
 
 /**
@@ -179,6 +196,7 @@ export function Knob(props: KnobProps) {
     accent = 'amber',
     modulated = false,
     controlledBy,
+    macroRange,
     disabled = false,
     tip,
     detail,
@@ -200,7 +218,11 @@ export function Knob(props: KnobProps) {
   const shown = clampParam(spec, live ?? value);
 
   const sliderRef = useRef<HTMLDivElement>(null);
+  const dialRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pendingTouch = useRef<PendingTouch | null>(null);
+  /** A mouse or pen press on the value key: a click types, a drag turns the knob. */
+  const valuePress = useRef<{ pointerId: number; x: number; y: number; dragged: boolean } | null>(null);
   const latest = useRef(shown);
   const specRef = useRef(spec);
   const interactiveRef = useRef(interactive);
@@ -261,6 +283,13 @@ export function Knob(props: KnobProps) {
     emit(v, { gesture: d.gesture, final: false });
   }, [emit]);
 
+  const cancelPending = useCallback(() => {
+    const p = pendingTouch.current;
+    if (!p) return;
+    pendingTouch.current = null;
+    window.clearTimeout(p.timer);
+  }, []);
+
   const endDrag = useCallback(
     (pointerId?: number) => {
       const d = drag.current;
@@ -287,21 +316,35 @@ export function Knob(props: KnobProps) {
   // Close any open gesture on unmount so the app never keeps a dangling undo step.
   useEffect(
     () => () => {
+      cancelPending();
       endDrag();
       finishBurst();
     },
-    [endDrag, finishBurst],
+    [cancelPending, endDrag, finishBurst],
   );
 
   // Lose interactivity (disabled / taken over by a macro) mid-gesture: close it.
   useEffect(() => {
     if (!interactive) {
+      cancelPending();
       endDrag();
       finishBurst();
       entryOpen.current = false;
       setEntry(null);
     }
-  }, [interactive, endDrag, finishBurst]);
+  }, [interactive, cancelPending, endDrag, finishBurst]);
+
+  // Touch: once a drag has begun, the finger's moves must not scroll the page (only a non-passive
+  // touchmove listener can stop that after the touch started; the slider allows panning).
+  useEffect(() => {
+    const el = sliderRef.current;
+    if (!el) return;
+    const onTouchMove = (e: TouchEvent) => {
+      if (drag.current && e.cancelable) e.preventDefault();
+    };
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => el.removeEventListener('touchmove', onTouchMove);
+  }, []);
 
   // Wheel: a native non-passive listener, active only with keyboard focus.
   useEffect(() => {
@@ -331,6 +374,28 @@ export function Knob(props: KnobProps) {
 
   /* ---------------- pointer ---------------- */
 
+  /** Start a drag with `pointerId` from `clientY` (the press, or where a resting finger is). */
+  const beginDrag = (el: HTMLDivElement, pointerId: number, clientY: number) => {
+    el.focus({ preventScroll: true });
+    finishBurst();
+    endDrag();
+    try {
+      el.setPointerCapture(pointerId);
+    } catch {
+      /* synthetic or already-released pointer */
+    }
+    drag.current = {
+      pointerId,
+      lastY: clientY,
+      norm: toNormalized(specRef.current, latest.current),
+      gesture: newGestureId('knob-drag'),
+      pending: null,
+      emitted: null,
+      raf: 0,
+    };
+    setDragging(true);
+  };
+
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     // Any press is pointer focus, never keyboard focus: right and middle
     // clicks (and presses on read-only knobs) focus natively later in this
@@ -342,28 +407,32 @@ export function Knob(props: KnobProps) {
     }, 0);
     if (e.button !== 0 || !interactive) return;
     const el = e.currentTarget;
-    e.preventDefault(); // no text selection; focus is set explicitly below
-    el.focus({ preventScroll: true });
-    finishBurst();
-    endDrag();
-    try {
-      el.setPointerCapture(e.pointerId);
-    } catch {
-      /* synthetic or already-released pointer */
+    if (e.pointerType === 'touch') {
+      if (drag.current || pendingTouch.current) return; // a second finger
+      if (!onTouchGrip(dialRef.current, e.clientX, e.clientY)) {
+        // Off the dial: a swipe scrolls; a finger that rests still takes the knob.
+        const pointerId = e.pointerId;
+        const pending: PendingTouch = { pointerId, x: e.clientX, y: e.clientY, lastY: e.clientY, timer: 0 };
+        pending.timer = window.setTimeout(() => {
+          if (pendingTouch.current !== pending) return;
+          pendingTouch.current = null;
+          if (interactiveRef.current && sliderRef.current) beginDrag(sliderRef.current, pointerId, pending.lastY);
+        }, TOUCH_HOLD_MS);
+        pendingTouch.current = pending;
+        return;
+      }
     }
-    drag.current = {
-      pointerId: e.pointerId,
-      lastY: e.clientY,
-      norm: toNormalized(spec, latest.current),
-      gesture: newGestureId('knob-drag'),
-      pending: null,
-      emitted: null,
-      raf: 0,
-    };
-    setDragging(true);
+    e.preventDefault(); // no text selection; focus is set explicitly
+    beginDrag(el, e.pointerId, e.clientY);
   };
 
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    const p = pendingTouch.current;
+    if (p && e.pointerId === p.pointerId) {
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) >= TOUCH_SLOP_PX) cancelPending();
+      else p.lastY = e.clientY;
+      return;
+    }
     const d = drag.current;
     if (!d || e.pointerId !== d.pointerId) return;
     const dy = d.lastY - e.clientY;
@@ -376,7 +445,10 @@ export function Knob(props: KnobProps) {
     if (!d.raf) d.raf = requestAnimationFrame(flushDrag);
   };
 
-  const onPointerEnd = (e: PointerEvent<HTMLDivElement>) => endDrag(e.pointerId);
+  const onPointerEnd = (e: PointerEvent<HTMLDivElement>) => {
+    if (pendingTouch.current?.pointerId === e.pointerId) cancelPending();
+    endDrag(e.pointerId);
+  };
 
   const onDoubleClick = () => {
     if (!interactive) return;
@@ -496,8 +568,17 @@ export function Knob(props: KnobProps) {
   const arcTone = disabled ? 'off' : modulated ? 'teal' : accent;
   const activeTick = shortStepped ? Math.round(norm * (tickCount - 1)) : -1;
 
+  // A macro-controlled knob shows the macro's span on an outer arc instead of the scale.
+  const macroArc = (() => {
+    if (!controlledBy || optionKnob) return null;
+    const [a, b] = macroRange ?? [spec.min, spec.max];
+    const a0 = START_ANGLE + SWEEP * toNormalized(spec, clampParam(spec, a));
+    const a1 = START_ANGLE + SWEEP * toNormalized(spec, clampParam(spec, b));
+    return Math.abs(a1 - a0) > 0.5 ? arcPath(47.5, a0, a1) : null;
+  })();
+
   const ticks = [];
-  if (size !== 'sm' || shortStepped) {
+  if ((size !== 'sm' || shortStepped) && !macroArc) {
     for (let i = 0; i < tickCount; i++) {
       const a = START_ANGLE + (SWEEP * i) / (tickCount - 1);
       if (shortStepped) {
@@ -522,6 +603,37 @@ export function Knob(props: KnobProps) {
       .join(' ') || undefined;
 
   const rootClass = [styles.knob, className].filter(Boolean).join(' ');
+  // The value under a number knob is a key that opens typed entry (option knobs are turned, not
+  // typed); every other value line stays inside the slider, so a drag from it turns the knob.
+  const typable = showValue && interactive && !optionKnob;
+  const valueInner = (
+    <>
+      {modulated && <Icon name="wave" size={10} className={styles.modMark} />}
+      <span className={styles.valueText}>{formatted}</span>
+    </>
+  );
+
+  /* A press on the value key: past DRAG_START_PX it becomes a drag of the knob. */
+  const onValuePointerDown = (e: PointerEvent<HTMLButtonElement>) => {
+    valuePress.current = null;
+    if (e.button !== 0 || !interactive || e.pointerType === 'touch') return;
+    e.preventDefault(); // no focus on the key itself; a click opens the entry, which takes focus
+    valuePress.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, dragged: false };
+  };
+  const onValuePointerMove = (e: PointerEvent<HTMLButtonElement>) => {
+    const p = valuePress.current;
+    if (!p || p.dragged || e.pointerId !== p.pointerId || !sliderRef.current) return;
+    if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < VALUE_DRAG_START_PX) return;
+    p.dragged = true;
+    // The slider takes the pointer from here (capture), so the rest of the drag is the knob's own.
+    beginDrag(sliderRef.current, e.pointerId, p.y);
+  };
+  const onValueClick = () => {
+    const p = valuePress.current;
+    valuePress.current = null;
+    if (p?.dragged) return;
+    openEntry(paramEditText(spec, latest.current), true);
+  };
 
   return (
     <div
@@ -532,6 +644,7 @@ export function Knob(props: KnobProps) {
       data-dragging={dragging || undefined}
       data-tone={arcTone}
       data-label-lines={labelLines}
+      data-typable={typable || undefined}
       data-wraps={labelMayWrap(shownLabel) || undefined}
       style={labelLines ? ({ '--label-lines': labelLines } as CSSProperties) : undefined}
     >
@@ -559,9 +672,15 @@ export function Knob(props: KnobProps) {
           onFocus={onFocus}
           onBlur={onBlur}
         >
-          <div className={styles.dial}>
+          <div ref={dialRef} className={styles.dial}>
+            {controlledBy && (
+              <span className={styles.badge} aria-hidden="true">
+                <Icon name="link" size={10} />
+              </span>
+            )}
             <svg className={styles.ring} viewBox="0 0 100 100" aria-hidden="true" focusable="false">
               {ticks}
+              {macroArc && <path className={styles.macroArc} d={macroArc} />}
               {!optionKnob && <path className={styles.track} d={arcPath(40, START_ANGLE, START_ANGLE + SWEEP)} />}
               {!optionKnob && Math.abs(angle - baseAngle) > 0.5 && <path className={styles.arc} d={arcPath(40, baseAngle, angle)} />}
             </svg>
@@ -572,24 +691,32 @@ export function Knob(props: KnobProps) {
                 <div className={styles.pointer} />
               </div>
             </div>
-            {controlledBy && (
-              <span className={styles.badge} aria-hidden="true">
-                <Icon name="link" size={10} />
-                <span className={styles.badgeText}>{controlledBy}</span>
-              </span>
-            )}
           </div>
           <div className={styles.label}>
             <span className={styles.labelText}>{shownLabel}</span>
           </div>
-          {showValue && (
-            <div className={styles.value} data-kind={optionKnob ? 'option' : 'number'} aria-hidden="true" style={entry ? { visibility: 'hidden' } : undefined}>
-              {modulated && <Icon name="wave" size={10} className={styles.modMark} />}
-              {formatted}
+          {showValue && !typable && (
+            <div className={styles.value} data-kind={optionKnob ? 'option' : 'number'} data-macro={controlledBy ? '' : undefined} aria-hidden="true" style={entry ? { visibility: 'hidden' } : undefined}>
+              {valueInner}
             </div>
           )}
         </div>
       </Tooltip>
+      {typable && (
+        <button
+          type="button"
+          className={styles.value}
+          data-kind="number"
+          tabIndex={-1}
+          aria-label={`${name}: ${valueText}, type a value`}
+          style={entry ? { visibility: 'hidden' } : undefined}
+          onPointerDown={onValuePointerDown}
+          onPointerMove={onValuePointerMove}
+          onClick={onValueClick}
+        >
+          {valueInner}
+        </button>
+      )}
       {entry && (
         <input
           ref={inputRef}

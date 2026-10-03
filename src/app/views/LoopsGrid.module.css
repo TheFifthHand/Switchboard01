@@ -6,17 +6,77 @@
   gap: 8px;
 }
 
+/*
+ * The grid and, over its foot, a fade shown while more rows are below (data-more). Its own stacking
+ * context: the sticky head's and the fade's z-index order them inside the grid only, so they never
+ * paint over the transport's popovers (Saving failed), app banners or menus that reach over the grid.
+ */
+.gridFrame {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.gridFade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -4px;
+  z-index: 4;
+  display: grid;
+  place-items: end center;
+  height: 34px;
+  padding-bottom: 2px;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--surface) 0%, transparent), var(--surface) 80%);
+  color: var(--ink-3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.gridFrame[data-more] .gridFade {
+  opacity: 1;
+}
+
 .grid {
+  /* The shortest a pad row gets before the rows scroll (under the sticky part headers). */
+  --row-min: 64px;
   flex: 1;
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr)) 104px;
-  grid-template-rows: auto repeat(4, minmax(52px, 1fr));
+  grid-template-rows: auto repeat(var(--rows, 4), minmax(var(--row-min), 1fr));
+  grid-auto-rows: auto;
   gap: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  /* Room for focus rings and drop outlines at the edges (the grid scrolls, so it clips). */
+  padding: 4px;
+  margin: -4px;
+  /* A pad or scene button brought into view by the keyboard stays clear of the sticky head (--head-h is measured) and of the fade at the foot. */
+  scroll-padding-top: calc(var(--head-h, 170px) + 8px);
+  scroll-padding-bottom: 30px;
 }
 
 .row {
   display: contents;
+}
+
+/* The part headers and the scene column's head (Stop all): one row that stays on top while the pad rows scroll. */
+.head {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  position: sticky;
+  /* Flush with the grid's edge (over its 4 px padding), so no row shows above it. */
+  top: -4px;
+  z-index: 5;
+  background: var(--surface);
+  /* Covers the gap under it, so pads scrolling up pass behind a clean edge. */
+  box-shadow: 0 8px 0 var(--surface);
 }
 
 /* ---------- Column headers ---------- */
@@ -32,7 +92,14 @@
   min-width: 0;
   transition:
     border-color var(--t-fast) var(--ease),
-    box-shadow var(--t-fast) var(--ease);
+    box-shadow var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
+}
+/* The pointer over a header: it lifts a little, like a key (selection stays teal). */
+.header:not(.headerSelected):hover {
+  border-color: var(--line);
+  background: linear-gradient(180deg, #ffffff, var(--surface-hi));
+  box-shadow: var(--shadow-raised);
 }
 .headerSelected {
   border-color: var(--teal);
@@ -44,9 +111,12 @@
   opacity: 0.55;
 }
 .headerMain {
+  /* Takes the header's spare height, so every column's keys line up whatever its names' lengths. */
+  flex: 1 0 auto;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-rows: auto auto;
+  align-content: start;
   column-gap: 4px;
   row-gap: 1px;
   min-width: 0;
@@ -65,6 +135,7 @@
   color: var(--ink-3);
 }
 .trackName {
+  grid-column: 2;
   font-size: var(--fs-lg);
   font-weight: 650;
   line-height: 18px;
@@ -73,13 +144,40 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A soloed part: a small amber tag beside its name (it keeps its meter). */
+.soloTag {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+  padding: 0 5px;
+  border-radius: 7px;
+  background: var(--amber-hi);
+  box-shadow: inset 0 0 0 1px var(--amber);
+  color: var(--amber-ink);
+  font-size: var(--fs-2xs);
+  font-weight: 650;
+  line-height: 14px;
+}
+/* The sound's name: up to two lines (then cut; the full name is in the header's title). */
 .trackSound {
+  grid-column: 2 / -1;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   font-size: var(--fs-sm);
   line-height: 15px;
+  max-height: 30px;
   color: var(--ink-2);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+/* Narrower columns: the part's name a size down, so more of it shows. */
+@container (max-width: 110px) {
+  .trackName {
+    font-size: var(--fs-md);
+    line-height: 17px;
+  }
 }
 /* Narrow columns: the number gives its room to the name. */
 @container (max-width: 70px) {
@@ -87,10 +185,16 @@
     display: none;
   }
   .headerMain {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
   }
   .trackName {
-    font-size: var(--fs-md);
+    grid-column: 1;
+  }
+  .trackSound {
+    grid-column: 1 / -1;
+  }
+  .soloTag {
+    grid-column: 2;
   }
 }
 
@@ -142,13 +246,14 @@
 }
 /* Muted = coral (attention), Solo = amber; the pressed key also sits lower and its word stays. */
 .toggle[data-kind='mute'][aria-pressed='true'] {
-  background: var(--coral);
-  border-color: var(--coral);
+  background: var(--coral-key);
+  border-color: var(--coral-key);
   color: #fff;
   box-shadow: var(--shadow-pressed);
 }
 .toggle[data-kind='solo'][aria-pressed='true'] {
-  background: var(--amber);
+  /* The lighter amber keeps the amber-ink word at 4.5:1 or better. */
+  background: var(--amber-hi);
   border-color: var(--amber);
   color: var(--amber-ink);
   box-shadow: var(--shadow-pressed);
@@ -165,10 +270,12 @@
 .partPlay {
   flex: none;
 }
+/* The meter and the status word (Muted / Not soloed / Solo) take turns in one box of the same size, so Mute and Solo never move anything. */
 .meter,
 .status {
   flex: 1 1 0;
   min-width: 0;
+  height: 14px;
 }
 .meter {
   display: flex;
@@ -224,7 +331,16 @@
     order: 3;
     flex: 1 1 100%;
   }
+}
+/* Very narrow columns: "Not soloed" may need two lines, so that line is two lines tall either way (the meter sits in its middle). */
+@container (max-width: 76px) {
+  .meter,
   .status {
+    height: 28px;
+  }
+  .status {
+    display: flex;
+    align-items: center;
     white-space: normal;
   }
 }
@@ -278,71 +394,327 @@
   box-shadow: var(--shadow-pressed);
 }
 
-/* Moving a clip (drag or keyboard): the source is marked, valid pads are outlined, the pad under it is lit. */
+/*
+ * Moving a clip (drag or keyboard Move…). The marks are written by the
+ * gesture (drag) or by React (keyboard): data-drop on every pad says what it
+ * is (source / ok / no); the pad under the carried clip gets data-target
+ * (land / swap / replace / no) and a word in data-chip. Dimming goes on the
+ * pad inside, so the outlines and words stay crisp.
+ */
 .cell[data-drop] {
   opacity: 1;
 }
-.cell[data-drop]::after {
+/* Always there, with a fixed border: marking the pads when a drag starts only repaints them (no boxes to create or lay out). */
+.cell::after {
   content: '';
   position: absolute;
   inset: -3px;
+  border: 2px dashed transparent;
   border-radius: 12px;
   pointer-events: none;
 }
-.cell[data-drop='source'] {
-  opacity: 0.55;
+/* The clip's own pad while it is carried: a faint placeholder (copying: the original stays). */
+.cell[data-drop='source'] button[data-state] {
+  opacity: 0.28;
 }
 .cell[data-drop='source']::after {
-  border: 2px dashed var(--teal);
+  border-color: var(--teal);
+}
+.grid[data-copy] .cell[data-drop='source'] button[data-state] {
+  opacity: 0.85;
 }
 .cell[data-drop='ok']::after {
-  border: 2px dashed color-mix(in srgb, var(--teal) 45%, transparent);
+  border-color: color-mix(in srgb, var(--teal) 45%, transparent);
 }
-.cell[data-drop='ok'][data-over]::after {
-  border: 3px solid var(--teal);
-  box-shadow: 0 0 0 3px var(--teal-wash);
-}
-.cell[data-drop='no'] {
+.cell[data-drop='no'] button[data-state] {
   opacity: 0.4;
 }
-.cell[data-drop='no'][data-over]::after {
-  border: 3px solid var(--coral);
+/* The pad under the carried clip: where it lands (outline and wash), what it swaps with or replaces, or a refusal. */
+.cell[data-target]::after {
+  border-color: transparent;
+  box-shadow:
+    inset 0 0 0 3px var(--teal),
+    0 0 0 3px var(--teal-wash);
 }
-.dropNote {
+.cell[data-target='land']::after {
+  background: var(--teal-wash);
+}
+.cell[data-target='no']::after {
+  box-shadow: inset 0 0 0 3px var(--coral);
+  background: repeating-linear-gradient(135deg, var(--coral-wash) 0 6px, transparent 6px 12px);
+}
+/* A swap: the other clip leans toward the carried clip's pad (it is where that clip goes). */
+.cell[data-target='swap'] button[data-state] {
+  transform: translate(var(--lean-x, 0), var(--lean-y, 0));
+}
+/* Keyboard move: the word sits on the focused pad's lower edge. (While dragging, .targetChip draws it above the lifted pad.) */
+.cell[data-chip]::before {
+  content: attr(data-chip);
   position: absolute;
   left: 50%;
-  bottom: 6px;
-  transform: translateX(-50%);
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: var(--coral);
+  bottom: -10px;
+  z-index: 2;
+  translate: -50% 0;
+  padding: 2px 8px;
+  border-radius: 9px;
+  background: var(--teal-ink);
   color: #fff;
   font-size: var(--fs-xs);
   font-weight: 650;
+  line-height: 15px;
   white-space: nowrap;
+  box-shadow: var(--shadow-raised);
   pointer-events: none;
 }
-.ghost {
+.cell[data-target='no'][data-chip]::before {
+  background: var(--coral);
+  color: #fff;
+}
+/* While something is carried: the '⋯' keys step aside and the cursor says what a drop does. */
+.grid[data-dragging] .more {
+  visibility: hidden;
+}
+.grid[data-dragging] {
+  cursor: grabbing;
+}
+/* (The grid holds the pointer while something is carried, so its cursor is the one shown.) */
+.grid[data-refused] {
+  cursor: not-allowed;
+}
+/* The lifted pad: a real copy of the pad that follows the pointer (its translate is written by the gesture). */
+.lift {
   position: fixed;
   left: 0;
   top: 0;
   z-index: 60;
+  border-radius: 10px;
+  box-shadow:
+    var(--shadow-float),
+    0 0 0 2px var(--teal);
+  pointer-events: none;
+  translate: -9999px 0;
+  scale: 1.04;
+  will-change: translate;
+  transition:
+    scale 120ms var(--ease),
+    box-shadow 120ms var(--ease);
+}
+@starting-style {
+  .lift {
+    scale: 1;
+  }
+}
+.lift[data-kind='no'] {
+  box-shadow:
+    var(--shadow-float),
+    0 0 0 2px var(--coral);
+}
+.lift[data-kind='none'] {
+  opacity: 0.75;
+}
+/* The label above the lifted pad (above the lifted row's scene): Move / Copy / Swap / why not. */
+.liftLabel {
+  position: absolute;
+  left: 4px;
+  bottom: calc(100% + 5px);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--teal);
-  border-radius: var(--r-md);
-  background: var(--shell-hi);
-  box-shadow: var(--shadow-float);
-  color: var(--ink);
+  gap: 5px;
+  max-width: max(100%, 220px);
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: 11px;
+  background: var(--ink);
+  color: var(--ink-inverse);
   font-size: var(--fs-sm);
-  font-weight: 600;
-  pointer-events: none;
-  transform: translate(-9999px, 0);
+  font-weight: 650;
+  white-space: nowrap;
+  box-shadow: var(--shadow-raised);
 }
-.ghost[data-copy] {
-  border-color: var(--amber);
+/* Kept inside the window (GridGestures sets data-side from where the pad is). */
+.lift[data-side~='end'] .liftLabel {
+  left: auto;
+  right: 4px;
+}
+.lift[data-side~='below'] .liftLabel {
+  top: calc(100% + 5px);
+  bottom: auto;
+}
+.liftText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lift[data-copy] .liftLabel {
+  background: var(--teal-ink);
+}
+.lift[data-kind='no'] .liftLabel {
+  background: var(--coral);
+  color: #fff;
+}
+.lift[data-kind='none'] .liftLabel {
+  background: var(--ink-3);
+}
+/* One icon per meaning. */
+.liftIcon {
+  display: none;
+  flex: none;
+}
+.lift:not([data-copy]) .liftIcon[data-for='move'],
+.lift[data-copy] .liftIcon[data-for='copy'],
+.rowLift .liftIcon[data-for='move'] {
+  display: inline-flex;
+}
+/* (As specific as the Move / Copy rule above, so the one icon of a Swap, a refusal or a cancel replaces it.) */
+.lift[data-kind='swap'] .liftIcon[data-for],
+.lift[data-kind='no'] .liftIcon[data-for],
+.lift[data-kind='none'] .liftIcon[data-for],
+.rowLift[data-kind='none'] .liftIcon[data-for],
+.rowLift[data-kind='no'] .liftIcon[data-for] {
+  display: none;
+}
+.lift[data-kind='swap'] .liftIcon[data-for='swap'],
+.lift[data-kind='no'] .liftIcon[data-for='no'],
+.lift[data-kind='none'] .liftIcon[data-for='none'],
+.rowLift[data-kind='none'] .liftIcon[data-for='none'],
+.rowLift[data-kind='no'] .liftIcon[data-for='no'] {
+  display: inline-flex;
+}
+/* A row carried while a take records: it says Locked (coral), and nothing slides. */
+.rowLift[data-kind='no'] .liftLabel {
+  background: var(--coral);
+  color: #fff;
+}
+
+/* The word for the pad under the carried clip, on that pad's lower edge, above the lifted pad. */
+.targetChip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 61;
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: var(--teal-ink);
+  color: #fff;
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  line-height: 16px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-raised), 0 0 0 2px var(--shell-hi);
+  pointer-events: none;
+  /* Mostly below the target's edge: clear of the lifted pad, over the gap. */
+  transform: translate(-50%, -30%);
+  visibility: hidden;
+}
+.targetChip[data-on] {
+  visibility: visible;
+}
+.targetChip[data-kind='no'] {
+  background: var(--coral);
+}
+
+/* The lifted scene row: its scene, raised, and a faint copy of its pads (translate written by the gesture). */
+.rowLift {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 60;
+  pointer-events: none;
+  translate: -9999px 0;
+  will-change: translate;
+}
+.rowLift[data-kind='none'] {
+  opacity: 0.6;
+}
+.rowLiftPad {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 7px 8px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fbfbfb, #e7eaec);
+  box-shadow: 0 0 0 1px rgba(20, 24, 28, 0.12), var(--shadow-float);
+  opacity: 0.6;
+  overflow: hidden;
+}
+.rowLiftPad[data-empty] {
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(20, 24, 28, 0.14);
+  opacity: 0.5;
+}
+.rowLiftName {
+  overflow: hidden;
+  font-size: var(--pad-label-size, var(--fs-lg));
+  font-weight: 600;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rowLiftBars {
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  line-height: 15px;
+}
+.rowLiftScene {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 2px solid var(--teal);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, var(--shell-hi), var(--shell));
+  box-shadow: var(--shadow-float);
+}
+.rowLiftScene .liftLabel {
+  left: auto;
+  right: 0;
+}
+
+/* A scene row being carried: its own cells are the faint open slot; every row slides to where the drop puts it. */
+.grid[data-dragging='row'] .cell,
+.grid[data-dragging='row'] .sceneCell {
+  transition:
+    transform 170ms cubic-bezier(0.2, 0.8, 0.25, 1),
+    opacity var(--t-fast) var(--ease);
+}
+.cell[data-row-drag] button[data-state],
+.sceneCell[data-row-drag] > * {
+  opacity: 0;
+}
+.cell[data-row-drag]::after {
+  border-color: var(--teal);
+  background: var(--teal-wash);
+}
+.sceneCell::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 2px dashed transparent;
+  border-radius: 11px;
+  pointer-events: none;
+}
+.sceneCell[data-row-drag]::after {
+  border-color: var(--teal);
+  background: var(--teal-wash);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lift,
+  .grid[data-dragging='row'] .cell,
+  .grid[data-dragging='row'] .sceneCell {
+    transition: none;
+  }
+  /* No lean: the word "Swap" says it. */
+  .cell[data-target='swap'] button[data-state] {
+    transform: none;
+  }
 }
 
 /* ---------- Scenes ---------- */
@@ -376,6 +748,11 @@
   color: var(--ink-2);
   box-shadow: var(--shadow-raised);
 }
+.stopAll:hover {
+  border-color: var(--line-strong);
+  background: linear-gradient(180deg, #ffffff 0%, #f5f6f7 55%, #eceef0 100%);
+  color: var(--ink);
+}
 .stopAll:active {
   box-shadow: var(--shadow-pressed);
 }
@@ -385,17 +762,6 @@
   min-width: 0;
   min-height: 0;
   border-radius: var(--r-md);
-}
-.sceneCell[data-drag] {
-  opacity: 0.55;
-}
-.sceneCell[data-over]::after {
-  content: '';
-  position: absolute;
-  inset: -3px;
-  border: 3px solid var(--teal);
-  border-radius: 11px;
-  pointer-events: none;
 }
 .sceneMore {
   position: absolute;
@@ -423,6 +789,8 @@
   color: var(--teal-ink);
 }
 .scene {
+  position: relative;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -438,10 +806,37 @@
   touch-action: none;
   transition:
     box-shadow var(--t-fast) var(--ease),
-    background var(--t-fast) var(--ease);
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+.scene:hover:not(.sceneLit) {
+  border-color: var(--line-strong);
+  background: linear-gradient(180deg, #ffffff 0%, var(--shell-hi) 60%, var(--shell) 100%);
 }
 .scene:active {
   box-shadow: var(--shadow-pressed);
+}
+/*
+ * The playing scene: how far through its loop (the row's longest clip), as a 3 px amber bar along
+ * the bottom. A compositor animation of its scaleX runs it (see ProgressAnimator); data-progress
+ * shows it. Its own layer, so moving it repaints nothing else.
+ */
+.scene::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--amber);
+  transform: scaleX(0);
+  transform-origin: left;
+  opacity: 0;
+  will-change: transform;
+  pointer-events: none;
+}
+.scene[data-progress]::after {
+  opacity: 1;
 }
 .sceneLit {
   border-color: var(--amber);
@@ -463,8 +858,57 @@
   white-space: nowrap;
 }
 .sceneCount {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-ui);
   font-size: var(--fs-xs);
   color: var(--ink-3);
+}
+
+/* Under the grid: the pad actions, and under the scene column a quiet key that adds a scene (up to 8). */
+.bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+.bottom[data-add] {
+  grid-template-columns: minmax(0, 1fr) 104px;
+}
+.bottomBar {
+  min-width: 0;
+}
+.bottom > span:has(> .addScene) {
+  display: grid;
+}
+.addScene {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.addScene:hover:not(:disabled) {
+  border-style: solid;
+  background: var(--shell-hi);
+  color: var(--ink);
+  box-shadow: var(--shadow-raised);
+}
+.addScene:disabled {
+  opacity: 0.55;
+}
+.addScene:focus-visible {
+  box-shadow: var(--focus-ring);
 }
 
 /* ---------- Selected pad actions ---------- */
@@ -482,6 +926,32 @@
 .actions[data-moving] {
   border-color: var(--teal);
   background: var(--teal-wash);
+}
+/* While a performance take records: one coral line where the keys were. */
+.actions[data-locked] {
+  border-color: color-mix(in srgb, var(--coral) 40%, transparent);
+  background: var(--coral-wash);
+}
+.lockLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--coral-ink);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.lockDot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 5px var(--coral-glow);
 }
 .actionsText {
   display: flex;
@@ -534,9 +1004,44 @@
     grid-template-columns: repeat(8, minmax(0, 1fr)) 92px;
     gap: 6px;
   }
+  .bottom {
+    gap: 6px;
+  }
+  .bottom[data-add] {
+    grid-template-columns: minmax(0, 1fr) 92px;
+  }
+  .head {
+    box-shadow: 0 6px 0 var(--surface);
+  }
+}
+/*
+ * A short, wide window (a laptop browser's 657 px, 1280 x 720; narrower windows scroll the page): smaller rows, so more of them show. The pads drop
+ * their length line (LoopsGrid), and a scene's play mark sits beside its name.
+ */
+@media (max-height: 740px) and (min-width: 1024px) {
+  .grid {
+    --row-min: 56px;
+  }
+  .scene {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-content: center;
+    column-gap: 5px;
+    row-gap: 0;
+    /* The name's line keeps clear of the scene's ⋯ key in the top-right corner. */
+    padding: 4px 34px 4px 8px;
+  }
+  .sceneIcon {
+    align-self: center;
+  }
+  .sceneCount {
+    grid-column: 1 / -1;
+  }
 }
 @media (max-width: 1179px) {
-  .grid {
+  .grid,
+  .lift,
+  .rowLift {
     --pad-label-size: var(--fs-md);
   }
 }

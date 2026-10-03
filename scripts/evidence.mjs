@@ -70,6 +70,19 @@ async function tab(page, name) {
     await shot(page, `04-play-${mode.toLowerCase()}-1366`);
   }
   await tab(page, 'Loops');
+  // A clip pad mid-drag: lifted, over the next pad of its part, which previews the swap (Esc cancels).
+  {
+    const from = await page.locator('#pad-t3-1').boundingBox();
+    const to = await page.locator('#pad-t3-2').boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2 + 6, { steps: 16 });
+    await page.waitForTimeout(300);
+    await shot(page, '24-play-pad-drag-1366');
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+  }
   // The Mix view (Simple): a channel strip per part, the master and mastering; then a mastering preset.
   await tab(page, 'Mix');
   await shot(page, '17-mix-1366');
@@ -84,6 +97,31 @@ async function tab(page, name) {
   await shot(page, '05-shape-cables-1366');
   await tab(page, 'Arrange');
   await shot(page, '06-arrange-1366');
+  // The song lane while the song plays, with Drums switched off in block 2; then block 4 lifted
+  // mid-drag towards position 2 (the blocks in between slide aside), cancelled with Esc.
+  await page.getByRole('button', { name: /^Drums in .+ \(block 2\): plays/ }).click();
+  // A narrow block shows its ▶ on hover; with the pads playing, the mode box also offers Play the song.
+  await page.locator('[data-block-id]').first().hover();
+  const fromBlock1 = page.getByRole('button', { name: /^Play song from block 1/ });
+  if (await fromBlock1.isVisible().catch(() => false)) await fromBlock1.click();
+  else await page.getByRole('button', { name: /Play the song/ }).click();
+  await page.waitForTimeout(2500);
+  await shot(page, '22-arrange-song-playing-1366');
+  {
+    const blocks = page.locator('[data-block-id]');
+    const b = await blocks.nth(3).boundingBox();
+    const a = await blocks.nth(1).boundingBox();
+    await page.mouse.move(b.x + 40, b.y + 14);
+    await page.mouse.down();
+    await page.mouse.move(b.x + 30, b.y + 14, { steps: 4 });
+    await page.mouse.move(a.x + 20, b.y + 14, { steps: 24 });
+    await page.waitForTimeout(400);
+    await shot(page, '23-arrange-drag-1366');
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+  }
+  await page.keyboard.press('Shift+Space');
+  await page.waitForTimeout(300);
   await tab(page, 'Play');
   // The cable panel, opened from the Play view's drawer.
   await page.getByRole('region', { name: 'Cables drawer' }).getByRole('button', { expanded: false }).click();

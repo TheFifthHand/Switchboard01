@@ -36,6 +36,16 @@ export const MIGRATIONS: readonly MigrationStep[] = [
       return d;
     },
   },
+  {
+    from: 2,
+    // Every addition of version 3 is optional or a wider range, so a version-2
+    // project is already a valid version-3 project and plays exactly as before.
+    // The bump exists so that older builds refuse version-3 projects (which may
+    // hold 5 to 8 scenes, clips of 5 to 8 bars, per-clip recordings, song moves
+    // and designed macro positions) instead of silently dropping that data.
+    description: 'Allow up to 8 scenes, clips of up to 8 bars, per-clip recordings, song moves and designed macro positions (all optional: nothing changes).',
+    migrate: (d) => d,
+  },
 ];
 
 export type MigrateResult = { ok: true; data: any; migrated: boolean } | { ok: false; error: string };

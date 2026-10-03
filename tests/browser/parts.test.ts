@@ -124,13 +124,13 @@ describe('Part menu', () => {
     expect(document.activeElement).toBe(main);
   });
 
-  it('right-click on a header opens the menu; Lock toggles the part lock', () => {
+  it('right-click on a header opens the menu; Keep pattern toggles the part lock (Variation leaves it alone)', () => {
     mountGrid();
     const header = document.querySelector<HTMLButtonElement>('button[aria-label^="Select Chords"]')!.parentElement!;
     const r = header.getBoundingClientRect();
     fire(header, new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: r.left + 20, clientY: r.top + 10 }));
     expect(menu()!.getAttribute('aria-label')).toBe('Part Chords');
-    const lock = item('Lock against Variation');
+    const lock = item('Keep pattern (no Variation)');
     expect(lock.getAttribute('aria-checked')).toBe('false');
     click(lock);
     expect(track('t4').locked).toBe(true);
@@ -144,7 +144,7 @@ describe('Part menu', () => {
     expect(menu()).toBeNull();
     const d = dialog()!;
     expect(d.getAttribute('aria-labelledby')).toBeTruthy();
-    expect(d.textContent).toContain('Sound for Chords');
+    expect(d.textContent).toContain('Change instrument: Chords');
     const before = track('t4').instrument;
     expect(before.kind).toBe('poly');
     // Current sound is marked and focused.
@@ -308,7 +308,7 @@ describe('Part panel sound selector', () => {
     expect(btn.getAttribute('aria-label')).toContain('Bass synth');
     expect(btn.textContent).toBe('Change instrument');
     click(btn);
-    expect(dialog()!.textContent).toContain('Sound for Bass');
+    expect(dialog()!.textContent).toContain('Change instrument: Bass');
     // The Bass category is preselected for a bass part.
     expect(dialog()!.querySelector('[role="tab"][aria-selected="true"]')!.textContent).toContain('Bass');
     click([...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Done')!);
@@ -387,15 +387,18 @@ describe('Part panel macros and Variation', () => {
     expect(runtimeStore.getState().notice).toMatchObject({ tone: 'warn', text: 'Slot 1 of Bass is empty. Select a clip with notes: Variation changes a pattern.' });
   });
 
-  it('with nothing selected yet, Variation changes the playing clip', () => {
+  it('a part selected with no clip chosen yet gets its playing clip: the ring, Variation and Steps all act on it', () => {
     act(() => {
-      selectTrack('t3');
+      selectTrack('t1');
       uiStore.setState((s) => {
         const { t3: _drop, ...rest } = s.selectedSlot;
         return { ...s, selectedSlot: rest };
       });
       patchRuntime({ playing: true, tracks: { ...runtimeStore.getState().tracks, t3: { playingSlot: 2, queued: null } } });
+      // Selecting the part chooses its slot (selection.ts): the clip it plays.
+      selectTrack('t3');
     });
+    expect(uiStore.getState().selectedSlot.t3).toBe(2);
     mountPanel();
     const rolling = notes(2);
     click(variation());

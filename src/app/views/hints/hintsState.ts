@@ -3,8 +3,10 @@
  * localStorage (every access guarded: storage can be missing or throw), never
  * part of the project and never undoable.
  *
- * - `started`: hints were offered (after the first Jump In, or "Show hints
- *   again" in the Project library).
+ * - `started`: hints were offered (for the first project, or "Show hints
+ *   again" in Help or the Project library).
+ * - `song`: the song track was offered (Arrange opened while hints run); its
+ *   steps come first from then on.
  * - `hidden`: the person closed them; they stay closed until shown again.
  * - `done`: steps done by doing them, or passed over with "Next hint".
  * - `finished`: the closing message was dismissed.
@@ -14,7 +16,8 @@ import type { KeyValueStorage } from '../../../state/uiStore';
 
 export const HINTS_STORAGE_KEY = 'omnisong.hints';
 
-export const HINT_IDS = ['pad', 'mute', 'drag', 'tone', 'instrument', 'master', 'record'] as const;
+/** The basics track, then the song track (see steps.ts). */
+export const HINT_IDS = ['pad', 'mute', 'drag', 'tone', 'instrument', 'master', 'record', 'song-play', 'song-repeats', 'song-part', 'song-export'] as const;
 export type HintId = (typeof HINT_IDS)[number];
 
 export interface HintsState {
@@ -22,9 +25,11 @@ export interface HintsState {
   hidden: boolean;
   done: readonly HintId[];
   finished: boolean;
+  /** The song track was offered (Arrange opened while the hints ran). Absent in older stored state: no. */
+  song?: boolean;
 }
 
-export const INITIAL_HINTS: HintsState = { started: false, hidden: false, done: [], finished: false };
+export const INITIAL_HINTS: HintsState = { started: false, hidden: false, done: [], finished: false, song: false };
 
 function defaultStorage(): KeyValueStorage | null {
   try {
@@ -44,7 +49,7 @@ export function readHints(storage: KeyValueStorage | null): HintsState {
     if (typeof v !== 'object' || v === null) return INITIAL_HINTS;
     const o = v as Record<string, unknown>;
     const done = Array.isArray(o.done) ? HINT_IDS.filter((id) => (o.done as unknown[]).includes(id)) : [];
-    return { started: o.started === true, hidden: o.hidden === true, done, finished: o.finished === true };
+    return { started: o.started === true, hidden: o.hidden === true, done, finished: o.finished === true, song: o.song === true };
   } catch {
     return INITIAL_HINTS;
   }
@@ -69,7 +74,7 @@ export function createHintsStore(storage: KeyValueStorage | null = defaultStorag
 /** The app's hints store. */
 export const hintsStore: HintsStore = createHintsStore();
 
-/** Offer hints (after Jump In). Does nothing once they were offered, hidden or finished. */
+/** Offer hints (for the first project: Jump In, a starter, Blank, Just look around). Does nothing once they were offered, hidden or finished. */
 export function startHints(store: HintsStore = hintsStore): void {
   store.setState((s) => (s.started ? s : { ...s, started: true }));
 }
@@ -89,9 +94,14 @@ export function finishHints(store: HintsStore = hintsStore): void {
   store.setState((s) => (s.finished ? s : { ...s, finished: true }));
 }
 
+/** Arrange opened while the hints run: the song track becomes current (once). */
+export function startSongHints(store: HintsStore = hintsStore): void {
+  store.setState((s) => (s.song || !hintsRunning(s) ? s : { ...s, song: true }));
+}
+
 /** Start the hints again from the first step. */
 export function showHintsAgain(store: HintsStore = hintsStore): void {
-  store.setState({ started: true, hidden: false, done: [], finished: false });
+  store.setState({ started: true, hidden: false, done: [], finished: false, song: false });
 }
 
 /** True while the hints have something to show (whether or not they are on screen right now). */

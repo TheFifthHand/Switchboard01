@@ -6,9 +6,13 @@
  *   mix mod ─> worklet 'mix' AudioParam (clamped to 0..1 by its range)
  *
  * Depth sweeps the delay from 0.3 ms up to 8 ms (exponentially, so the
- * notches move evenly in pitch); left and right sweep 90° apart. Feedback is
- * bounded at 0.85 and damped, so the sound never runs away; Mute All clears
- * the delay line.
+ * notches move evenly in pitch); left and right sweep 90° apart. Mix blends
+ * dry and wet with an equal-power law (dry cos, wet sin) and a slow level
+ * match inside the processor (FLANGER_MATCH_TAU): the swept copy adds in
+ * phase with bass but not with brighter sound, so no fixed law keeps every
+ * part's level; the match does, within about 1 dB, while the notches still
+ * move. Feedback is bounded at 0.85 and damped, so the sound never runs
+ * away; Mute All clears the delay line (and what the match measured).
  */
 import { FLANGER_PARAMS, readParam } from '../../project/params';
 import type { Id, ParamValues } from '../../project/types';

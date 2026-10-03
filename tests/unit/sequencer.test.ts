@@ -4,6 +4,7 @@ import type { SeqEvent } from '../../src/time/contracts';
 import { Sequencer, nextBarTick, type NoteEvent } from '../../src/time/sequencer';
 import { makeSnapshot } from '../../src/time/snapshot';
 import { Holder, effectiveEnds, makeClip, makeProject, notesOf, ofKind, runTo, sec, setClip } from './sequencer-fixtures';
+import { DEFAULT_LOOKAHEAD as LOOKAHEAD } from '../../src/time/transport';
 
 const SIXTEENTHS = Array.from({ length: 16 }, (_, i) => [i * 24, 60 + (i % 4)] as [number, number]);
 
@@ -599,7 +600,7 @@ describe('Sequencer: pause and resume', () => {
    * rest of the look-ahead), plus everything after the resume.
    */
   function heardWithPause(seq: Sequencer, t0: number, pauseAt: number, resumeAt: number, until: number) {
-    const before = runTo(seq, t0, pauseAt + 0.12);
+    const before = runTo(seq, t0, pauseAt + LOOKAHEAD);
     expect(seq.pause(pauseAt)).toBe(true);
     // Nothing is generated while paused, however long the pause lasts.
     expect(seq.process(resumeAt - 0.001)).toEqual([]);
@@ -676,7 +677,7 @@ describe('Sequencer: pause and resume', () => {
     seq.start(0);
     runTo(seq, 0, sec(300));
     expect(seq.launchClip('t4', 1, sec(300)).atTick).toBe(384);
-    runTo(seq, sec(300), sec(350) + 0.12);
+    runTo(seq, sec(300), sec(350) + LOOKAHEAD);
     expect(seq.pause(sec(350))).toBe(true);
     expect(seq.getTrackState('t4')).toMatchObject({ playing: { slot: 0 }, queued: { slot: 1, atTick: 384 } });
     seq.resume(10);
@@ -747,7 +748,7 @@ describe('Sequencer: pause and resume', () => {
     p.arrangement = { tailSeconds: 1, blocks: [{ id: 'a', sceneId: p.scenes[0].id, repeats: 1 }, { id: 'b', sceneId: p.scenes[1].id, repeats: 2 }] };
     const seq = new Sequencer({ getProject: () => p });
     seq.start(0, { mode: { kind: 'song', fromBlock: 0 } });
-    runTo(seq, 0, sec(1000) + 0.12);
+    runTo(seq, 0, sec(1000) + LOOKAHEAD);
     expect(seq.pause(sec(1000))).toBe(true); // block b, second bar of the 2-bar pad
     expect(seq.mode).toEqual({ kind: 'song', fromBlock: 0 });
     seq.resume(20);
@@ -795,7 +796,7 @@ describe('Sequencer: pause and resume', () => {
     const seq = new Sequencer({ getProject: () => p });
     seq.start(0, { mode: { kind: 'replay', performanceId: 'perf1' } });
     const pauseAt = sec(600) + sec(400, 60); // tick 1000, at 60 BPM since 600
-    runTo(seq, 0, pauseAt + 0.12);
+    runTo(seq, 0, pauseAt + LOOKAHEAD);
     expect(seq.pause(pauseAt)).toBe(true);
     expect(seq.getPosition(0).tick).toBeCloseTo(1000, 6);
     seq.resume(50);
@@ -880,7 +881,7 @@ describe('Sequencer: the launcher follows moved clips', () => {
     const seq = new Sequencer({ getProject: h.get });
     seq.launchClip('t4', 0, 0);
     seq.start(0);
-    const first = runTo(seq, 0, sec(100) + 0.12);
+    const first = runTo(seq, 0, sec(100) + LOOKAHEAD);
     seq.launchClip('t4', 1, sec(100)); // queued for 384
     // A moves to another part at tick 100; B moves too (both left t4).
     h.project = setClip(setClip(h.project, 't4', 0, null), 't4', 1, null);

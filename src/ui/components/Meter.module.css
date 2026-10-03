@@ -1,15 +1,23 @@
+/*
+ * One meter = a contained box (the meter's own colour) holding one canvas, where the segments
+ * are drawn: amber, light amber from −12 dBFS, coral from −3, unlit segments in --seg-off. The
+ * gaps between them are left clear, so the box's colour shows through. The colours come from
+ * the theme tokens here.
+ */
 .meter {
   --thickness: 8px;
-  --gap: 2px;
+  --meter-bg: #cbd0d4;
+  --seg-off: #b6bcc2;
   display: inline-flex;
   align-items: stretch;
   gap: 3px;
   padding: 3px;
   border-radius: 4px;
-  background: #cbd0d4;
+  background: var(--meter-bg);
   box-shadow:
     inset 0 1px 2px rgba(20, 24, 28, 0.24),
     0 1px 0 rgba(255, 255, 255, 0.7);
+  contain: strict;
 }
 
 .meter[data-orientation='horizontal'] {
@@ -24,67 +32,129 @@
   height: 100%;
 }
 
-.track {
-  display: flex;
-  flex: 1 1 auto;
-  gap: var(--gap);
+.bar {
+  display: block;
+  /* Its size comes from the box, never from the canvas's own pixel size. */
+  flex: 1 1 0;
+  width: 100%;
   min-width: 0;
+  height: 100%;
   min-height: 0;
 }
 
-.meter[data-orientation='vertical'] .track {
-  flex-direction: column-reverse;
+.meter[data-orientation='horizontal'] .bar {
+  width: auto;
 }
 
-.seg {
-  flex: 1 1 0;
-  min-width: 1px;
-  min-height: 1px;
-  border-radius: 1px;
-  background: #b6bcc2;
-  box-shadow: inset 0 0.5px 0.5px rgba(20, 24, 28, 0.18);
+.meter[data-orientation='vertical'] .bar {
+  height: auto;
 }
 
-.seg[data-on='1'][data-band='lo'] {
-  background: var(--amber);
-  box-shadow: 0 0 3px rgba(242, 166, 52, 0.45);
-}
-
-.seg[data-on='1'][data-band='mid'] {
-  background: var(--amber-hi);
-  box-shadow: 0 0 3px rgba(246, 197, 107, 0.55);
-}
-
-.seg[data-on='1'][data-band='hi'] {
-  background: var(--coral);
-  box-shadow: 0 0 3px var(--coral-glow);
-}
-
+/*
+ * The clip lamp: its own cap beyond the bar (a gap apart), drawn as an outlined lamp, never as a
+ * segment. When the signal has reached full scale it lights white-hot inside a coral ring, unlike
+ * the flat coral of the top segments; aria-valuetext says "clipping" too.
+ */
 .clip {
   position: relative;
   flex: none;
-  border-radius: 1px;
-  background: #b6bcc2;
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px #a2a9b0;
 }
 
 .meter[data-orientation='horizontal'] .clip {
   width: calc(var(--thickness) * 1.4);
+  margin-left: 1px;
 }
 
 .meter[data-orientation='vertical'] .clip {
   height: calc(var(--thickness) * 1.2);
+  margin-bottom: 1px;
 }
 
 .clip[data-on='1'] {
-  background: var(--coral);
-  box-shadow: 0 0 6px var(--coral-glow);
+  background: radial-gradient(circle at 50% 50%, #ffffff 0 30%, #ffe3db 55%, var(--coral-hi) 100%);
+  box-shadow: inset 0 0 0 1.5px var(--coral-key);
 }
 
-.clipText {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
+/* ---------- with the peak-hold number ---------- */
+
+.withPeak {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.withPeak[data-orientation='vertical'] {
+  flex-direction: column;
+  height: 100%;
+}
+
+.withPeak[data-orientation='horizontal'] {
+  flex-direction: row;
+  width: 100%;
+}
+
+.withPeak > .meter {
+  flex: 1 1 auto;
+}
+
+.withPeak[data-orientation='vertical'] > .meter {
+  height: auto;
+}
+
+.withPeak[data-orientation='horizontal'] > .meter {
+  width: auto;
+}
+
+/* A small number: it takes 16 px of the layout, but its box is a full 32 x 32 px press target. */
+.peakValue {
+  position: relative;
+  flex: none;
+  min-width: var(--hit);
+  height: 32px;
+  margin: -8px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: center;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.withPeak[data-orientation='horizontal'] > .peakValue {
+  margin: 0;
+  height: var(--hit);
+}
+
+.peakValue:hover {
+  color: var(--ink);
+}
+
+.peakValue:hover .peakText {
+  background: rgba(20, 24, 28, 0.06);
+}
+
+.peakValue[data-hot] {
+  color: var(--coral-ink);
+  font-weight: var(--fw-semibold);
+}
+
+.peakValue[data-hot] .peakText {
+  background: var(--coral-wash);
+}
+
+.peakText {
+  display: inline-block;
+  padding: 0 2px;
+  border-radius: 3px;
 }

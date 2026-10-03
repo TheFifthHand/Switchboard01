@@ -88,21 +88,57 @@
   pointer-events: none;
 }
 
-/* The light: an LED under the lower edge of the silicone. It pools up from
-   the bottom (a bright rim, a soft contained falloff) and leaves the legend
-   crisp on pale silicone. */
+/* The light: an even wash of the pad's colour over the whole silicone, with a
+   brighter rim, so a large pad looks lit (not smudged) and the legend stays
+   crisp. */
 .light {
   position: absolute;
-  left: 50%;
-  bottom: -46%;
-  width: 118%;
-  height: 112%;
-  border-radius: 50%;
-  background: radial-gradient(closest-side, rgba(var(--core), 0.95) 0%, rgba(var(--lc), var(--mid)) 34%, rgba(var(--lc), 0.2) 64%, rgba(var(--lc), 0.05) 86%, rgba(var(--lc), 0) 100%);
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(var(--lc), 0.2);
+  box-shadow: inset 0 0 0 1.5px rgba(var(--lc), 0.5);
   opacity: 0;
-  transform: translateX(-50%);
   transition: opacity 180ms var(--ease);
   pointer-events: none;
+}
+
+/*
+ * Loop progress: a 3 px bar along the bottom, scaled by --loop-progress (0..1),
+ * which the caller writes from an animation-frame loop. Until it is written the
+ * bar does not show (the registered default is -1).
+ */
+@property --loop-progress {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: -1;
+}
+
+.progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(var(--lc), 0.22);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.progress::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgb(var(--lc));
+  transform: scaleX(clamp(0, var(--loop-progress), 1));
+  transform-origin: left;
+  will-change: transform;
+}
+
+.pad[data-state='playing'] .progress,
+.pad[data-state='recording'] .progress,
+.pad[data-state='queued'] .progress,
+.pad[data-state='stopping'] .progress {
+  opacity: clamp(0, calc((var(--loop-progress) + 1) * 1000), 1);
 }
 
 .pad[data-state='playing'] .light,
@@ -157,11 +193,11 @@
 @media (prefers-reduced-motion: reduce) {
   .pad[data-state='queued'] .light {
     animation: none;
-    opacity: 0.4;
+    opacity: 0.45;
   }
   .pad[data-state='stopping'] .light {
     animation: none;
-    opacity: 0.5;
+    opacity: 0.6;
   }
 }
 
@@ -180,6 +216,7 @@
   color: var(--ink-2);
 }
 
+/* The face is a size container: what fits (a sketch, a larger name) follows the pad's own size. */
 .face {
   position: absolute;
   inset: 0;
@@ -188,6 +225,7 @@
   justify-content: space-between;
   padding: 7px 8px 6px;
   pointer-events: none;
+  container: pad-face / size;
 }
 
 .pad[data-state='empty'] .face {
@@ -217,6 +255,28 @@
 .pad[data-corner] .text {
   padding-right: 30px;
 }
+/*
+ * Beside that key a large name may use two lines ("Bell / Hook" rather than
+ * "Bell H…"). The text block holds two name lines: a one-line name keeps the
+ * length under it; a name that needs both lines hides the length (the selected
+ * clip's length is also in the pad actions under the grid).
+ */
+.pad[data-corner][data-label='lg'] .text {
+  max-height: 36px;
+  overflow: hidden;
+}
+.pad[data-corner][data-label='lg'] .text > * {
+  flex: none;
+}
+.pad[data-corner][data-label='lg'] .label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
 
 /* Pads with only a name (drum and note pads) may use two lines. */
 .pad[data-wrap] .label {
@@ -225,6 +285,8 @@
   -webkit-line-clamp: 2;
   white-space: normal;
   overflow-wrap: anywhere;
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 .pad[data-state='empty'] .text {
@@ -232,13 +294,15 @@
   padding-right: 0;
 }
 
+/* A name too long for one line fades out at its end (no "…"); the pad's title has it whole. */
 .label {
   overflow: hidden;
   font-size: var(--fs-sm);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   line-height: 15px;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 14px), transparent);
 }
 
 .pad[data-size='lg'] .label {
@@ -247,7 +311,9 @@
 
 .pad[data-state='empty'] .label {
   font-size: var(--fs-xs);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 .sublabel {
@@ -271,7 +337,7 @@
   margin-right: -6px;
   color: var(--ink-3);
   font-size: var(--fs-xs);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
   line-height: 14px;
   white-space: nowrap;
 }
@@ -287,7 +353,7 @@
 .pad[data-state='playing'] .caption,
 .pad[data-state='queued'] .caption {
   color: var(--amber-ink);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 .pad[data-light='teal'][data-state='playing'] .caption,
@@ -297,7 +363,7 @@
 
 .pad[data-state='recording'] .caption {
   color: var(--coral-ink);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 .pad[data-state='stopping'] .caption {
@@ -352,6 +418,48 @@
 .pad[data-label='lg'] .caption {
   font-size: var(--fs-sm);
   line-height: 15px;
+}
+
+/* The content sketch fills the pad's empty middle; on short pads there is no room for it. */
+.sketch {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 5px 0 4px;
+  color: var(--ink-3);
+  opacity: 0.7;
+}
+
+.pad[data-state='playing'] .sketch,
+.pad[data-state='queued'] .sketch {
+  color: var(--amber-ink);
+}
+
+.pad[data-state='recording'] .sketch {
+  color: var(--coral-ink);
+}
+
+.sketch > * {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+@container pad-face (max-height: 99.98px) {
+  .sketch {
+    display: none;
+  }
+}
+
+/* Large pads (a big screen): the clip name steps up. */
+@container pad-face (min-width: 150px) and (min-height: 120px) {
+  .pad[data-label='lg'] .label {
+    font-size: var(--fs-2xl);
+    line-height: 21px;
+  }
+  .pad[data-corner][data-label='lg'] .text {
+    max-height: 42px;
+  }
 }
 
 /* Quiet empty pads: a faint outline and "+"; "Add clip" (the label) shows on hover and keyboard focus. */

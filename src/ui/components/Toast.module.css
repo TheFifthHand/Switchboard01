@@ -64,7 +64,7 @@
 }
 
 .title {
-  font-weight: 620;
+  font-weight: var(--fw-semibold);
   line-height: 18px;
 }
 
@@ -86,7 +86,7 @@
     0 1px 1px rgba(20, 24, 28, 0.1);
   color: var(--ink);
   font-size: var(--fs-sm);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   white-space: nowrap;
 }
 
@@ -113,10 +113,23 @@
 }
 
 /* ---------- toasts ---------- */
+/*
+ * Toasts never cover what is being played or chosen. Every view keeps its playing surfaces
+ * (keyboard, pads, drum and note lanes, faders, the song lane) in the body and at the bottom,
+ * and its headers at the top, so the stack always sits at the top centre, just under the
+ * transport (--transport-h, written by the TransportBar on document.documentElement: the toasts
+ * render into body, outside the app's own tree, so a value set on an app element would never
+ * reach them):
+ * - while a menu is open (a Popover sets body[data-popover-open]) the stack goes below menus, so
+ *   an open menu is never covered and the toast keeps its Undo;
+ * - while a modal dialog is open (body[data-modal-open]) their action keys hide: an Undo must not
+ *   change the project under a dialog (an export, for one). Ctrl+Z still works where it applies.
+ * The region passes the pointer through; only the cards take it.
+ */
 .viewport {
   position: fixed;
   left: 50%;
-  bottom: 18px;
+  top: calc(var(--transport-h, 56px) + 8px);
   z-index: 950;
   display: flex;
   flex-direction: column;
@@ -125,6 +138,19 @@
   width: min(520px, calc(100vw - 32px));
   transform: translateX(-50%);
   pointer-events: none;
+}
+
+body[data-popover-open] .viewport {
+  z-index: 840;
+}
+
+/* While the stack measures what lies under it (Toast.tsx placeClearOfControls). */
+.viewport[data-measuring] .toast {
+  pointer-events: none;
+}
+
+body[data-modal-open] .toast .action {
+  display: none;
 }
 
 .toast {
@@ -176,7 +202,7 @@
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
   color: #ffffff;
   font-size: var(--fs-md);
-  font-weight: 620;
+  font-weight: var(--fw-semibold);
   white-space: nowrap;
 }
 
@@ -197,6 +223,6 @@
 @keyframes toastIn {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(-8px);
   }
 }

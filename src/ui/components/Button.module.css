@@ -27,7 +27,7 @@
   box-shadow: var(--btn-shadow);
   color: var(--ink);
   font-size: var(--fs-md);
-  font-weight: 560;
+  font-weight: var(--fw-medium);
   line-height: 1;
   letter-spacing: 0.005em;
   white-space: nowrap;
@@ -45,6 +45,13 @@
   --px: 11px;
   gap: 6px;
   font-size: var(--fs-sm);
+}
+
+/* Nothing clickable is smaller than 32 x 32 px, whatever a view sets on a small key. */
+.button[data-size='sm'],
+.button[data-size='sm'].iconOnly {
+  min-width: var(--hit);
+  min-height: var(--hit);
 }
 
 .button[data-size='lg'] {
@@ -78,11 +85,17 @@
   --tone-wash: var(--coral-wash);
 }
 
-.button:hover:not(:disabled) {
+/*
+ * Hover and press only change keys that are off: a key that is on (pressed or
+ * lit) keeps its on-look under the pointer, while pressed and with keyboard
+ * focus, in every variant (the variants' on-rules below never compete with a
+ * hover or active rule).
+ */
+.button:hover:not(:disabled):not([data-on]):not([aria-disabled='true']) {
   --btn-bg: linear-gradient(180deg, #ffffff 0%, #f5f6f7 55%, #eceef0 100%);
 }
 
-.button:active:not(:disabled),
+.button:active:not(:disabled):not([data-on]):not([aria-disabled='true']),
 .button[data-on] {
   --btn-bg: linear-gradient(180deg, #e6e9eb 0%, #eef0f1 60%, #f1f2f3 100%);
   --btn-shadow:
@@ -91,7 +104,7 @@
     0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
-.button:active:not(:disabled) {
+.button:active:not(:disabled):not([aria-disabled='true']) {
   transform: translateY(0.5px);
 }
 
@@ -125,11 +138,11 @@
   color: #f7f6f2;
 }
 
-.button[data-variant='primary']:hover:not(:disabled) {
+.button[data-variant='primary']:hover:not(:disabled):not([data-on]):not([aria-disabled='true']) {
   --btn-bg: linear-gradient(180deg, #4a5058 0%, #373b42 55%, #2d3136 100%);
 }
 
-.button[data-variant='primary']:active:not(:disabled),
+.button[data-variant='primary']:active:not(:disabled):not([data-on]):not([aria-disabled='true']),
 .button[data-variant='primary'][data-on] {
   --btn-bg: linear-gradient(180deg, #25282c 0%, #2e3237 100%);
   --btn-shadow:
@@ -144,12 +157,12 @@
   color: var(--ink-2);
 }
 
-.button[data-variant='ghost']:hover:not(:disabled) {
+.button[data-variant='ghost']:hover:not(:disabled):not([data-on]):not([aria-disabled='true']) {
   --btn-bg: rgba(20, 24, 28, 0.06);
   color: var(--ink);
 }
 
-.button[data-variant='ghost']:active:not(:disabled) {
+.button[data-variant='ghost']:active:not(:disabled):not([data-on]):not([aria-disabled='true']) {
   --btn-bg: rgba(20, 24, 28, 0.1);
   --btn-shadow: 0 0 0 0 transparent;
 }
@@ -163,7 +176,7 @@
 /* ---------- transport: squarer hardware key ---------- */
 .button[data-variant='transport'] {
   border-radius: 6px;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 .button[data-variant='transport'][data-on] .icon {
@@ -175,17 +188,22 @@
   color: var(--coral-ink);
 }
 
-.button[data-variant='danger']:hover:not(:disabled) {
+.button[data-variant='danger']:hover:not(:disabled):not([data-on]):not([aria-disabled='true']) {
   --btn-bg: linear-gradient(180deg, #fffaf8 0%, #fbeeea 100%);
 }
 
+.button[data-variant='danger']:active:not(:disabled):not([data-on]):not([aria-disabled='true']) {
+  --btn-bg: linear-gradient(180deg, #f8ebe7 0%, #fbf1ee 100%);
+}
+
+/* Engaged (Mute All): a deep coral key; its white legend reads at 4.5:1 or better on every stop. */
 .button[data-variant='danger'][data-on] {
-  --btn-bg: linear-gradient(180deg, #e46d55 0%, #d65a42 60%, #cf533b 100%);
+  --btn-bg: linear-gradient(180deg, var(--coral-key) 0%, #bf452d 60%, #b9412a 100%);
   --btn-shadow:
-    0 0 0 1px #b2432e,
+    0 0 0 1px #9e3824,
     inset 0 1px 2px rgba(120, 30, 14, 0.35),
     0 0 10px var(--coral-glow);
-  color: #fff8f5;
+  color: #ffffff;
 }
 
 .button[data-variant='danger'][data-on] .led {

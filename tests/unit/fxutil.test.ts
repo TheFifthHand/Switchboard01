@@ -9,7 +9,9 @@ import {
   SHAPER_CURVE_POINTS,
   SHAPER_DOMAIN,
   driveGain,
+  DRIVE_REF_RMS,
   driveMakeup,
+  driveRmsGain,
   driveTransfer,
   driveWetFade,
   generateImpulse,
@@ -154,8 +156,45 @@ describe('drive curves', () => {
     expect(driveWetFade(0)).toBe(0);
     expect(driveWetFade(1 / 16)).toBeCloseTo(0.5, 12);
     expect(driveWetFade(0.5)).toBe(1);
-    expect(driveMakeup(0)).toBeCloseTo(1.03, 2);
-    expect(driveMakeup(1)).toBeCloseTo(0.3, 3);
+    // The RMS trim: unity small-signal gain at Drive 0, a real cut at full drive.
+    for (const c of [0, 1, 2]) {
+      expect(driveMakeup(0, c)).toBeGreaterThan(0.98);
+      expect(driveMakeup(0, c)).toBeLessThan(1.05);
+      expect(driveMakeup(1, c)).toBeLessThan(0.2);
+    }
+    expect(driveMakeup(0.5)).toBe(driveMakeup(0.5, 0));
+  });
+
+  it('the trim keeps a Gaussian input at −20 dBFS RMS at its level for every character and drive', () => {
+    // Independent check of the integral: seeded Gaussian noise through the curve.
+    let seed = 12345;
+    const rnd = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return (seed + 0.5) / 4294967296;
+    };
+    const n = 40000;
+    const x = new Float64Array(n);
+    for (let i = 0; i < n; i += 2) {
+      const r = Math.sqrt(-2 * Math.log(rnd()));
+      const th = 2 * Math.PI * rnd();
+      x[i] = DRIVE_REF_RMS * r * Math.cos(th);
+      x[i + 1] = DRIVE_REF_RMS * r * Math.sin(th);
+    }
+    let inSq = 0;
+    for (const v of x) inSq += v * v;
+    for (const c of [0, 1, 2]) {
+      for (const d of [0.1, 0.3, 0.6, 1]) {
+        const g = driveGain(d);
+        let outSq = 0;
+        for (const v of x) {
+          const y = driveTransfer(c, g * v) * driveMakeup(d, c);
+          outSq += y * y;
+        }
+        const db = 10 * Math.log10(outSq / inSq);
+        expect(Math.abs(db), `character ${c}, drive ${d}`).toBeLessThan(0.15);
+      }
+    }
+    expect(driveRmsGain(0, 0)).toBeCloseTo(1, 1);
   });
 
   it('control curves clamp their input to 0..1 before mapping', () => {

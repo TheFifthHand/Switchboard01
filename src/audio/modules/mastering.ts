@@ -30,6 +30,10 @@ import { PARAM_SMOOTHING } from './types';
 export const MASTER_LOW_CUT_OFF = 10;
 /** Corner of the Air shelf. */
 export const MASTER_AIR_HZ = 14000;
+/** Glide of the A/B level match (seconds). */
+export const COMPARE_TRIM_TAU = 0.03;
+/** When a comparison ends, the trim returns to unity this long after (the un-mastered path has faded out by then). */
+export const COMPARE_RELEASE_HOLD = 10 * BYPASS_TAU;
 /** Q of the wide Mids band. */
 export const MASTER_MID_Q = 0.7;
 /** 4th-order Butterworth as two biquads (linear Q). */
@@ -55,6 +59,9 @@ export class MasteringChain {
   readonly output: GainNode;
   private readonly ctx: BaseAudioContext;
   private readonly direct: GainNode;
+  /** Level match of the un-mastered sound during an A/B comparison (unity otherwise). */
+  private readonly compareTrim: GainNode;
+  private trimGain = 1;
   private readonly processed: GainNode;
   private readonly lcDry: GainNode;
   private readonly lcWet: GainNode;
@@ -86,9 +93,11 @@ export class MasteringChain {
     this.input = own(new GainNode(ctx, { channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' }));
     this.output = own(new GainNode(ctx));
     this.direct = own(new GainNode(ctx, { gain: 0 }));
+    this.compareTrim = own(new GainNode(ctx, { gain: 1 }));
     this.processed = own(new GainNode(ctx, { gain: 1 }));
     this.input.connect(this.direct);
-    this.direct.connect(this.output);
+    this.direct.connect(this.compareTrim);
+    this.compareTrim.connect(this.output);
     this.processed.connect(this.output);
 
     // Low cut (crossfaded).
@@ -142,14 +151,44 @@ export class MasteringChain {
     return this.enabled && !this.listenBypass;
   }
 
+  /** True when the project has mastering on (whether or not an A/B comparison bypasses it right now). */
+  get isOn(): boolean {
+    return this.enabled;
+  }
+
   /**
    * A/B listening: hear the mix without mastering without changing the
    * project (exports, which build their own engine, always keep it).
+   * `trimGain` (linear) is applied to the un-mastered sound while the
+   * comparison is on, so both sides can be heard at the same loudness. When
+   * the comparison starts the trim is in place at once (the un-mastered path
+   * is fading in from silence, so nothing jumps); when it ends the trim stays
+   * until that path has faded out, then returns to unity; a new trim while
+   * comparing glides (COMPARE_TRIM_TAU).
    */
-  setListenBypass(on: boolean, time: number): void {
-    if (this.disposed || on === this.listenBypass) return;
+  setListenBypass(on: boolean, time: number, trimGain = 1): void {
+    if (this.disposed) return;
+    const t = Number.isFinite(time) ? Math.max(time, this.ctx.currentTime) : this.ctx.currentTime;
+    const trim = on && this.enabled && Number.isFinite(trimGain) && trimGain > 0 ? trimGain : 1;
+    const g = this.compareTrim.gain;
+    // The direct path is silent before a comparison starts (mastering on) and after this fade.
+    const directSilent = !this.listenBypass && this.enabled;
+    if (on !== this.listenBypass && !on && this.enabled) {
+      // Ending: keep the trim on the fading un-mastered sound, unity once it is gone.
+      if (this.trimGain !== 1) {
+        this.trimGain = 1;
+        g.cancelScheduledValues(t);
+        g.setValueAtTime(1, t + COMPARE_RELEASE_HOLD);
+      }
+    } else if (trim !== this.trimGain) {
+      this.trimGain = trim;
+      g.cancelScheduledValues(t);
+      if (on && directSilent) g.setValueAtTime(trim, t);
+      else g.setTargetAtTime(trim, t, COMPARE_TRIM_TAU);
+    }
+    if (on === this.listenBypass) return;
     this.listenBypass = on;
-    this.route(Number.isFinite(time) ? Math.max(time, this.ctx.currentTime) : this.ctx.currentTime, false);
+    this.route(t, false);
   }
 
   /** Crossfade between the processed and the direct path. */

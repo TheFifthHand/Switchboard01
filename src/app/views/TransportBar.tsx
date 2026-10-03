@@ -7,18 +7,20 @@
  * (it always holds Tips), so every control stays one press away without
  * squeezing the always-visible ones.
  */
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { Button, Icon, IconButton, Knob, Meter, NumberField, SegmentedControl, Tooltip, useRafLoop } from '../../ui/components';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { Button, Icon, Knob, Meter, NumberField, SegmentedControl, Tooltip, useRafLoop } from '../../ui/components';
 import { BPM_SPEC, MASTER_VOLUME_SPEC, SWING_SPEC } from '../../project/params';
 import { setTipsEnabled, setUiMode, setView, type UiMode, type View } from '../../state/uiStore';
 import { session, useAutosave, useHistory, useProject, useUi } from '../instance';
-import { notify, transportWord, useOffline, useRuntime } from '../runtime';
+import { notify, runtimeStore, transportWord, useOffline, useRuntime, type RuntimeState } from '../runtime';
 import { PAUSE_UNAVAILABLE_MESSAGE } from '../session';
 import type { MeterFrame } from '../../audio/contracts';
-import { OfflineMenuItems, OfflineStatus } from './OfflineStatus';
+import { OfflineMenuItems, OfflineMenuStatus, OfflineStatus } from './OfflineStatus';
+import { keysFor } from './hints/shortcuts';
 import { RecordOptions, quantizeCaption, recordOptionsCaption } from './RecordOptions';
 import { MOD_ARIA, MOD_KEY, MenuItem, MenuSeparator, MoreIcon, Popover, anchorFromElement } from './ClipMenu';
 import { DevicesDialog, DevicesKey, midi } from './devices';
+import { songTimelineBar, useSongPlan } from './arrange/songPlan';
 import styles from './TransportBar.module.css';
 
 const VIEW_OPTIONS = [
@@ -37,19 +39,41 @@ const MODE_OPTIONS = [
 export const MASTER_METER_TIP = 'What you hear, left and right. Amber is a healthy level. The red light at the top means the song is close to as loud as it can go, which is normal with a loud mastering preset.';
 export const MASTER_METER_DETAIL = 'Red lights within about 3 dB of full scale. The output limiter still keeps every peak below −1 dBFS, so red does not mean distortion.';
 
-const meterFrame: MeterFrame = { masterPeakL: 0, masterPeakR: 0, masterRms: 0, limiterReductionDb: 0, tracks: [] };
-let meterFrameAt = 0;
-/** One engine read per animation frame, shared by every meter. */
+/** Silence, before audio starts. Read-only. */
+const SILENT_FRAME: MeterFrame = { masterPeakL: 0, masterPeakR: 0, masterRms: 0, limiterReductionDb: 0, tracks: [] };
+/**
+ * The meter frame of this animation frame: one engine read per frame, shared
+ * with every other meter in the app (session.readMetersShared). Read-only.
+ */
 export function readMeterFrame(): MeterFrame {
-  const now = performance.now();
-  if (now - meterFrameAt > 12) {
-    meterFrameAt = now;
-    if (!session.readMeters(meterFrame)) {
-      meterFrame.masterPeakL = meterFrame.masterPeakR = meterFrame.masterRms = 0;
-      meterFrame.tracks = [];
+  return session.readMetersShared() ?? SILENT_FRAME;
+}
+
+/** Nothing sounds and nothing is about to: no part plays a clip or has one queued (a Blank project, a scene with no clips). */
+export function nothingToPlay(s: Pick<RuntimeState, 'tracks'>): boolean {
+  for (const t of Object.values(s.tracks)) if (t.playingSlot !== null || (t.queued !== null && t.queued.slot !== null)) return false;
+  return true;
+}
+/** "Nothing to play yet" waits this long, so the moment between Play and the first clip starting never shows it. */
+const NOTHING_DELAY_MS = 600;
+
+/**
+ * True while the transport plays the pads with nothing sounding or about to
+ * ("Nothing to play yet"), once that has lasted NOTHING_DELAY_MS. The tab's
+ * title reads it too, so its ▶ agrees with the strip.
+ */
+export function useNothingToPlay(): boolean {
+  const silent = useRuntime((s) => s.playing && s.mode === 'live' && nothingToPlay(s));
+  const [empty, setEmpty] = useState(false);
+  useEffect(() => {
+    if (!silent) {
+      setEmpty(false);
+      return;
     }
-  }
-  return meterFrame;
+    const t = window.setTimeout(() => setEmpty(nothingToPlay(runtimeStore.getState())), NOTHING_DELAY_MS);
+    return () => window.clearTimeout(t);
+  }, [silent]);
+  return silent && empty;
 }
 
 /** "3.2" (bar.beat, from 1), or "Count" during a count-in. */
@@ -57,27 +81,42 @@ function positionText(tick: number, bar: number, beat: number): string {
   return tick < 0 ? 'Count' : `${bar + 1}.${beat + 1}`;
 }
 
+/** The transport's position; in song mode on the song timeline as the Arrange lane draws it. */
+function transportPositionText(t: NonNullable<typeof session.transport>): string {
+  const p = t.getPosition();
+  const song = p.tick < 0 ? null : songTimelineBar(p.tick);
+  if (song === null) return positionText(p.tick, p.bar, p.beat);
+  const bar = Math.floor(song + 1e-9);
+  return positionText(p.tick, bar, Math.min(3, Math.floor((song - bar) * 4 + 1e-9)));
+}
+
 /** The current position: Stopped at 1.1, the paused position, or the playhead while playing. */
 function heldPositionText(): string {
   const t = session.transport;
   if (!t || !t.paused) return '1.1';
-  const p = t.getPosition();
-  return positionText(p.tick, p.bar, p.beat);
+  return transportPositionText(t);
 }
 
-/** Bar.beat with the transport's state word above it (Playing / Paused / Stopped / Song / Replay). */
+/**
+ * Bar.beat with the transport's state word above it (Playing / Paused /
+ * Stopped / Song / Replay). Playing with no clip sounding or waiting in any
+ * part (a Blank project, a scene with no clips), it says "Nothing to play
+ * yet" instead: the pads and keys still play, but the transport plays nothing.
+ */
 function Position() {
   const ref = useRef<HTMLSpanElement>(null);
   const playing = useRuntime((s) => s.playing);
   const paused = useRuntime((s) => s.paused);
   const mode = useRuntime((s) => s.mode);
-  const word = transportWord({ playing, paused, mode });
+  const nothing = useNothingToPlay();
+  const word = nothing ? 'Nothing to play yet' : transportWord({ playing, paused, mode });
+  // A song edited while paused moves the paused position on the timeline: show it again.
+  useSongPlan();
   const last = useRef('');
   useRafLoop(() => {
     const t = session.transport;
     if (!ref.current || !t) return;
-    const p = t.getPosition();
-    const text = positionText(p.tick, p.bar, p.beat);
+    const text = transportPositionText(t);
     if (text !== last.current) {
       last.current = text;
       ref.current.textContent = text;
@@ -85,44 +124,67 @@ function Position() {
   }, playing);
   if (!playing) last.current = '';
   return (
-    <div className={styles.position} data-state={word.toLowerCase()} role="group" aria-label="Position">
+    <div className={styles.position} data-state={nothing ? 'empty' : word.toLowerCase()} role="group" aria-label="Position">
       <span className={styles.posWord} role="status">
         {word}
       </span>
-      <span ref={ref} className={`${styles.posValue} mono`} role="timer" aria-label="Bar and beat">
+      <span ref={ref} className={`${styles.posValue} mono`} role="timer" aria-label="Bar and beat" aria-hidden={nothing || undefined}>
         {playing ? '' : heldPositionText()}
       </span>
     </div>
   );
 }
 
-/** One key: ▶ Play when stopped or paused, ❚❚ Pause while playing. */
+/**
+ * One key: ▶ Play when stopped or paused, ❚❚ Pause while playing. In Arrange
+ * (with blocks in the song) it plays the song, from the loop when one is set;
+ * after a pause it continues whatever was playing.
+ */
 function PlayPauseButton() {
   const playing = useRuntime((s) => s.playing);
   const paused = useRuntime((s) => s.paused);
   const mode = useRuntime((s) => s.mode);
   const take = useRuntime((s) => s.recording === 'performance');
+  const looping = useRuntime((s) => s.songLoop !== null);
+  const arrange = useUi((s) => s.view === 'arrange');
+  const hasSong = useProject((p) => p.arrangement.blocks.length > 0);
   const blocked = playing && take;
+  // Play here starts the song (not the pads): its name and tip say so.
+  const song = arrange && hasSong && !playing && !paused;
   const tip = blocked
     ? PAUSE_UNAVAILABLE_MESSAGE
     : playing
       ? `Pause: hold the position${mode === 'song' ? ' in the song' : ''}. Play continues from exactly here, in time.`
       : paused
-        ? 'Continue from where you paused, in time.'
-        : 'Start the lit clips from bar 1.';
+        ? `Continue ${mode === 'song' ? 'the song ' : ''}from where you paused, in time.`
+        : song
+          ? `Play song: the blocks below in order, ${looping ? 'starting at the loop' : 'from the first one'}.`
+          : 'Start the lit clips from bar 1.';
   return (
     <Button
       variant="transport"
       icon={playing ? 'pause' : 'play'}
       lit={playing}
       aria-disabled={blocked || undefined}
-      onClick={() => (blocked ? notify(PAUSE_UNAVAILABLE_MESSAGE, 'warn') : void session.togglePlay())}
+      aria-label={song ? 'Play song' : undefined}
+      onClick={() => (blocked ? notify(PAUSE_UNAVAILABLE_MESSAGE, 'warn') : void session.togglePlay({ song: arrange }))}
       tip={tip}
-      detail="Space plays and pauses. Shift+Space stops."
+      detail={song ? `${keysFor('play')} plays the song in Arrange and pauses it. ${keysFor('stop')} stops.` : `${keysFor('play')} plays and pauses. ${keysFor('stop')} stops.`}
       aria-keyshortcuts="Space"
       className={styles.play}
+      data-song={song || undefined}
     >
-      {playing ? 'Pause' : 'Play'}
+      {song ? (
+        <span className={styles.playWord}>
+          Play
+          {/* The leading space keeps the words apart for screen readers and copy; on screen they stack. */}
+          <span className={styles.playSong}> song</span>
+        </span>
+      ) : playing ? (
+        'Pause'
+      ) : (
+        'Play'
+      )}
     </Button>
   );
 }
@@ -131,6 +193,7 @@ function StopButton() {
   const playing = useRuntime((s) => s.playing);
   const paused = useRuntime((s) => s.paused);
   const take = useRuntime((s) => s.recording === 'performance');
+  const song = useRuntime((s) => s.mode === 'song');
   const idle = !playing && !paused;
   return (
     <Button
@@ -143,9 +206,11 @@ function StopButton() {
           ? 'Stopped at bar 1.'
           : take
             ? 'Stop playback and the performance recording (the take is kept). Back to bar 1.'
-            : 'Stop and go back to bar 1. The clips that were playing stay lit and start again from the top on Play.'
+            : song
+              ? 'Stop the song and go back to its start. Play (or Space) in Arrange plays it again.'
+              : 'Stop and go back to bar 1. The clips that were playing stay lit and start again from the top on Play.'
       }
-      detail="Shift+Space also stops."
+      detail={`${keysFor('stop')} also stops.`}
       aria-keyshortcuts="Shift+Space"
       className={styles.stop}
     >
@@ -155,40 +220,58 @@ function StopButton() {
 }
 
 /**
- * "Saving failed" with its recovery actions. It stays while Try again or the
- * export is writing, so keyboard focus stays on the pressed button; when
- * saving works again it goes, and focus inside it returns to the save status.
+ * "Saving failed" with its recovery actions, on the shared Popover (a
+ * non-modal dialog: Esc and a press outside close it, focus goes back to
+ * the save state). It stays while Try again or the export is writing, so
+ * keyboard focus stays on the pressed button; when saving works again it
+ * goes.
  */
-function SaveFailedPopover(props: { message?: string; returnFocus: RefObject<HTMLButtonElement | null> }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const { returnFocus } = props;
-  useLayoutEffect(() => {
-    const el = ref.current;
-    return () => {
-      if (el?.contains(document.activeElement)) returnFocus.current?.focus();
-    };
-  }, [returnFocus]);
+function SaveFailedPopover(props: { message?: string; anchor: HTMLButtonElement | null; onClose(): void }) {
   return (
-    <div ref={ref} className={styles.savePopover} role="alertdialog" aria-label="Saving failed">
-      <p>{props.message}</p>
+    <Popover anchor={anchorFromElement(props.anchor)} label="Saving failed" role="dialog" align="end" onClose={props.onClose} returnFocus={props.anchor} ignore={props.anchor} className={styles.savePopover}>
+      <p className={styles.saveMessage} role="alert">
+        {props.message}
+      </p>
       <div className={styles.saveActions}>
-        <Button size="sm" onClick={() => void session.autosaver?.retry()}>
+        <Button size="sm" onClick={() => void session.autosaver?.retry()} data-autofocus="">
           Try again
         </Button>
         <Button size="sm" variant="secondary" onClick={() => window.dispatchEvent(new CustomEvent('sb:export-project'))}>
           Export project file
         </Button>
       </div>
-    </div>
+    </Popover>
   );
 }
 
-/** Saved / Saving… / Not saved, or Preview for the untouched first-launch starter (stored on its first change). */
-function SaveStatus() {
+/**
+ * The save state's glyph: a shape per state in neutral ink, so colour is
+ * never alone (and the button's name says it in words): a check (Saved), a
+ * small arc that turns (Saving; still under reduced motion), a hollow ring
+ * (Preview: not stored yet), a coral warning (Not saved).
+ */
+function SaveGlyph({ state }: { state: 'saved' | 'saving' | 'preview' | 'error' }) {
+  if (state === 'error') return <Icon name="warning" size={14} />;
+  if (state === 'saved') return <Icon name="check" size={14} className={styles.saveGlyph} />;
+  if (state === 'preview') return <span className={styles.saveRing} aria-hidden="true" />;
+  return (
+    <svg className={styles.saveSpin} width={14} height={14} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" aria-hidden="true" focusable="false">
+      <path d="M8 2.6 A5.4 5.4 0 1 1 2.6 8" />
+    </svg>
+  );
+}
+
+/**
+ * Saved / Saving… / Not saved, or Preview for the untouched first-launch
+ * starter (stored on its first change). Pressing it opens your projects; when
+ * saving failed it says why and how to recover.
+ */
+function SaveStatus(props: { onOpenLibrary(): void }) {
   const save = useAutosave();
   const preview = useRuntime((s) => s.preview);
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
+  const actionId = useId();
   // Set from a failed save until a save succeeds (also while Try again or the export is writing).
   const failing = save.lastError !== null;
   // Saving works again: the popover closes, and a later failure does not reopen it by itself.
@@ -199,30 +282,72 @@ function SaveStatus() {
   const busy = !error && (save.status === 'saving' || save.dirty);
   const idlePreview = preview && !error && !busy;
   const text = error ? 'Not saved' : busy ? 'Saving…' : idlePreview ? 'Preview' : 'Saved';
+  const state = error ? 'error' : busy ? 'saving' : idlePreview ? 'preview' : 'saved';
   const tone = error ? styles.saveError : busy ? styles.saveBusy : idlePreview ? styles.savePreview : styles.saveOk;
   const tip = error
     ? save.lastError?.message
     : idlePreview
       ? 'This starter is a preview and is not stored yet. Your first change adds it to My projects; from then on it saves automatically in this browser.'
-      : 'Your project saves automatically in this browser.';
+      : 'Your project saves automatically in this browser. Press for your projects.';
   return (
     <div className={styles.saveWrap}>
-      <Tooltip tip={tip} detail="Browser storage is working storage. Export a project file for a portable backup.">
+      <Tooltip tip={tip} detail={`Browser storage is working storage. Export a project file for a portable backup. ${keysFor('save')} saves at once.`}>
         <button
           ref={btnRef}
           type="button"
           className={`${styles.save} ${tone}`}
           aria-live="polite"
           aria-label={idlePreview ? 'Autosave: Preview, not stored until you change it' : `Autosave: ${text}`}
-          onClick={() => setOpen(error ? !open : false)}
+          aria-describedby={actionId}
+          aria-haspopup="dialog"
+          aria-expanded={error ? open : undefined}
+          data-save={state}
+          onClick={() => {
+            if (error) setOpen((o) => !o);
+            else props.onOpenLibrary();
+          }}
         >
-          {error ? <Icon name="warning" size={13} /> : <span className={styles.saveDot} aria-hidden />}
+          <SaveGlyph state={state} />
           <span className={styles.saveText}>{text}</span>
         </button>
       </Tooltip>
-      {failing && open && <SaveFailedPopover message={save.lastError?.message} returnFocus={btnRef} />}
+      {/* What pressing it does (the library opens, or why saving failed). */}
+      <span id={actionId} hidden>
+        {error ? 'Opens why it was not saved and how to recover.' : 'Opens your projects.'}
+      </span>
+      {failing && open && <SaveFailedPopover message={save.lastError?.message} anchor={btnRef.current} onClose={() => setOpen(false)} />}
     </div>
   );
+}
+
+/**
+ * While Record Notes waits for its downbeat (the clip's launch at the next
+ * bar, or the end of a count-in), the beats left before recording starts, as
+ * heard (runtime.recordStartsAtTick against the audible position).
+ */
+function beatsLeft(startsAt: number): number | null {
+  const t = session.transport;
+  if (!t || !t.playing) return null;
+  const left = startsAt - t.audibleTick();
+  return left > 0 ? Math.ceil(left / 96 - 1e-6) : null;
+}
+
+/** "Recording in 3…": the count down to the downbeat, updated by the audio clock's position (no re-render per beat). */
+function RecordCountdown(props: { startsAt: number }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const last = useRef<number | null>(null);
+  const write = () => {
+    const n = beatsLeft(props.startsAt);
+    if (n === last.current || !ref.current) return;
+    last.current = n;
+    ref.current.textContent = n === null ? 'Recording' : `Recording in ${n}…`;
+  };
+  useLayoutEffect(() => {
+    last.current = -1;
+    write();
+  });
+  useRafLoop(write, true);
+  return <span ref={ref} aria-hidden="true" />;
 }
 
 /** Record Notes, Record Performance and their options, with the recording status as the caption. */
@@ -230,6 +355,8 @@ function RecordGroup() {
   const recording = useRuntime((s) => s.recording);
   const countingIn = useRuntime((s) => s.countingIn);
   const targetId = useRuntime((s) => s.recordTarget?.trackId ?? null);
+  // Record Notes waits for its downbeat: the caption counts the beats down.
+  const startsAt = useRuntime((s) => (s.recording === 'notes' && s.playing && s.recordStartsAtTick != null ? s.recordStartsAtTick : null));
   // The clip to record into was chosen while another one played: it (and recording) starts at the next bar.
   const waiting = useRuntime((s) => s.recordTarget !== null && s.playing && (s.tracks[s.recordTarget.trackId]?.playingSlot ?? null) !== s.recordTarget.slot);
   const targetName = useProject((p) => (targetId ? (p.tracks.find((t) => t.id === targetId)?.name ?? '') : ''));
@@ -243,11 +370,13 @@ function RecordGroup() {
   // Short enough to fit above the buttons with the grid: the pressed Notes key says what records.
   const caption =
     recording === 'notes'
-      ? countingIn
-        ? `Count-in · ${targetName}`
-        : waiting
-          ? `Next bar · ${targetName}`
-          : `Recording · ${targetName}`
+      ? startsAt !== null
+        ? null
+        : countingIn
+          ? `Count-in · ${targetName}`
+          : waiting
+            ? `Next bar · ${targetName}`
+            : `Recording · ${targetName}`
       : recording === 'performance'
         ? 'Recording performance'
         : options
@@ -266,7 +395,16 @@ function RecordGroup() {
     <div className={`${styles.group} ${styles.recGroup}`} role="group" aria-label="Recording">
       <span className={styles.recCaption} data-live={recording !== 'off' || undefined} aria-live="polite">
         {recording !== 'off' && <span className={styles.recDot} aria-hidden="true" />}
-        <span className={styles.recText}>{caption}</span>
+        {caption !== null ? (
+          <span className={styles.recText}>{caption}</span>
+        ) : (
+          <span className={styles.recText}>
+            <RecordCountdown startsAt={startsAt!} />
+            {/* Read out once (the count itself is not, beat by beat). */}
+            <span className="visually-hidden">Recording starts on the downbeat</span>
+            {` · ${targetName}`}
+          </span>
+        )}
         {/* The leading space keeps the words apart for screen readers; on screen the gap does. */}
         {snap && <span className={styles.recSnap}>{` · ${snap}`}</span>}
       </span>
@@ -306,13 +444,30 @@ function RecordGroup() {
 }
 
 /**
- * The More menu: Tips, and whatever the strip has no room for at this width
- * (Undo and Redo below 1600 px, Projects, Export below 1280 px, the Simple ·
- * Advanced switch, the offline state and the Update action, which the key
- * marks when one waits). It always lists all of them, so each is one place to
- * look whatever the width.
+ * The More menu: a waiting Update first, then Undo and Redo, Simple or
+ * Advanced and Tips, New project…, Projects…, Export WAV…, MIDI & audio…
+ * and Help…, and last the offline state as plain text. It lists everything
+ * the strip has no room for at this width (the Simple · Advanced switch and
+ * Export below 1366 px, Projects below 1440 px, MIDI & audio, and the Update
+ * action below 1600 px, which the key marks with a coral dot), so each is
+ * one place to look whatever the width.
  */
-function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; onOpenDevices(): void; projectName: string }) {
+/**
+ * Opening a menu gives focus to its first item that can be used (Undo comes
+ * first and often has nothing to undo). It runs before the menu's own
+ * focusing, which then leaves it be.
+ */
+function FocusFirstUsable() {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const menu = ref.current?.closest<HTMLElement>('[role="menu"]');
+    if (!menu || menu.contains(document.activeElement)) return;
+    menu.querySelector<HTMLElement>('[role^="menuitem"]:not([aria-disabled="true"])')?.focus({ preventScroll: true });
+  }, []);
+  return <span ref={ref} hidden />;
+}
+
+function MoreMenu(props: { onOpenLibrary(): void; onNewProject(): void; onOpenExport(): void; onOpenDevices(): void; onOpenHelp(): void; projectName: string }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const history = useHistory();
@@ -320,14 +475,19 @@ function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; onOpenDe
   const uiMode = useUi((s) => s.uiMode);
   const updateReady = useOffline().state === 'update-ready';
   const close = () => setOpen(false);
+  /** Close the menu, then run the action (dialogs open with the menu gone, so focus goes to them). */
+  const then = (fn: () => void) => () => {
+    close();
+    fn();
+  };
   return (
     <>
-      <Tooltip name="More" tip={updateReady ? 'A new version is ready: Update is in this menu. Also Tips, Undo, Redo, your projects, WAV export and MIDI & audio.' : 'Tips, Undo, Redo, Simple or Advanced, your projects, WAV export, and MIDI keyboards and audio input.'}>
+      <Tooltip name="More" tip={updateReady ? 'A new version is ready: Update is in this menu. Also Undo, Redo, Tips, projects, WAV export, MIDI & audio and Help.' : 'Undo, Redo, Simple or Advanced, Tips, a new project, your projects, WAV export, MIDI & audio, and Help.'}>
         <button
           ref={btnRef}
           type="button"
           className={styles.more}
-          aria-label={updateReady ? 'More: update ready, undo, redo, tips, projects, export, MIDI and audio' : 'More: undo, redo, tips, projects, export, MIDI and audio'}
+          aria-label={updateReady ? 'More: update ready, undo, redo, tips, projects, export, MIDI and audio, help' : 'More: undo, redo, tips, projects, export, MIDI and audio, help'}
           aria-haspopup="menu"
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
@@ -338,17 +498,15 @@ function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; onOpenDe
       </Tooltip>
       {open && (
         <Popover anchor={anchorFromElement(btnRef.current)} label="More" align="end" onClose={close} returnFocus={btnRef.current} ignore={btnRef.current}>
+          <FocusFirstUsable />
           <OfflineMenuItems onDone={close} />
           <MenuItem
             icon="undo"
-            hint={`${MOD_KEY}Z`}
+            hint={keysFor('undo', MOD_KEY === '⌘')}
             keyShortcut={`${MOD_ARIA}+Z`}
             disabled={!history.canUndo}
             disabledReason="Nothing to undo"
-            onSelect={() => {
-              session.undo();
-              close();
-            }}
+            onSelect={then(() => session.undo())}
           >
             {history.undoLabel ? `Undo ${history.undoLabel}` : 'Undo'}
           </MenuItem>
@@ -358,10 +516,7 @@ function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; onOpenDe
             keyShortcut={`${MOD_ARIA}+Shift+Z`}
             disabled={!history.canRedo}
             disabledReason="Nothing to redo"
-            onSelect={() => {
-              session.redo();
-              close();
-            }}
+            onSelect={then(() => session.redo())}
           >
             {history.redoLabel ? `Redo ${history.redoLabel}` : 'Redo'}
           </MenuItem>
@@ -371,62 +526,162 @@ function MoreMenu(props: { onOpenLibrary(): void; onOpenExport(): void; onOpenDe
             role="menuitemcheckbox"
             checked={uiMode === 'advanced'}
             hint={uiMode === 'advanced' ? 'Advanced' : 'Simple'}
-            onSelect={() => {
-              setUiMode(uiMode === 'advanced' ? 'simple' : 'advanced');
-              close();
-            }}
+            onSelect={then(() => switchMode(uiMode === 'advanced' ? 'simple' : 'advanced'))}
           >
             Show every control (Advanced)
           </MenuItem>
-          <MenuItem
-            icon="info"
-            role="menuitemcheckbox"
-            checked={tipsEnabled}
-            hint={tipsEnabled ? 'On' : 'Off'}
-            onSelect={() => {
-              setTipsEnabled(!tipsEnabled);
-              close();
-            }}
-          >
+          <MenuItem icon="info" role="menuitemcheckbox" checked={tipsEnabled} hint={tipsEnabled ? 'On' : 'Off'} onSelect={then(() => setTipsEnabled(!tipsEnabled))}>
             Tips
           </MenuItem>
           <MenuSeparator />
-          <MenuItem
-            icon="folder"
-            hint={props.projectName}
-            onSelect={() => {
-              close();
-              props.onOpenLibrary();
-            }}
-          >
+          <MenuItem icon="plus" hint="Starters" onSelect={then(props.onNewProject)}>
+            New project…
+          </MenuItem>
+          <MenuItem icon="folder" hint={props.projectName} onSelect={then(props.onOpenLibrary)}>
             Projects…
           </MenuItem>
-          <MenuItem
-            icon="download"
-            onSelect={() => {
-              close();
-              props.onOpenExport();
-            }}
-          >
+          <MenuItem icon="download" onSelect={then(props.onOpenExport)}>
             Export WAV…
           </MenuItem>
           <MenuSeparator />
-          <MenuItem
-            icon="midi"
-            onSelect={() => {
-              close();
-              props.onOpenDevices();
-            }}
-          >
+          <MenuItem icon="midi" onSelect={then(props.onOpenDevices)}>
             MIDI & audio…
           </MenuItem>
+          <MenuItem icon="keys" hint="?" keyShortcut="?" onSelect={then(props.onOpenHelp)}>
+            Help…
+          </MenuItem>
+          {/* The app's own state closes the menu, as plain text. */}
+          <OfflineMenuStatus />
         </Popover>
       )}
     </>
   );
 }
 
-export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): void }) {
+/** Simple or Advanced: playback is braced first (every view re-renders), and the switch shows at once. */
+function switchMode(mode: UiMode): void {
+  session.brace();
+  setUiMode(mode);
+}
+
+/** Another view: playback is braced first (the new view mounts), then the tab changes at once. */
+function switchView(view: View): void {
+  session.brace();
+  setView(view);
+}
+
+/**
+ * Undo and Redo, always on the strip: an icon and the word where there is
+ * room (from 1600 px), the icon alone (its name still "Undo …", its tooltip
+ * naming the step) narrower or where a waiting update, a failed save or the
+ * MIDI & audio key needs the room.
+ * Unavailable, they stay focusable and their tip says why ("Nothing to
+ * undo", or the take lock); available, the tip names the step ("Undo: Move
+ * block").
+ */
+function HistoryKey(props: { kind: 'undo' | 'redo' }) {
+  const { kind } = props;
+  const history = useHistory();
+  const undo = kind === 'undo';
+  const can = undo ? history.canUndo : history.canRedo;
+  const what = undo ? history.undoLabel : history.redoLabel;
+  const word = undo ? 'Undo' : 'Redo';
+  const tip = can
+    ? `${word}: ${what ?? 'the last change'}.`
+    : what && history.lock
+      ? `${word} waits: ${history.lock}`
+      : undo
+        ? 'Nothing to undo yet.'
+        : 'Nothing to redo: Redo brings back a step you undid.';
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      icon={kind}
+      aria-disabled={!can || undefined}
+      aria-label={can && what ? `${word} ${what}` : word}
+      aria-keyshortcuts={undo ? `${MOD_ARIA}+Z` : `${MOD_ARIA}+Shift+Z ${MOD_ARIA}+Y`}
+      onClick={() => {
+        if (!can) return;
+        if (undo) session.undo();
+        else session.redo();
+      }}
+      tip={tip}
+      detail={keysFor(undo ? 'undo' : 'redo', MOD_KEY === '⌘')}
+      className={styles.historyKey}
+      data-history={kind}
+    >
+      <span className={styles.historyWord}>{word}</span>
+    </Button>
+  );
+}
+
+function HistoryKeys() {
+  return (
+    <div className={styles.history} role="group" aria-label="Undo and redo">
+      <HistoryKey kind="undo" />
+      <HistoryKey kind="redo" />
+    </div>
+  );
+}
+
+export interface TransportBarProps {
+  onOpenLibrary(): void;
+  onOpenExport(): void;
+  /** New project…: the project library's Starters. */
+  onNewProject?(): void;
+  /** Help… (also the ? key). */
+  onOpenHelp?(): void;
+}
+
+/**
+ * How far down the top chrome reaches on screen, on the page root
+ * (--transport-h): the strip's bottom edge, or the bottom of the banners the
+ * shell shows right under it (a project open in another tab, playback
+ * stopped: [data-banners], the strip's next sibling) while they are in view.
+ * Toasts sit just under it (Toast.module.css), so they never hide a banner's
+ * keys, and never float down where a banner was once the page has scrolled
+ * it away (below 1024 px the strip is sticky and the banners scroll). Kept
+ * up to date as the strip wraps or grows, as banners come and go, and as
+ * the page scrolls.
+ */
+function useTransportHeight(ref: RefObject<HTMLElement | null>): void {
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const root = document.documentElement;
+    const below = el.nextElementSibling instanceof HTMLElement && el.nextElementSibling.matches('[data-banners]') ? el.nextElementSibling : null;
+    let last = -1;
+    let frame = 0;
+    const write = () => {
+      frame = 0;
+      const bar = el.getBoundingClientRect().bottom;
+      const banners = below && below.getBoundingClientRect().height > 0 ? below.getBoundingClientRect().bottom : bar;
+      const h = Math.max(0, Math.ceil(Math.max(bar, banners)));
+      if (h === last) return;
+      last = h;
+      root.style.setProperty('--transport-h', `${h}px`);
+    };
+    const soon = () => {
+      if (!frame) frame = requestAnimationFrame(write);
+    };
+    write();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(write) : null;
+    ro?.observe(el);
+    if (below) ro?.observe(below);
+    window.addEventListener('scroll', soon, { capture: true, passive: true });
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('scroll', soon, { capture: true });
+      cancelAnimationFrame(frame);
+      root.style.removeProperty('--transport-h');
+    };
+  }, [ref]);
+}
+
+export function TransportBar(props: TransportBarProps) {
+  const barRef = useRef<HTMLElement>(null);
+  useTransportHeight(barRef);
   const view = useUi((s) => s.view);
   const uiMode = useUi((s) => s.uiMode);
   const bpm = useProject((p) => p.bpm);
@@ -435,7 +690,6 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
   const projectName = useProject((p) => p.name);
   const muteAll = useRuntime((s) => s.muteAll);
   const takeRecording = useRuntime((s) => s.recording === 'performance');
-  const history = useHistory();
   const advanced = uiMode === 'advanced';
   const [devicesOpen, setDevicesOpen] = useState(false);
   // MIDI devices reconnect by themselves on a later visit, but only if the browser already allows them.
@@ -444,8 +698,8 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
   }, []);
 
   return (
-    <header className={styles.bar} data-mode={uiMode} aria-label="Transport">
-      <SegmentedControl<View> label="View" kind="tabs" options={VIEW_OPTIONS} value={view} onChange={(v) => setView(v)} size="lg" lamp={false} className={styles.views} />
+    <header ref={barRef} className={styles.bar} data-mode={uiMode} aria-label="Transport">
+      <SegmentedControl<View> label="View" kind="tabs" options={VIEW_OPTIONS} value={view} onChange={switchView} size="lg" lamp={false} className={styles.views} />
 
       <div className={`${styles.group} ${styles.playback}`} role="group" aria-label="Playback">
         <PlayPauseButton />
@@ -453,7 +707,8 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
         <Position />
       </div>
 
-      <div className={styles.group} role="group" aria-label="Tempo">
+      {/* Enter commits and hands the keys back (Space plays, letters play notes); a drag moves in whole BPM (Shift: tenths). */}
+      <div className={`${styles.group} ${styles.tempoGroup}`} role="group" aria-label="Tempo">
         <NumberField
           label="Tempo"
           layout="stacked"
@@ -462,11 +717,14 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           max={BPM_SPEC.max}
           step={1}
           fineStep={0.1}
+          dragStep={1}
+          blurOnCommit
           unit="BPM"
           size="sm"
           chars={4}
           tip={BPM_SPEC.tip}
           onChange={(v, info) => session.setBpm(v, info.gesture)}
+          className={styles.tempo}
         />
         {advanced && (
           <NumberField
@@ -476,12 +734,15 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
             min={0}
             max={100}
             step={1}
+            dragStep={1}
+            blurOnCommit
             unit="%"
             size="sm"
             chars={4}
             tip={SWING_SPEC.tip}
             detail={SWING_SPEC.detail}
             onChange={(v, info) => session.setSwing(v / 100, info.gesture)}
+            className={styles.swing}
           />
         )}
       </div>
@@ -520,32 +781,13 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           label="Simple or Advanced"
           options={MODE_OPTIONS}
           value={uiMode}
-          onChange={(m) => setUiMode(m)}
+          onChange={switchMode}
           size="sm"
           lamp={false}
           className={styles.modeSwitch}
         />
-        <SaveStatus />
-        <IconButton
-          icon="undo"
-          label={history.undoLabel ? `Undo ${history.undoLabel}` : 'Undo'}
-          disabled={!history.canUndo}
-          onClick={() => session.undo()}
-          size="sm"
-          variant="ghost"
-          aria-keyshortcuts="Control+Z"
-          className={styles.historyKey}
-        />
-        <IconButton
-          icon="redo"
-          label={history.redoLabel ? `Redo ${history.redoLabel}` : 'Redo'}
-          disabled={!history.canRedo}
-          onClick={() => session.redo()}
-          size="sm"
-          variant="ghost"
-          aria-keyshortcuts="Control+Shift+Z"
-          className={styles.historyKey}
-        />
+        <SaveStatus onOpenLibrary={props.onOpenLibrary} />
+        <HistoryKeys />
         <Button
           variant="ghost"
           size="sm"
@@ -562,13 +804,20 @@ export function TransportBar(props: { onOpenLibrary(): void; onOpenExport(): voi
           size="sm"
           icon="download"
           onClick={props.onOpenExport}
-          tip="Export a WAV file: your song, a scene or a recorded performance."
+          tip={view === 'arrange' ? 'Export the song as a WAV file (a scene or a recorded performance can be chosen instead).' : 'Export a WAV file: your song, a scene or a recorded performance.'}
           className={styles.exportKey}
         >
           Export
         </Button>
         <DevicesKey onOpen={() => setDevicesOpen(true)} className={styles.devicesKey} />
-        <MoreMenu onOpenLibrary={props.onOpenLibrary} onOpenExport={props.onOpenExport} onOpenDevices={() => setDevicesOpen(true)} projectName={projectName} />
+        <MoreMenu
+          onOpenLibrary={props.onOpenLibrary}
+          onNewProject={props.onNewProject ?? props.onOpenLibrary}
+          onOpenExport={props.onOpenExport}
+          onOpenDevices={() => setDevicesOpen(true)}
+          onOpenHelp={props.onOpenHelp ?? (() => window.dispatchEvent(new CustomEvent('sb:open-help')))}
+          projectName={projectName}
+        />
         {/* The app's own state (offline copy, waiting update) closes the strip. */}
         <OfflineStatus statusClassName={styles.offline} updateClassName={styles.update} />
       </div>

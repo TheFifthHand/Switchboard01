@@ -87,13 +87,20 @@
   }
 }
 
+/* Reduced motion: no ring that would stand still; the words beside it ("Decoding … on this device…") say it. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    display: none;
+  }
+}
+
 .dismiss {
   display: inline-grid;
   flex: none;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  margin: -4px -4px -4px auto;
+  width: 32px;
+  height: 32px;
+  margin: -6px -6px -6px auto;
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -196,4 +203,45 @@
   justify-content: center;
   width: 100%;
   text-align: left;
+}
+
+/* ---------- a file waiting for a choice (a drum or synth part with clips) ---------- */
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--coral-wash);
+  box-shadow: inset 0 0 0 1px rgba(184, 68, 46, 0.25);
+  text-align: left;
+}
+
+.confirmText {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.confirmText strong {
+  font-weight: 650;
+}
+
+.confirmIcon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--coral);
+}
+
+.confirmKeys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
