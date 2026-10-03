@@ -73,13 +73,14 @@ state, Undo, Redo and More are always on it):
 | 1024–1279 | Stop as its square; the switch, Export and Projects are in More (Advanced, with Swing: two rows below 1180 px) |
 | 1280–1365 | the word "Stop" (Simple) |
 | 1366–1439 | the Simple · Advanced switch, Export with its word, "Stop" in Advanced too |
-| 1440–1599 | Projects, the offline state, "Not saved" in words |
-| 1600 up | the words of Undo and Redo, a waiting Update key, roomier spacing |
-| 1700 up | the save word; from 1800 the project's name |
+| 1440–1599 | the offline state, "Not saved" in words; in Advanced the bar.beat readout again |
+| 1600 up | Projects (the save state and More open your projects too), a waiting Update key, roomier spacing |
+| 1700 up | the save word |
+| 1800 up | the words of Undo and Redo, the project's name |
 
 - The right-hand group is the same width in Simple and Advanced, so the switch never moves when
-  pressed. Advanced takes Swing's room from the bar.beat readout at 1366–1799 px; at 1366–1439 px
-  (1440–1599 beside the MIDI & audio key) Swing is a narrow field.
+  pressed. In Advanced, Swing is a narrow field from 1366 to 1599 px, and at 1366–1439 px only the
+  bar.beat readout (with its state word) gives way to it.
 - Things that come and go take room from the least important first: a waiting Update or a failed
   save from Projects and the words of Undo and Redo; the MIDI & audio key from the offline state.
   Never the save state, Undo, Redo, Export or Stop, nor the switch from 1366 px.
@@ -87,7 +88,9 @@ state, Undo, Redo and More are always on it):
   available, they name the step ("Undo: Move block").
 - **Tempo and Swing**: Enter commits and hands the keys back to the app (Space plays); dragging
   Tempo moves in whole BPM.
-- The transport writes its height, including any banner under it, to `--transport-h`.
+- The transport writes how far down it reaches on screen (the strip's visible bottom, or the bottom
+  of the banners under it) to `--transport-h`, and keeps it current as the strip wraps, banners come
+  and go and the page scrolls.
 
 **Play in Arrange plays the song.** In Arrange (with blocks in the song) the Play key reads **Play
 song** and Space does the same: from the loop when one is set, else from the first block. A pause
@@ -107,9 +110,9 @@ because the tab was in the background or the audio device paused. Press Play to 
 
 **Save state.** An icon in neutral ink with a label: a check (Saved), a turning arc (Saving…), a
 hollow ring (Preview: a first-launch starter not stored yet), a coral warning (**Not saved**).
-Clicking it opens the Project library, except while it shows an error (then it explains and
-offers **Try again** and **Export project file**). A run of failed saves raises one toast, with
-Export project file.
+Pressing it opens My projects (it says so to screen readers), except while it shows an error (then
+it explains and offers **Try again** and **Export project file**). A run of failed saves raises one
+toast, with Export project file.
 
 **Title and headings.** The browser tab reads "<project> — Omni Song", with ▶ while playing. Each
 view has one hidden h1 naming it and the project.
@@ -125,13 +128,15 @@ view has one hidden h1 naming it and the project.
 
 Order: **Update** first when one waits (a coral dot on ⋯ below 1600 px); Undo, Redo; Show every
 control (Advanced), Tips; **New project…**, **Projects…**, **Export WAV…**, **MIDI & audio…**,
-**Help…** (?). The offline state is its last line, plain text that cannot be focused.
+**Help…** (?). The offline state is its last line, plain text that cannot be focused. Focus starts
+on the first item that can be used.
 
 ### Help
 
 **Help** opens from ⋯ → Help… or the **?** key (not while typing). Tabs:
 - **Shortcuts**, generated from the one table in `src/app/views/hints/shortcuts.ts` (the
-  transport's tooltips take their key lines from it too, so they never disagree).
+  transport's tooltips take their key lines from it too, so they never disagree); each key is its
+  own key cap, and rows of them wrap rather than run into the words.
 - **Guides**: the three walkthroughs of the user guide as short steps, **Show the quick guide
   again** and **Show hints again**.
 - **About**: the version (from `package.json`) and what is new. After an update a one-time toast
@@ -142,7 +147,8 @@ control (Advanced), Tips; **New project…**, **Projects…**, **Export WAV…**
 - **Ctrl/⌘+S** saves now (also from a field) and says "Saved in this browser." with Export project
   file; the browser never saves the page.
 - The browser asks before leaving only while a performance or audio take records, an export
-  renders, or edits could not be saved. Never merely for playing.
+  renders, or edits could not be saved. Never merely for playing, nor for Record Notes (its notes
+  are edits, which the save state covers).
 - A project file (`.omnisong.zip`, `.sb01.zip`) dropped anywhere on the window opens it. Sampler
   drop zones keep their own handling; other files are refused with a message.
 - A drag or swipe that runs past the window edge never triggers the browser's Back/Forward swipe.
@@ -156,8 +162,8 @@ control (Advanced), Tips; **New project…**, **Projects…**, **Export WAV…**
   the pad actions until there are 8. A short window shows a fade at the foot while rows are below.
 - **One selected clip.** Every control acts on the ringed pad of the selected part
   (`src/app/selection.ts`): the pad actions, the part's ▶, Variation, Record Notes and Steps. A part
-  with no chosen slot gets one when selected: the clip it plays, else its first clip, else the
-  first slot. A part never selected uses its first clip for ▶, the same slot it gets when selected.
+  with no chosen slot gets one when selected: the clip it plays, else its first clip, else the first
+  slot. A part never selected uses its first clip for ▶, the same slot it gets when selected.
 - **Column headers:** number badge (white on `--teal-key`), part name (one size down under 110 px),
   sound name on up to two lines, full names in a tooltip while cut. A **part ▶/■** (starts the
   chosen clip at the next bar / stops the part at the next bar); **Mute** and **Solo** as labelled
@@ -240,7 +246,8 @@ editing items of the clip, scene and part menus are unavailable with the reason 
 ### Cables drawer (Advanced)
 
 A splitter resizes it; at its tallest the pads keep two whole rows. Edge shadows and "Scroll the
-patch left/right" arrows reach Master Out.
+patch left/right" arrows reach Master Out. **Open in Shape** shows the same cables in Shape, where
+the panel can take the whole height.
 
 ## Bottom bar: keyboard and pads
 
@@ -357,20 +364,27 @@ toast offers "Back to Simple"); a part selector.
   with **Edit sound** (opens the Advanced instrument column for this part):
   - bass synth: **Soft start**, **Length**, **Octave**, **Character**;
   - poly synth: Soft start, Length, Character, **Thickness** (unison);
-  - drum kit: a **Drum mix** of Kick, Snare and Hats levels plus Kick tune (Hats keeps the
-    closed/open balance; locked during a take);
+  - drum kit: a **Drum mix** of the groups the part's clips play most, up to three (standard kits:
+    Kick, Snare & clap, Hats, Percussion, Toms, Cymbals; percussion kits: Low drums, High drums,
+    Shakers, Percussion; a group the part plays only one voice of takes that voice's name), each
+    moving its voices together and keeping their balance (also through 0), and a tune knob for the
+    first group's most played voice ("Kick tune"); locked during a take;
   - sampler: Start (keeps the length), Length, Pitch, and a small waveform.
-- **Big knobs:** the six macros, large, with a caption; xl in a 3 × 2 grid where the panel has room.
-  A big knob that reaches nothing audible is unavailable and reads **Moves nothing here**. **Reset
-  big knobs** gives each one back what the sound is designed to move (one undo step; positions
-  stay).
+- **Big knobs:** the six macros, large, with a caption; xl in a 3 × 2 grid where the panel has room;
+  on a short window, where two rows do not fit under the instrument card, one row of six smaller
+  knobs. A big knob that would be heard once a switched-off effect is on says so ("Drive is off")
+  and can still be set; one that reaches nothing audible is unavailable and reads **Moves nothing
+  here**. **Reset big knobs** gives each one back what the sound is designed to move (one undo
+  step; positions stay).
 - **Effect cards**, in signal order: name, on/off switch, one knob that always changes the sound —
-  the effect's first setting, or the big knob that sets it, with a line saying which (the Drive
-  card shows the Drive big knob; the Filter card shows Tone or Motion). The Filter card offers
-  Resonance only while the filter is in the audible band (low-pass below 12 kHz, high-pass above
-  60 Hz), else: "Resonance appears once the filter closes below 12 kHz." The Compressor card's knob
-  is **Squeeze** (half way = the compressor's own default; full = −36 dB, 7:1, faster attack, auto
-  make-up). Compressor and Gate show a gain-reduction bar from the engine ("—" when there is none).
+  the effect's first setting, or the big knob that sets it, with a line saying which (the Drive card
+  shows the Drive big knob; the Filter card shows Tone or Motion). The Filter card offers Resonance
+  only while the filter is in the audible band (low-pass below 12 kHz, high-pass above 60 Hz, any
+  band-pass); otherwise it says why ("Resonance is set by the Motion big knob.", "Resonance appears
+  once the filter closes below 12 kHz.", "… cuts above 60 Hz."). The Compressor card's knob is
+  **Squeeze** (half way = the compressor's own default, −18 dB and 4:1; full = −28 dB, 5:1, a 0.5 ms
+  attack, and make-up gain of at most 8 dB, so a squeezed part stays clear of the ceiling).
+  Compressor and Gate show a gain-reduction bar from the engine ("—" when there is none).
 - **Effects header:** "N effects (up to 8)", **Copy effects** / **Paste effects** (after or instead
   of the part's effects, one undo step), **Add effect** grouped by purpose: Tone (EQ, Filter) ·
   Dynamics (Compressor, Gate) · Space (Reverb, Echo) · Movement (Chorus, Phaser, Flanger, Auto Pan)
@@ -383,10 +397,14 @@ toast offers "Back to Simple"); a part selector.
 - **Double-click** returns to the sound's own value (the preset or kit value, the starter's
   big-knob position, or where an added effect starts); **Alt+double-click** to the plain default.
   The tooltip says both ("this sound's 28%").
-- **Assign to big knob:** right-click, a 650 ms long press, or Shift+F10 / the menu key. A new
-  assignment sweeps half the knob's travel around its current value, so the sound does not jump; a
-  setting already assigned offers to stop that big knob moving it. Refused during a take, and the
-  rows say so.
+- **Assign to big knob:** right-click, a 650 ms long press (which ends any drag it started), or
+  Shift+F10 / the menu key. A new assignment sweeps half the knob's travel around its current value,
+  so the sound does not jump; a value at an end of its travel, and an option control (Filter Mode, a
+  wave, on/off), keeps its value until the big knob passes its current position (an option then
+  steps towards the far option). A setting already assigned offers to stop that big knob moving it.
+  Refused during a take, and the rows say so.
+- A **part switch ends a knob drag**: the rest of the drag stays with the part it started on (in
+  Shape and in Play's part panel), still one undo step.
 - Knobs that currently do nothing are dimmed with the reason in their tooltip: Unison and Vibrato
   settings until their amount is raised, FM settings at FM Amount 0, the Drive card's Character,
   Fizz and Mix while Drive is 0, an EQ band at 0 dB ("Set this band's gain first").
@@ -396,12 +414,17 @@ toast offers "Back to Simple"); a part selector.
 - Three columns: **Macros** (with mappings) | **Instrument** | **Effects** (chain, channel,
   returns, LFOs). Below 850 px of window height (from 1024 px wide) they become tabs, Instrument
   first. Each column keeps its scroll position per part.
-- Mapping rows say what they do in words: "curve: gentle" / "curve: even" (a toggle) and "over Tone
-  [60]–[100] %" (fields with arrow keys and typing); each change is one undo step. **Reset
-  mappings** restores the design's mappings and the LFO cable to the filter, in one step.
+- Mapping rows, each on its own line, say what they do in words: "curve: gentle" / "curve: even" (a
+  toggle) and "over Tone [60]–[100] %" (fields with arrow keys and typing); each change is one undo
+  step. **Reset mappings** restores the design's mappings and the LFO cable to the filter, in one
+  step.
 - **Cables** open as a full-height overlay over the columns with a resizable splitter. The LFO
   block's name is never cut short.
-- A part switch never remounts the columns; they follow in a deferred render.
+- A part switch never remounts the columns; they follow in a deferred render. Until they have
+  caught up they take no clicks or keys (Tab and Escape still work) and, when that lasts over 120
+  ms, show "Showing Lead…" (they are not dimmed).
+- While a performance take records, the Macros column's mapping controls and Reset mappings are
+  unavailable, with the reason.
 
 ## Sound browser
 
@@ -452,11 +475,15 @@ clip it says "Recording notes into Chords · Stabs (Groove)", adding "This block
 when that is so; cells that play the target show a coral **Rec**.
 
 **Layout.**
-- Left: the part names column (does not scroll) with compact **Mute** and **Solo** keys (the word
-  shows on hover or focus) and the state in words (Muted / Solo / Not soloed); those parts' cells dim
-  in every block. A part's name opens Off in selected blocks, Back on in selected blocks, Off
-  everywhere and Back on everywhere. Above it, the lane's view tools: **−**, the zoom level (**Fit**
-  when fitted, else a percentage; a press fits the song), **+**, **Follow**.
+- Left: the part names column (does not scroll), 108 px with every name whole, and each part's state
+  in words (Muted / Solo / Not soloed); those parts' cells dim in every block. Hovered, or with
+  keyboard focus, it widens to 160 px over the lane's edge (the lane stays put) and the row shows
+  its **Mute** and **Solo** keys (icon, the word on hover or focus, a 32 × 32 hit area). The column
+  is one Tab stop: arrows move between the parts and their Mute and Solo. A part's name opens its
+  menu: Mute, Solo, Off in selected blocks, Back on in selected blocks, Off everywhere, Back on
+  everywhere. Above it, the lane's view tools: **−**, the zoom level (**Fit** when fitted; **Min**
+  when the song is as small as it goes and still longer than the lane; else a percentage; a press
+  fits the song), **+**, **Follow**.
 - Right: the lane scrolls sideways (never the page): the ruler (a loop row over the bar numbers),
   then the blocks. A block is a header (name, Playing / Next, length, ▶, ⋯; 32 px keys where there
   is room) over one cell per part. The playing block has no ▶ and keeps its whole **Playing** word.
@@ -467,11 +494,13 @@ when that is so; cells that play the target show a coral **Rec**.
   is remembered, and until it is made the panel opens by itself only on tall windows.
 
 **Scale.** Widths are proportional to bars; the only minimum is 44 px. Blocks narrower than 112 px
-are **compact**: the header is the name only (▶ and ⋯ on hover, focus and while the menu is open),
-cells show no clip names, and a cell's tip says what it plays. Ruler numbers are evenly spaced and
-the playhead moves the same px per bar in every block. When Arrange opens, the scale is the largest
-readable step at which the whole song fits (a song of 10 blocks or more that only fits at an
-overview step opens there); after that edits never change it: a longer song scrolls. Zoom and
+are **compact**: the header is the name only (a helper's blocks show their step first, "1/4 Lift",
+so neighbours stay told apart; ▶ and ⋯ on hover, focus and while the menu is open), cells show no
+clip names, and a cell's tip says what it plays. Blocks up to 150 px wide show the whole name and
+length at rest, with ▶ and ⋯ over the header's right end on hover or focus. Ruler numbers are evenly
+spaced and the playhead moves the same px per bar in every block. When Arrange opens, the scale is
+the largest readable step at which the whole song fits (a song of 10 blocks or more that only fits
+at an overview step opens there); after that edits never change it: a longer song scrolls. Zoom and
 scroll are remembered per project for the session (a lane never zoomed is remembered as "fit" and
 re-fits to the window); opening Arrange measures once. The scale changes with a window resize, the
 zoom keys (two ladder steps a press), Ctrl/⌘+wheel (one step) or the zoom level key; blocks glide
@@ -488,9 +517,9 @@ Hovering a cell says what a click does.
 Off (a thin edge), Rec and the take lock.
 
 **Gestures** (mouse or pen: a press becomes a drag after 4 px):
-- **Touch:** a finger rests 300 ms on a block or scene card to pick it up; a finger that moves
-  first scrolls. Held and released in place, a block opens its actions. On the **ruler** a swipe
-  scrolls the lane; a 200 ms rest, then a drag, sets a loop.
+- **Touch:** a finger rests 300 ms on a block, or anywhere on a scene card (its keys too), to pick
+  it up; a finger that moves first scrolls. Held and released in place, a block opens its actions.
+  On the **ruler** a swipe scrolls the lane; a 200 ms rest, then a drag, sets a loop.
 - **Select:** click a header (teal); Shift+click a range; Ctrl/⌘+click toggles; a click on empty
   lane or Esc clears; Ctrl+A selects all. **Select blocks named "Lift"** (block menu) selects every
   block of that name.
@@ -506,10 +535,13 @@ Off (a thin edge), Rec and the take lock.
 - **Parts:** click a cell to switch that part off in this block, again to bring it back ("Drums off
   in Groove", Undo). With several blocks selected, a cell click switches the part in all of them
   ("Drums off in 4 blocks"). A cell with nothing to switch opens the part picker.
-- **Combine:** drag a scene card onto the middle of a block to **layer** it (fills the silent
-  parts; Shift **replaces**). On a boundary the insertion slot opens only after the card rests there
-  250 ms (any move over 3 px, or faster than 0.1 px/ms, restarts the wait); carrying on the way it
-  came closes it again. Drop in the open slot to **insert** a block.
+- **Combine:** a scene card drags from anywhere on it, its keys included (a dotted grip at its left
+  edge says so; the click that ends a drag presses nothing). Drag it onto the middle of a block to
+  **layer** it (fills the silent parts; Shift **replaces**). On a boundary the insertion slot opens
+  only after the card rests there 250 ms (any move over 3 px, or faster than 0.1 px/ms, restarts
+  the wait; a busy moment never opens it). Which way the card came is read from its last 12 px of
+  travel across; carrying on that way closes the slot and layers into the block beyond. Drop in the
+  open slot to **insert** a block.
 - **Clipboard:** Ctrl+C / X / V; right after a Cut, Paste puts the blocks back where they were.
   Delete or Backspace removes the selection (toast with Undo).
 - **Ruler:** click a bar (or Enter on the focused ruler) to play from there.
@@ -545,25 +577,28 @@ and **Add an ending** (a strip-down of the last scene after it; an Echo tail of 
 One Undo each.
 
 **Scenes palette.** Each card: ▶ **audition** (one pass on the live pads, stopping at the bar line
-where the pass ends, timed on the audio clock; a second press stops at once; while the pads play it
-switches at the next bar; while the song plays it is unavailable: "Stop the song to audition"), +
-(add at the end) and ⋯ / right-click (Rename scene, Edit clips in Play, Add at the end of the song).
+where the pass ends, timed on the audio clock, also if you go to another view meanwhile; a second
+press stops at once; while the pads play it switches at the next bar; while the song plays it is
+unavailable: "Stop the song to audition"), + (add at the end) and ⋯ / right-click (Rename scene,
+Edit clips in Play, Add at the end of the song).
 
 **Performances.** A take's events open in a tall side drawer with a header that stays put (Replay,
 Export, **Make song blocks**, close); the song folds to its header meanwhile. Event times are the
 music's bar.beat.step. **Start later…** sits beside **End earlier…**. **Make song blocks** turns the
-take's scene and pad launches into blocks after the song (one Undo); the toast says what was rounded
-and that played notes and knob moves are not carried over. An empty song with takes offers "Make
-song blocks from <newest take>".
+take's scene and pad launches into blocks after the song (one Undo); the toast says what was
+rounded, names launches too short to make a block that were left out, and says that played notes and
+knob moves are not carried over. An empty song with takes offers "Make song blocks from <newest
+take>".
 
 **Following the playhead.** While the song plays, the lane glides a page on when the playhead nears
 its right edge. It never turns the page while the pointer moves over the lane, while a menu is open,
 while a key was just pressed in the lane, or while something is carried; it waits 8 s after a scroll
 or edit. **Follow** turns it off (remembered, `switchboard01.songLane`).
 
-**Keyboard** (the blocks are one Tab stop): ←/→, Home/End; Shift extends; Alt+←/→ moves the
-selection; ↓ enters the part cells (Enter switches, "." picker, Esc back); Enter, ".", the menu key
-or Shift+F10 open the menu; F2 renames. Undo and Redo keep the lane's selection and focus.
+**Keyboard.** Tab order from Loop: the view tools, the part names (one stop), the ruler, the blocks
+(one stop). In the blocks: ←/→, Home/End; Shift extends; Alt+←/→ moves the selection; ↓ enters the
+part cells (Enter switches, "." picker, Esc back); Enter, ".", the menu key or Shift+F10 open the
+menu; F2 renames. Undo and Redo keep the lane's selection and focus.
 
 **Feedback.** Edits get one short toast with Undo that names the block ("Moved Groove to position
 3", "Groove: plays 3 times, 12 bars"); a gesture shows one, replacing the one before; an edit that
@@ -608,7 +643,10 @@ panel follows a frame later.
 - **Channel drawer:** **Channel** in the Mixer header (Simple and Advanced), or an effect chip,
   opens the selected part's effects rack in a drawer that takes the mastering's place, the view
   staying Mix: **Add EQ**, **Add Compressor** (unavailable at the limit, during a take or with
-  custom routing, the reason shown), **Open in Shape**. Opening it ends an A/B comparison.
+  custom routing, the reason shown), **Open in Shape**. The rack is Shape's own, embedded: its undo
+  steps name the part ("Drums filter cutoff", "Turn off Drums drive"; "Reverb size" for a shared
+  return), and the drawer, not the rack, says why effects are locked during a take. Opening it ends
+  an A/B comparison.
 
 **Mastering.**
 - On/Off; preset chips (Clean, Gentle, Warm, Punchy, Bright, Wide, Loud, Lo-fi) with what each does;
@@ -661,19 +699,31 @@ panel follows a frame later.
 
 - **Quick guide** (offered once after the first Jump In; replayable from Help and the Project
   library): three coach marks — Play / Pause; the pads with Mute and Solo; Change instrument with
-  the big knobs. Non-modal; it never covers the transport.
+  the big knobs. Non-modal; it never covers the transport and avoids controls, headings and
+  `[data-hint-avoid]` readouts. On its Play step ("Pause it here or with the Space bar") Space plays
+  and pauses even with Next focused; Enter presses Next. Outside the Play view it waits as one line
+  ("This is on the Play view." with **Show the Play view**) on the view's hint home, or wherever it
+  covers least. Toasts about the start (the project a starter replaced, What's new) wait until the
+  guide is closed.
 - **"Try this" hints** (`src/app/views/hints/`): a chip suggests one next action at a time and moves
   on when the real state shows it was done (never a timer or a click on the hint). Two tracks: the
   basics (tap a pad in the Bass column, Mute on Drums, drag a clip, Tone, Change instrument, a
   mastering preset, record a Performance) and the **song** (play the song, a block's repeats, a part
-  switched off in a block, an export), which becomes current when Arrange opens. Any first project
-  starts them; on a Blank project, steps with nothing to tap or drag are passed over.
+  switched off in a block, an export), which becomes current when Arrange opens; song steps about
+  blocks wait for a song with blocks, and in another view a basics step that can be done there comes
+  before an Arrange-only one. Any first project starts them; on a Blank project, steps with nothing
+  to tap or drag are passed over.
   - Placement: after the view has painted, in idle time; never while a pointer is pressed or a
-    modal is open. It prefers the view's hint home (`[data-hint-home]`), keeps clear of
-    `[data-hint-avoid]` (readouts, take lists), never covers the transport, pads or keyboard, then
-    avoids controls, headings and status lines. It moves only when something appears under it.
+    modal is open. It prefers the view's hint home (`[data-hint-home]`). It **never** covers the
+    transport, the banners under it, the pads, the keyboard, a control or a `[data-hint-avoid]`
+    readout; headings and status lines are avoided wherever there is room. With no such spot it
+    takes a narrower layout (down to one line) or waits off screen (its words stay with screen
+    readers) and looks again after 1.5 s.
+  - Toasts and tooltips pass above it: they are never a reason to move. It moves only when
+    something it must not cover appears under it, and arrives with a short slide (3 px), never a
+    fade.
   - A step that belongs to another view collapses to one line, "Next, in Play: …" (or the pad
-    tab's name), with a button that goes there.
+    tab's name), with a button that goes there; its words follow the view on screen.
   - Shown only while Tips are on; **Hide hints** says Help (?) shows them again.
 
 ## Cross-cutting rules
@@ -696,12 +746,14 @@ song lane (300 ms hold picks up), ruler (200 ms hold sets a loop), Shape knobs (
 opens the knob menu), sampler waveform (two-finger pinch zooms).
 
 **Toasts.** At the top centre, just under the transport and any banner (`--transport-h`), where
-every view keeps headers rather than anything played. Below an open menu; action keys hidden under
-a modal dialog. When a control (a tab, key, pad, field) lies under the centred stack, it slides
-into the widest clear stretch of its band nearest the centre (narrowing to fit, never under 300
-px), placed again after a scroll or resize. Durations: Undid / Redid 3 s; a failed save once per
-run of failures; errors stay until dismissed. Tone is shown by icon and words; coral only for
-warnings and errors.
+every view keeps headers rather than anything played; the stack is at most 520 px wide. Below an
+open menu; action keys hidden under a modal dialog. When a control (a tab, key, pad, field, a
+field's frame, a song block) lies under the centred stack, it moves to the nearest spot that covers
+none, trying narrower stacks (440, then 360 px) and measuring the height each width really takes; if
+no spot is clear it stays centred. Very wide elements (over 60 % of the window) do not count as
+controls. It is placed each time the stack changes and again after a scroll or resize. Durations:
+Undid / Redid 3 s; a failed save once per run of failures; errors stay until dismissed. Tone is
+shown by icon and words; coral only for warnings and errors.
 
 **Menus** (`Popover` in `src/app/views/ClipMenu.tsx`): below the trigger when they fit, else above,
 else beside it, never on top of the key that opened them. A second click on the trigger closes the

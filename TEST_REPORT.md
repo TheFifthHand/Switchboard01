@@ -1,8 +1,8 @@
-# TEST REPORT — Omni Song 2.1
+# TEST REPORT — Omni Song 2.2
 
-_Formerly SWITCHBOARD / 01. Test results and evidence for the 2.1 build (2.0 plus the song
-timeline) and the round-4 upgrade built on it. Every requirement of the original brief, the 2.0 and
-2.1 additions and round 4 is listed with its evidence in
+_Formerly SWITCHBOARD / 01. Test results and evidence for the 2.2 build: 2.1 (2.0 plus the song
+timeline) and the round-4 upgrade built on it. Every requirement of the original brief and of the
+2.0, 2.1 and 2.2 additions is listed with its evidence in
 [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)._
 
 ## How to reproduce
@@ -19,7 +19,7 @@ npm run package                       # build, then release/omni-song-<version>.
 
 ## Results
 
-### Round 4 (`r4-int`)
+### 2.2 (round 4, `r4-int`)
 
 | Suite | Files | Tests | Result |
 |-------|-------|-------|--------|
@@ -38,7 +38,9 @@ Tab tours in `a11y`, which exceed 90 s; Jump In and first-sound timings in `jour
 re-run on their own, or failed the same way on the base build under the same load; the one
 exception is the e2e `r4-core-stall` failure in the shell slice's full run (load 40–57), which was
 not compared with a base run (it passed in the core slice and its review). They are timing checks
-of the test machine, not of the app's audio clock; a run on a quiet machine is the reference.
+of the test machine, not of the app's audio clock; a run on a quiet machine is the reference. The
+one quiet run in the slice reports, the shell slice's final full e2e run, serial at a load of about
+2, passed 51 of 51; the arrange slice's browser tests passed 221 of 221 run serially.
 
 ### 2.1 handoff
 
@@ -153,7 +155,7 @@ the long frame went from 90–140 ms (first version) to a median of 57–75 ms; 
 from ~150 ms to 72–107 ms. A replan deferred past the paint was tried and measured worse overall,
 so the replan stays in the edit's own task.
 
-## Round 4 test files (by area)
+## 2.2 (round 4) test files, by area
 
 Every round-4 slice added tests named after it (`r4-<slice>-*`); browser tests use real CDP mouse,
 keyboard and touch input at 1366 × 768, 1920 × 1080 and 960 × 540 at 2×. Shared helpers:
@@ -172,15 +174,16 @@ keyboard and touch input at 1366 × 768, 1920 × 1080 and 960 × 540 at 2×. Sha
 | Keys and pads (drum grid, kit keys, strip, key change, chords) | — | `r4-keys-drumgrid`, `-kitkeys`, `-strip`, `-key-change`, `-chords` | `r4-keys-firstkey` |
 | Steps | `r4-steps-model` | `r4-steps-selection`, `-keys`, `-grid`, `-quantize`, `-bars`, `-follow`, `-touch`, `-playhead`, `-key`, `-layout`, `-fixes` | — |
 | Sound browser and sampler | `r4-sampler-tempo-helper` | `r4-sampler-browse-cancel`, `-browse-safety`, `-import-clip`, `-takes`, `-zoom`, `-motion` | — |
-| Shape | `r4-shape-logic` | `r4-shape-cards`, `-bigknobs`, `-reset`, `-assign`, `-sound-card`, `-layout`, `-switch-perf`, `-copy-effects`, `-gr`, `-gates` | — |
-| Arrange | — | `r4-arrange-card-layer`, `-scale`, `-mute`, `-loop-button`, `-wheel`, `-rows`, `-take-drawer`, `-selection-parts`, `-moves`, `-scenes`, `-take-to-song`, `-touch-ruler`, `-audition`, `-edge-grip`, `-zoom-memory`, `-menu-toast`, `-song` | — |
+| Shape | `r4-shape-logic` | `r4-shape-cards`, `-bigknobs`, `-reset`, `-assign`, `-sound-card`, `-layout`, `-switch-perf`, `-part-switch`, `-copy-effects`, `-gr`, `-gates`, `-rack-embedded` | — |
+| Arrange | — | `r4-arrange-card-layer`, `-card-grab`, `-slot`, `-names`, `-scale`, `-mute`, `-loop-button`, `-wheel`, `-rows`, `-take-drawer`, `-selection-parts`, `-moves`, `-scenes`, `-take-to-song`, `-touch-ruler`, `-audition`, `-edge-grip`, `-zoom-memory`, `-menu-toast`, `-song` | — |
 | Mix and export | — | `r4-mix-layout`, `-channel-drawer`, `-returns`, `-spectrum`, `-compare`, `-export`, `-match`, `-match-steps`, `-match-guard` | — |
-| Shell (Welcome, Help, keys, save state, widths, hints, drop import, toasts) | `r4-shell-help-data`, `r4-shell-steps` | `r4-shell-welcome`, `-keys`, `-help`, `-savestate`, `-transport-widths`, `-hints-song`, `-hints-cost`, `-hint-home`, `-drop-import` | `r4-shell-two-tabs-banner`, `-return-visit`, `-toast-place` |
+| Shell (Welcome, Help, keys, save state, widths, hints, drop import, toasts, renders) | `r4-shell-help-data`, `r4-shell-steps` | `r4-shell-welcome`, `-keys`, `-help`, `-savestate`, `-transport-widths`, `-hints-song`, `-hints-cost`, `-hint-home`, `-chip-clear`, `-drop-import` | `r4-shell-two-tabs-banner`, `-return-visit`, `-toast-place`, `-renders`, `-first-keys` |
 
 Many older tests were updated to the new wording and behaviour (for example `steps`, `arp`,
 `parts`, `clipmenu`, `omni-mix-view`, `omni-mix-session`, `omni-shape-*`, `omni-hints-*`,
 `library`, `starters`, and the e2e `journey`, `firstnote`, `persistence`, `resilience`, `a11y`).
-Screenshots in `docs/screenshots/` and the WAVs in `evidence/wav/` were not refreshed for round 4.
+Screenshots in `docs/screenshots/`, the WAVs in `evidence/wav/` and the launcher smoke test
+(`evidence/launcher-smoke.txt`, run on the 2.1 zip) were not refreshed for 2.2.
 
 ## Audio measurements (automated, not listening)
 

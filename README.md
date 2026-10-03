@@ -5,8 +5,9 @@ beat plays; tap pads to change it, swap instruments, mix it, record what you pla
 WAV file. Everything runs on your own device: no account, no uploads, no internet needed once it is
 loaded. All sounds are synthesized by the app itself.
 
-Omni Song is version 2.0 of the app that was called **SWITCHBOARD / 01**. Projects, settings and
-project files from 1.0 carry over (see [Coming from SWITCHBOARD / 01](#coming-from-switchboard--01)).
+Omni Song is the app that was called **SWITCHBOARD / 01**, renamed with version 2.0; this is version
+2.2. Projects, settings and project files from 1.0 carry over (see
+[Coming from SWITCHBOARD / 01](#coming-from-switchboard--01)).
 
 ## What it does
 
@@ -68,6 +69,17 @@ Knobs: drag up or down (hold Shift for fine steps), double-click to reset (in Sh
 sound had it), or click the value and type (`2.5k`, `-6`); in Shape, right-click a knob to give it
 to a big knob. Arrow keys, Page Up/Down and Home/End work once a knob has focus. Space plays and
 pauses, Shift+Space stops, M mutes the selected part, Ctrl+Z undoes, Ctrl+S saves, ? opens Help.
+
+### New in 2.2: the whole app, deeper and steadier
+
+Up to eight scenes and 8-bar clips; chord pads, Write a progression and moving the song to a new
+key; a piano roll you can select, move, tighten and loosen in, and drum steps you paint; per-clip
+recordings and imports; friendlier Shape (Sound knobs, any knob on a big knob, copy effects); song
+moves, intros and endings, and song blocks from a take; Reverb and Echo returns, a Channel drawer,
+a Match that keeps correcting and a level-matched A/B; exports that start on the beat, with or
+without mastering and with a loudness report; a true-peak limiter; Help (?), versions, recovery
+after a reload, and one tab per project. Playback no longer stops when the computer is busy for a
+moment. All of it is in the list above and in [`docs/GUIDE.md`](docs/GUIDE.md).
 
 ### New in 2.1: build a song by moving blocks
 

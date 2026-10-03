@@ -21,9 +21,9 @@ Rules:
 
 - `src/project`, `src/music`, `src/content`, `src/time/clock.ts`, `src/time/sequencer.ts`,
   `src/time/moves.ts`, `src/time/recordWindow.ts`, `src/time/songLoop.ts`, `src/audio/spectrum.ts`
-  and view helpers such as `arrange/songLayout.ts`, `songModel.ts`, `songDrag.ts`,
-  `steps/model.ts` and Shape's `macroAssign`, `cardKnob`, `squeeze` and `paramState` are **pure
-  TypeScript**: no DOM, no Web Audio, no React. They run in Node unit tests.
+  and view helpers such as `arrange/songLayout.ts`, `songModel.ts`, `songDrag.ts`, `steps/model.ts`
+  and Shape's `macroAssign`, `cardKnob`, `squeeze`, `paramState`, `drumMix` and `bigKnobReach` are
+  **pure TypeScript**: no DOM, no Web Audio, no React. They run in Node unit tests.
 - `src/audio` never imports React, stores, or UI. It is driven by `setProject()` and timed calls.
 - Audio nodes, class instances and functions never enter the Project. The Project is JSON.
 - The **audio clock is the timing authority**. Notes, song moves and audition stops are scheduled
@@ -493,11 +493,13 @@ Rules:
   imports it; the app loads PlayView eagerly).
 - `runtime.ts`: what the audio side is doing now (`playing`, `tracks`, `recording`,
   `recordStartsAtTick`, `recordTargetAudible`, `starterReplaced`, `stalled`, …) and `notify()`.
-- `App.tsx`: banners (audio, stall, another tab), the shell's own toasts, global keys (?, Ctrl+S),
-  drop-to-import, the leave warning, the document title. The view tab changes at once and the view
-  follows in a deferred render (`useDeferredValue`). App counts finished exports by wrapping
-  `renderWav` / `renderWavWithReport` (the song hints read it). `__APP_VERSION__` comes from a Vite
-  define (package.json).
+- `App.tsx`: banners (audio, stall, another tab), the shell's own toasts (start toasts wait until
+  the quick guide is closed), global keys (?, Ctrl+S), drop-to-import, the leave warning (not for
+  Record Notes) and the document title. The title and the leave guard are leaf components with
+  narrow selectors, so Play / Pause and saves do not re-render the app. The view tab changes at once
+  and the view follows in a deferred render (`useDeferredValue`). `session.exportsFinished` (a store
+  counting finished exports) is what the song hints read. `__APP_VERSION__` comes from a Vite define
+  (package.json).
 
 ## UI kit (`src/ui/`)
 
@@ -509,11 +511,16 @@ Rules:
   silent app runs no meter frames. Mix readouts and the spectrum ride on the same loop (`useMixTask`).
   `useRafLoop(cb, active, {fps})` caps other loops.
 - **Toast placement** (`components/Toast.tsx` and its CSS): top centre under `--transport-h`
-  (written by the TransportBar on `document.documentElement`, strip plus banners); below an open
-  menu (`body[data-popover-open]`, counted by Popover); action keys hidden under
-  `body[data-modal-open]` (set by Dialog); slides clear of controls under its band into the widest
-  clear stretch (≥ 300 px), placed again on scroll and resize. `--keyboard-h` (written by the
-  KeyboardStrip; 0 when folded or not docked) remains for other overlays.
+  (written by the TransportBar on `document.documentElement`: the visible bottom of the strip, or
+  of the banners under it, kept current on wrap, banners and scroll); below an open menu
+  (`body[data-popover-open]`, counted by Popover); action keys hidden under `body[data-modal-open]`
+  (set by Dialog). `placeClearOfControls`: when a control (a button, tab, field, a field's frame,
+  a song block `[data-block-id]`; nothing wider than 60 % of the window) lies under the centred
+  stack (at most 520 px wide), it hit-tests a coarse grid of the band once and takes the nearest
+  spot that covers none, trying narrower stacks (440, then 360 px) and measuring the height each
+  width really takes; with none it stays centred. Placed each time the stack changes and again
+  after a scroll or resize. `--keyboard-h` (written by the KeyboardStrip; 0 when folded or not
+  docked) remains for other overlays.
 - **Touch rule** (`components/touchDrag.ts`): `TOUCH_HOLD_MS` 250, `TOUCH_SLOP_PX` 8,
   `TOUCH_HIT_PX` 44 for Knob and Fader.
 - Knob sizes sm/md/lg/xl (`--knob-dial-*`), `macroRange`, clickable value key (`--knob-value-h`
@@ -541,11 +548,18 @@ Rules:
   commits on the drop; a diagonal in-key drag joins `moveNotes` and `transposeNotes` in one undo
   group. `usePlayhead(…, {cellTicks, follow})` lights the heard step from `clipPhase` +
   `audibleTick`.
-- **Shape:** pure, unit-tested helpers `macroAssign`, `cardKnob`, `squeeze`, `paramState`;
-  `knobExtras` adds Alt+double-click and the knob menu with native listeners; `GrMeter` reads
-  `moduleReductionDb` through the shared meter loop; `shapeLayout` keeps the Advanced tab and each
-  column's scroll per part; columns are memoised and follow a part switch in a deferred render (never
-  remounted, never made inert); `resetBigKnobs` is one undo group.
+- **Shape:** pure, unit-tested helpers `macroAssign` (a new assignment never jumps the sound; an
+  option control or a value at an end of its travel waits for the big knob to pass), `cardKnob`,
+  `squeeze`, `paramState`, `drumMix` (the Drum mix's groups from the voices a part plays) and
+  `bigKnobReach` (heard, waiting for a switched-off effect, or moving nothing); `knobExtras` adds
+  Alt+double-click and the knob menu with native listeners; `partSwitch.endKnobDrags` ends every
+  knob drag (as a cancelled pointer) when the selected part changes, before React renders the new
+  part (Shape and the Play part panel); `GrMeter` reads `moduleReductionDb` through the shared meter
+  loop; `shapeLayout` keeps the Advanced tab and each column's scroll per part; columns are memoised
+  and follow a part switch in a deferred render, swallowing input until they catch up (never
+  remounted, made inert or dimmed; "Showing <part>…" after 120 ms); `resetBigKnobs` is one undo
+  group. `EffectsRack({embedded})` is the rack outside Shape (Mix's Channel drawer): undo steps name
+  the part through `PartWordsContext`, and the host shows the take-lock note.
 - **Sound browser and sampler:** a browse takes `snapshotTrackSound` and makes every choice (and
   Cancel) with one gesture id, so back-to-back choices are one step and Cancel
   (`restoreTrackSound`) leaves none; outside edits stay their own steps. `importState` checks an
@@ -553,16 +567,21 @@ Rules:
   part's recording; `sampleDetail.ts` decodes close-up waveforms; `clipAudition.ts` plays a clip's
   own recording through `engine.scheduleNote` via the part's chain and the limiter (the session's
   preview cannot pass a recording yet).
-- **Arrange:** `PartNames`, `ScenePalette` (audition: the stop is queued for the pass's end bar on
-  the audio clock), `songDrag.Dwell` (the insertion slot opens after a 250 ms rest),
+- **Arrange:** `PartNames` (one Tab stop, arrows inside), `ScenePalette` (cards drag from anywhere:
+  their keys carry `data-drag-ok`; audition: the stop is queued for the pass's end bar on the audio
+  clock, by a module-level watcher that outlives the view), `songDrag.Dwell` (the insertion slot
+  opens after a 250 ms rest, its direction from the last `NET_DIR_PX` = 12 px of travel across),
   `LANE_EXTRA_MAX_PX`, lane glides timed from the current time (not the frame's start).
 - **Mix:** `loudnessMatch.ts` (fresh readings and iterating Match; watches from app load),
   `mixMeters` reads `readMetersShared`; the mastering panel mounts in a transition after the strips'
   first frame. Export uses `renderWavWithReport`.
 - **Hints:** placed after the view has painted, in idle time, never while a pointer is pressed or a
   modal is open, with a coarse-then-fine search and cached sizes; prefer `[data-hint-home]`, avoid
-  `[data-hint-avoid]`. Steps keep their words and detection together in `hints/steps.ts`; Help's
-  shortcuts and walkthroughs are pure data in `hints/shortcuts.ts` and `hints/guides.ts`.
+  `[data-hint-avoid]`. `placeOk` refuses any spot over a hard obstacle (the transport and the
+  banners, the pads, the keyboard, controls, `[data-hint-avoid]`); toasts and tooltips pass above
+  and are ignored; with no acceptable spot the chip waits off screen and tries again after 1.5 s.
+  Steps keep their words and detection together in `hints/steps.ts`; Help's shortcuts and
+  walkthroughs are pure data in `hints/shortcuts.ts` and `hints/guides.ts`.
 
 ## Testing
 
