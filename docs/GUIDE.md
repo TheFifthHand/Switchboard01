@@ -20,7 +20,7 @@ walkthroughs as short steps, and can show the quick guide and the hints again.
    Coming back later, the first key is **Continue** with your project's name; **Start a new
    groove** starts fresh and keeps your earlier project in My projects.
 2. **Swap a clip.** Tap another pad in the **Bass** column, for example *Rolling*. It counts down
-   (**Next bar · 3**, **2**, **1**) and takes over on the next bar line, in time. Only one clip per
+   the beats (**Next bar · 3** …) and takes over on the next bar line, in time. Only one clip per
    part plays at a time. The scene buttons on the right (Intro, Groove, Lift, Break) switch every
    part at once.
 3. **Mute and Solo.** Press **Mute** at the top of the **Drums** column: the column dims and says
@@ -114,7 +114,8 @@ bar. Turn on **Follow** and the shown bar turns with the music.
   place notes off the grid.
 - The **velocity** lane under the notes sets how hard each note is played; with notes selected it
   changes only those.
-- **Transpose** moves the clip one note of the key up or down (Shift: an octave).
+- **Transpose** moves the clip one note of the key up or down (Shift: an octave); with Musical
+  Assist off it moves by semitones.
 - **Timing…** → **Tighten timing…** pulls notes onto the grid (choose how firmly; it tells you how
   many notes will move). **Loosen (humanize)…** shifts timing and level a little, for a played
   feel; each press rolls again.
@@ -273,8 +274,8 @@ timing grid. Grid, metronome and count-in are in the recording options (the butt
 
 - **It saves by itself.** Even if the page closes or reloads right after an edit, the next start
   brings it back ("Recovered your last edits").
-- **Versions.** Open the projects button (folder icon, top right) → **My projects** → **Versions…**
-  on a project. Omni Song keeps a version about every ten minutes while you work and before big
+- **Versions.** Open the projects button (folder icon, top right, or **⋯ → Projects…**) → **My
+  projects** → **Versions…** on a project. Omni Song keeps a version about every ten minutes while you work and before big
   changes (a Variation, deleting a scene, moving the song to another key …). **Restore as a copy**
   opens one as a new project; **Save version…** keeps the project as it is now, with a name if you
   like.
