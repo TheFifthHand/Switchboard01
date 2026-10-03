@@ -169,8 +169,8 @@ control (Advanced), Tips; **New project…**, **Projects…**, **Export WAV…**
   length small, state word (Ready / Next bar / Playing / Stopping / Paused / Rec). A playing pad is
   an even amber wash. Where a pad is at least 100 px tall it shows a sketch of its notes. A long
   name fades at its end (no ellipsis) and the pad then carries the whole name as its title.
-  - Stopped: a pad that will start says **Starts on Play**; the part ▶ of a part that will not says
-    "Skip <part> when Play starts".
+  - Stopped: a pad that will start says **Starts on Play**, and its part's ■ key reads "Skip <part>
+    when Play starts".
   - **Loop progress:** a 3 px bar along the bottom of each sounding pad and of the playing scene
     button shows its place in the loop, moving once a sixteenth (once a beat with reduced motion),
     timed from the audio clock. A queued pad counts down: "Next bar · 3".
@@ -559,6 +559,17 @@ or edit. **Follow** turns it off (remembered, `switchboard01.songLane`).
 **Keyboard** (the blocks are one Tab stop): ←/→, Home/End; Shift extends; Alt+←/→ moves the
 selection; ↓ enters the part cells (Enter switches, "." picker, Esc back); Enter, ".", the menu key
 or Shift+F10 open the menu; F2 renames. Undo and Redo keep the lane's selection and focus.
+
+**Feedback.** Edits get one short toast with Undo that names the block ("Moved Groove to position
+3", "Groove: plays 3 times, 12 bars"); a gesture shows one, replacing the one before; an edit that
+left no undo step of its own gets a toast without Undo. A polite status line says the same for
+screen readers.
+
+**Motion and speed.** Only transform and opacity animate (a zoom also glides widths); slides are Web
+Animations started from where each block is; the lane scrolls on the compositor and never reads
+layout while a pointer moves or it auto-scrolls; a drop re-renders only the blocks that changed.
+Glides are timed from the current time, so a long edit never makes them finish before their first
+frame. With reduced motion blocks jump to their places and the lane jumps to the playhead.
 
 **Playing and locks.** Edits apply while the song plays or is paused; a deleted playing block sounds
 to the next bar line. While a take records the lane says "The song is locked while a take records."
