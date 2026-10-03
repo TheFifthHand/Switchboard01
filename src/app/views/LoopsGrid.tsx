@@ -63,7 +63,7 @@ import { createPortal, flushSync } from 'react-dom';
 import { Button, ClipSketch, DRUM_KEYS, Icon, IconButton, Meter, NOTE_KEYS, OCTAVE_KEYS, Pad, Tooltip, useRafLoop, type PadState } from '../../ui/components';
 import { TAP_SLOP_PX } from '../../ui/components/Pad';
 import { MOTION, boxOf, flip, offsetBox, prefersReducedMotion, scaledBox, stopMotion, type Box } from '../../ui/motion';
-import { BEATS_PER_BAR, MAX_SCENES, TICKS_PER_BAR, TICKS_PER_BEAT, type Clip, type Id, type Project, type Scene } from '../../project/types';
+import { BEATS_PER_BAR, MAX_SCENES, PPQ, TICKS_PER_BAR, TICKS_PER_BEAT, TICKS_PER_STEP, type Clip, type Id, type Project, type Scene } from '../../project/types';
 import { clipDropProblem, insertScene } from '../../state/commands';
 import { selectSlot, selectTrack, slotFor, uiStore } from '../../state/uiStore';
 import type { ClipPhase } from '../../time/contracts';
@@ -195,45 +195,72 @@ function queuedCaption(beats: number | null): string | undefined {
   return beats !== null && beats <= BEATS_PER_BAR ? `Next bar · ${beats}` : undefined;
 }
 
+/** One progress bar: a looping Web Animation of its fill's scaleX, moving in steps on the sequencer grid. */
+interface Bar {
+  /** The element that shows it (the pad button, or the scene button). */
+  host: HTMLElement;
+  anim: Animation;
+  durMs: number;
+  /** Steps per loop: one a sixteenth (one a beat with reduced motion). */
+  steps: number;
+}
+
 /**
- * Paints loop progress: `--loop-progress` (0..1) on the pad of each part's
- * sounding clip and on the lit scene button, and the beat countdown of
- * queued parts. Reads the audible position from the transport (the audio
- * clock); writes the DOM directly and only when a value changes. With
- * reduced motion it moves once a beat.
+ * How far (ms) the bars may fall behind the audio clock before they are all moved back together: under a quarter
+ * of a sixteenth at most tempos, and above the jitter of the audio clock as the page reads it.
  */
-class ProgressPainter {
-  private pads = new Map<Id, { el: HTMLElement; value: number }>();
-  private scenes = new Map<HTMLElement, number>();
+const DRIFT_MS = 30;
+/** How often (per second) the bars are checked against the audio clock and the countdowns updated. */
+export const PROGRESS_CHECKS_PER_SECOND = 8;
+/** A bar moves once a sixteenth (TICKS_PER_STEP) or, with reduced motion, once a beat. */
+export const progressStepTicks = (reduce: boolean) => (reduce ? TICKS_PER_BEAT : TICKS_PER_STEP);
+
+/** The fill a pad's bar scales: the Pad's progress strip (its ::after). */
+const padStrip = (pad: HTMLElement) => pad.querySelector<HTMLElement>(':scope > [class*="progress"]');
+
+/**
+ * Loop progress for the playing pads and the playing scene. Each bar is one
+ * looping Web Animation of its fill's transform, scaleX(0 → 1) over the
+ * clip's length, run by the browser: nothing is written per frame. It moves
+ * in steps of a sixteenth (a beat with reduced motion), all bars on the same
+ * grid, because a running animation that changes every frame restyles the
+ * page every frame; stepped, they restyle only when they move.
+ *
+ * All bars hang from one anchor: the page time at which tick 0 would be heard
+ * at the current tempo. `sync` reads the audible position from the transport
+ * (the audio clock) a few times a second, moves the anchor (and every bar
+ * with it) only when it drifted more than DRIFT_MS or the tempo changed, and
+ * otherwise touches a bar only when a clip starts or stops, or playback
+ * pauses or resumes. It also updates the beat countdown of queued pads.
+ */
+class ProgressAnimator {
+  private pads = new Map<Id, Bar>();
+  private scenes = new Map<HTMLElement, Bar>();
   private phase: ClipPhase = { slot: 0, startTick: 0, lengthTicks: 0 };
   private rows = new Map<number, { start: number; len: number }>();
+  /** Page time (ms, the animation timeline's clock) at which tick 0 would be heard at the current tempo. */
+  private anchor: number | null = null;
+  private msPerTick = 0;
 
-  paint(grid: HTMLElement | null, trackIds: readonly Id[]): void {
+  sync(grid: HTMLElement | null, trackIds: readonly Id[], running: boolean): void {
     const tr = session.transport;
     if (!grid || !tr) return this.clear();
     const tick = tr.audibleTick();
-    const step = prefersReducedMotion() ? TICKS_PER_BEAT : 0;
-    const at = (start: number, len: number) => {
-      let pos = (((tick - start) % len) + len) % len;
-      if (step) pos = Math.floor(pos / step) * step;
-      return pos / len;
-    };
+    const msPerTick = 60000 / (tr.sequencer.bpm * PPQ);
+    // The audio clock as the page reads it only ever lags what is heard (it moves in bursts), so the earliest
+    // anchor is the truest: take an earlier one, and a later one only when the music really fell behind.
+    const anchorNow = performance.now() - tick * msPerTick;
+    if (this.anchor === null || msPerTick !== this.msPerTick || anchorNow < this.anchor - 4 || anchorNow > this.anchor + DRIFT_MS) {
+      this.anchor = anchorNow;
+      this.msPerTick = msPerTick;
+    }
+    const reduce = prefersReducedMotion();
     this.rows.clear();
     for (const id of trackIds) {
       const ph = tr.clipPhase(id, this.phase);
-      const el = ph && ph.lengthTicks > 0 ? document.getElementById(padId(id, ph.slot)) : null;
-      const old = this.pads.get(id);
-      if (old && old.el !== el) {
-        old.el.style.removeProperty('--loop-progress');
-        this.pads.delete(id);
-      }
-      if (ph && el) {
-        const value = at(ph.startTick, ph.lengthTicks);
-        const cur = this.pads.get(id);
-        if (!cur || Math.abs(cur.value - value) > 0.0005) {
-          el.style.setProperty('--loop-progress', value.toFixed(4));
-          this.pads.set(id, { el, value });
-        }
+      const host = ph && ph.lengthTicks > 0 ? document.getElementById(padId(id, ph.slot)) : null;
+      this.place(this.pads, id, host, ph ? padStrip : null, ph, tick, reduce, running);
+      if (ph && host) {
         // The row's longest playing clip times the scene.
         const row = this.rows.get(ph.slot);
         if (!row || ph.lengthTicks > row.len) this.rows.set(ph.slot, { start: ph.startTick, len: ph.lengthTicks });
@@ -242,30 +269,86 @@ class ProgressPainter {
       countdown.set(id, q === null ? null : Math.max(1, Math.ceil((q - tick) / TICKS_PER_BEAT)));
     }
     // The playing scene's button (lit: every part of its row plays it).
-    for (const btn of grid.querySelectorAll<HTMLElement>('button[data-scene]')) {
-      const row = btn.dataset.lit !== undefined ? this.rows.get(Number(btn.dataset.row)) : undefined;
-      const old = this.scenes.get(btn);
-      if (!row) {
-        if (old !== undefined) {
-          btn.style.removeProperty('--loop-progress');
-          this.scenes.delete(btn);
-        }
-        continue;
-      }
-      const value = at(row.start, row.len);
-      if (old === undefined || Math.abs(old - value) > 0.0005) {
-        btn.style.setProperty('--loop-progress', value.toFixed(4));
-        this.scenes.set(btn, value);
-      }
+    const seen = new Set<HTMLElement>();
+    for (const btn of grid.querySelectorAll<HTMLElement>('button[data-scene][data-lit]')) {
+      const row = this.rows.get(Number(btn.dataset.row));
+      if (!row) continue;
+      seen.add(btn);
+      const ph: ClipPhase = { slot: Number(btn.dataset.row), startTick: row.start, lengthTicks: row.len };
+      this.place(this.scenes, btn, btn, (b) => b, ph, tick, reduce, running);
+    }
+    for (const [btn, bar] of [...this.scenes]) if (!seen.has(btn)) this.drop(this.scenes, btn, bar);
+  }
+
+  /** Start, retime or move one bar (never per frame: only when it is new, the anchor or tempo moved, or play paused or resumed). */
+  private place<K>(
+    map: Map<K, Bar>,
+    key: K,
+    host: HTMLElement | null,
+    fillOf: ((host: HTMLElement) => HTMLElement | null) | null,
+    ph: ClipPhase | null,
+    tick: number,
+    reduce: boolean,
+    running: boolean,
+  ): void {
+    let bar = map.get(key);
+    const fill = host && fillOf ? fillOf(host) : null;
+    if (!host || !ph || !fill || typeof fill.animate !== 'function' || this.anchor === null) {
+      if (bar) this.drop(map, key, bar);
+      return;
+    }
+    const len = ph.lengthTicks;
+    const durMs = len * this.msPerTick;
+    const steps = Math.max(1, Math.round(len / progressStepTicks(reduce)));
+    if (bar && (bar.host !== host || bar.steps !== steps || !host.isConnected)) {
+      this.drop(map, key, bar);
+      bar = undefined;
+    }
+    if (!bar) {
+      // Shown from now on (the strip appears once --loop-progress is a number; the animation moves the fill).
+      host.style.setProperty('--loop-progress', '0');
+      host.dataset.progress = '';
+      const anim = fill.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], {
+        duration: durMs,
+        iterations: Infinity,
+        easing: `steps(${steps}, end)`,
+        pseudoElement: '::after',
+      });
+      bar = { host, anim, durMs, steps };
+      map.set(key, bar);
+    }
+    const { anim } = bar;
+    if (Math.abs(bar.durMs - durMs) > 0.01) {
+      // A tempo change: the loop takes another time now.
+      anim.effect?.updateTiming({ duration: durMs });
+      bar.durMs = durMs;
+    }
+    if (running) {
+      // The loop started (in page time) where its start tick is heard: set only when that moved by more than a hair.
+      const want = this.anchor + ph.startTick * this.msPerTick;
+      const st = anim.startTime === null ? null : Number(anim.startTime);
+      const off = st === null ? durMs : (((st - want) % durMs) + durMs) % durMs;
+      if (anim.playState !== 'running' || Math.min(off, durMs - off) > 0.5) anim.startTime = want;
+    } else {
+      // Paused: held exactly where the music holds.
+      if (anim.playState !== 'paused') anim.pause();
+      const at = ((((tick - ph.startTick) % len) + len) % len) * this.msPerTick;
+      if (Math.abs(Number(anim.currentTime ?? 0) - at) > 0.5) anim.currentTime = at;
     }
   }
 
+  private drop<K>(map: Map<K, Bar>, key: K, bar: Bar): void {
+    bar.anim.cancel();
+    bar.host.style.removeProperty('--loop-progress');
+    delete bar.host.dataset.progress;
+    map.delete(key);
+  }
+
   clear(): void {
-    for (const { el } of this.pads.values()) el.style.removeProperty('--loop-progress');
-    for (const el of this.scenes.keys()) el.style.removeProperty('--loop-progress');
-    this.pads.clear();
-    this.scenes.clear();
+    for (const [k, bar] of [...this.pads]) this.drop(this.pads, k, bar);
+    for (const [k, bar] of [...this.scenes]) this.drop(this.scenes, k, bar);
     countdown.clear();
+    this.anchor = null;
   }
 }
 
@@ -1219,6 +1302,8 @@ function onContextMenuOpen(e: ReactMouseEvent<HTMLElement>, open: (anchor: MenuA
 
 interface ClipPadProps {
   col: ColumnSummary;
+  /** A short window: the pads are short, so the length line goes (the action bar and the spoken name keep it). */
+  compact: boolean;
   /** Column index (for the keyboard move's swap lean). */
   index: number;
   slot: number;
@@ -1235,7 +1320,7 @@ interface ClipPadProps {
 }
 
 const ClipPad = memo(function ClipPad(props: ClipPadProps) {
-  const { col, index, slot, sceneName, dimmed, onMenu, menuOpen, move, moveCol, onPointerDownPad, onDropHere } = props;
+  const { col, compact, index, slot, sceneName, dimmed, onMenu, menuOpen, move, moveCol, onPointerDownPad, onDropHere } = props;
   const trackId = col.id;
   const clip = col.clips[slot];
   const selected = useUi((s) => s.selectedTrackId === trackId && slotFor(s, trackId) === slot);
@@ -1315,7 +1400,7 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
           state={state}
           selected={selected}
           label={clip ? clip.name : 'Add clip'}
-          sublabel={clip ? barsLabel(clip.bars) : undefined}
+          sublabel={clip && !compact ? barsLabel(clip.bars) : undefined}
           caption={caption}
           captionIcon={paused ? 'pause' : undefined}
           activateOn="release"
@@ -1727,6 +1812,10 @@ function SceneButton(props: {
       e.preventDefault();
       const to = row + (e.key === 'ArrowUp' ? -1 : 1);
       if (to < 0 || to >= rows) return;
+      if (isEditLocked()) {
+        notify('Locked while a performance records. Stop the take to move scenes.', 'warn');
+        return;
+      }
       if (moveSceneWithMotion(row, to)) document.querySelector<HTMLElement>(`[data-scene-row="${to}"] button[data-scene]`)?.focus();
     } else if (!e.altKey && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       // The scene buttons are the grid's last column: arrows move along it, Left goes back to the pads.
@@ -1889,6 +1978,22 @@ function PadActions(props: {
 /* Grid                                                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Where the page scrolls under the sticky transport (narrow or short windows),
+ * scroll the page so a focused pad or scene button is not under it, nor below
+ * the window. (Chromium's focus scroll ignores scroll-margin.)
+ */
+function keepClearOfTransport(el: HTMLElement): void {
+  if (!el.isConnected) return;
+  const transport = document.querySelector<HTMLElement>('header[aria-label="Transport"]');
+  if (!transport || getComputedStyle(transport).position !== 'sticky') return;
+  const r = el.getBoundingClientRect();
+  const top = transport.getBoundingClientRect().bottom + 8;
+  const bottom = document.documentElement.clientHeight - 8;
+  if (r.top < top) window.scrollBy({ top: r.top - top });
+  else if (r.bottom > bottom) window.scrollBy({ top: Math.min(r.bottom - bottom, r.top - top) });
+}
+
 const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'];
 const countWords = (n: number, one: string, many: string) => `${NUMBER_WORDS[n] ?? String(n)} ${n === 1 ? one : many}`;
 
@@ -1944,8 +2049,18 @@ function usePadRoving(gridRef: { current: HTMLElement | null }) {
   );
 }
 
+/** Short, wide windows (a laptop browser's 657 px, 1280 x 720; narrower ones scroll the page instead): the rows get shorter (see LoopsGrid.module.css). */
+const SHORT_WINDOW = '(max-height: 740px) and (min-width: 1024px)';
+function subscribeShort(fn: () => void): () => void {
+  const mq = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(SHORT_WINDOW) : null;
+  mq?.addEventListener('change', fn);
+  return () => mq?.removeEventListener('change', fn);
+}
+const isShortWindow = () => (typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(SHORT_WINDOW).matches : false);
+
 export function LoopsGrid() {
   const columns = useProject(summarize, sameColumns);
+  const compact = useSyncExternalStore(subscribeShort, isShortWindow);
   const scenes = useProject((p) => p.scenes);
   const rows = scenes.length;
   const anySolo = columns.some((c) => c.solo);
@@ -1998,21 +2113,46 @@ export function LoopsGrid() {
     chipRef.current = el;
   }, []);
 
-  // Loop progress and countdowns: one frame loop for the whole grid while playing; paused holds the last picture.
-  const [painter] = useState(() => new ProgressPainter());
+  // Loop progress and countdowns: compositor animations, checked against the audio clock a few times a second
+  // while playing (never written per frame); a pause holds them where the music holds; Stop takes them away.
+  const [progress] = useState(() => new ProgressAnimator());
   const trackIds = columns.map((c) => c.id);
   const idsRef = useRef(trackIds);
   idsRef.current = trackIds;
-  useRafLoop(() => painter.paint(gridRef.current, idsRef.current), playing);
+  useRafLoop(() => progress.sync(gridRef.current, idsRef.current, true), playing, { fps: PROGRESS_CHECKS_PER_SECOND });
   useEffect(() => {
-    if (playing) return;
-    if (paused) painter.paint(gridRef.current, idsRef.current);
-    else painter.clear();
-  }, [playing, paused, painter]);
-  useEffect(() => () => painter.clear(), [painter]);
+    if (playing) progress.sync(gridRef.current, idsRef.current, true);
+    else if (paused) progress.sync(gridRef.current, idsRef.current, false);
+    else progress.clear();
+  }, [playing, paused, progress, scenes, columns]);
+  useEffect(() => () => progress.clear(), [progress]);
 
   // One Tab stop for the pads (with the scene buttons), one for the part headers.
-  const onPadFocus = usePadRoving(gridRef);
+  const onRovingFocus = usePadRoving(gridRef);
+  /** The pad or scene button focused last: when an edit takes it away (Delete scene, an undo), focus goes to its neighbour, not to the page. */
+  const lastFocus = useRef<{ el: HTMLElement; row: number; trackId: Id | null } | null>(null);
+  const onPadFocus = useCallback(
+    (e: FocusEvent<HTMLElement>) => {
+      onRovingFocus(e);
+      const el = e.target as HTMLElement;
+      const pad = /^pad-(.+)-(\d+)$/.exec(el.id);
+      if (pad && el.closest('[data-pad-cell]')) lastFocus.current = { el, row: Number(pad[2]), trackId: pad[1] };
+      else if (el.matches('button[data-scene]')) lastFocus.current = { el, row: Number(el.dataset.row), trackId: null };
+      else return;
+      // Keyboard focus is never hidden under a sticky transport where the page scrolls (narrow or short windows; the
+      // grid's own scroll padding keeps it clear of the part headers): the page moves just enough.
+      if (el.matches(':focus-visible')) requestAnimationFrame(() => keepClearOfTransport(el));
+    },
+    [onRovingFocus],
+  );
+  useLayoutEffect(() => {
+    const f = lastFocus.current;
+    const active = document.activeElement;
+    if (!f || f.el.isConnected || (active && active !== document.body)) return;
+    const row = Math.max(0, Math.min(f.row, scenes.length - 1));
+    const next = f.trackId ? document.getElementById(padId(f.trackId, row)) : document.querySelector<HTMLElement>(`[data-scene-row="${row}"] button[data-scene]`);
+    next?.focus();
+  }, [scenes]);
   const selectedColumn = useUi((s) => Math.max(0, columns.findIndex((c) => c.id === s.selectedTrackId)));
   const { gridRef: headRef, onFocus: onHeadFocus } = useRovingPads(HEAD_ID, selectedColumn * HEAD_KEYS.length);
 
@@ -2210,6 +2350,37 @@ export function LoopsGrid() {
     [openMenu],
   );
 
+  // The sticky head's height sets the grid's scroll padding (a focused pad never hides under it), and a fade
+  // at the grid's foot says when more rows are below. Written when they change, never per frame.
+  useLayoutEffect(() => {
+    const g = gridRef.current;
+    const head = headRef.current;
+    const frame = g?.parentElement;
+    if (!g || !head || !frame) return;
+    let headH = -1;
+    const check = () => {
+      const h = Math.ceil(head.getBoundingClientRect().height);
+      if (h !== headH) {
+        headH = h;
+        g.style.setProperty('--head-h', `${h}px`);
+      }
+      const more = g.scrollHeight - g.clientHeight - g.scrollTop > 4;
+      if (more !== frame.hasAttribute('data-more')) {
+        if (more) frame.dataset.more = '';
+        else delete frame.dataset.more;
+      }
+    };
+    check();
+    g.addEventListener('scroll', check, { passive: true });
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : null;
+    ro?.observe(g);
+    ro?.observe(head);
+    return () => {
+      g.removeEventListener('scroll', check);
+      ro?.disconnect();
+    };
+  }, [headRef, rows]);
+
   const addScene = () => {
     const r = insertScene(session.store);
     if (!session.accepted(r)) return;
@@ -2227,63 +2398,70 @@ export function LoopsGrid() {
 
   return (
     <div className={styles.wrap}>
-      <div
-        className={styles.grid}
-        ref={gridRef}
-        onKeyDown={onGridKey}
-        onKeyDownCapture={onGridKeyCapture}
-        onFocus={onPadFocus}
-        role="group"
-        aria-label={`Clip pads: ${countWords(columns.length, 'part', 'parts')} by ${countWords(rows, 'scene', 'scenes')}`}
-        data-moving={move ? 'keys' : undefined}
-        data-locked={locked || undefined}
-        style={{ '--rows': rows } as CSSProperties}
-      >
-        {/* The part headers and Stop all: one sticky row (the pad rows scroll under it). */}
-        <div className={styles.head} ref={headRef} onKeyDown={onHeadKey} onFocus={onHeadFocus} data-grid-head="">
-          {columns.map((c, i) => (
-            <TrackHeader key={c.id} col={c} index={i} anySolo={anySolo} onMenu={openMenu} menuOpen={menu?.kind === 'track' && menu.trackId === c.id} />
-          ))}
-          <div className={styles.sceneHeader}>
-            <span className={styles.sceneHeaderText}>Scenes</span>
-            <Tooltip tip="Stop every part at the next bar (the transport keeps running).">
-              <button type="button" className={styles.stopAll} onClick={() => session.stopAllClips()} aria-label="Stop all parts at the next bar">
-                <Icon name="stop" size={12} />
-                <span>Stop all</span>
-              </button>
-            </Tooltip>
-          </div>
-        </div>
-        {scenes.map((scene, row) => (
-          <div key={scene.id} className={styles.row}>
+      <div className={styles.gridFrame}>
+        <div
+          className={styles.grid}
+          ref={gridRef}
+          onKeyDown={onGridKey}
+          onKeyDownCapture={onGridKeyCapture}
+          onFocus={onPadFocus}
+          role="group"
+          aria-label={`Clip pads: ${countWords(columns.length, 'part', 'parts')} by ${countWords(rows, 'scene', 'scenes')}`}
+          data-moving={move ? 'keys' : undefined}
+          data-locked={locked || undefined}
+          style={{ '--rows': rows } as CSSProperties}
+        >
+          {/* The part headers and Stop all: one sticky row (the pad rows scroll under it). */}
+          <div className={styles.head} ref={headRef} onKeyDown={onHeadKey} onFocus={onHeadFocus} data-grid-head="">
             {columns.map((c, i) => (
-              <ClipPad
-                key={c.id}
-                col={c}
-                index={i}
-                slot={row}
-                sceneName={scene.name}
-                dimmed={c.mute || (anySolo && !c.solo)}
-                onMenu={openMenu}
-                menuOpen={menu?.kind === 'clip' && menu.trackId === c.id && menu.slot === row}
-                move={move}
-                moveCol={moveCol}
-                onPointerDownPad={onPointerDownPad}
-                onDropHere={dropOn}
-              />
+              <TrackHeader key={c.id} col={c} index={i} anySolo={anySolo} onMenu={openMenu} menuOpen={menu?.kind === 'track' && menu.trackId === c.id} />
             ))}
-            <SceneButton
-              row={row}
-              rows={rows}
-              scene={scene}
-              columns={columns}
-              onMenu={openMenu}
-              menuOpen={menu?.kind === 'scene' && menu.row === row}
-              onPointerDownScene={onPointerDownScene}
-              consumeClick={gestures.consumeClick}
-            />
+            <div className={styles.sceneHeader}>
+              <span className={styles.sceneHeaderText}>Scenes</span>
+              <Tooltip tip="Stop every part at the next bar (the transport keeps running).">
+                <button type="button" className={styles.stopAll} onClick={() => session.stopAllClips()} aria-label="Stop all parts at the next bar">
+                  <Icon name="stop" size={12} />
+                  <span>Stop all</span>
+                </button>
+              </Tooltip>
+            </div>
           </div>
-        ))}
+          {scenes.map((scene, row) => (
+            <div key={scene.id} className={styles.row}>
+              {columns.map((c, i) => (
+                <ClipPad
+                  key={c.id}
+                  col={c}
+                  index={i}
+                  slot={row}
+                  sceneName={scene.name}
+                  compact={compact}
+                  dimmed={c.mute || (anySolo && !c.solo)}
+                  onMenu={openMenu}
+                  menuOpen={menu?.kind === 'clip' && menu.trackId === c.id && menu.slot === row}
+                  move={move}
+                  moveCol={moveCol}
+                  onPointerDownPad={onPointerDownPad}
+                  onDropHere={dropOn}
+                />
+              ))}
+              <SceneButton
+                row={row}
+                rows={rows}
+                scene={scene}
+                columns={columns}
+                onMenu={openMenu}
+                menuOpen={menu?.kind === 'scene' && menu.row === row}
+                onPointerDownScene={onPointerDownScene}
+                consumeClick={gestures.consumeClick}
+              />
+            </div>
+          ))}
+        </div>
+        {/* More rows below than the grid shows: a fade at its foot says so. */}
+        <div className={styles.gridFade} aria-hidden="true">
+          <Icon name="chevronDown" size={14} />
+        </div>
       </div>
       {/* Under the grid: the selected pad's actions, and under the scene column "Add scene" (until there are 8). */}
       <div className={styles.bottom} data-add={rows < MAX_SCENES || undefined}>

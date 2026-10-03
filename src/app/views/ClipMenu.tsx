@@ -10,7 +10,8 @@
  * popup's trigger, or the `ignore` element) is not an outside press: the
  * key's own click closes it again. A menu closed by an outside press takes
  * that press: nothing under the pointer starts (a pad, Stop, a knob) and its
- * click is swallowed (once; keys are never affected). While any popover is
+ * click is swallowed (once; keys are never affected), except on another
+ * menu's trigger, which opens its own menu at once. While any popover is
  * open, body carries data-popover-open (counted, so nested or overlapping
  * popovers keep it until the last one closes): toasts move to the top, clear
  * of the menu. For a moment after it opens, a click that
@@ -337,7 +338,8 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
       if (!t || ref.current?.contains(t) || (ignore && ignore.contains(t))) return;
       if (t instanceof Element && t.closest('[aria-haspopup][aria-expanded="true"]')) return;
       focusInside.current = false;
-      if (roleRef.current === 'menu') consumePress(e);
+      // A press on another menu's trigger is not swallowed: this menu closes and that one opens, on the first click.
+      if (roleRef.current === 'menu' && !(t instanceof Element && t.closest('[aria-haspopup]'))) consumePress(e);
       onCloseRef.current();
     };
     const onResize = () => onCloseRef.current();
