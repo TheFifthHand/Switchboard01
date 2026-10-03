@@ -79,6 +79,18 @@ project files, so a song made on a laptop opens in the headset and back.
 model, shaped by your movement, in a space you can stand in — music as something you move through.
 What this becomes will be decided by trying the earlier steps first.
 
+### 5. Smaller things deferred from round 4
+
+*Plan.* Round 4 (the whole-app upgrade after 2.1) left these out on purpose, to be picked up later:
+
+- **Stem export:** one WAV per part from the Export dialog.
+- **Drum rolls** in the step grid.
+- **Preview on each sound card** in the sound browser (today Preview plays the part's current
+  sound).
+- **Sampler:** slicing a recording, an ADSR envelope and more filter types.
+- **Shape:** a per-voice drum strip, a voice-source picker, and saving your own sound presets.
+- **Links to views** (hash routing), so a view can be bookmarked or reopened by address.
+
 ## How plans become features
 
 Each plan starts as a small experiment behind an option, is measured against the same quality bar
