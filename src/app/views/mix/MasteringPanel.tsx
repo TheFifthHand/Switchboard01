@@ -38,8 +38,10 @@ import {
   loudnessTick,
   matchState,
   minusLufs,
+  onMatchFocusRequest,
   readingBasis,
   startMatch,
+  takeMatchFocusRequest,
   useMatchState,
   watchLoudness,
   type LoudnessReading,
@@ -299,6 +301,7 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
   const values = useRef<Record<ReadoutKey, HTMLElement | null>>({ momentary: null, shortTerm: null, integrated: null, truePeak: null });
   const peakNameRef = useRef<HTMLSpanElement>(null);
   const statusRef = useRef<HTMLParagraphElement>(null);
+  const matchRef = useRef<HTMLButtonElement>(null);
   const latest = useRef<LoudnessReading>({ integrated: -Infinity, shortTerm: -Infinity });
   const lastAt = useRef(-Infinity);
   /** There is a reading to match from (React state: it changes rarely, the readings themselves do not render). */
@@ -307,6 +310,30 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
   useLayoutEffect(() => {
     targetRef.current = target;
   });
+
+  // Sent here by "Match target in Mix" (the export report): bring Match into view and focus it,
+  // once the dialog that asked has closed and given focus back.
+  useEffect(() => {
+    let raf = 0;
+    const go = () => {
+      if (!takeMatchFocusRequest()) return;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        raf = requestAnimationFrame(() => {
+          const el = matchRef.current;
+          if (!el) return;
+          el.scrollIntoView({ block: 'center', inline: 'nearest' });
+          el.focus({ preventScroll: true });
+        });
+      });
+    };
+    go();
+    const off = onMatchFocusRequest(go);
+    return () => {
+      off();
+      cancelAnimationFrame(raf);
+    };
+  }, []);
 
   // A new target, a new state of the readings, or of Match: the status line is written again at once.
   useLayoutEffect(() => {
@@ -322,6 +349,7 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
   useMixTask({
     frame(now) {
       if (now - lastAt.current < READOUT_INTERVAL_MS) return runtimeStore.getState().playing;
+      const dt = Number.isFinite(lastAt.current) ? now - lastAt.current : 0;
       lastAt.current = now;
       const l = readMixFrame().loudness;
       const live = mixFrameLive();
@@ -347,7 +375,7 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
       }
       const reading = { integrated: l?.integrated ?? -Infinity, shortTerm: l?.shortTerm ?? -Infinity };
       latest.current = reading;
-      loudnessTick(now, reading);
+      loudnessTick(now, reading, dt);
       const run = runtimeStore.getState();
       const isPlaying = run.playing && !run.paused;
       const t = targetRef.current;
@@ -443,6 +471,7 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
       </p>
       <div className={styles.matchRow}>
         <Button
+          ref={matchRef}
           variant="primary"
           size="lg"
           icon="sparkle"
@@ -454,10 +483,10 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
           className={styles.match}
           tip={
             matching
-              ? `Matching the ${target.name} target: after each fresh 3-second reading it corrects again, up to ${MATCH_PASSES} times, while the music plays. Stop playback or change a setting to stop it.`
+              ? `Matching the ${target.name} target: after each fresh 3-second reading it corrects again, up to ${MATCH_PASSES} times, while the music plays. Stopping playback, Mute All, the A/B or any change to the song stops it.`
               : (blocked ?? `Set Loudness drive so the song lands on ${minusLufs(target.lufs)}.`)
           }
-          detail={`Moves Loudness drive by the measured difference: the integrated reading when it is of the current settings, else the short-term one. The limiter holds peaks below ${MINUS}1 dBTP, so a push adds less than the numbers say; while the music plays, Match checks again after each fresh 3-second reading and corrects again, until it is within 0.5 dB or after ${MATCH_PASSES} passes. Each correction is one undo step.`}
+          detail={`Moves Loudness drive by the measured difference: the integrated reading when it is of the current settings, else the short-term one. The limiter holds peaks below ${MINUS}1 dBTP, so a push adds less than the numbers say; while the music plays, Match checks again after each fresh 3-second reading and corrects again, until it is within 0.5 dB or after ${MATCH_PASSES} passes. One press is one undo step.`}
         >
           {/* Both words take the same place, so the key keeps its width. */}
           <span className={styles.matchWords}>

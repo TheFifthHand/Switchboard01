@@ -1,16 +1,20 @@
-/* Mixer strips (parts, returns, master). Each strip is a size container so its controls adapt to its width. */
+/*
+ * Mixer strips (parts, returns, master). Each strip spans three rows of the mixer's grid
+ * (MixView.module.css: name / controls / fader) through subgrid: every strip's controls end, and its
+ * fader starts, at the same height, so the faders are equally long and the parts' 0 dB marks line up
+ * across the mixer (the returns' 0 dB is the top of their travel: their level is the return's Mix,
+ * 100 % at the top). Size containment would stop a subgrid, so each of the three rows is the size
+ * container its controls adapt to (the strip's width less its 6 px of padding).
+ */
 
 .strip {
-  container-type: inline-size;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 5px;
+  display: grid;
+  grid-row: 1 / span 3;
+  grid-template-rows: subgrid;
+  row-gap: 5px;
   min-width: 0;
-  /* Never shorter than what it holds (the fader at its smallest): with the Sends and effects row on a
-     short window the mixer scrolls instead of cutting faders off. */
-  min-height: max-content;
-  padding: 4px 3px 6px;
+  /* The same padding at every width, so the subgrid rows line up. */
+  padding: 5px 3px 7px;
   border-radius: var(--r-md);
   background: linear-gradient(180deg, var(--surface-hi), var(--surface));
   box-shadow:
@@ -18,15 +22,20 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 
-@container (min-width: 96px) {
-  .strip {
-    padding: 6px 6px 8px;
-  }
+/* The three rows: each a size container for what it holds. */
+.top,
+.middle,
+.faderRow {
+  container-type: inline-size;
 }
 
-/* Only the fader grows or shrinks with the strip's height. */
-.strip > * {
-  flex-shrink: 0;
+/* Between the name and the fader: sits on the fader (Mute and Solo line up across the strips). */
+.middle {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 5px;
+  min-width: 0;
 }
 
 .strip[data-selected] {
@@ -273,7 +282,7 @@ button.head:focus-visible {
   gap: 2px;
 }
 
-@container (min-width: 132px) {
+@container (min-width: 126px) {
   .returnKnobs {
     flex-direction: row;
     justify-content: center;
@@ -281,6 +290,7 @@ button.head:focus-visible {
 }
 
 .missing {
+  grid-row: 2 / span 2;
   margin: 0;
   padding: 0 4px;
   font-size: var(--fs-xs);
@@ -296,7 +306,7 @@ button.head:focus-visible {
 }
 
 /* Side by side once the strip is wide enough: icon above the word, then icon beside it. */
-@container (min-width: 72px) {
+@container (min-width: 66px) {
   .ms {
     grid-template-columns: 1fr 1fr;
   }
@@ -318,7 +328,7 @@ button.head:focus-visible {
   }
 }
 
-@container (min-width: 128px) {
+@container (min-width: 122px) {
   .msButton {
     flex-direction: row;
     gap: 5px;
@@ -383,8 +393,7 @@ button.head:focus-visible {
   display: flex;
   justify-content: center;
   gap: 0;
-  flex: 1 1 auto;
-  min-height: 132px;
+  min-height: 0;
 }
 
 /*
@@ -406,6 +415,17 @@ button.head:focus-visible {
   min-width: 11px;
   height: auto;
   padding: 6px 0 20px;
+}
+
+/*
+ * A return's fader and meter: the part of the row a part's fader gives to −60…0 dB (--reach), from the
+ * same bottom, so their marks line up with the parts'. 60 px: the value row (22 px) and the cap's
+ * half-height plus padding at each end of the travel (2 x 19 px), which do not scale.
+ */
+.returnStrip .faderRow > * {
+  align-self: flex-end;
+  height: calc(60px + (100% - 60px) * var(--reach, 1));
+  min-height: 0;
 }
 
 /* The master's two meters (no peak number): 19 - 13 = 6 px over, 22 + 19 - 3 = 38 px under. */
@@ -451,9 +471,13 @@ button.head:focus-visible {
   color: var(--coral-ink);
 }
 
-@container (min-width: 104px) {
+/* Wide enough for the ceiling's number: the meters keep its room on their right, so it stays inside the strip. */
+@container (min-width: 98px) {
   .ceilingText {
     display: block;
+  }
+  .masterMeters {
+    margin-right: 14px;
   }
 }
 
@@ -485,7 +509,7 @@ button.head:focus-visible {
 
 /* Narrow strips (eight parts, two returns and the master beside the mastering at 1366 px): one step
    smaller names, so "Percussion" stays one word. */
-@container (max-width: 95px) {
+@container (max-width: 89px) {
   .head {
     padding-left: 2px;
     padding-right: 2px;
@@ -505,8 +529,45 @@ button.head:focus-visible {
     overflow-wrap: break-word;
   }
   /* Fader and meter start at the strip's edge, so the peak number under the meter stays inside it. */
-  .faderRow {
-    justify-content: flex-start;
+  .faderRow > :first-child {
     margin-left: -3px;
+  }
+  .faderRow > :last-child {
+    margin-right: auto;
+  }
+  /* The peak number's 32 px press target ends under the meter's right edge (not centred under the
+     11 px meter), so the number and its target stay inside the strip. */
+  .meterWell > [data-meter-hold] {
+    align-self: flex-end;
+  }
+}
+
+/*
+ * The Sends and effects row on a window shorter than the one it is shown on by default: the strips
+ * drop the sound names and the Effects label and tighten up, so the faders keep about 120 px or more
+ * (at 1366 x 768) and the meters stay in sight. The sound is still in each strip's name for assistive
+ * technology and its tooltip.
+ */
+@media (max-height: 999px) {
+  :global([data-mix-sends]) .sound,
+  :global([data-mix-sends]) .effects > .sectionLabel {
+    display: none;
+  }
+  /* One line kept for the names (a longer one still takes two). */
+  :global([data-mix-sends]) .name {
+    min-height: 16px;
+  }
+  :global([data-mix-sends]) > .strip {
+    row-gap: 3px;
+    padding-top: 3px;
+    padding-bottom: 5px;
+  }
+  :global([data-mix-sends]) .head {
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+  :global([data-mix-sends]) .sendsRow,
+  :global([data-mix-sends]) .middle {
+    gap: 3px;
   }
 }

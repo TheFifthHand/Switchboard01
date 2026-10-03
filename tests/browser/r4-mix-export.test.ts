@@ -4,7 +4,9 @@
  * - Output: Mix (default) or Mix without mastering, which is quieter with a loud master; 24-bit by
  *   default; visible labels for every setting; "Echo tail"; one close pattern (× and one primary key).
  * - After a render, a report line: "Integrated −17.6 LUFS · true peak −1.0 dBTP (Streaming target
- *   −14)", with "Match target in Mix" when the file is more than 1 dB off; changing a setting clears it.
+ *   −14)", with "Match target in Mix" when the file is more than 1 dB off and the project's mastering
+ *   is on (it asks Mix to bring Match target into view and focus it); changing a setting clears it.
+ * - Output starts at Mix each time the dialog opens ("without mastering" is a choice for one file).
  * - While it renders, Esc and a click outside do nothing: Cancel export is the only way out; the
  *   time left is shown; "Export cancelled" and "Saved …" outlive the dialog as toasts (raised when it
  *   closes, so they never cover its keys).
@@ -18,6 +20,7 @@ import { ToastProvider } from '../../src/ui/components';
 import { session } from '../../src/app/instance';
 import { patchRuntime } from '../../src/app/runtime';
 import { ExportDialog, safeName, timeLeftText } from '../../src/app/views/ExportDialog';
+import { takeMatchFocusRequest } from '../../src/app/views/mix/loudnessMatch';
 import { setLoudnessTarget } from '../../src/app/views/mix/mixPrefs';
 import { getStarter } from '../../src/content/starters';
 import { parseWav } from '../../src/render/wav';
@@ -64,9 +67,15 @@ afterEach(() => {
 });
 
 function open() {
-  const m = mount(h(ToastProvider, null, h(ExportDialog, { open: true, onClose: () => closes++, initialSource: 'scene:1' })), { width: 900 });
+  const el = (shown: boolean) => h(ToastProvider, null, h(ExportDialog, { open: shown, onClose: () => closes++, initialSource: 'scene:1' }));
+  const m = mount(el(true), { width: 900 });
   const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
-  return { m, dialog };
+  /** Close the dialog and open it again. */
+  const reopen = () => {
+    m.rerender(el(false));
+    m.rerender(el(true));
+  };
+  return { m, dialog, reopen };
 }
 
 const byText = (root: ParentNode, text: string | RegExp) =>
@@ -176,9 +185,12 @@ describe('Export dialog: report and output', () => {
     await press(radio(dialog(), '24-bit'));
     if (link) {
       await exportAndWait(dialog());
+      takeMatchFocusRequest();
       await press(byText(dialog(), 'Match target in Mix'));
       expect(closes).toBe(1);
       expect(uiStore.getState().view).toBe('mix');
+      // Mix is asked to bring Match target into view and focus it (r4-mix-match-steps checks that it does).
+      expect(takeMatchFocusRequest()).toBe(true);
       // The result outlives the dialog as a toast.
       await act(async () => wait(50));
       expect(toastText()).toMatch(/Saved .+\.wav .*Integrated −\d+\.\d LUFS/);
@@ -205,6 +217,31 @@ describe('Export dialog: report and output', () => {
     expect(byText(dialog(), 'Match target in Mix')).toBeUndefined();
     expect(saved).toHaveLength(2);
     expect(session.store.getState().mastering.presetId).toBe('loud');
+  }, 90_000);
+
+  it('Output is back at Mix each time the dialog opens', async () => {
+    const { dialog, reopen } = open();
+    await press(radio(dialog(), 'Mix without mastering'));
+    expect(radio(dialog(), 'Mix without mastering').getAttribute('aria-checked')).toBe('true');
+    reopen();
+    await settleFrames();
+    expect(radio(dialog(), 'Mix').getAttribute('aria-checked')).toBe('true');
+    expect(radio(dialog(), 'Mix without mastering').getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('with the project’s mastering off, an off-target export offers no Match target (it moves the mastering)', async () => {
+    act(() => {
+      session.accepted(cmd.setMasteringEnabled(session.store, false));
+    });
+    const { dialog } = open();
+    await setLength(dialog(), 2);
+    await exportAndWait(dialog());
+    const report = dialog().querySelector('[data-testid="export-report"]')!.textContent ?? '';
+    const lufs = -Number(/Integrated −(\d+\.\d)/.exec(report)![1]);
+    console.info(`[export] mastering off: ${report}`);
+    // The house starter without mastering is well off the Streaming target, and still no link.
+    expect(Math.abs(lufs + 14)).toBeGreaterThan(1);
+    expect(byText(dialog(), 'Match target in Mix')).toBeUndefined();
   }, 90_000);
 });
 

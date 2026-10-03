@@ -15,7 +15,7 @@
  */
 import { createStore, useStore } from '../../../state/store';
 import { session } from '../../instance';
-import { loudnessChanged, stopMatch } from './loudnessMatch';
+import { STOPPED_COMPARE, loudnessChanged, matchState, stopMatch } from './loudnessMatch';
 
 export type CompareMode = 'off' | 'held' | 'latched';
 
@@ -58,7 +58,8 @@ export function engageCompare(mode: Exclude<CompareMode, 'off'>): boolean {
   const p = session.store.getState();
   if (!p.mastering.enabled) return false;
   engagedIn = p.id;
-  stopMatch(null);
+  // Match acts on readings of the mastered sound: the comparison ends it, and says so.
+  if (matchState().matching) stopMatch(STOPPED_COMPARE);
   session.setMasteringListen(true);
   // Another project, or mastering switched off meanwhile, ends the comparison.
   unwatch = session.store.subscribe((next) => {
