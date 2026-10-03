@@ -20,7 +20,7 @@ export interface HintSources {
   project: ReadableStore<Project>;
   history: ReadableStore<HistoryInfo>;
   runtime: ReadableStore<RuntimeState>;
-  /** The open view (the song steps are about Arrange). Absent: Play. */
+  /** The open view (the song steps are about the Song view). Absent: Play. */
   view?: ReadableStore<View>;
   /** How many exports have finished (a WAV was made); each new one is a change. Absent: none. */
   exports?: ReadableStore<number>;

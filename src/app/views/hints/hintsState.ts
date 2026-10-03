@@ -5,7 +5,7 @@
  *
  * - `started`: hints were offered (for the first project, or "Show hints
  *   again" in Help or the Project library).
- * - `song`: the song track was offered (Arrange opened while hints run); its
+ * - `song`: the song track was offered (Song opened while hints run); its
  *   steps come first from then on.
  * - `hidden`: the person closed them; they stay closed until shown again.
  * - `done`: steps done by doing them, or passed over with "Next hint".
@@ -17,7 +17,7 @@ import type { KeyValueStorage } from '../../../state/uiStore';
 export const HINTS_STORAGE_KEY = 'omnisong.hints';
 
 /** The basics track, then the song track (see steps.ts). */
-export const HINT_IDS = ['pad', 'mute', 'drag', 'tone', 'instrument', 'master', 'record', 'song-play', 'song-repeats', 'song-part', 'song-export'] as const;
+export const HINT_IDS = ['pad', 'mute', 'drag', 'tone', 'instrument', 'master', 'record', 'song-add', 'song-stretch', 'song-move', 'song-ruler', 'song-play', 'song-export'] as const;
 export type HintId = (typeof HINT_IDS)[number];
 
 export interface HintsState {
@@ -25,7 +25,7 @@ export interface HintsState {
   hidden: boolean;
   done: readonly HintId[];
   finished: boolean;
-  /** The song track was offered (Arrange opened while the hints ran). Absent in older stored state: no. */
+  /** The song track was offered (the Song view opened while the hints ran). Absent in older stored state: no. */
   song?: boolean;
 }
 
@@ -94,7 +94,7 @@ export function finishHints(store: HintsStore = hintsStore): void {
   store.setState((s) => (s.finished ? s : { ...s, finished: true }));
 }
 
-/** Arrange opened while the hints run: the song track becomes current (once). */
+/** The Song view opened while the hints run: the song track becomes current (once). */
 export function startSongHints(store: HintsStore = hintsStore): void {
   store.setState((s) => (s.song || !hintsRunning(s) ? s : { ...s, song: true }));
 }

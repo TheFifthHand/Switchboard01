@@ -32,13 +32,12 @@ export const WALKTHROUGHS: readonly Walkthrough[] = [
     title: 'Build a song',
     time: 'about three minutes',
     steps: [
-      'Open Arrange. The song plays its blocks left to right; each block is a scene played a number of times.',
-      'Press Play (or Space): in Arrange it plays the song. ▶ on a block, or a click on the bar numbers, starts from there.',
-      'Drag a block to move it. Hold Ctrl while dragging to drop a copy.',
-      'Drag a block’s right edge to play it more times, or fewer. With the keyboard, + and − do the same.',
-      'Click a part in a block to switch it off there; click again to bring it back.',
-      'Drag a scene card onto a block to layer it in, or between two blocks to add it as a new block.',
-      'Open a block’s ⋯ → Shape this block… for Build up, Strip down or Breakdown, each one Undo.',
+      'Open Song. Each part has its own row, like the tracks in GarageBand; the ruler counts the bars.',
+      'Drag a scene from the Loops panel onto the rows: each of its parts gets a loop. Or drag one part’s loop onto its own row.',
+      'Drag a loop’s right edge to make it play longer: it snaps to the bars and repeats to fill them.',
+      'Drag a loop to move it; hold Alt (or Ctrl) as you let go to drop a copy. Double-click an empty spot to pick a loop for it.',
+      'Click a bar number to move the playhead, then press Play (or Space). Drag along the bar numbers to loop part of the song.',
+      'Right-click a section (Intro, Drop …) for fades, a filter rise, Build up or Breakdown, each one Undo.',
     ],
   },
   {
@@ -46,7 +45,7 @@ export const WALKTHROUGHS: readonly Walkthrough[] = [
     title: 'Record and export',
     time: 'about three minutes',
     steps: [
-      'With music playing, press Performance to record what you do. Press it again to stop; the take appears in Arrange.',
+      'With music playing, press Performance to record what you do. Press it again to stop; the take appears in Song.',
       'Notes records what you play into the selected clip. One Undo removes the whole pass.',
       'Open Mix and try a mastering preset and a loudness target. Compare A/B lets you hear the mix without mastering.',
       'Press Export (or ⋯ → Export WAV…), choose the song, a scene or a performance, then Export WAV.',
