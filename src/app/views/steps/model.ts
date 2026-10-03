@@ -357,10 +357,13 @@ export function scaleStepsBetween(from: number, to: number, key: MusicalKey): nu
 }
 
 /**
- * How far a move of the selected notes can go: as moveNotes clamps it, the
- * whole selection stays inside the clip (0..clipTicks-1) as one shape.
+ * How far a move of the selected notes can go: the whole selection stays
+ * inside the clip (0..clipTicks-1) as one shape, as moveNotes clamps it. With
+ * `step` (the grid, or the nudge), the move is held to whole steps, so a
+ * selection on the grid never stops one tick before the clip's end, off the
+ * grid; 0 means it cannot move that way at all.
  */
-export function clampMoveTicks(sel: readonly Note[], dTick: number, clipTicks: number): number {
+export function clampMoveTicks(sel: readonly Note[], dTick: number, clipTicks: number, step = 1): number {
   if (sel.length === 0) return 0;
   let min = Infinity;
   let max = -Infinity;
@@ -368,7 +371,10 @@ export function clampMoveTicks(sel: readonly Note[], dTick: number, clipTicks: n
     min = Math.min(min, n.tick);
     max = Math.max(max, n.tick);
   }
-  return Math.min(Math.max(0, clipTicks - 1 - max), Math.max(-min, dTick)) || 0;
+  const s = step > 0 ? step : 1;
+  const hi = Math.max(0, Math.floor((clipTicks - 1 - max) / s) * s);
+  const lo = -Math.max(0, Math.floor(min / s) * s);
+  return Math.min(hi, Math.max(lo, dTick)) || 0;
 }
 
 /** Semitones a selection can move and stay inside 0..127 (as moveNotes clamps it). */
@@ -426,42 +432,52 @@ export function landsFree(notes: readonly Note[], moved: ReadonlyMap<Id, { tick:
 /* ------------------------------------------------------------------ */
 
 /**
- * How many notes "Tighten timing" would move with this grid and strength
- * (0..1): the same arithmetic as quantizeClip, so the preview sentence and
- * the toast agree.
+ * What "Tighten timing" would do with this grid and strength (0..1): how many
+ * notes move, and how many merge into another note (two of one pitch pulled
+ * onto the same tick become one, the louder). The same arithmetic as
+ * quantizeClip, so the preview sentence and the toast agree.
  */
-export function quantizeMoves(notes: readonly Note[], gridTicks: number, strength: number, clipTicks: number): number {
-  if (!(gridTicks > 0)) return 0;
+export function quantizeMoves(notes: readonly Note[], gridTicks: number, strength: number, clipTicks: number): { moved: number; merged: number } {
+  if (!(gridTicks > 0)) return { moved: 0, merged: 0 };
   const round = (v: number) => Math.round(v * 1000) / 1000;
   let moved = 0;
+  const at = new Set<string>();
   for (const n of notes) {
     const snapped = Math.round(n.tick / gridTicks) * gridTicks;
     const start = round(n.tick + (snapped - n.tick) * strength);
     const tick = start >= clipTicks ? start - clipTicks : start;
     if (tick !== n.tick) moved++;
+    at.add(`${tick}:${n.pitch}`);
   }
-  return moved;
+  return { moved, merged: notes.length - at.size };
+}
+
+/** "1 pair of notes merged", "3 pairs of notes merged" (notes that met another of the same pitch on the same tick). */
+export function mergedWords(merged: number): string {
+  return merged === 1 ? '1 pair of notes merged' : `${merged} pairs of notes merged`;
 }
 
 /* ------------------------------------------------------------------ */
 /* Touch                                                               */
 /* ------------------------------------------------------------------ */
 
-/** A finger that lifts within this time (ms) and distance is a tap. */
-export const TAP_MS = 250;
-/** Movement (px) that ends a tap or a pending hold. */
-export const TOUCH_SLOP = 8;
 /** A finger resting this long (ms) starts a draw, move or resize (the song lane's hold). */
 export const TOUCH_HOLD = 300;
+/** A finger that lifts before the hold starts (and moved less than TOUCH_SLOP) is a tap: no gap between the two. */
+export const TAP_MS = TOUCH_HOLD;
+/** Movement (px) that ends a tap or a pending hold. */
+export const TOUCH_SLOP = 8;
+/** A start counts as sideways only when it is clearly more sideways than up or down. */
+export const SIDEWAYS_RATIO = 1.5;
 
 /**
  * What a finger on the roll is doing so far: still deciding ('pending'), a
- * swipe that scrolls the roll ('scroll': it moved up or down first), or a
- * sideways press that draws or moves at once ('drag').
+ * swipe that scrolls the roll ('scroll': it moved up or down, or slanted),
+ * or a clearly sideways press that draws or moves at once ('drag').
  */
 export function touchIntent(dx: number, dy: number): 'pending' | 'scroll' | 'drag' {
   if (Math.hypot(dx, dy) < TOUCH_SLOP) return 'pending';
-  return Math.abs(dy) >= Math.abs(dx) ? 'scroll' : 'drag';
+  return Math.abs(dx) > SIDEWAYS_RATIO * Math.abs(dy) ? 'drag' : 'scroll';
 }
 
 /** True when a finger that went up after `ms`, `dx`/`dy` from where it landed, was a tap. */

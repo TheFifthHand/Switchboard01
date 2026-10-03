@@ -25,12 +25,12 @@
  */
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import { TICKS_PER_BAR, type Clip, type Id, type Note } from '../../../project/types';
-import { keyLabel, keyShortName, noteName, stepsPerOctave, type MusicalKey } from '../../../music/scales';
+import { keyLabel, keyRootName, keyShortName, noteName, stepsPerOctave, type MusicalKey } from '../../../music/scales';
 import * as cmd from '../../../state/commands';
 import { setStepPage } from '../../../state/uiStore';
 import { IconButton, Tooltip, newGestureId } from '../../../ui/components';
 import { session, useProject, useUi } from '../../instance';
-import { notify } from '../../runtime';
+import { notify, runtimeStore } from '../../runtime';
 import { MOD_ARIA, MOD_KEY } from '../ClipMenu';
 import {
   anchorNote,
@@ -120,6 +120,8 @@ type Drag =
       collapse: boolean;
       mod: boolean;
       grabTick: number;
+      /** The cell under the pointer when pressed, counted from the clip start (cells of the grid). */
+      grabCell: number;
       anchorPitch: number;
       moved: boolean;
       plan: MovePlan;
@@ -205,30 +207,39 @@ const NoteBlock = memo(
 
 /**
  * The key the rows follow, in a target of at least 32 px: the full name
- * ('G Dorian') where it fits, else the short one ('G Dor'); the tooltip and
- * the accessible name always say it in full.
+ * ('G Dorian') where it fits, else the short one ('G Dor'), else the root
+ * alone ('D#'), never cut; the tooltip and the accessible name always say it
+ * in full.
  */
-function KeyChip({ text, short, label, tip, detail }: { text: string; short: string; label: string; tip: string; detail: string }) {
+function KeyChip({ text, short, tiny, label, tip, detail }: { text: string; short: string; tiny: string; label: string; tip: string; detail: string }) {
   const ref = useRef<HTMLSpanElement>(null);
-  const measure = useRef<HTMLSpanElement>(null);
-  const [fits, setFits] = useState(true);
+  const full = useRef<HTMLSpanElement>(null);
+  const mid = useRef<HTMLSpanElement>(null);
+  const [fit, setFit] = useState<'full' | 'short' | 'tiny'>('full');
   useLayoutEffect(() => {
     const el = ref.current;
-    const m = measure.current;
-    if (!el || !m) return;
-    const check = () => setFits(m.offsetWidth <= el.clientWidth - 8);
+    if (!el) return;
+    const check = () => {
+      const room = el.clientWidth - 8;
+      setFit((full.current?.offsetWidth ?? 0) <= room ? 'full' : (mid.current?.offsetWidth ?? 0) <= room ? 'short' : 'tiny');
+    };
     check();
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : null;
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => requestAnimationFrame(check)) : null;
     ro?.observe(el);
     return () => ro?.disconnect();
-  }, [text]);
+  }, [text, short]);
   return (
     <Tooltip tip={tip} detail={detail}>
-      <span ref={ref} className={styles.keyInfo} role="note" tabIndex={0} aria-label={label} data-short={!fits || undefined}>
-        <span ref={measure} className={styles.keyMeasure} aria-hidden="true">
+      <span ref={ref} className={styles.keyInfo} role="note" tabIndex={0} aria-label={label} data-fit={fit}>
+        <span ref={full} className={styles.keyMeasure} aria-hidden="true">
           {text}
         </span>
-        <span aria-hidden="true">{fits ? text : short}</span>
+        <span ref={mid} className={styles.keyMeasure} aria-hidden="true">
+          {short}
+        </span>
+        <span className={styles.keyText} aria-hidden="true">
+          {fit === 'full' ? text : fit === 'short' ? short : tiny}
+        </span>
       </span>
     </Tooltip>
   );
@@ -393,11 +404,29 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
     return { cell: best, frac: r && x >= r.right ? 1 : 0 };
   };
 
-  /** The clip tick under x on the shown page (continuous; held inside the page). */
+  /**
+   * The clip tick under x on the shown page (continuous; held inside the
+   * page). Past the left or right edge it is the middle of the first or last
+   * cell, so a dragged note stays in view on the shown bar while the edge
+   * hold turns the page (and a drop there lands on the bar shown).
+   */
   const rawTickAt = (x: number): number => {
     const c = cur.current;
+    const side = edgeOf(x);
+    if (side !== 0) return pageStartTick(c.page) + ((side > 0 ? c.spec.cells - 1 : 0) + 0.5) * c.spec.ticks;
     const { cell, frac } = cellAt(x);
     return pageStartTick(c.page) + (cell + frac) * c.spec.ticks;
+  };
+
+  /**
+   * The cell under x, counted from the clip start: past the left or right
+   * edge, the shown bar's first or last cell (the edge hold turns the page).
+   */
+  const cellIndexAt = (x: number): number => {
+    const c = cur.current;
+    const side = edgeOf(x);
+    const cell = side > 0 ? c.spec.cells - 1 : side < 0 ? 0 : cellAt(x).cell;
+    return c.page * c.spec.cells + cell;
   };
 
   const rowAt = (y: number): number => {
@@ -482,19 +511,28 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
         // Chord voices move by different semitones in the key: time, then pitch, joined into one undo step.
         const timeFirst = new Map(sel.map((n) => [n.id, { tick: n.tick + plan.dTick, pitch: n.pitch }]));
         const pitchFirst = new Map(sel.map((n) => [n.id, { tick: n.tick, pitch: pitches.get(n.id) ?? n.pitch }]));
-        const grouped = !session.recordingNotes;
+        // Record Notes keeps its own undo group open for the whole pass: edits made meanwhile join it.
+        // (Other groups belong to modal dialogs, so none can be open during a drag here.)
+        const grouped = !session.recordingNotes && runtimeStore.getState().recording !== 'notes';
         if (grouped) store.beginGroup('notes:Move notes');
         try {
-          if (landsFree(c.clip.notes, timeFirst)) {
-            cmd.moveNotes(store, c.trackId, c.slot, ids, plan.dTick, 0, undefined, { collide: 'refuse' });
-            r = cmd.transposeNotes(store, c.trackId, c.slot, ids, plan.steps, { inScale: plan.key, collide: 'replace' });
-          } else if (landsFree(c.clip.notes, pitchFirst)) {
-            cmd.transposeNotes(store, c.trackId, c.slot, ids, plan.steps, { inScale: plan.key, collide: 'refuse' });
-            r = cmd.moveNotes(store, c.trackId, c.slot, ids, plan.dTick, 0, undefined, { collide: 'replace' });
-          } else {
+          const first = landsFree(c.clip.notes, timeFirst) ? 'time' : landsFree(c.clip.notes, pitchFirst) ? 'pitch' : null;
+          if (first === null) {
             const anchor = anchorNote(sel);
             const d = anchor ? (pitches.get(anchor.id) ?? anchor.pitch) - anchor.pitch : 0;
             r = cmd.moveNotes(store, c.trackId, c.slot, ids, plan.dTick, d, undefined, { collide: 'replace' });
+          } else {
+            const a =
+              first === 'time'
+                ? cmd.moveNotes(store, c.trackId, c.slot, ids, plan.dTick, 0, undefined, { collide: 'refuse' })
+                : cmd.transposeNotes(store, c.trackId, c.slot, ids, plan.steps, { inScale: plan.key, collide: 'refuse' });
+            // The first half did not go through (refused, or two selected notes would meet): stop, and say why.
+            if (!a.changed) r = a;
+            else
+              r =
+                first === 'time'
+                  ? cmd.transposeNotes(store, c.trackId, c.slot, ids, plan.steps, { inScale: plan.key, collide: 'replace' })
+                  : cmd.moveNotes(store, c.trackId, c.slot, ids, plan.dTick, 0, undefined, { collide: 'replace' });
           }
         } finally {
           if (grouped) store.endGroup();
@@ -557,6 +595,7 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
       collapse,
       mod,
       grabTick: rawTickAt(x),
+      grabCell: cellIndexAt(x),
       anchorPitch: note.pitch,
       moved: false,
       plan: NO_MOVE,
@@ -655,9 +694,11 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
     const c = cur.current;
     const sel = selectedNotes(c.clip.notes, new Set(d.ids));
     if (sel.length === 0) return;
-    const raw = rawTickAt(d.lastX) - d.grabTick;
-    const want = d.alt ? Math.round(raw) : Math.round(raw / c.spec.ticks) * c.spec.ticks;
-    const dTick = clampMoveTicks(sel, want, c.clipTicks);
+    // On the grid the note follows the cell the pointer is in (cells moved since the press);
+    // with Alt it follows the pointer tick by tick.
+    const want = d.alt ? Math.round(rawTickAt(d.lastX) - d.grabTick) : (cellIndexAt(d.lastX) - d.grabCell) * c.spec.ticks;
+    // Whole grid steps (Alt: whole ticks): what the drop does is exactly what is drawn.
+    const dTick = clampMoveTicks(sel, want, c.clipTicks, d.alt ? 1 : c.spec.ticks);
     const targetPitch = c.rows[rowAt(d.lastY)]?.pitch ?? d.anchorPitch;
     const plan: MovePlan = c.inKeyOnly
       ? { dTick, dPitch: 0, steps: scaleStepsBetween(d.anchorPitch, targetPitch, c.key), key: c.key }
@@ -957,7 +998,14 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
   const moveSelection = (dTick: number): void => {
     const c = cur.current;
     const ids = getSel();
-    const r = cmd.moveNotes(session.store, c.trackId, c.slot, ids, dTick, 0, burst(`move:${ids.join(',')}`));
+    // Whole steps of the grid (or of the nudge): never a stop one tick before the end, off the grid.
+    const step = Math.abs(dTick);
+    const d = clampMoveTicks(selectedNotes(c.clip.notes, new Set(ids)), dTick, c.clipTicks, step);
+    if (d === 0) {
+      notify(`The notes are already at the ${dTick > 0 ? 'end' : 'start'} of the clip.`, 'warn');
+      return;
+    }
+    const r = cmd.moveNotes(session.store, c.trackId, c.slot, ids, d, 0, burst(`move:${ids.join(',')}`));
     if (!session.accepted(r)) return;
     if (r.message) notify(r.message);
     const anchor = followSelection(ids);
@@ -1028,7 +1076,13 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
       notify('Select notes first, then duplicate them.', 'warn');
       return;
     }
-    const r = cmd.duplicateNotes(session.store, c.trackId, c.slot, ids);
+    // Right after the selection, rounded up to whole cells of the grid (a triplet stays on its grid).
+    const sel = selectedNotes(c.clip.notes, new Set(ids));
+    const start = Math.min(...sel.map((n) => n.tick));
+    const end = Math.max(...sel.map((n) => n.tick + n.duration));
+    const g0 = c.spec.ticks;
+    const offsetTicks = Math.max(g0, Math.ceil((end - start) / g0) * g0);
+    const r = cmd.duplicateNotes(session.store, c.trackId, c.slot, ids, { offsetTicks });
     if (!session.accepted(r)) return;
     setSel(r.ids);
     followSelection(r.ids);
@@ -1199,6 +1253,7 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
 
   const keyText = inKeyOnly ? keyLabel(root, scale) : 'All notes';
   const keyShort = inKeyOnly ? keyShortName(root, scale) : 'All';
+  const keyTiny = inKeyOnly ? keyRootName(root, scale) : 'All';
   const selCount = selSet.size - (selSet.has(DRAW_ID) ? 1 : 0);
   const cols = cellIndices(spec.cells);
 
@@ -1214,6 +1269,7 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
             <KeyChip
               text={keyText}
               short={keyShort}
+              tiny={keyTiny}
               label={inKeyOnly ? `Rows in key: ${keyText}` : 'Rows: all 12 notes'}
               tip={inKeyOnly ? `Rows show the notes of ${keyText} (Musical Assist is on).` : 'Rows show all 12 notes (Musical Assist is off).'}
               detail="Switch Musical Assist or the key on the keyboard strip."
@@ -1287,7 +1343,16 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
         hasSelection={selCount > 0}
         onSetNotes={setVelocities}
         title="Velocity"
-        hint={selCount > 0 ? <span className={styles.selHint}>{plural(selCount, 'note')} selected</span> : 'Drag · per step'}
+        onUnselected={() => notify('Only the selected notes change. Press Esc to clear the selection; then the lane sets every note on a step.')}
+        hint={
+          selCount > 0 ? (
+            <span className={styles.selHint} title="Only the selected notes change. Esc clears the selection.">
+              {plural(selCount, 'note')} selected · Esc clears
+            </span>
+          ) : (
+            'Drag · per step'
+          )
+        }
       />
     </div>
   );

@@ -49,6 +49,8 @@ export interface VelocityLaneProps {
   /** With a selection only the selected notes are edited; without one, every note on the cell. */
   hasSelection?: boolean;
   onSetNotes?(ids: Id[], velocity: number, gesture: string): void;
+  /** A drag (with a selection) reached a step whose notes are not selected: say why nothing changes there (once a drag). */
+  onUnselected?(): void;
   /** Column layout (default: 16 steps). */
   grid?: GridSpec;
   title: string;
@@ -62,11 +64,11 @@ export interface VelocityLaneProps {
  * drag is one undo step. Keyboard users change velocity on the focused step
  * (Up/Down or +/-), so this surface is pointer-only.
  */
-export function VelocityLane({ values, counts, onSet, voices, hasSelection = false, onSetNotes, grid: spec = STEP_GRID, title, hint, className }: VelocityLaneProps) {
+export function VelocityLane({ values, counts, onSet, voices, hasSelection = false, onSetNotes, onUnselected, grid: spec = STEP_GRID, title, hint, className }: VelocityLaneProps) {
   const colRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const latest = useRef({ values, voices, hasSelection, onSet, onSetNotes });
-  latest.current = { values, voices, hasSelection, onSet, onSetNotes };
-  const drag = useRef<{ pointerId: number; gesture: string } | null>(null);
+  const latest = useRef({ values, voices, hasSelection, onSet, onSetNotes, onUnselected });
+  latest.current = { values, voices, hasSelection, onSet, onSetNotes, onUnselected };
+  const drag = useRef<{ pointerId: number; gesture: string; told: boolean } | null>(null);
   const cells = voices ? voices.length : spec.cells;
 
   const columnAt = (x: number): number => {
@@ -99,6 +101,10 @@ export function VelocityLane({ values, counts, onSet, voices, hasSelection = fal
     if (l.voices) {
       const here = l.voices[col] ?? [];
       const targets = l.hasSelection ? here.filter((x) => x.selected) : here;
+      if (targets.length === 0 && here.length > 0 && !d.told) {
+        d.told = true;
+        l.onUnselected?.();
+      }
       if (targets.length === 0 || targets.every((x) => Math.abs(x.velocity - v) < 0.005)) return;
       l.onSetNotes?.(
         targets.map((x) => x.id),
@@ -122,7 +128,7 @@ export function VelocityLane({ values, counts, onSet, voices, hasSelection = fal
       /* synthetic pointer */
     }
     session.store.endGesture();
-    drag.current = { pointerId: e.pointerId, gesture: newGestureId('steps-velocity') };
+    drag.current = { pointerId: e.pointerId, gesture: newGestureId('steps-velocity'), told: false };
     setFrom(e);
   };
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
@@ -178,7 +184,11 @@ export function VelocityLane({ values, counts, onSet, voices, hasSelection = fal
                     ))}
                   </div>
                   <span className={grid.velValue}>{Math.round(top * 100)}</span>
-                  {here.length > 1 && <span className={grid.velCount}>{picked.length ? `${picked.length}/${here.length}` : `×${here.length}`}</span>}
+                  {here.length > 1 && (
+                    <span className={grid.velCount} data-picked={picked.length || undefined}>
+                      {picked.length ? `${picked.length}/${here.length}` : `×${here.length}`}
+                    </span>
+                  )}
                 </>
               )}
             </div>

@@ -133,6 +133,10 @@ describe('drag previews match the commands', () => {
     const dTick = clampMoveTicks(notes, 500, 768);
     const dPitch = clampMovePitch(notes, 12);
     expect(dTick).toBe(767 - 700);
+    // On a grid the move is held to whole steps: never one tick before the end, off the grid.
+    expect(clampMoveTicks(notes, 500, 768, 24)).toBe(48);
+    expect(clampMoveTicks(notes, -500, 768, 24)).toBe(-24);
+    expect(clampMoveTicks([{ id: 'x', tick: 1512, pitch: 60, velocity: 1, duration: 24 }], 24, 1536, 24)).toBe(0);
     expect(dPitch).toBe(7);
     const preview = previewMovedNotes(notes, ids, { dTick, dPitch, steps: 0, key: null });
     const r = moveNotes(s, T, 0, [...ids], 500, 12);
@@ -154,28 +158,45 @@ describe('drag previews match the commands', () => {
 });
 
 describe('the Tighten timing count', () => {
-  it('is the number of notes quantizeClip moves, for each grid and strength', () => {
+  it('counts a pair of notes that meet on one tick as merged', () => {
+    const s = store([
+      [94, 43],
+      [100, 43],
+      [150, 43],
+    ]);
+    expect(quantizeMoves(clipNotes(s), 24, 1, 768)).toEqual({ moved: 3, merged: 1 });
+    quantizeClip(s, T, 0, { grid: '1/16' });
+    expect(clipNotes(s)).toHaveLength(2);
+  });
+
+  it('is the number of notes quantizeClip moves (and merges), for each grid and strength', () => {
     const rng = new Rng(3);
     for (const grid of ['1/16', '1/8', '1/32', '1/8T', '1/16T', '1/4'] as const) {
       for (const strength of [0.25, 0.5, 0.75, 1]) {
         const ticks = [...new Set(Array.from({ length: 10 }, () => Math.floor(rng.range(0, 760))))];
         const s = store(ticks.map((t, i) => [t, 50 + i]));
         const g = { '1/16': 24, '1/8': 48, '1/32': 12, '1/8T': 32, '1/16T': 16, '1/4': 96 }[grid];
+        const before = clipNotes(s).length;
         const want = quantizeMoves(clipNotes(s), g, strength, 768);
         const r = quantizeClip(s, T, 0, { grid, strength });
-        expect(r.moved, `${grid} ${strength}`).toBe(want);
+        expect(r.moved, `${grid} ${strength}`).toBe(want.moved);
+        expect(before - clipNotes(s).length, `${grid} ${strength} merged`).toBe(want.merged);
       }
     }
   });
 });
 
 describe('touch decisions', () => {
-  it('a short still touch is a tap; moving up or down first scrolls; sideways first edits', () => {
+  it('a still touch lifted before the hold is a tap; up, down or slanted first scrolls; clearly sideways first edits', () => {
     expect(isTap(3, 2, 120)).toBe(true);
+    // No gap between a tap and the 300 ms hold.
+    expect(isTap(3, 2, 290)).toBe(true);
     expect(isTap(3, 2, 300)).toBe(false);
     expect(isTap(12, 0, 100)).toBe(false);
     expect(touchIntent(2, 5)).toBe('pending');
     expect(touchIntent(2, 20)).toBe('scroll');
+    // Slanted (8 across, 6 down): a scroll, not a stray note.
+    expect(touchIntent(8, 6)).toBe('scroll');
     expect(touchIntent(-20, 6)).toBe('drag');
   });
 });

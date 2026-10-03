@@ -35,7 +35,8 @@
   padding: 0 4px;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  /* Centred while it fits; never centred past its edges (which would cut the root letter off). */
+  justify-content: safe center;
   border-radius: 6px;
   box-shadow: inset 0 0 0 1px var(--line);
   font-size: var(--fs-xs);
@@ -52,6 +53,11 @@
     0 0 0 4px var(--teal);
 }
 /* Measures the full name, unseen. */
+.keyText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .keyMeasure {
   position: absolute;
   left: 0;
@@ -181,14 +187,14 @@
   background: linear-gradient(180deg, var(--amber-hi), var(--amber));
   opacity: calc(0.5 + 0.5 * var(--vel, 1));
   box-shadow:
-    inset 0 0 0 1px rgba(122, 72, 0, 0.35),
+    inset 0 0 0 1px color-mix(in srgb, var(--amber-ink) 35%, transparent),
     0 0 6px rgba(242, 166, 52, calc(0.2 + 0.4 * var(--vel, 1)));
 }
 /* Selected notes: a teal ring (and the "N notes selected" line under the roll). */
 .note[data-selected] .noteBody {
   opacity: 1;
   box-shadow:
-    inset 0 0 0 1px rgba(122, 72, 0, 0.35),
+    inset 0 0 0 1px color-mix(in srgb, var(--amber-ink) 35%, transparent),
     0 0 0 2px var(--teal),
     0 0 8px var(--teal-glow);
 }
@@ -254,7 +260,7 @@
   right: 5px;
   width: 2px;
   border-radius: 1px;
-  background: rgba(122, 72, 0, 0.45);
+  background: color-mix(in srgb, var(--amber-ink) 45%, transparent);
   opacity: 0;
   transition: opacity var(--t-fast) var(--ease);
 }
@@ -296,6 +302,9 @@
   height: clamp(44px, 6.4vh, 92px);
 }
 .selHint {
+  display: block;
+  white-space: normal;
+  line-height: 13px;
   color: var(--teal-ink);
   font-weight: 600;
 }

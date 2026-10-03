@@ -238,9 +238,9 @@ describe('drum steps', () => {
     expect(byLabel(m.container, `Step 1, ${KICK}`).getAttribute('aria-pressed')).toBe('true');
 
     // Copy bar 2, paste onto bar 1.
-    fire(buttonByText(m.container, 'Copy'), new MouseEvent('click', { bubbles: true }));
+    fire(byLabel(m.container, 'Copy bar'), new MouseEvent('click', { bubbles: true }));
     fire(tabs()[0], new MouseEvent('click', { bubbles: true }));
-    fire(buttonByText(m.container, 'Paste'), new MouseEvent('click', { bubbles: true }));
+    fire(byLabel(m.container, 'Paste onto bar'), new MouseEvent('click', { bubbles: true }));
     expect(notes('t1').map((n) => n.tick).sort((a, b) => a - b)).toEqual([0, 384]);
 
     // Copy bar 1 to bar 2 → shows bar 2; then to bar 3 lengthens the clip.
@@ -254,7 +254,7 @@ describe('drum steps', () => {
     expect(tabs()[2].getAttribute('aria-selected')).toBe('true');
 
     // Clear bar 3 (from the keyboard), then undo brings it back.
-    const clearBtn = buttonByText(m.container, 'Clear');
+    const clearBtn = byLabel(m.container, 'Clear bar');
     clearBtn.focus();
     fire(clearBtn, new MouseEvent('click', { bubbles: true, detail: 0 }));
     expect(notes('t1').filter((n) => n.tick >= 768)).toHaveLength(0);
@@ -585,17 +585,18 @@ describe('undo and playhead', () => {
     try {
       patchRuntime({ playing: true, tracks: { t1: { playingSlot: 0, queued: null } } });
       const m = mountEditor();
-      await frames(3);
+      const tabs = () => [...m.container.querySelectorAll<HTMLElement>('[role="tab"]')];
+      // The frame loop marks it within a few frames (more on a busy machine).
+      for (let i = 0; i < 60 && !tabs()[1].hasAttribute('data-live'); i++) await frames(1);
       // Bar 2 is sounding: its page lamp is lit; bar 1 is shown, so no step is.
-      const tabs = [...m.container.querySelectorAll<HTMLElement>('[role="tab"]')];
-      expect(tabs[1].hasAttribute('data-live')).toBe(true);
+      expect(tabs()[1].hasAttribute('data-live')).toBe(true);
       expect(m.container.querySelectorAll('[data-playhead]')).toHaveLength(0);
       tick = 5 * 24 + 3 + 768; // loops: bar 1, step 6
-      await frames(3);
+      for (let i = 0; i < 60 && !tabs()[0].hasAttribute('data-live'); i++) await frames(1);
       const lit = [...m.container.querySelectorAll<HTMLElement>('[data-playhead]')];
       expect(lit.length).toBeGreaterThanOrEqual(2);
       expect(lit.every((el) => el.getAttribute('data-ph-step') === '5')).toBe(true);
-      expect(tabs[0].hasAttribute('data-live')).toBe(true);
+      expect(tabs()[0].hasAttribute('data-live')).toBe(true);
     } finally {
       s.transport = saved.transport;
       s.sequencer = saved.sequencer;
