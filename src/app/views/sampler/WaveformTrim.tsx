@@ -70,6 +70,8 @@ const FINE_DRAG = 0.1;
 const NARROW_REGION_PX = 40;
 /** Shift-drag snaps to a hit this near the pointer (CSS px). */
 const SNAP_PX = 40;
+/** A handle beyond the view moves only once the pointer has moved this far (CSS px). */
+const MOVE_PX = 4;
 /** One press of − or +. */
 const ZOOM_STEP = 2;
 /** Wheel distance (px) for doubling the zoom. */
@@ -99,6 +101,13 @@ interface DragState {
   gesture: string;
   pending: number | null;
   raf: number;
+  /**
+   * A handle waiting at the edge of a zoomed view (it lies beyond it): it
+   * stays where it is until the pointer has moved MOVE_PX, then comes to the
+   * pointer. A press without moving only shows it (the view moves to it).
+   * The press's x while that is so; null once it moves.
+   */
+  waiting: number | null;
 }
 
 interface PinchState {
@@ -443,9 +452,12 @@ export function WaveformTrim({ target, sampleId, name, overview, status, duratio
   const canZoomOut = usable && zoomed;
   const xPct = (f: number) => ((f - view.a) / span) * 100;
   // Flags are 17 px wide: in a region narrower than two flags the End flag moves to the bottom, so both stay grabbable.
-  const narrow = ((hi - lo) / span) * size.width < NARROW_REGION_PX;
+  // Measured where the handles are drawn (one beyond the view waits at its edge), so two waiting at one edge count too.
+  const narrow = (Math.abs(clamp(xPct(hi), 0, 100) - clamp(xPct(lo), 0, 100)) / 100) * size.width < NARROW_REGION_PX;
   const zoomText = `${span > 0 ? Math.round(1 / span) : 1}×`;
   const hitsShown = snapping && !sync && detail ? detail.onsets : null;
+  /** What a Shift-drag snaps to, in words. */
+  const snapWhat = sync ? 'whole beats' : 'hits';
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -549,6 +561,11 @@ export function WaveformTrim({ target, sampleId, name, overview, status, duratio
   const endHandleDrag = (el: HTMLElement | null, pointerId: number, revert: boolean) => {
     const d = drag.current;
     if (!d || d.pointerId !== pointerId) return;
+    // A press on a handle waiting beyond the view, without moving: the view goes to it (nothing is trimmed).
+    if (d.waiting !== null && !revert) {
+      const pos = readTargetValues(session.store.getState(), target, TRIM_IDS)[d.which];
+      setView(revealInView(viewRef.current, pos));
+    }
     if (revert) {
       // A second finger: this was the start of a pinch, not a trim. Back where it was (the step goes away).
       if (d.raf) cancelAnimationFrame(d.raf);
@@ -611,14 +628,24 @@ export function WaveformTrim({ target, sampleId, name, overview, status, duratio
     burst.current = null;
     // The hits a Shift-drag snaps to (at once when the live sample bank has the audio).
     setWantDetail(true);
-    // A handle waiting at the edge of a zoomed view (it lies beyond it) comes to the pointer, as a press on the waveform does.
+    // A handle waiting at the edge of a zoomed view (it lies beyond it) moves only once the pointer does.
     const cv = viewRef.current;
-    const offView = cur[which] < cv.a - 1e-9 || cur[which] > cv.b + 1e-9;
-    const jump = !onHandle || offView;
-    const d: DragState = { pointerId: e.pointerId, which, value: jump ? frac : cur[which], from: cur[which], lastX: e.clientX, gesture: newGestureId('trim'), pending: null, raf: 0 };
+    const offView = !!onHandle && (cur[which] < cv.a - 1e-9 || cur[which] > cv.b + 1e-9);
+    const d: DragState = {
+      pointerId: e.pointerId,
+      which,
+      value: onHandle ? cur[which] : frac,
+      from: cur[which],
+      lastX: e.clientX,
+      gesture: newGestureId('trim'),
+      pending: null,
+      raf: 0,
+      waiting: offView ? e.clientX : null,
+    };
     drag.current = d;
     setDragging(which);
-    if (jump) commit(which, e.shiftKey ? snapped(which, frac) : frac, d.gesture);
+    // A press on the waveform moves the nearest handle there at once.
+    if (!onHandle) commit(which, e.shiftKey ? snapped(which, frac) : frac, d.gesture);
   };
 
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
@@ -644,6 +671,13 @@ export function WaveformTrim({ target, sampleId, name, overview, status, duratio
     if (!d || !box || e.pointerId !== d.pointerId) return;
     const width = box.getBoundingClientRect().width;
     if (width <= 0) return;
+    if (d.waiting !== null) {
+      if (Math.abs(e.clientX - d.waiting) < MOVE_PX) return;
+      // It moves: the handle comes to the pointer, then follows it.
+      d.waiting = null;
+      d.value = fracAt(e.clientX) ?? d.value;
+      d.lastX = e.clientX;
+    }
     const dx = e.clientX - d.lastX;
     d.lastX = e.clientX;
     d.value = clamp(d.value + (dx / width) * (viewRef.current.b - viewRef.current.a) * (e.altKey ? FINE_DRAG : 1), 0, 1);
@@ -751,7 +785,9 @@ export function WaveformTrim({ target, sampleId, name, overview, status, duratio
     e.preventDefault();
     const cur = viewRef.current;
     let grab = f - cur.a;
-    if (f < cur.a || f > cur.b) {
+    // A press on the window itself (its target is at least 32 px wide) grabs it where it is.
+    const onWindow = !!(e.target as Element).closest('[role="slider"]');
+    if (!onWindow && (f < cur.a || f > cur.b)) {
       const next = placeView(cur.b - cur.a, f, 0.5, duration);
       setView(next);
       grab = f - next.a;
@@ -894,6 +930,12 @@ export function WaveformTrim({ target, sampleId, name, overview, status, duratio
             {message}
           </p>
         )}
+        {dragging && (
+          // While a handle is dragged: what the modifier keys do (the pointer's Shift snaps; Shift with the arrow keys is fine).
+          <p className={styles.dragHint} data-snapping={snapping || undefined} aria-hidden="true">
+            {snapping ? `Snapping to ${snapWhat}` : `Shift: snap to ${snapWhat} · Alt: fine`}
+          </p>
+        )}
         {handle('start')}
         {handle('end')}
       </div>
@@ -951,6 +993,11 @@ export function WaveformTrim({ target, sampleId, name, overview, status, duratio
             {zoomText}
           </span>
         </div>
+      )}
+      {usable && (
+        <p className={styles.help}>
+          Drag S or E to trim: hold Shift to snap to {snapWhat}, Alt to move finely. Ctrl+wheel or a pinch zooms. A focused handle moves with the arrow keys, finely with Shift.
+        </p>
       )}
     </div>
   );

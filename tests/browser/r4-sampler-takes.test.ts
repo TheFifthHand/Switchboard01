@@ -19,9 +19,10 @@ import { session } from '../../src/app/instance';
 import { runtimeStore } from '../../src/app/runtime';
 import { audioInput } from '../../src/app/views/devices';
 import { TAKE_CLIP_TEXT } from '../../src/app/views/sampler/RecordAudio';
+import type { VoiceHandle } from '../../src/audio/contracts';
 import type { SamplerInstrument } from '../../src/project/types';
 import { selectSlot, uiStore } from '../../src/state/uiStore';
-import { button, clickEl, described, energyAt, openApp, project, renderPart, setUp, shapeOn, tearDown, track, until } from './r4-sampler-helpers';
+import { button, clickEl, described, energyAt, openApp, press, project, renderPart, setUp, shapeOn, tearDown, track, until } from './r4-sampler-helpers';
 import { centre, mouse, settleFrames } from './r4-uikit-input';
 
 const editorText = () => document.querySelector('[aria-label^="Waveform of"]')?.closest('section')?.parentElement?.textContent ?? '';
@@ -63,7 +64,7 @@ afterEach(async () => {
 });
 
 describe('Per-clip recordings in the sampler editor (capability-01)', () => {
-  it('two takes go into two clips and each plays its own recording; Oh Chops and Long Oh keep Vocal "Oh"', async () => {
+  it('two takes go into two clips and each plays its own recording; Oh Chops and Long Oh keep Vocal "Oh"', { timeout: 180_000 }, async () => {
     await openApp(1366, 768);
     expect(await session.startAudio()).toBe(true);
     const osc = fakeMic();
@@ -152,7 +153,11 @@ describe('Per-clip recordings in the sampler editor (capability-01)', () => {
     const start = wave.querySelector<HTMLElement>('[role="slider"][aria-label="Trim start"]')!;
     const r = wave.getBoundingClientRect();
     // A real drag of Start to about 30%.
+    start.scrollIntoView({ block: 'center' });
+    await settleFrames();
     const from = centre(start);
+    const hit = document.elementFromPoint(from.x, from.y);
+    expect(hit?.closest('[data-handle]'), `the press lands on ${hit?.outerHTML.slice(0, 120)}`).toBe(start);
     await mouse('mouseMoved', from);
     await mouse('mousePressed', from);
     for (let i = 1; i <= 8; i++) {
@@ -179,16 +184,33 @@ describe('Per-clip recordings in the sampler editor (capability-01)', () => {
     expect(await session.startAudio()).toBe(true);
     const engine = session.engine!;
     const calls: { pitch: number; sample?: { id: string; rootNote: number; start: number } }[] = [];
+    const voices: VoiceHandle[] = [];
     const real = engine.scheduleNote.bind(engine);
     const spy = vi.spyOn(engine, 'scheduleNote').mockImplementation((trackId, note) => {
-      if (trackId === 't8') calls.push({ pitch: note.pitch, sample: note.sample });
-      return real(trackId, note);
+      const v = real(trackId, note);
+      if (trackId === 't8') {
+        calls.push({ pitch: note.pitch, sample: note.sample });
+        if (v) voices.push(v);
+      }
+      return v;
     });
+    // Loop mode: it sounds until stopped.
+    act(() => session.setInstrumentParam('t8', 'mode', 1));
     await clickEl(button('Audition: play E4'));
     await until(() => !!button('Stop audition (playing E4)'), 'the audition to sound');
     expect(calls.at(-1)).toMatchObject({ pitch: 64, sample: { id: 'builtin:glass-chord', rootNote: 64, start: own.start } });
     await clickEl(button('Stop audition (playing E4)'));
     await until(() => !!button('Audition: play E4'), 'the audition to stop');
+    await until(() => voices.at(-1)!.ended, 'the voice to end');
+    // Stop (Shift+Space, from anywhere) ends it too, as it ends every held note.
+    await clickEl(button('Audition: play E4'));
+    await until(() => !!button('Stop audition (playing E4)'), 'the audition to sound again');
+    const second = voices.at(-1)!;
+    expect(second).not.toBe(voices[0]);
+    await press('{Shift>}[Space]{/Shift}');
+    await until(() => !!button('Audition: play E4'), 'Stop to end the audition');
+    await until(() => second.ended, 'the voice to end after Stop', 4000);
+    act(() => session.setInstrumentParam('t8', 'mode', 0));
     spy.mockRestore();
 
     // Edit recording works on the clip's recording: a new version for this clip only.

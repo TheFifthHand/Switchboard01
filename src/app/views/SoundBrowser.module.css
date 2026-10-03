@@ -334,6 +334,14 @@
 .importRefused {
   margin: 0;
 }
+/* A file waiting for a choice: between the sounds and the footer, whatever category is shown. */
+.confirm {
+  margin-top: 12px;
+}
+/* The sounds give it room, so the dialog still fits the window. */
+.dialog:has(.confirm) .layout {
+  height: clamp(140px, calc(100vh - 412px), 410px);
+}
 .importNote {
   flex: 1;
   min-width: 0;

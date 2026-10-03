@@ -115,9 +115,7 @@ export function EditRecording(props: { target: SamplerTarget; available: boolean
       <div className={styles.status} role="status" aria-live="polite" data-tone={tone}>
         {working && (
           <>
-            <span className={styles.spinner} aria-hidden="true">
-              <span className={styles.spinnerWord}>Loading…</span>
-            </span>
+            <span className={styles.spinner} aria-hidden="true" />
             <span className={styles.statusText}>{WORKING[status.kind]}</span>
           </>
         )}

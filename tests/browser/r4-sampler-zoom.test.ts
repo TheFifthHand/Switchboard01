@@ -15,6 +15,7 @@ import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cdp } from 'vitest/browser';
 import { session } from '../../src/app/instance';
+import * as cmd from '../../src/state/commands';
 import { SIZES, clicksWav, clickEl, openApp, project, setUp, shapeOn, tearDown, track, until } from './r4-sampler-helpers';
 import { centre, mouse, send, settleFrames, touch, type Pt } from './r4-uikit-input';
 
@@ -95,6 +96,8 @@ describe('Sampler waveform zoom (shape-14)', () => {
         expect(r.height, which).toBeGreaterThanOrEqual(32);
       }
       for (const k of [zoomKey('Zoom in'), zoomKey('Zoom out'), viewport()]) expect(k.getBoundingClientRect().height).toBeGreaterThanOrEqual(32);
+      // The help line says what the modifier keys do.
+      expect(wave().parentElement!.textContent).toContain('hold Shift to snap to hits, Alt to move finely');
       expect(zoomText()).toContain('1×');
       expect(zoomKey('Zoom out').disabled).toBe(true);
 
@@ -133,6 +136,21 @@ describe('Sampler waveform zoom (shape-14)', () => {
       await clickEl(zoomKey('Zoom out'));
       expect(zoomText()).toContain('1×');
       expect(project()).toBe(before);
+      // Very close, the window is a few pixels wide but takes the pointer over 32 px: a press 12 px
+      // beside its middle grabs it (the view does not jump there).
+      while (!zoomKey('Zoom in').disabled && viewport().getBoundingClientRect().width >= 16) await clickEl(zoomKey('Zoom in'));
+      const vr = viewport().getBoundingClientRect();
+      expect(vr.width).toBeLessThan(16);
+      const a2 = view().a;
+      const grab = { x: vr.left + vr.width / 2 + 12, y: vr.top + vr.height / 2 };
+      expect(document.elementFromPoint(grab.x, grab.y)).toBe(viewport());
+      await mouse('mouseMoved', grab);
+      await mouse('mousePressed', grab);
+      await mouse('mouseMoved', { x: grab.x + 20, y: grab.y }, { buttons: 1 });
+      await mouse('mouseReleased', { x: grab.x + 20, y: grab.y });
+      await settleFrames();
+      const strip2 = document.querySelector('[data-overview]')!.getBoundingClientRect();
+      expect(view().a - a2).toBeCloseTo(20 / strip2.width, 2);
     });
   }
 
@@ -165,6 +183,23 @@ describe('Sampler waveform zoom (shape-14)', () => {
 
   it('Shift-drag snaps a handle to the nearest hit; with Tempo Sync on, End snaps to whole beats from Start; Alt drags finely', async () => {
     await setUpHits(1366, 768);
+    // While dragging, the waveform says what Shift and Alt do; holding Shift, that it snaps.
+    const hint = () => wave().querySelector('p[aria-hidden="true"]')?.textContent ?? '';
+    const h0 = centre(handle('start'));
+    await mouse('mouseMoved', h0);
+    await mouse('mousePressed', h0);
+    await mouse('mouseMoved', { x: h0.x + 6, y: h0.y }, { buttons: 1 });
+    await settleFrames();
+    expect(hint()).toBe('Shift: snap to hits · Alt: fine');
+    await mouse('mouseMoved', { x: h0.x + 8, y: h0.y }, { buttons: 1, modifiers: 8 });
+    await settleFrames();
+    expect(hint()).toBe('Snapping to hits');
+    await mouse('mouseReleased', { x: h0.x + 8, y: h0.y }, { modifiers: 8 });
+    await settleFrames();
+    expect(hint()).toBe('');
+    const at0 = track('t8').clips.findIndex((c) => c?.sample?.id === own().id);
+    act(() => void cmd.setClipSampleRegion(session.store, 't8', at0, { start: 0 }));
+    await settleFrames();
     // Start dragged (with Shift) to just short of the hit at 1.25 s lands exactly on it.
     const target = 1.22 / DURATION;
     await dragBy(handle('start'), xAt(target) - centre(handle('start')).x, 8);
@@ -188,6 +223,41 @@ describe('Sampler waveform zoom (shape-14)', () => {
     expect((own().start - s0) * r.width).toBeCloseTo(10, -0.5);
   });
 
+  it('both handles beyond the view on one side: their flags do not stack, a bare press only shows the handle pressed, a drag brings it (M3)', async () => {
+    await setUpHits(1366, 768);
+    // Region 1.2–1.6 s, then Ctrl+wheel ×3 at 3.0 s: both handles lie left of the view.
+    const slot = track('t8').clips.findIndex((c) => c?.sample?.id === own().id);
+    act(() => void cmd.setClipSampleRegion(session.store, 't8', slot, { start: 1.2 / DURATION, end: 1.6 / DURATION }));
+    await settleFrames();
+    for (let i = 0; i < 3; i++) await wheel({ x: xAt(3 / DURATION), y: centre(wave()).y }, -240, 2);
+    expect(view().a * DURATION).toBeGreaterThan(1.6);
+    expect(handle('start').dataset.offview).toBe('left');
+    expect(handle('end').dataset.offview).toBe('left');
+    // Two separate flags: the S flag (top) is the Start handle's, the E flag (bottom) the End handle's.
+    const sFlag = handle('start').querySelector<HTMLElement>('[aria-hidden="true"]:last-child')!;
+    const eFlag = handle('end').querySelector<HTMLElement>('[aria-hidden="true"]:last-child')!;
+    const sAt = centre(sFlag);
+    const eAt = centre(eFlag);
+    expect(Math.abs(sAt.y - eAt.y)).toBeGreaterThan(30);
+    expect(document.elementFromPoint(sAt.x, sAt.y)?.closest('[data-handle]')).toBe(handle('start'));
+    expect(document.elementFromPoint(eAt.x, eAt.y)?.closest('[data-handle]')).toBe(handle('end'));
+    // A press without moving trims nothing; the view goes to the Start handle.
+    const before = { ...own() };
+    await mouse('mouseMoved', sAt);
+    await mouse('mousePressed', sAt);
+    await mouse('mouseReleased', sAt);
+    await settleFrames(3);
+    expect(own()).toEqual(before);
+    expect(handle('start').dataset.offview).toBeUndefined();
+    expect(view().a * DURATION).toBeLessThanOrEqual(1.2);
+    // Zoomed away again, a drag of the E flag brings End to the pointer.
+    for (let i = 0; i < 2; i++) await wheel({ x: xAt(3.2 / DURATION), y: centre(wave()).y }, -240, 2);
+    await dragBy(handle('end').querySelector<HTMLElement>('[aria-hidden="true"]:last-child')!, 60);
+    expect(own().start).toBe(before.start);
+    expect(own().end * DURATION).toBeGreaterThan(view().a * DURATION);
+    expect(own().end * DURATION).toBeLessThan((view().a + view().span) * DURATION);
+  });
+
   it('arrow keys step in the visible window; a handle outside the view waits at its edge, and Zoom in is around the handle used last', async () => {
     await setUpHits(1366, 768);
     // Zoom in 8× around Start (the handle used last).
@@ -205,15 +275,14 @@ describe('Sampler waveform zoom (shape-14)', () => {
       handle('start').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     });
     expect(own().start - s0).toBeCloseTo(0.01 / 8, 6);
-    // Pressing the End handle waiting at the edge brings it to the pointer (into the view).
-    const e = handle('end');
-    const at = centre(e);
+    // A press on the End handle waiting at the edge only shows it: the view goes there, End stays.
+    const endBefore = own().end;
+    const at = centre(handle('end'));
     await mouse('mouseMoved', at);
     await mouse('mousePressed', at);
     await mouse('mouseReleased', at);
     await settleFrames(3);
-    expect(own().end).toBeLessThanOrEqual(view().a + view().span + 1e-6);
-    expect(own().end).toBeGreaterThan(view().a + view().span * 0.8);
+    expect(own().end).toBe(endBefore);
     expect(handle('end').dataset.offview).toBeUndefined();
   });
 });
