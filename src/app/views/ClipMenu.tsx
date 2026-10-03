@@ -573,46 +573,49 @@ export function MenuKeyRow<T extends string | number>(props: {
   const labelId = useId();
   const tipId = useId();
   const described = (disabled && disabledReason) || tip;
+  // The tooltip wraps the whole row (the group): in a menu only items, groups and separators may carry ARIA, so its
+  // description goes on the group, never on a wrapper of the keys. Each key carries the row's sentence itself (also
+  // with Tips off).
   return (
-    <div className={styles.keyRow} role="group" aria-labelledby={labelId} aria-describedby={described ? tipId : undefined}>
-      <span id={labelId} className={styles.keyRowLabel}>
-        {label}
-      </span>
-      {described && (
-        <span id={tipId} hidden>
-          {described}
+    <Tooltip tip={described || undefined} disabled={!described}>
+      <div className={styles.keyRow} role="group" aria-labelledby={labelId}>
+        <span id={labelId} className={styles.keyRowLabel}>
+          {label}
         </span>
-      )}
-      <Tooltip tip={described || undefined} disabled={!described}>
-      <span className={styles.keys}>
-        {options.map((o) => (
-          <button
-            key={String(o.value)}
-            type="button"
-            role="menuitemradio"
-            tabIndex={-1}
-            data-row={row}
-            aria-checked={value === o.value}
-            aria-label={o.ariaLabel}
-            aria-disabled={disabled || undefined}
-            aria-describedby={described ? tipId : undefined}
-            className={styles.key}
-            data-on={value === o.value || undefined}
-            onClick={() => {
-              if (!disabled) onSelect(o.value);
-            }}
-          >
-            {o.label}
-          </button>
-        ))}
-      </span>
-      </Tooltip>
-      {unit && (
-        <span className={styles.keyRowUnit} aria-hidden="true">
-          {unit}
+        {described && (
+          <span id={tipId} hidden>
+            {described}
+          </span>
+        )}
+        <span className={styles.keys}>
+          {options.map((o) => (
+            <button
+              key={String(o.value)}
+              type="button"
+              role="menuitemradio"
+              tabIndex={-1}
+              data-row={row}
+              aria-checked={value === o.value}
+              aria-label={o.ariaLabel}
+              aria-disabled={disabled || undefined}
+              aria-describedby={described ? tipId : undefined}
+              className={styles.key}
+              data-on={value === o.value || undefined}
+              onClick={() => {
+                if (!disabled) onSelect(o.value);
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
         </span>
-      )}
-    </div>
+        {unit && (
+          <span className={styles.keyRowUnit} aria-hidden="true">
+            {unit}
+          </span>
+        )}
+      </div>
+    </Tooltip>
   );
 }
 
