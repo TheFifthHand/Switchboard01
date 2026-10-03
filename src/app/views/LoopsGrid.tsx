@@ -312,6 +312,8 @@ class ProgressAnimator {
         duration: durMs,
         iterations: Infinity,
         easing: `steps(${steps}, end)`,
+        // Before its start (a clip launched a moment ago, as the page clock reads it) it shows the loop's start.
+        fill: 'backwards',
         pseudoElement: '::after',
       });
       bar = { host, anim, durMs, steps };

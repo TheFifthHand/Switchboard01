@@ -181,7 +181,7 @@ describe('loop progress (PLAY-11, design-12)', () => {
       await frames(1);
       frameCount++;
       const hosts = [...document.querySelectorAll<HTMLElement>('[data-pad-cell] button[id^="pad-"], button[data-scene]')].filter((h) => barOf(h));
-      drawn.add(hosts.map((h) => progressOf(h)!.toFixed(4)).join(' '));
+      drawn.add(hosts.map((h) => (progressOf(h) ?? 0).toFixed(4)).join(' '));
     }
     const secs = (performance.now() - start) / 1000;
     mo.disconnect();
