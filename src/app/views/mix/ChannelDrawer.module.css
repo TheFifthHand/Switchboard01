@@ -1,19 +1,27 @@
-/* The Channel drawer: a panel under the mixer holding the part's effects rack at its natural height
-   (the Mix view scrolls to it; the rack itself never becomes a small scroll box). */
+/* The Channel drawer: in the mastering's place, filling it and scrolling inside itself; under the mixer
+   (narrow windows, where the view scrolls) at its natural height. */
 
 .drawer {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   scroll-margin: 10px;
 }
 
 .panel {
+  flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
 }
 
 .body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .part {
@@ -27,7 +35,22 @@
   font-size: var(--fs-xs);
 }
 
+.keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* A key that cannot act now: still focusable, its reason in the note under it and in its tip. */
+.keys [data-blocked] {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   margin: 0;
   padding: 7px 10px;
   border-radius: var(--r-md);
@@ -37,10 +60,11 @@
 }
 
 .rack {
+  flex: none;
   min-width: 0;
 }
 
-/* The rack's body keeps its natural height here. */
+/* The rack's body keeps its natural height here (the drawer scrolls, not the rack). */
 .rack > :last-child {
   overflow: visible;
   max-height: none;

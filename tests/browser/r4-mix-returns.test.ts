@@ -124,6 +124,8 @@ describe('Return strips on the real engine', () => {
     expect(mute.getAttribute('aria-pressed')).toBe('true');
     expect(s.textContent).toContain('Muted');
     expect(runtimeStore.getState().notice?.text).toMatch(/shared Reverb is muted/);
+    // Undo names it in the strip's words.
+    expect(session.store.undoLabel()).toBe('Mute Reverb return');
     await act(async () => wait(150));
     expect(await peakOver(600, 'reverb')).toBe(0);
     expect(await peakOver(600)).toBeGreaterThan(0.01);
@@ -132,6 +134,14 @@ describe('Return strips on the real engine', () => {
     act(() => session.undo());
     expect(mod(REVERB_ID).bypass).toBe(false);
     expect(await peakOver(1500, 'reverb')).toBeGreaterThan(0.003);
+    // Muted and unmuted again: each its own step, in words.
+    await press(mute);
+    await press(mute);
+    expect(mod(REVERB_ID).bypass).toBe(false);
+    expect(session.store.undoLabel()).toBe('Unmute Reverb return');
+    act(() => session.undo());
+    act(() => session.undo());
+    expect(mod(REVERB_ID).bypass).toBe(false);
   });
 
   it('the level fader sets the return’s Mix in dB (keys, one undo step); 0 dB is all the way up', async () => {
@@ -144,14 +154,15 @@ describe('Return strips on the real engine', () => {
     expect(mod(DELAY_ID).params.mix).toBeCloseTo(10 ** (-1 / 20), 3);
     expect(f.getAttribute('aria-valuetext')).toBe('−1.0 dB');
     await act(async () => wait(900));
-    expect(session.store.undoLabel()).toMatch(/Mix/);
+    expect(session.store.undoLabel()).toBe('Echo return level');
     await pressKey('Home', 'Home', 36);
     expect(mod(DELAY_ID).params.mix).toBe(0);
     expect(f.getAttribute('aria-valuetext')).toBe('−60.0 dB, silent');
     await act(async () => wait(900));
-    // How much the echo still passes with its Mix at 0 (the engine's insert-style dry path, see the report).
+    // A send-only return passes its wet sound times its Mix (no dry path): at the bottom it is silent.
     const atZero = await peakOver(800, 'delay');
-    console.info(`[returns] echo return at Mix 0 still reads ${atZero.toFixed(4)} (the dry send passing through)`);
+    console.info(`[returns] echo return at Mix 0 reads ${atZero.toFixed(4)}`);
+    expect(atZero).toBeLessThan(1e-3);
     act(() => session.undo());
     act(() => session.undo());
     expect(mod(DELAY_ID).params.mix ?? 1).toBe(1);
@@ -168,6 +179,7 @@ describe('Return strips on the real engine', () => {
     await press(time);
     await pressKey('ArrowUp', 'ArrowUp', 38);
     expect(mod(DELAY_ID).params.division).toBe(div + 1);
+    expect(session.store.undoLabel()).toBe('Echo time');
     expect(strip('delay').textContent).toContain('Time');
     await act(async () => wait(900));
     act(() => session.undo());

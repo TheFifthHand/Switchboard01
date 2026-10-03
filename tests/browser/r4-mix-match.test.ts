@@ -5,7 +5,8 @@
  *   Loudness drive DOWN toward −14 LUFS (the stale integrated reading would have pushed it up).
  * - While the music plays, Match goes on correcting after each fresh 3-second reading
  *   ("Matching… 2/3") until it is within 0.5 dB or has made 3 passes.
- * - Stop, or a change made by hand, ends it.
+ * - Stop, or a change made by hand, ends it (r4-mix-match-guard: Mute All, Solo, a part fader, and a
+ *   change made before Mix was first opened; r4-mix-match-steps: how each pass is sized).
  */
 import { act, createElement as h } from 'react';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -16,7 +17,7 @@ import { TipsProvider } from '../../src/ui/components';
 import { session } from '../../src/app/instance';
 import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { MixView } from '../../src/app/views/mix/MixView';
-import { matchState, resetLoudnessWatch } from '../../src/app/views/mix/loudnessMatch';
+import { STOPPED_CHANGE, matchState, resetLoudnessWatch } from '../../src/app/views/mix/loudnessMatch';
 import { setLoudnessTarget } from '../../src/app/views/mix/mixPrefs';
 import { getStarter } from '../../src/content/starters';
 import { MASTERING_PARAMS, readParam } from '../../src/project/params';
@@ -134,8 +135,8 @@ describe('Match target on the real engine', () => {
       expect(result()).toBe('Matching stopped: the music stopped.');
       expect(matchWords()).toBe('Match target');
     } else {
-      // Landed already: within the tolerance, it says so.
-      expect(result()).toMatch(/^On the Loud target|after 3 passes/);
+      // Done already: on the target, out of passes, or at the end of Loudness drive's range, and it says so.
+      expect(result()).toMatch(/^On the Loud target|after 3 passes|as far as Loudness drive goes/);
     }
   }, 60_000);
 
@@ -152,7 +153,7 @@ describe('Match target on the real engine', () => {
     expect(matchState().matching).not.toBeNull();
     await click(centre(chip('Bright')));
     expect(matchState().matching).toBeNull();
-    expect(result()).toBe('Matching stopped: a setting changed.');
+    expect(result()).toBe(STOPPED_CHANGE);
     expect(status()).toMatch(/^Measuring the new setting…/);
   }, 60_000);
 });

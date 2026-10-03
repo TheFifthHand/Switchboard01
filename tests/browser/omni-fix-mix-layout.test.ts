@@ -1,10 +1,11 @@
 /**
  * Mix view fixes, in real Chromium with the app's theme and fonts:
- * - The mastering panel is always usable: beside the mixer (from 1340 px, in
+ * - The mastering panel is always usable: beside the mixer (from 1280 px, in
  *   Simple and Advanced) it fills the workspace height; below the mixer
  *   (narrower, 200 % zoom) it has its full height, with no small scroll box of
- *   its own, and the view scrolls to it. Checked at 1366, 1440, 1600, 1920
- *   and 960 × 540 in Simple and Advanced.
+ *   its own, and the view scrolls to it; its header (name, A/B, switch) shows
+ *   under the mixer on first view. Checked at 1280 × 720, 1280 × 800, 1339,
+ *   1366, 1440, 1600, 1920, 1100 × 700 and 960 × 540 in Simple and Advanced.
  * - At 1366 × 768 in Simple, a Match keeps the spectrum on screen.
  * - True peak is amber at the limiter's −1 dBTP ceiling (normal) and red only
  *   above 0 dBTP, with one line saying so; the master meter's tooltip says
@@ -29,8 +30,8 @@ import { selectModule, selectTrack, setUiMode, setView, type UiMode } from '../.
 import { actFrame, cleanup, fire, mount, wait } from './ui-harness';
 
 const project = () => session.store.getState();
-/** Transport (58 px) and keyboard (100 px) take this much of the window height. */
-const CHROME = 158;
+/** Transport (58 px) and the keyboard bar (collapsed in Mix, 44 px) take this much of the window height. */
+const CHROME = 102;
 
 async function fonts() {
   await Promise.all(['400 13px "Inter Variable"', '600 13px "Inter Variable"', '650 15px "Inter Variable"', '400 12px "IBM Plex Mono"'].map((f) => document.fonts.load(f)));
@@ -56,7 +57,7 @@ async function setup(mode: UiMode, w: number, hh: number) {
   await fonts();
   await act(async () => wait(350));
   await actFrame();
-  const view = m.container.querySelector<HTMLElement>('[role="region"][aria-label="Mix"]')!;
+  const view = m.container.querySelector<HTMLElement>('[role="region"][aria-label="Mix view"]')!;
   return { m, view };
 }
 
@@ -103,15 +104,19 @@ afterEach(() => {
 
 describe('Mastering is usable at every size', () => {
   const sizes: [number, number][] = [
+    [1280, 720],
+    [1280, 800],
+    [1339, 768],
     [1366, 768],
     [1440, 900],
     [1600, 900],
     [1920, 1080],
+    [1100, 700],
     [960, 540],
   ];
   for (const mode of ['simple', 'advanced'] as const) {
     for (const [w, hh] of sizes) {
-      const beside = w >= 1340;
+      const beside = w >= 1280;
       it(`${w}×${hh} ${mode}: mastering ${beside ? 'beside the mixer at full height' : 'below the mixer, full height, no inner scroll box'}`, async () => {
         const { view } = await setup(mode, w, hh);
         expect(view.scrollWidth).toBeLessThanOrEqual(view.clientWidth + 1);
@@ -124,7 +129,19 @@ describe('Mastering is usable at every size', () => {
           expect(r.left).toBeGreaterThanOrEqual(mixer.right);
           // As tall as the mixer: a real panel, not a strip.
           expect(Math.abs(r.height - mixer.height)).toBeLessThanOrEqual(2);
-          expect(r.height).toBeGreaterThanOrEqual(450);
+          expect(r.height).toBeGreaterThanOrEqual(440);
+          // Presets and Match target are in sight without scrolling, and nothing in the header spills out.
+          const vb = view.getBoundingClientRect();
+          for (const el of [view.querySelector<HTMLElement>('[data-section="presets"] h3')!, byText(view, /^Match target/)]) {
+            const e = el.getBoundingClientRect();
+            expect(e.top, el.textContent ?? '').toBeGreaterThanOrEqual(Math.max(vb.top, r.top) - 1);
+            expect(e.bottom, el.textContent ?? '').toBeLessThanOrEqual(Math.min(vb.bottom, r.bottom) + 1);
+          }
+          for (const el of panel.querySelectorAll<HTMLElement>('header button, header [role="switch"]')) expect(el.getBoundingClientRect().right).toBeLessThanOrEqual(r.right + 1);
+          // Every target and reading name whole (no "Momen…").
+          for (const el of panel.querySelectorAll<HTMLElement>('[data-section="loudness"] [role="radio"], [data-section="loudness"] [data-key] > span:first-child')) {
+            expect(el.scrollWidth, el.textContent ?? '').toBeLessThanOrEqual(el.clientWidth + 1);
+          }
         } else {
           expect(r.top).toBeGreaterThanOrEqual(mixer.bottom);
           // Its whole content shows: the panel body does not scroll on its own.
@@ -134,9 +151,11 @@ describe('Mastering is usable at every size', () => {
           const spectrum = view.querySelector<HTMLElement>('[data-section="spectrum"]')!.getBoundingClientRect();
           const loudness = view.querySelector<HTMLElement>('[data-section="loudness"]')!.getBoundingClientRect();
           expect(spectrum.left).toBeGreaterThanOrEqual(loudness.right);
-          if (w >= 1024 && hh - CHROME >= 700) {
-            // The top of Mastering peeks out below the mixer, so it is found without scrolling.
-            expect(r.top).toBeLessThan(view.getBoundingClientRect().top + view.clientHeight - 24);
+          if (w >= 1024) {
+            // The Mastering header (its name, A/B and switch) shows under the mixer on first view.
+            const head = panel.querySelector('header')!.getBoundingClientRect();
+            expect(view.scrollTop).toBe(0);
+            expect(head.bottom).toBeLessThanOrEqual(view.getBoundingClientRect().top + view.clientHeight);
           }
           if (w >= 1024) {
             // The view scrolls to all of it.
@@ -182,7 +201,8 @@ describe('Simple at 1366 × 768: Match keeps the spectrum in sight', () => {
     await act(async () => wait(300));
     expect(project().mastering.params.loudness).toBeCloseTo(4.5, 5);
     expect(view.querySelector('[data-testid="loudness-control"]')!.textContent).toBe('Loudness drive 0.0 → +4.5 dB');
-    expect(runtimeStore.getState().notice?.text).toMatch(/^Loudness drive 0\.0 dB → \+4\.5 dB to aim for −9 LUFS/);
+    // One toast for the press (its passes are one undo step): what this pass did, and that it checks again.
+    expect(runtimeStore.getState().notice?.text).toMatch(/^Matching the Loud target: Loudness drive 0\.0 dB → \+4\.5 dB \(the integrated reading was −13\.5 LUFS\)\. Checking again/);
     plotFits();
   });
 });
@@ -247,6 +267,8 @@ describe('Words on the loudness and A/B buttons', () => {
   it('Reset shows its word and restarts the measurement', async () => {
     const reset = vi.spyOn(session, 'resetLoudness');
     const { view } = await setup('simple', 1366, 768);
+    // (Another project restarts the readings by itself: count only the click.)
+    reset.mockClear();
     const b = byText(view, 'Reset');
     expect(b.getAttribute('aria-label')).toBe('Reset loudness readings');
     const r = b.getBoundingClientRect();

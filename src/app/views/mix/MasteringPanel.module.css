@@ -502,3 +502,52 @@
     gap: 5px;
   }
 }
+
+/* The narrowest column (beside the mixer from 1280 px): every reading's name and every target still in
+   full, without cutting. */
+@container mastering (max-width: 359px) {
+  /* Each target as wide as its words ("Streaming −14" is the longest), not three equal thirds. */
+  .targets[data-block] button[role] {
+    flex: 1 1 auto;
+    gap: 5px;
+    padding: 0 7px;
+  }
+  .readout {
+    padding-left: 3px;
+    padding-right: 3px;
+  }
+  .readoutName {
+    font-size: 10px;
+    letter-spacing: -0.01em;
+  }
+  .reset {
+    min-width: 40px;
+    padding: 0 4px;
+  }
+}
+
+/* The header of a narrow column beside the mixer (it is outside the body's container): the A/B key's words
+   may take two lines, so the key, the switch and its state word stay inside the panel. In the narrowest
+   column (below 1340 px) the key also drops its icon: its words say what it is. */
+@media (min-width: 1280px) and (max-width: 1439px) {
+  .compare {
+    max-width: 118px;
+    padding: 0 8px;
+    font-size: var(--fs-xs);
+    line-height: 1.15;
+    white-space: normal;
+  }
+  .compareWords > span {
+    align-self: center;
+  }
+}
+
+@media (min-width: 1280px) and (max-width: 1339px) {
+  .compare {
+    max-width: 92px;
+  }
+  /* !important: the icon sets its display inline. */
+  .compare > svg {
+    display: none !important;
+  }
+}

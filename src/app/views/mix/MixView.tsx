@@ -2,12 +2,13 @@
  * Mix: levels, panning, the shared returns and mastering for the whole song.
  *
  *   [ MIXER: one strip per part · Reverb · Echo returns · Master ] [ MASTERING ]
- *   [ CHANNEL drawer (when open): the selected part's effects    ]
+ *                                                    or, while open: [ CHANNEL  ]
  *
  * Simple shows the essentials; Advanced adds the limiter readout, every
  * mastering control grouped by purpose, and (when its row is shown) each
  * part's effects and Reverb and Echo big knobs. Mastering stays beside the
- * mixer from 1340 px; narrower, it sits under it. Everything edits the real
+ * mixer from 1280 px; narrower, it sits under it, its header in sight. The
+ * Channel drawer takes the mastering's place while open. Everything edits the real
  * project through the session and commands (undoable, recorded by a take
  * where a take can record it); every meter shows real engine output.
  *
@@ -58,7 +59,7 @@ export function MixView() {
     );
   const drawerTrack = trackIds.includes(selected ?? '') ? selected! : trackIds[0];
   return (
-    <div className={styles.view} data-mode={advanced ? 'advanced' : 'simple'} data-drawer={drawer.open || undefined} role="region" aria-label="Mix">
+    <div className={styles.view} data-mode={advanced ? 'advanced' : 'simple'} data-drawer={drawer.open || undefined} role="region" aria-label="Mix view">
       <Panel
         title="Mixer"
         subtitle={subtitle}
@@ -93,7 +94,7 @@ export function MixView() {
           </>
         }
       >
-        <div className={styles.strips} style={{ ['--parts' as string]: trackIds.length }}>
+        <div className={styles.strips} style={{ ['--parts' as string]: trackIds.length }} data-mix-sends={(advanced && sends) || undefined}>
           {trackIds.map((id, i) => (
             <ChannelStrip key={id} trackId={id} index={i} advanced={advanced} sends={sends} />
           ))}

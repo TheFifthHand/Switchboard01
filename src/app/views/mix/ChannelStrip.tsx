@@ -159,7 +159,8 @@ const SendKnob = memo(function SendKnob(props: { trackId: Id; name: string; send
     return { ...s, label: `${name} ${words}`, short: reverb ? 'Reverb' : 'Echo' };
   }, [macro, name, reverb, words]);
   if (macro) {
-    return <Knob spec={spec} value={macroValue} size="sm" onChange={(v, i) => session.setMacro(trackId, macro, v, i.gesture)} />;
+    // Undo says what was turned here ("Drums reverb"), not the big knob's own name.
+    return <Knob spec={spec} value={macroValue} size="sm" onChange={(v, i) => session.setMacro(trackId, macro, v, i.gesture, { display: spec.label })} />;
   }
   return (
     <Knob
@@ -169,7 +170,7 @@ const SendKnob = memo(function SendKnob(props: { trackId: Id; name: string; send
       controlledBy={rawBy ?? undefined}
       disabled={!channel}
       onChange={(v, i) => {
-        if (channel) session.setModuleParam(channel, send, v, i.gesture);
+        if (channel) session.setModuleParam(channel, send, v, i.gesture, { display: spec.label });
       }}
     />
   );
@@ -248,21 +249,24 @@ export const ChannelStrip = memo(function ChannelStrip({ trackId, index, advance
           {state}
         </span>
       </div>
-      {advanced && sends && <SendsRow trackId={trackId} name={name} />}
-      <Knob spec={panSpec} value={info.pan} size="sm" onChange={setParam('pan')} controlledBy={info.panBy ?? undefined} modulated={info.panMod} disabled={noChannel} className={styles.pan} />
-      <div className={styles.ms}>
-        <Tooltip tip={info.mute ? `Hear ${name} again.` : `Silence ${name}. It keeps playing in time, so unmuting brings it straight back.`}>
-          <button type="button" className={`${styles.msButton} ${styles.mute}`} aria-pressed={info.mute} aria-label={`Mute ${name}`} onClick={() => session.setMute(trackId, !info.mute)}>
-            <Icon name={info.mute ? 'mute' : 'speaker'} size={14} />
-            <span>Mute</span>
-          </button>
-        </Tooltip>
-        <Tooltip tip={info.solo ? `Stop soloing ${name}.` : `Hear only ${name} (and any other soloed part).`}>
-          <button type="button" className={`${styles.msButton} ${styles.solo}`} aria-pressed={info.solo} aria-label={`Solo ${name}`} onClick={toggleSolo}>
-            <Icon name="headphones" size={14} />
-            <span>Solo</span>
-          </button>
-        </Tooltip>
+      {/* Everything between the name and the fader. It sits on the fader, so Mute and Solo line up across the strips. */}
+      <div className={styles.middle}>
+        {advanced && sends && <SendsRow trackId={trackId} name={name} />}
+        <Knob spec={panSpec} value={info.pan} size="sm" onChange={setParam('pan')} controlledBy={info.panBy ?? undefined} modulated={info.panMod} disabled={noChannel} className={styles.pan} />
+        <div className={styles.ms}>
+          <Tooltip tip={info.mute ? `Hear ${name} again.` : `Silence ${name}. It keeps playing in time, so unmuting brings it straight back.`}>
+            <button type="button" className={`${styles.msButton} ${styles.mute}`} aria-pressed={info.mute} aria-label={`Mute ${name}`} onClick={() => session.setMute(trackId, !info.mute)}>
+              <Icon name={info.mute ? 'mute' : 'speaker'} size={14} />
+              <span>Mute</span>
+            </button>
+          </Tooltip>
+          <Tooltip tip={info.solo ? `Stop soloing ${name}.` : `Hear only ${name} (and any other soloed part).`}>
+            <button type="button" className={`${styles.msButton} ${styles.solo}`} aria-pressed={info.solo} aria-label={`Solo ${name}`} onClick={toggleSolo}>
+              <Icon name="headphones" size={14} />
+              <span>Solo</span>
+            </button>
+          </Tooltip>
+        </div>
       </div>
       <div className={styles.faderRow}>
         <Fader
@@ -311,21 +315,23 @@ export const MasterStrip = memo(function MasterStrip(props: { advanced: boolean 
           {muteAll ? 'Muted' : ''}
         </span>
       </div>
-      {advanced && <LimiterReadout />}
-      <Tooltip
-        tip={
-          muteAll
-            ? 'Everything is silenced. Press to hear sound again.'
-            : takeRecording
-              ? 'Silence everything at once, including echoes and held notes. This also ends the performance recording, keeping what came before.'
-              : 'Silence everything at once, including echoes and held notes.'
-        }
-      >
-        <button type="button" className={`${styles.msButton} ${styles.mute} ${styles.muteAll}`} aria-pressed={muteAll} aria-label="Mute All" onClick={() => session.toggleMuteAll()}>
-          <Icon name="mute" size={14} />
-          <span>{muteAll ? 'Muted' : 'Mute All'}</span>
-        </button>
-      </Tooltip>
+      <div className={styles.middle}>
+        {advanced && <LimiterReadout />}
+        <Tooltip
+          tip={
+            muteAll
+              ? 'Everything is silenced. Press to hear sound again.'
+              : takeRecording
+                ? 'Silence everything at once, including echoes and held notes. This also ends the performance recording, keeping what came before.'
+                : 'Silence everything at once, including echoes and held notes.'
+          }
+        >
+          <button type="button" className={`${styles.msButton} ${styles.mute} ${styles.muteAll}`} aria-pressed={muteAll} aria-label="Mute All" onClick={() => session.toggleMuteAll()}>
+            <Icon name="mute" size={14} />
+            <span>{muteAll ? 'Muted' : 'Mute All'}</span>
+          </button>
+        </Tooltip>
+      </div>
       <div className={styles.faderRow}>
         <Fader
           spec={MASTER_VOLUME_SPEC}
