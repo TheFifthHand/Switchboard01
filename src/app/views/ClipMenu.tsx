@@ -13,8 +13,8 @@
  * click is swallowed (once; keys are never affected), except on another
  * menu's trigger, which opens its own menu at once. While any popover is
  * open, body carries data-popover-open (counted, so nested or overlapping
- * popovers keep it until the last one closes): toasts move to the top, clear
- * of the menu. For a moment after it opens, a click that
+ * popovers keep it until the last one closes): the toasts (at the top, under
+ * the transport) stack below the menu. For a moment after it opens, a click that
  * comes without the pointer moving (the second half of a double-click on the
  * trigger) does nothing. Rows light up under the pointer only once it moves
  * over the menu (keyboard focus always shows); then the row under the
