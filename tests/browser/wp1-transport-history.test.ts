@@ -1,6 +1,6 @@
 /**
  * Undo and Redo on the transport strip (real Chromium layout, the app's
- * fonts): always on the strip, with their words from 1600 px and as named
+ * fonts): always on the strip, with their words from 1800 px and as named
  * icon keys narrower (beside the Simple · Advanced switch from 1366 px); never
  * only in the ⋯ menu. Unavailable, they say why; available, their tip names
  * the step ("Undo: Change tempo"), and pressing them undoes and redoes it. The
@@ -91,11 +91,11 @@ function expectStripFits(label: string) {
 }
 
 describe('Undo and Redo on the strip', () => {
-  it('show their words from 1600 px and named icon keys narrower, in Simple and Advanced, and the strip fits', async () => {
+  it('show their words from 1800 px and named icon keys narrower, in Simple and Advanced, and the strip fits', async () => {
     await openApp();
     for (const mode of ['simple', 'advanced'] as const) {
       act(() => setUiMode(mode));
-      for (const w of [1024, 1100, 1180, 1279, 1280, 1366, 1440, 1536, 1600, 1700, 1760, 1920]) {
+      for (const w of [1024, 1100, 1180, 1279, 1280, 1366, 1440, 1536, 1600, 1700, 1760, 1800, 1920]) {
         await page.viewport(w, 900);
         await settle();
         const label = `${mode} ${w} px`;
@@ -106,7 +106,7 @@ describe('Undo and Redo on the strip', () => {
           expect(k.getAttribute('aria-label')?.startsWith(word), `${label}: ${word}'s name`).toBe(true);
           const r = k.getBoundingClientRect();
           expect(Math.min(r.width, r.height), `${label}: ${word} is a 32 px target`).toBeGreaterThanOrEqual(32);
-          expect(wordShown(k, word), `${label}: the word "${word}"`).toBe(w >= 1600);
+          expect(wordShown(k, word), `${label}: the word "${word}"`).toBe(w >= 1800);
         }
         // The Simple · Advanced switch is on the strip beside them from 1366 px (in More narrower).
         for (const name of ['Simple', 'Advanced']) expect(shown([...bar().querySelectorAll('[role="radio"]')].find((r) => r.textContent === name) ?? null), `${label}: "${name}"`).toBe(w >= 1366);
@@ -123,10 +123,10 @@ describe('Undo and Redo on the strip', () => {
       expect(b && shown(b) && wordShown(b, word), `1366: "${word}"`).toBe(true);
     }
     for (const kind of ['undo', 'redo'] as const) expect(shown(key(kind)), `1366: ${kind}`).toBe(true);
-    // From 1600 px the words are back.
-    await page.viewport(1600, 900);
+    // From 1800 px the words are back.
+    await page.viewport(1800, 900);
     await settle();
-    for (const kind of ['undo', 'redo'] as const) expect(wordShown(key(kind), kind === 'undo' ? 'Undo' : 'Redo'), `1600: ${kind}'s word`).toBe(true);
+    for (const kind of ['undo', 'redo'] as const) expect(wordShown(key(kind), kind === 'undo' ? 'Undo' : 'Redo'), `1800: ${kind}'s word`).toBe(true);
   });
 
   it('say why when there is nothing to undo or redo, name the step when there is, and undo and redo it', async () => {
