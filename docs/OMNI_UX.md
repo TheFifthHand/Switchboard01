@@ -285,8 +285,11 @@ patch left/right" arrows reach Master Out.
 
 ### Drums pads
 
-The kit overview is a clickable grid (see Steps, drum parts); the pad lane below it plays and paints
-the chosen sound.
+A 4 × 4 performance layout of the kit, laid out like the computer keys (Z X C V / A S D F / Q W E R
+/ 1 2 3 4, bottom row first). A struck pad (or key) plays with a velocity from where it is struck,
+lights while held and selects its sound for step editing. A part that is not a kit gets a chooser of
+the project's drum parts; a part that cannot be heard (muted, another part soloed) says so and
+offers the fix.
 
 ## Steps
 
