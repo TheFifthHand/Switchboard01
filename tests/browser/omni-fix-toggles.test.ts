@@ -288,7 +288,7 @@ describe('engaged toggles keep their on-look', () => {
     const panelMute = panel.querySelector<HTMLElement>('button[data-kind="mute"]');
     expect(panelMute?.getAttribute('aria-pressed')).toBe('true');
     await expectOnLookHolds('Mute (part panel)', panelMute);
-    await expectOnLookHolds('Lock (part panel)', named('Locked', panel));
+    await expectOnLookHolds('Keep pattern (part panel)', named('Pattern kept', panel));
     act(() => selectTrack(bass.id));
     await settle();
     const panelSolo = panel.querySelector<HTMLElement>('button[data-kind="solo"]');

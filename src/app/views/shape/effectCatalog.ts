@@ -11,6 +11,7 @@
 import { INSERTABLE_EFFECTS, MODULE_DEFS } from '../../../project/modules';
 import { MODULE_PARAMS, specById, type ParamSpec } from '../../../project/params';
 import type { ModuleType } from '../../../project/types';
+import { SQUEEZE_SPEC } from './squeeze';
 
 export interface EffectGroup {
   id: 'tone' | 'dynamics' | 'space' | 'movement' | 'colour' | 'stereo';
@@ -41,8 +42,10 @@ export interface EffectInfo {
   /** What the effect does, in one plain sentence (names no knob). */
   does: string;
   /**
-   * Candidates for the Simple card's one knob, best first. The card shows the
-   * first one no macro controls, so turning it always changes the sound.
+   * The Simple card's knob first (the effect's main amount), then the
+   * effect's other main settings. The card always shows the first one; when
+   * a big knob (macro) sets it, the card shows that big knob instead, so
+   * turning the card's knob always changes the sound.
    */
   knobs: readonly EffectKnob[];
 }
@@ -71,6 +74,7 @@ export const EFFECT_INFO: Partial<Record<ModuleType, EffectInfo>> = {
     summary: 'Evens out loud and quiet moments for more punch.',
     does: 'Holds loud moments down for a tighter, punchier sound.',
     knobs: [
+      { id: 'squeeze', says: 'Squeeze holds them down harder: it lowers the threshold and raises the ratio together, and keeps the level about the same.' },
       { id: 'ratio', says: 'Squeeze sets how hard.' },
       { id: 'threshold', says: 'Lower the Threshold to squeeze more of the sound.' },
       { id: 'mix', says: 'Mix blends the squeezed sound with the untouched one.' },
@@ -142,7 +146,7 @@ export const EFFECT_INFO: Partial<Record<ModuleType, EffectInfo>> = {
     does: 'Warms the sound up, then adds crunch.',
     knobs: [
       { id: 'amount', says: 'Turn Drive up for more grit.' },
-      { id: 'tone', says: 'Tone tames or keeps the fizz the crunch adds.' },
+      { id: 'tone', says: 'Fizz tames or keeps the bright fizz the crunch adds.' },
       { id: 'mix', says: 'Mix blends the crunch with the clean sound.' },
     ],
   },
@@ -191,11 +195,30 @@ export function effectSentence(type: ModuleType, paramId?: string): string {
   return knob ? `${info.does} ${knob.says}` : info.does;
 }
 
-/** The specs that may be an effect card's one knob, best first (the first parameter when none are listed). */
+/** What turning one of an effect's main knobs does ("Resonance adds a ringing peak where the filter cuts."), or ''. */
+export function knobSays(type: ModuleType, paramId: string): string {
+  return EFFECT_INFO[type]?.knobs.find((k) => k.id === paramId)?.says ?? '';
+}
+
+/**
+ * Knobs a Simple card shows that are not one stored setting: the
+ * Compressor's Squeeze sets threshold, ratio and makeup together.
+ */
+export const VIRTUAL_KNOBS: Partial<Record<ModuleType, ParamSpec>> = { compressor: SQUEEZE_SPEC };
+
+/**
+ * The effect's main settings, best first (the first parameter when none are
+ * listed); the Simple card's knob is the first one (or its virtual knob).
+ */
 export function mainKnobCandidates(type: ModuleType): ParamSpec[] {
   const specs = MODULE_PARAMS[type];
   const listed = (EFFECT_INFO[type]?.knobs ?? []).map((k) => specById(specs, k.id)).filter((s): s is ParamSpec => !!s);
   return listed.length ? listed : specs.slice(0, 1);
+}
+
+/** The Simple card's one knob for an effect type: its virtual knob, else its first main setting. */
+export function cardKnobSpec(type: ModuleType): ParamSpec | undefined {
+  return VIRTUAL_KNOBS[type] ?? mainKnobCandidates(type)[0];
 }
 
 /** The preferred main knob's spec for an effect type (its first candidate). */

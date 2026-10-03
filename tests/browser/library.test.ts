@@ -714,7 +714,8 @@ describe('The first-launch preview and reopening', () => {
     expect(title.textContent).toBe('Omni Song');
     expect(card.getAttribute('aria-labelledby')).toBe('welcome-title');
     expect(card.textContent).toContain('Start with a beat. Make it yours.');
-    expect(buttonNamed('Jump In')).not.toBeNull();
+    // A returning visit offers Continue first and a new groove second (shell-02).
+    expect(buttonNamed('Start a new groove')).not.toBeNull();
     expect(buttonNamed('Continue “From Before”')).not.toBeNull();
     expect(card.querySelector('[data-testid="welcome-renamed"]')?.textContent).toBe('SWITCHBOARD / 01 is now called Omni Song. Your projects and settings are all still here.');
     first.unmount();
@@ -784,7 +785,7 @@ describe('The first-launch preview and reopening', () => {
       act(() => session.setBpm(103));
       const status = await until(() => document.querySelector<HTMLButtonElement>('button[aria-label="Autosave: Not saved"]'), 'Not saved', 5000);
       await click(status);
-      const pop = document.querySelector<HTMLElement>('[role="alertdialog"][aria-label="Saving failed"]')!;
+      const pop = document.querySelector<HTMLElement>('[role="dialog"][aria-label="Saving failed"]')!;
       // Pressed from the keyboard: the export tries to save first, and focus stays on the button meanwhile.
       const exportButton = buttonNamed('Export project file', pop)!;
       exportButton.focus();
@@ -799,7 +800,7 @@ describe('The first-launch preview and reopening', () => {
       act(() => session.store.replace({ ...session.store.getState(), samples: [meta] }));
       await session.autosaver!.flush();
       saved = null;
-      const again = await until(() => document.querySelector<HTMLElement>('[role="alertdialog"][aria-label="Saving failed"]'), 'popover');
+      const again = await until(() => document.querySelector<HTMLElement>('[role="dialog"][aria-label="Saving failed"]'), 'popover');
       await click(buttonNamed('Export project file', again));
       const notice = await until(() => (runtimeStore.getState().notice?.tone === 'error' ? runtimeStore.getState().notice : null), 'error message');
       expect(notice.text).toBe('Exporting the project file failed: The recording "Lost take" is missing from this browser\'s storage, so the project file would be incomplete.');
@@ -810,11 +811,11 @@ describe('The first-launch preview and reopening', () => {
     }
     // Storage is back: Try again writes the pending edits, the popover goes and focus returns to the save status.
     await putSample({ id: 'smp_missing', name: 'Lost take', mime: 'audio/wav', byteLength: 3, duration: 0.1, sampleRate: 44100, channels: 1 }, new Blob([new Uint8Array([1, 2, 3])]));
-    const tryAgain = buttonNamed('Try again', document.querySelector<HTMLElement>('[role="alertdialog"][aria-label="Saving failed"]')!)!;
+    const tryAgain = buttonNamed('Try again', document.querySelector<HTMLElement>('[role="dialog"][aria-label="Saving failed"]')!)!;
     tryAgain.focus();
     await click(tryAgain);
     await until(() => saveStatus() === 'Autosave: Saved', 'Saved', 5000);
-    expect(document.querySelector('[role="alertdialog"][aria-label="Saving failed"]')).toBeNull();
+    expect(document.querySelector('[role="dialog"][aria-label="Saving failed"]')).toBeNull();
     expect(document.activeElement?.getAttribute('aria-label')).toBe('Autosave: Saved');
   });
 });

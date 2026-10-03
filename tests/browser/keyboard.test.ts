@@ -1,9 +1,11 @@
 import { createElement as h, Fragment } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
+// The app's tokens (type sizes): kit key names are measured in them.
+import '../../src/ui/theme.css';
 import { Dialog, MiniKeyboard } from '../../src/ui/components';
 import { drumKeyHint, noteKeyLabels, useComputerKeyboard, type ComputerKeyboardLayout } from '../../src/ui/hooks/useComputerKeyboard';
 import { cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
-import { centre, click } from './r4-uikit-input';
+import { centre, click, settleFrames } from './r4-uikit-input';
 
 afterEach(cleanup);
 
@@ -438,5 +440,47 @@ describe('MiniKeyboard kit row and spelling', () => {
     const legend = mount(h('div', { style: { width: '760px' } }, h(MiniKeyboard, { baseNote: 60, height: 90, rootPc: 10, pitchNames: flats, onNoteOn: () => {}, onNoteOff: () => {} })), { width: 800 });
     // B♭ is a black key: its name shows on the rail only; the white C keys keep C4 / C5.
     expect(legend.container.querySelector('[data-midi="60"] [class*="name"]')!.textContent).toBe('C4');
+  });
+});
+
+describe('MiniKeyboard kit row on narrow strips', () => {
+  function kitRow(width: number) {
+    const events: Ev[] = [];
+    const names = ['Kick', 'Kick 2', 'Snare', 'Clap', 'Closed Hat', 'Open Hat', 'Pedal Hat', 'Rim', 'Low Tom', 'Mid Tom', 'High Tom', 'Cowbell', 'Crash', 'Ride', 'Blip', 'Zap'];
+    const letters = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [60 + i, drumKeyHint(i)!]));
+    const m = mount(
+      h('div', { style: { width: `${width}px` } }, h(MiniKeyboard, { variant: 'kit', kitLayout: 'row', baseNote: 60, height: 90, kitNames: names, keyLabels: letters, onNoteOn: (n: number, v: number) => events.push(['on', n, v]), onNoteOff: (n: number) => events.push(['off', n]) })),
+      { width: width + 40 },
+    );
+    const board = m.container.querySelector<HTMLElement>('[role="group"]')!;
+    return { names, events, board, keys: () => [...board.querySelectorAll<HTMLElement>('[data-midi]')] };
+  }
+
+  it('under about 44 px a key, two rows of eight (8–15 above 0–7); the mouse plays the key under it', async () => {
+    const { keys, events } = kitRow(470);
+    await settleFrames(2);
+    const ks = keys();
+    expect(new Set(ks.map((k) => Math.round(k.getBoundingClientRect().top))).size).toBe(2);
+    expect(ks[8].getBoundingClientRect().top).toBeLessThan(ks[0].getBoundingClientRect().top);
+    for (const k of ks) expect(k.getBoundingClientRect().height).toBeGreaterThanOrEqual(32);
+    await click(centre(ks[9]));
+    await click(centre(ks[1]));
+    expect(events.filter((e) => e[0] === 'on').map((e) => e[1])).toEqual([69, 61]);
+  });
+
+  it('when even two rows are too narrow, names are shortened (the whole name is the title)', async () => {
+    const { keys, names } = kitRow(300);
+    await settleFrames(2);
+    const ks = keys();
+    expect(ks[4].firstElementChild!.textContent).toBe('CH');
+    expect(ks[4].title).toBe('Closed Hat');
+    expect(ks[1].firstElementChild!.textContent).toBe('K2');
+    expect(ks[0].firstElementChild!.textContent).toBe('Kick');
+    expect(ks[11].firstElementChild!.textContent).toBe('Cwbl');
+    expect(ks[2].firstElementChild!.textContent).toBe('Snr');
+    for (const [i, k] of ks.entries()) {
+      const n = k.firstElementChild as HTMLElement;
+      expect(n.scrollWidth, names[i]).toBeLessThanOrEqual(n.clientWidth + 1);
+    }
   });
 });

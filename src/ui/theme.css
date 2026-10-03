@@ -153,6 +153,15 @@ body,
   margin: 0;
 }
 
+/*
+ * A sideways swipe or a drag that runs past an edge must never turn into the browser's Back or
+ * Forward gesture (a lane or pad drag that ends past the window's edge would leave the app).
+ */
+html,
+body {
+  overscroll-behavior-x: none;
+}
+
 body {
   background: var(--shell-lo);
   color: var(--ink);

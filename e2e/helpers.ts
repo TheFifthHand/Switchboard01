@@ -18,6 +18,15 @@ export async function jumpIn(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing), { timeout: 10_000 }).toBe(true);
 }
 
+/**
+ * Coming back (a stored project): the Welcome card's main key is Continue
+ * “<name>”; "Start a new groove" is the Jump In of a returning visit.
+ */
+export async function startNewGroove(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Start a new groove' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing), { timeout: 10_000 }).toBe(true);
+}
+
 /** Highest master peak seen over `ms` of real playback. */
 export async function masterPeakOver(page: Page, ms: number): Promise<{ peak: number; rms: number }> {
   return page.evaluate(async (ms) => {
@@ -32,6 +41,26 @@ export async function masterPeakOver(page: Page, ms: number): Promise<{ peak: nu
       await new Promise((r) => setTimeout(r, 30));
     }
     return { peak, rms };
+  }, ms);
+}
+
+/**
+ * Highest master peak from now for `ms`, read every 10 ms once audio runs. Start it before the
+ * key or click it measures (without awaiting), so a short sound (a closed hat) is caught.
+ */
+export function masterPeakFrom(page: Page, ms: number): Promise<number> {
+  return page.evaluate(async (ms) => {
+    const sb = (window as any).__switchboard;
+    let peak = 0;
+    const end = performance.now() + ms;
+    while (performance.now() < end) {
+      if (sb.audioState() === 'running') {
+        const m = sb.meters();
+        peak = Math.max(peak, m.masterPeakL, m.masterPeakR);
+      }
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return peak;
   }, ms);
 }
 
@@ -67,6 +96,19 @@ export function wavStats16(buf: Buffer, dataOffset: number, frames: number, chan
   const n = frames * channels;
   for (let i = 0; i < n; i++) {
     const v = buf.readInt16LE(dataOffset + i * 2) / 32768;
+    peak = Math.max(peak, Math.abs(v));
+    sum += v * v;
+  }
+  return { peak, rms: Math.sqrt(sum / Math.max(1, n)), finite: Number.isFinite(sum) };
+}
+
+/** Peak and RMS of a 24-bit PCM WAV body (the Export dialog's default bit depth). */
+export function wavStats24(buf: Buffer, dataOffset: number, frames: number, channels: number): { peak: number; rms: number; finite: boolean } {
+  let peak = 0;
+  let sum = 0;
+  const n = frames * channels;
+  for (let i = 0; i < n; i++) {
+    const v = buf.readIntLE(dataOffset + i * 3, 3) / 8388608;
     peak = Math.max(peak, Math.abs(v));
     sum += v * v;
   }

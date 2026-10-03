@@ -431,21 +431,22 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
   const rowCols = (v: number): Paint['cols'] =>
     STEP_INDICES.map((s) => overviewRef.current?.querySelector(`[data-voice="${v}"] [data-col="${s + 1}"]`)?.getBoundingClientRect() ?? { left: 0, right: 0 });
 
-  // A finger waits until it shows a sideways drag (paint) or lifts (tap); moving up or down scrolls instead.
-  const touchWait = useRef<{ pointerId: number; voice: number; step: number; x: number; y: number } | null>(null);
+  // A finger waits until it shows a sideways drag (paint) or lifts (tap); moving up or down scrolls instead
+  // (the browser then cancels the pointer). On a sound's name only a tap chooses and plays it. col 0 = the name.
+  const touchWait = useRef<{ pointerId: number; voice: number; col: number; x: number; y: number } | null>(null);
 
   const onGridPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const at = cellOf(e.target);
     if (!at) return;
     setCell(at);
-    if (at.col === 0) {
-      onPick(at.voice);
-      return;
-    }
     painter.end();
     if (e.pointerType === 'touch') {
-      touchWait.current = { pointerId: e.pointerId, voice: at.voice, step: at.col - 1, x: e.clientX, y: e.clientY };
+      touchWait.current = { pointerId: e.pointerId, voice: at.voice, col: at.col, x: e.clientX, y: e.clientY };
+      return;
+    }
+    if (at.col === 0) {
+      onPick(at.voice);
       return;
     }
     e.preventDefault();
@@ -463,15 +464,18 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
     const w = touchWait.current;
     if (w && w.pointerId === e.pointerId) {
       const dx = Math.abs(e.clientX - w.x);
-      if (dx < TOUCH_SLOP_PX) return;
+      const dy = Math.abs(e.clientY - w.y);
+      if (dx < TOUCH_SLOP_PX && dy < TOUCH_SLOP_PX) return;
       touchWait.current = null;
+      // A name is never painted from, and a mostly vertical move is a scroll: nothing happens.
+      if (w.col === 0 || dy > dx) return;
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
       } catch {
         /* synthetic pointer */
       }
       selectDrumVoice(trackId, w.voice);
-      painter.start(e.pointerId, w.voice, w.step, rowCols(w.voice));
+      painter.start(e.pointerId, w.voice, w.col - 1, rowCols(w.voice));
     }
     painter.move(e.pointerId, e.clientX);
   };
@@ -479,9 +483,10 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
   const onGridPointerUp = (e: PointerEvent<HTMLDivElement>) => {
     const w = touchWait.current;
     if (w && w.pointerId === e.pointerId) {
-      // A tap: toggle the cell.
+      // A tap: toggle the cell, or choose and play the sound.
       touchWait.current = null;
-      toggleCell(w.voice, w.step);
+      if (w.col === 0) onPick(w.voice);
+      else toggleCell(w.voice, w.col - 1);
       return;
     }
     painter.end(e.pointerId);
@@ -570,7 +575,10 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
         onPointerMove={onGridPointerMove}
         onPointerUp={onGridPointerUp}
         onPointerCancel={onGridPointerCancel}
-        onLostPointerCapture={(e) => painter.end(e.pointerId)}
+        // Only the grid's own capture ending ends a paint: a cell giving up its implicit (touch) capture to the grid bubbles here too.
+        onLostPointerCapture={(e) => {
+          if (e.target === e.currentTarget) painter.end(e.pointerId);
+        }}
         onClick={onGridClick}
         onContextMenu={onGridContextMenu}
         onKeyDown={onGridKey}
@@ -589,7 +597,9 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
         onPointerMove={(e) => painter.move(e.pointerId, e.clientX)}
         onPointerUp={(e) => painter.end(e.pointerId)}
         onPointerCancel={(e) => painter.end(e.pointerId)}
-        onLostPointerCapture={(e) => painter.end(e.pointerId)}
+        onLostPointerCapture={(e) => {
+          if (e.target === e.currentTarget) painter.end(e.pointerId);
+        }}
       >
         <div className={styles.laneLabel}>
           <div className={styles.laneHead}>

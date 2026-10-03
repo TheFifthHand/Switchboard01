@@ -381,3 +381,31 @@
     letter-spacing: -0.02em;
   }
 }
+
+/* Two rows of eight (narrow strips): the name from the top, the letter in the bottom-right corner. */
+.keyboard[data-layout='row'][data-rows='2'] .bed {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  row-gap: 3px;
+}
+.keyboard[data-layout='row'][data-rows='2'] .pad {
+  justify-content: flex-start;
+  padding: 3px 3px 2px;
+}
+.keyboard[data-layout='row'][data-rows='2'] .padName {
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  line-height: 11px;
+  text-align: left;
+  padding-right: 2px;
+}
+.keyboard[data-layout='row'][data-rows='2'] .padKey {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  min-width: 14px;
+  height: 14px;
+  font-size: var(--fs-2xs);
+  line-height: 12px;
+}

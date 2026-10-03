@@ -28,7 +28,9 @@
  * 'grid' (default) lays them out as the drum pads and the computer keys are (pad 0
  * bottom-left, rows bottom to top; rows at least 32 px tall); 'row' puts them in one
  * row of four groups, one per row of computer keys (Z–V, A–F, Q–R, 1–4), for a
- * strip only one key tall.
+ * strip only one key tall; on a narrow strip (under ~44 px a key) two rows of
+ * eight (Q–R 1–4 above Z–V A–F), and when even those keys are narrow, short
+ * names ("CH", "Snr") with the whole name as the key's title.
  *
  * `noteNames` spell the root on the rail (and in a legend) the way the key
  * writes it: pass the key's 12 names by pitch class (keyNoteNames), e.g. 'B♭'
@@ -36,6 +38,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { velocityFromPosition } from './Pad';
+import { useElementSize } from '../hooks/useElementSize';
 import styles from './MiniKeyboard.module.css';
 
 export interface MiniKeyboardProps {
@@ -137,7 +140,36 @@ function kitRowColumn(index: number): number {
   return index + 1 + Math.floor(index / KIT_COLS);
 }
 
-const KIT_ROW_COLUMNS = `repeat(4, minmax(0, 1fr)) ${KIT_GROUP_GAP_PX - 6}px repeat(4, minmax(0, 1fr)) ${KIT_GROUP_GAP_PX - 6}px repeat(4, minmax(0, 1fr)) ${KIT_GROUP_GAP_PX - 6}px repeat(4, minmax(0, 1fr))`;
+const GROUP = `repeat(4, minmax(0, 1fr))`;
+const SPACER = `${KIT_GROUP_GAP_PX - 6}px`;
+const KIT_ROW_COLUMNS = [GROUP, SPACER, GROUP, SPACER, GROUP, SPACER, GROUP].join(' ');
+const KIT_TWO_ROW_COLUMNS = [GROUP, SPACER, GROUP].join(' ');
+/**
+ * Kit 'row' on a narrow strip: under this width per key the 16 keys go in two rows of eight
+ * (Q–R 1–4 above Z–V A–F), each key twice as wide; under KIT_SHORT_PX per key even then, the
+ * names are shortened ("CH" for Closed Hat; the whole name is the key's title).
+ */
+export const KIT_ONE_ROW_MIN_PX = 44;
+const KIT_SHORT_PX = 40;
+
+/** Kit 'row' in two rows: key n's column and row (keys 0-7 below, 8-15 above). */
+function kitTwoRowCell(index: number): { col: number; row: number } {
+  const i = index % 8;
+  return { col: i + 1 + Math.floor(i / KIT_COLS), row: index < 8 ? 2 : 1 };
+}
+
+/**
+ * A sound's name in a few letters, for keys too narrow for it: the initials of several words
+ * ("Closed Hat" -> "CH", "Kick 2" -> "K2"); one longer word keeps its first letter and the
+ * consonants after it ("Snare" -> "Snr", "Cowbell" -> "Cwbl"), as drum machines label pads.
+ */
+export function shortSoundName(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length > 1) return words.map((w) => (/^\d/.test(w) ? w : w[0].toUpperCase())).join('');
+  const w = words[0] ?? '';
+  if (w.length <= 4) return w;
+  return (w[0] + w.slice(1).replace(/[aeiouy]/gi, '')).slice(0, 4);
+}
 
 export function MiniKeyboard({
   baseNote,
@@ -162,11 +194,16 @@ export function MiniKeyboard({
 }: MiniKeyboardProps) {
   const kit = variant === 'kit';
   const kitRow = kit && kitLayout === 'row';
+  const rootRef = useRef<HTMLDivElement>(null);
+  const box = useElementSize(rootRef);
+  // Kit 'row' on a narrow strip: two rows of eight, and short names when even those keys are narrow.
+  const perKey = box.width > 0 ? (box.width - 3 * KIT_GROUP_GAP_PX - 12 * 3) / KIT_KEYS : Infinity;
+  const kitRows: 1 | 2 = kitRow && perKey < KIT_ONE_ROW_MIN_PX ? 2 : 1;
+  const shortNames = kitRows === 2 && perKey * 2 < KIT_SHORT_PX;
   const nameOf = (pc: number) => pitchNames?.[pc] ?? NOTE_NAMES[pc];
   const count = kit ? KIT_KEYS : keyCount;
   const { keys, whites } = useMemo(() => (kit ? { keys: [] as KeyGeom[], whites: KIT_COLS } : layoutKeys(baseNote, count)), [kit, baseNote, count]);
   const rail = !kit && noteNames === 'above';
-  const rootRef = useRef<HTMLDivElement>(null);
   const bedRef = useRef<HTMLDivElement>(null);
   const cbs = useRef({ onNoteOn, onNoteOff });
   useEffect(() => {
@@ -238,11 +275,13 @@ export function MiniKeyboard({
     const y = (clientY - r.top) / r.height;
     if (x < 0 || x >= 1 || y < 0 || y >= 1) return null;
     if (kitRow) {
-      // One row of groups: the key under the point, or the nearest one across a gap (no dead strips).
+      // Rows of groups: the key under the point, or the nearest one across a gap (no dead strips).
       let best: { midi: number; d: number; top: number; height: number } | null = null;
       for (const key of el.querySelectorAll<HTMLElement>('[data-midi]')) {
         const k = key.getBoundingClientRect();
-        const d = clientX < k.left ? k.left - clientX : clientX >= k.right ? clientX - k.right : 0;
+        const dx = clientX < k.left ? k.left - clientX : clientX >= k.right ? clientX - k.right : 0;
+        const dy = clientY < k.top ? k.top - clientY : clientY >= k.bottom ? clientY - k.bottom : 0;
+        const d = dx + dy;
         if (!best || d < best.d) best = { midi: Number(key.dataset.midi), d, top: k.top, height: k.height };
       }
       if (!best) return null;
@@ -329,6 +368,7 @@ export function MiniKeyboard({
       data-disabled={disabled || undefined}
       data-variant={kit ? 'kit' : undefined}
       data-layout={kitRow ? 'row' : undefined}
+      data-rows={kitRow ? kitRows : undefined}
       data-rail={rail || undefined}
       data-fit={fit || undefined}
       onPointerDown={onPointerDown}
@@ -354,7 +394,7 @@ export function MiniKeyboard({
           })}
         </div>
       )}
-      <div ref={bedRef} className={styles.bed} style={kitRow ? { gridTemplateColumns: KIT_ROW_COLUMNS } : undefined}>
+      <div ref={bedRef} className={styles.bed} style={kitRow ? { gridTemplateColumns: kitRows === 2 ? KIT_TWO_ROW_COLUMNS : KIT_ROW_COLUMNS } : undefined}>
         {kit
           ? Array.from({ length: KIT_KEYS }, (_, i) => {
               const midi = baseNote + i;
@@ -362,18 +402,21 @@ export function MiniKeyboard({
               const lit = pressed.has(midi) || Boolean(activeNotes?.has(midi));
               const soundName = kitNames?.[i] ?? `Sound ${i + 1}`;
               const keyLabel = keyLabels?.[midi];
+              const two = kitTwoRowCell(i);
+              const place = !kitRow ? { gridColumn: col + 1, gridRow: row + 1 } : kitRows === 2 ? { gridColumn: two.col, gridRow: two.row } : { gridColumn: kitRowColumn(i), gridRow: 1 };
               return (
                 <div
                   key={i}
                   className={styles.pad}
-                  style={kitRow ? { gridColumn: kitRowColumn(i), gridRow: 1 } : { gridColumn: col + 1, gridRow: row + 1 }}
+                  style={place}
+                  title={shortNames ? soundName : undefined}
                   data-midi={midi}
                   data-note={soundName}
                   data-lit={lit || undefined}
                   data-pressed={pressed.has(midi) || undefined}
                   aria-hidden="true"
                 >
-                  <span className={styles.padName}>{soundName}</span>
+                  <span className={styles.padName}>{shortNames ? shortSoundName(soundName) : soundName}</span>
                   {keyLabel && <span className={styles.padKey}>{keyLabel}</span>}
                 </div>
               );

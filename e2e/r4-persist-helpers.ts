@@ -22,7 +22,8 @@ export const pageErrors = (page: Page): string[] => (page as Page & { __errors?:
 /** Jump In and wait until the starter is stored (these tests are about storage, not sound). */
 export async function jumpInStored(page: Page): Promise<void> {
   const before = await page.evaluate(() => (window as any).__switchboard.project().id as string);
-  await page.getByRole('button', { name: 'Jump In' }).click();
+  // A first visit says Jump In; a returning one (a project is stored) says Start a new groove.
+  await page.getByRole('button', { name: /^(Jump In|Start a new groove)$/ }).click();
   await expect
     .poll(() => page.evaluate((b) => (window as any).__switchboard.project().id !== b && !(window as any).__switchboard.session.isPreview, before), { timeout: 30_000 })
     .toBe(true);
@@ -41,7 +42,7 @@ export async function continueIn(page: Page, name: string): Promise<void> {
 
 /** Open the Project library from the More menu. */
 export async function openLibrary(page: Page): Promise<void> {
-  await page.getByRole('button', { name: /^More/ }).click();
+  await page.getByRole('button', { name: /^More:/ }).click();
   await page.getByRole('menuitem', { name: /Projects…/ }).click();
   await expect(page.getByRole('dialog', { name: 'Project library' })).toBeVisible();
 }

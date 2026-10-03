@@ -286,12 +286,21 @@ describe('Advanced strips', () => {
     reverb.focus();
     key(reverb, 'keydown', { key: 'PageUp' });
     await endBurst();
-    // Space moved (one undo step), and with it the amount Bass sends to the shared Reverb (0.85 × Space).
+    // Space moved (one undo step, named for what was turned here), and with it the amount Bass sends
+    // to the shared Reverb (0.85 × Space).
     expect(track('t3').macros.space).toBeCloseTo(0.25, 5);
     expect(channelValue(project(), 't3', 'sendA')).toBeCloseTo(0.85 * 0.25, 5);
-    expect(session.store.undoLabel()).toMatch(/Space/);
+    expect(session.store.undoLabel()).toBe(`${name} reverb`);
     act(() => session.undo());
     expect(track('t3').macros.space).toBeCloseTo(0.15, 5);
+    const echoBefore = track('t3').macros.echo;
+    echo.focus();
+    key(echo, 'keydown', { key: 'PageUp' });
+    await endBurst();
+    expect(track('t3').macros.echo).toBeGreaterThan(echoBefore);
+    expect(session.store.undoLabel()).toBe(`${name} echo`);
+    act(() => session.undo());
+    expect(track('t3').macros.echo).toBeCloseTo(echoBefore, 5);
     // Effects: an insert that does nothing says so; a click opens the Channel drawer and stays in Mix.
     const effects = s3.querySelector('[role="group"][aria-label$="effects"]')!;
     const names = [...effects.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'));
@@ -691,7 +700,7 @@ describe('Layout with the real theme', () => {
       // The workspace between the transport (58 px) and the keyboard (100 px); below 1024 px the page scrolls.
       const m = await setup(c.mode, { width: c.w, height: c.w < 1024 ? 'auto' : c.h - 158 });
       await actFrame();
-      const view = m.container.querySelector<HTMLElement>('[role="region"][aria-label="Mix"]')!;
+      const view = m.container.querySelector<HTMLElement>('[role="region"][aria-label="Mix view"]')!;
       expect(view.scrollWidth).toBeLessThanOrEqual(view.clientWidth + 1);
       expect(m.container.scrollWidth).toBeLessThanOrEqual(m.container.clientWidth + 1);
       const mixer = section(view, 'Mixer');

@@ -3,6 +3,7 @@
  * of the project): the loudness target Match aims for, and whether Advanced
  * strips show each part's sends and effects.
  */
+import { useSyncExternalStore } from 'react';
 import { createStore, useStore } from '../../../state/store';
 
 export type LoudnessTargetId = 'streaming' | 'gentle' | 'loud';
@@ -73,15 +74,25 @@ export function useLoudnessTarget(): LoudnessTarget {
 /** A window this tall has room for the Sends and effects row above full-height faders. */
 export const SENDS_ROW_MIN_HEIGHT = 1000;
 
-/** Whether Advanced strips show the Sends and effects row: the user's choice, else only on tall windows. */
-export function sendsRowShown(): boolean {
-  const s = prefs.getState().sends;
-  return s ?? (typeof window !== 'undefined' && window.innerHeight >= SENDS_ROW_MIN_HEIGHT);
+const tallQuery = (): MediaQueryList | null => (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(`(min-height: ${SENDS_ROW_MIN_HEIGHT}px)`) : null);
+const isTall = (): boolean => tallQuery()?.matches ?? (typeof window !== 'undefined' && window.innerHeight >= SENDS_ROW_MIN_HEIGHT);
+function onTallChange(listener: () => void): () => void {
+  const q = tallQuery();
+  if (!q) return () => {};
+  q.addEventListener('change', listener);
+  return () => q.removeEventListener('change', listener);
 }
 
+/** Whether Advanced strips show the Sends and effects row: the user's choice, else only on tall windows. */
+export function sendsRowShown(): boolean {
+  return prefs.getState().sends ?? isTall();
+}
+
+/** The same, following the window: until the user chooses, it appears and goes as the window gets taller or shorter. */
 export function useSendsRow(): boolean {
   const chosen = useStore(prefs, (s) => s.sends);
-  return chosen ?? (typeof window !== 'undefined' && window.innerHeight >= SENDS_ROW_MIN_HEIGHT);
+  const tall = useSyncExternalStore(onTallChange, isTall, () => false);
+  return chosen ?? tall;
 }
 
 /** Show or hide the Sends and effects row (remembered); `null` forgets the choice. */

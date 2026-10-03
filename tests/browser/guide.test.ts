@@ -84,10 +84,14 @@ function overlaps(a: DOMRect, b: DOMRect): boolean {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
-/** Let placement run and the callout finish gliding to its spot. */
+/** Let placement run and the callout finish gliding to its spot (on a busy machine its glide can start late: wait for it to end). */
 async function settle() {
   await act(async () => {
     await wait(260);
+    for (let i = 0; i < 2; i++) await new Promise((resolve) => requestAnimationFrame(resolve));
+    const c = document.querySelector<HTMLElement>('[data-guide-step]');
+    const gliding = c ? c.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity) : [];
+    await Promise.all(gliding.map((a) => a.finished.catch(() => undefined)));
   });
 }
 

@@ -263,7 +263,7 @@ const sliders = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>('[
 describe('instrument column', () => {
   it('groups every poly synth control exactly once under plain headings, and says when FM or Noise is off', () => {
     const m = mountColumn('t4');
-    expect(sections(m.container).map((s) => s.getAttribute('aria-label'))).toEqual(['Tones', 'Unison', 'FM', 'Noise', 'Pitch & movement', 'Filter', 'Envelope', 'Output']);
+    expect(sections(m.container).map((s) => s.getAttribute('aria-label'))).toEqual(['Tones', 'Unison', 'FM', 'Noise', 'Pitch & movement', 'Vibrato', 'Filter', 'Envelope', 'Output']);
     const labels = sliders(m.container);
     expect([...labels].sort()).toEqual(POLY_PARAMS.map((p) => p.label).sort());
     // Full words, no abbreviations.

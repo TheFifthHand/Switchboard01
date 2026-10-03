@@ -61,7 +61,11 @@ async function tabTour(page: Page, presses: number) {
   return seen;
 }
 
+/** A tour takes two screenshots per Tab stop (some 300 in all): it needs more than the default 90 s on a busy machine. */
+const TOUR_TIMEOUT_MS = 240_000;
+
 test('keyboard only: Jump In, reach every essential control, play a note, change a macro', async ({ page }) => {
+  test.setTimeout(TOUR_TIMEOUT_MS);
   await openFresh(page);
   // The Jump In button has focus on arrival; Enter is the gesture that starts audio.
   await expect(page.getByRole('button', { name: 'Jump In' })).toBeFocused();
@@ -121,6 +125,7 @@ test('keyboard only: Jump In, reach every essential control, play a note, change
 });
 
 test('keyboard only: every Tab stop in Shape and Arrange has a name and a visible focus ring', async ({ page }) => {
+  test.setTimeout(TOUR_TIMEOUT_MS);
   await openFresh(page);
   await page.getByRole('button', { name: 'Jump In' }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing)).toBe(true);

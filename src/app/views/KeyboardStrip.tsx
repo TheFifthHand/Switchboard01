@@ -14,8 +14,10 @@
  * Changing the key in Advanced asks once (a small popover) whether the song
  * moves with it: "Move the song" transposes every melodic clip in one undo
  * step (transposeSong; sampler parts only when ticked), "Only what I play"
- * changes the key alone. While it asks, further key changes update the
- * question; Escape or a press elsewhere keeps the old key.
+ * changes the key alone. Asking never takes focus from the picker: arrow
+ * keys there keep changing the key and the question follows; Tab from the
+ * Scale picker goes into it. Escape or a press elsewhere keeps the old key.
+ * The toast names the sampler parts that kept their pitch.
  *
  * The keyboard folds to a slim bar, remembered per view (Mix starts folded);
  * the computer keys still play then. The strip writes the height it covers
@@ -140,6 +142,8 @@ export function songMoveQuestion(p: Project, to: MusicalKey): string {
   return `Move the song to ${keyLabel(to.root, to.scale)} too? ${parts}${plan.drums ? '; drums stay.' : '.'}`;
 }
 
+const KEY_CHANGE_ID = 'key-change-question';
+
 function KeyChange(props: { pending: MusicalKey; anchor: HTMLElement | null; onDone(): void }) {
   const { pending, anchor, onDone } = props;
   const plan = useProject(songMovePlan, samePlan);
@@ -147,13 +151,25 @@ function KeyChange(props: { pending: MusicalKey; anchor: HTMLElement | null; onD
   const oldKey = useProject((p) => keyLabel(p.root, p.scale));
   const [ticked, setTicked] = useState<ReadonlySet<Id>>(() => new Set());
   const newKey = keyLabel(pending.root, pending.scale);
+  // Asking never takes the keyboard away from the key picker: arrow keys there keep changing the key
+  // (the question follows), and Tab from the Scale picker goes into the question.
+  const [picker] = useState(() => (anchor && document.activeElement instanceof HTMLElement && anchor.contains(document.activeElement) ? document.activeElement : null));
+  useLayoutEffect(() => {
+    if (picker?.isConnected) picker.focus({ preventScroll: true });
+  }, [picker]);
 
   const move = () => {
     const samplerParts = plan.samplers.filter((s) => ticked.has(s.id)).map((s) => s.id);
     const r = transposeSong(session.store, pending, { samplerParts });
     onDone();
     if (!session.accepted(r)) return;
-    const extra = [plan.drums ? 'Drums stayed.' : '', r.clamped > 0 ? `${r.clamped} note${r.clamped === 1 ? '' : 's'} folded back an octave to stay in range.` : '', r.takesKept > 0 ? 'Recorded performances keep their key.' : '']
+    const kept = plan.samplers.filter((s) => !ticked.has(s.id)).map((s) => s.name);
+    const extra = [
+      plan.drums ? 'Drums stayed.' : '',
+      kept.length ? `${listWords(kept)} kept ${kept.length === 1 ? 'its' : 'their'} pitch.` : '',
+      r.clamped > 0 ? `${r.clamped} note${r.clamped === 1 ? '' : 's'} folded back an octave to stay in range.` : '',
+      r.takesKept > 0 ? 'Recorded performances keep their key.' : '',
+    ]
       .filter(Boolean)
       .join(' ');
     notify(`Moved the song to ${newKey}: ${r.notes} note${r.notes === 1 ? '' : 's'} in ${r.clips} clip${r.clips === 1 ? '' : 's'}.${extra ? ` ${extra}` : ''}`, 'info', 'undo');
@@ -165,9 +181,11 @@ function KeyChange(props: { pending: MusicalKey; anchor: HTMLElement | null; onD
   };
 
   return (
-    <Popover anchor={anchorFromElement(anchor)} placement="above" role="dialog" label={`Move the song to ${newKey}?`} onClose={onDone} ignore={anchor} className={styles.movePopover}>
+    <Popover anchor={anchorFromElement(anchor)} placement="above" role="dialog" label={`Move the song to ${newKey}?`} onClose={onDone} ignore={anchor} className={styles.movePopover} id={KEY_CHANGE_ID}>
       <div className={styles.move}>
-        <p className={styles.moveText}>{question}</p>
+        <p className={styles.moveText} aria-live="polite">
+          {question}
+        </p>
         {plan.samplers.length > 0 && (
           <fieldset className={styles.moveSamplers}>
             <legend className={styles.moveLegend}>Recordings keep their pitch. Move these too:</legend>
@@ -419,7 +437,18 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
 
       <div className={styles.assist}>
         {advanced ? (
-          <div ref={keyRowRef} className={styles.keyRow}>
+          <div
+            ref={keyRowRef}
+            className={styles.keyRow}
+            onKeyDown={(e) => {
+              // While the question is open, Tab from the Scale picker (the last one) goes into it.
+              if (!pending || e.key !== 'Tab' || e.shiftKey || e.target !== keyRowRef.current?.querySelectorAll('select')[1]) return;
+              const first = document.getElementById(KEY_CHANGE_ID)?.querySelector<HTMLElement>('input, button');
+              if (!first) return;
+              e.preventDefault();
+              first.focus();
+            }}
+          >
             <Select
               label="Key"
               layout="inline"
