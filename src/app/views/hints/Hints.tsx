@@ -30,9 +30,9 @@ import { setPadMode, setView, uiStore, type View } from '../../../state/uiStore'
 import { shallowEqual, useStore, type ReadableStore } from '../../../state/store';
 import { session, useProject, useUi } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
-import { exportsDone, finishHints, hideHints, hintsRunning, hintsStore, markHintDone, startSongHints, type HintId } from './hintsState';
+import { finishHints, hideHints, hintsRunning, hintsStore, markHintDone, startSongHints, type HintId } from './hintsState';
 import { HINT_STEPS, bassHasClips, bassPart, currentHint, drumsPart, hintWhere, hintsFinishedText, projectHasClips, type HintContext } from './steps';
-import { findSpotFast, readObstacles, spotCost, workArea, type Box, type Spot } from './placement';
+import { findSpotFast, hardened, placeOk, readObstacles, spotCost, workArea, type Box, type Spot } from './placement';
 import { watchHints } from './tracker';
 import styles from './Hints.module.css';
 
@@ -51,6 +51,12 @@ interface Layout {
   column?: boolean;
   /** "Next hint" as its arrow alone (its name stays "Next hint"). */
   minimal?: boolean;
+  /**
+   * A step done in another view, in the narrowest one-line spot: "Next, in
+   * Arrange:" and its button, the step's words for screen readers only (they
+   * show once that view is open).
+   */
+  terse?: boolean;
 }
 const LAYOUTS: readonly Layout[] = [
   { maxW: 700, compact: false, stack: false },
@@ -58,6 +64,7 @@ const LAYOUTS: readonly Layout[] = [
   { maxW: 560, compact: false, stack: false },
   { maxW: 560, compact: true, stack: false },
   { maxW: 560, compact: true, stack: false, minimal: true },
+  { maxW: 560, compact: true, stack: false, minimal: true, terse: true },
   { maxW: 440, compact: false, stack: true },
   { maxW: 440, compact: true, stack: true },
   { maxW: 340, compact: true, stack: true },
@@ -71,6 +78,7 @@ function applyLayout(el: HTMLElement, layout: Layout, maxW: number): void {
   el.toggleAttribute('data-stack', layout.stack);
   el.toggleAttribute('data-column', !!layout.column);
   el.toggleAttribute('data-minimal', !!layout.minimal);
+  el.toggleAttribute('data-terse', !!layout.terse);
 }
 /** How long "Done" shows after a step is done. */
 const DONE_MS = 1800;
@@ -80,6 +88,8 @@ const CHECK_MS = 600;
 const IDLE_TIMEOUT_MS = 300;
 /** After placing, the chip looks again this much later (ms): a view may lay itself out again after its first paint. */
 const RECHECK_MS = 200;
+/** With no room for the chip, it looks again this much later (ms). */
+const NO_ROOM_RETRY_MS = 1500;
 /** A spot costing this little counts as free. */
 const FREE = 0.5;
 /**
@@ -146,7 +156,7 @@ export function Hints({ active, shownView }: HintsProps) {
   // Progress is tracked whenever hints are on, even while the guide or a dialog is showing.
   useEffect(() => {
     if (!running) return;
-    return watchHints({ project: session.store, history: session.store.info, runtime: runtimeStore, view: viewStore, exports: exportsDone }, (id) => markHintDone(id));
+    return watchHints({ project: session.store, history: session.store.info, runtime: runtimeStore, view: viewStore, exports: session.exportsFinished }, (id) => markHintDone(id));
   }, [running]);
 
   // Arrange opened while the hints run: the song track becomes current (once; again after "Show hints again").
@@ -167,18 +177,23 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
   const parts = useProject(
     (p) => {
       const drums = drumsPart(p);
-      return { bassName: bassPart(p)?.name ?? null, drumsName: drums?.name ?? null, drumsMuted: drums?.mute ?? false, hasClips: projectHasClips(p), bassHasClips: bassHasClips(p) };
+      return { bassName: bassPart(p)?.name ?? null, drumsName: drums?.name ?? null, drumsMuted: drums?.mute ?? false, hasClips: projectHasClips(p), bassHasClips: bassHasClips(p), hasBlocks: p.arrangement.blocks.length > 0 };
     },
     shallowEqual,
   );
   const recording = useRuntime((s) => s.recording === 'performance');
-  const padsPlaying = useRuntime((s) => s.playing && s.mode === 'live');
   const selectedTrack = useUi((s) => s.selectedTrackId);
   // Where Export is at this width, for the closing line and the export step (read from the strip, which follows the window).
   const [exportShown, setExportShown] = useState(true);
   const exportShownRef = useRef(exportShown);
   exportShownRef.current = exportShown;
-  const ctx: HintContext = { view, padMode, recording, padsPlaying, ...parts, exportAt: exportShown ? 'strip' : 'menu' };
+  // The words follow the view on screen, as the placement does (the chosen view is a moment ahead during a switch).
+  const base: HintContext = { view: onScreen, padMode, recording, ...parts, exportAt: exportShown ? 'strip' : 'menu' };
+  // Whether the pads play matters to one step's words only (Play is Pause then): only that step listens, so Play / Pause
+  // does not re-render the chip otherwise.
+  const listens = currentHint(done, base, { song })?.step.id === 'song-play';
+  const padsPlaying = useRuntime((s) => listens && s.playing && s.mode === 'live');
+  const ctx: HintContext = { ...base, padsPlaying };
 
   const current = currentHint(done, ctx, { song });
   const step = current?.step ?? null;
@@ -241,6 +256,8 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
   const sizes = useRef<{ key: string; map: Map<string, { w: number; h: number }> }>({ key: '', map: new Map() });
   /** A placement found a stale measure and asked for one more (only once in a row). */
   const restale = useRef(false);
+  /** When the last placement found no spot that leaves every control free (the chip is hidden until one frees up). */
+  const noRoomAt = useRef(-Infinity);
   /** A pointer is pressed (a drag may be under way): no placing or checking until it is released. */
   const pressed = useRef(false);
   const wordsKey = `${text}|${more ?? ''}|${go?.label ?? ''}|${where ?? ''}|${step ? 'step' : 'end'}`;
@@ -271,7 +288,7 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     const area = workArea(vw, vh);
     const obstacles = readObstacles(el, vw, vh);
     // Collapsed (a step done elsewhere): the one-line layouts only.
-    const choices = LAYOUTS.map((l, i) => ({ l, i })).filter(({ l }) => !go || l.compact);
+    const choices = LAYOUTS.map((l, i) => ({ l, i })).filter(({ l }) => (go ? l.compact : !l.terse));
     let best: (Spot & { maxW: number; i: number }) | null = null;
     // The view's home first: the chip sits on it (over the home's own words), as wide as it needs, when that covers nothing else.
     const home = homeBox(el, vw, vh, area);
@@ -291,9 +308,11 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
       }
     }
     if (!best) {
+      // Controls, headings, status lines and the played surfaces outweigh any amount of text.
+      const ranked = hardened(obstacles);
       for (const { l, i } of choices) {
         const maxW = Math.min(l.maxW, area.right - area.left);
-        const s = findSpotFast(sizeOf(el, i, maxW, vw), area, obstacles, { tolerance: FREE });
+        const s = findSpotFast(sizeOf(el, i, maxW, vw), area, ranked, { tolerance: FREE });
         if (!best || s.cost < best.cost) best = { ...s, maxW, i };
         if (s.cost <= FREE) break;
       }
@@ -314,6 +333,16 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     // Never past the work area's edges, whatever the measures said.
     const x = Math.round(Math.max(area.left, Math.min(best.x, area.right - w)));
     const y = Math.round(Math.max(area.top, Math.min(best.y, area.bottom - h)));
+    // No spot without covering a control (a crowded view, a very small window): the chip waits off screen
+    // (its words stay with screen readers) and looks again a little later.
+    if (!placeOk(x, y, { w, h }, obstacles)) {
+      el.removeAttribute('data-ready');
+      spot.current = null;
+      noRoomAt.current = performance.now();
+      noteExportPlace();
+      return;
+    }
+    noRoomAt.current = -Infinity;
     best = { ...best, x, y };
     el.style.left = `${x}px`;
     el.style.top = `${y}px`;
@@ -325,6 +354,10 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     const controls = spotCost(best.x, best.y, { w, h }, readObstacles(el, vw, vh, { text: false }));
     spot.current = { ...best, w, h, vw, vh, controls };
     el.setAttribute('data-ready', '');
+    noteExportPlace();
+  };
+  /** Where Export is now (the closing line and the export step say so): read whenever the chip looks for its spot. */
+  const noteExportPlace = () => {
     const strip = exportOnStrip();
     if (strip !== exportShownRef.current) setExportShown(strip);
   };
@@ -378,7 +411,8 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
       const el = chipRef.current;
       const s = spot.current;
       if (!el || pressed.current || modalOpen()) return;
-      if (!s) return placeRef.current();
+      // Hidden for want of room: look again now and then, not on every check.
+      if (!s) return performance.now() - noRoomAt.current < NO_ROOM_RETRY_MS ? undefined : placeRef.current();
       const vw = document.documentElement.clientWidth || window.innerWidth;
       const vh = document.documentElement.clientHeight || window.innerHeight;
       if (vw !== s.vw || vh !== s.vh) return placeRef.current();

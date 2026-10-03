@@ -2,9 +2,13 @@
  * The transport at every supported width, Simple and Advanced (shell-09,
  * design-05, design-22, design-04, shell-08, PLAY-25, perf-01/03):
  * - one row from 1024 px (Advanced: from 1180 px), no overflow, every target
- *   at least 32 px; Export (and the word "Stop") from 1366 px in both modes;
+ *   at least 32 px, nothing reaching past the strip onto the workspace;
+ *   Export (and the word "Stop") from 1366 px in both modes;
  *   the right-hand group as wide in both modes, so the Simple · Advanced
- *   switch does not move when pressed;
+ *   switch does not move when pressed; the bar.beat readout (and its state
+ *   word) in both modes except Advanced at 1366-1439 px; Projects on the
+ *   strip from 1600 px and the words of Undo and Redo from 1800 px, in both
+ *   modes;
  * - below 1024 px two balanced rows (Master and Mute All on the second),
  *   within 15 % of a 540 px window;
  * - "Tempo" and the Record caption share one label style;
@@ -45,6 +49,12 @@ function buttonOnStrip(name: string) {
   return [...transport().querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === name) ?? null;
 }
 const right = () => transport().querySelector<HTMLElement>('[role="radiogroup"][aria-label="Simple or Advanced"]')?.parentElement ?? null;
+const positionShown = () => shown(transport().querySelector('[role="group"][aria-label="Position"]'));
+const projectsShown = () => shown(transport().querySelector('[class*="projectKey"]'));
+const undoWordShown = () => {
+  const word = [...transport().querySelectorAll('button span')].find((s) => s.textContent === 'Undo');
+  return !!word && word.getBoundingClientRect().width > 2;
+};
 const stopWordShown = () => {
   const word = [...transport().querySelectorAll('button span')].find((s) => s.textContent === 'Stop');
   return !!word && word.getBoundingClientRect().width > 2;
@@ -54,7 +64,7 @@ describe('the strip at every width', () => {
   it('fits, keeps Export and Stop from 1366 px in both modes, and the switch stays put', async () => {
     await openShell();
     await keys('{Escape}');
-    for (const w of [1024, 1280, 1366, 1440, 1600, 1920]) {
+    for (const w of [1024, 1280, 1366, 1440, 1520, 1599, 1600, 1700, 1799, 1800, 1920]) {
       await page.viewport(w, w >= 1920 ? 1080 : 768);
       const at: Record<string, { right: number; switchX: number | null }> = {};
       for (const mode of ['simple', 'advanced'] as const) {
@@ -64,9 +74,17 @@ describe('the strip at every width', () => {
         expect(transport().scrollWidth, `${label}: overflow`).toBeLessThanOrEqual(transport().clientWidth + 1);
         expect(document.scrollingElement!.scrollWidth, `${label}: page`).toBeLessThanOrEqual(window.innerWidth);
         expect(smallTargets(), `${label}: small targets`).toEqual([]);
+        // Nothing on the strip reaches past its bottom onto the workspace (Master's 32 px value key reaches up instead).
+        const bottom = transport().getBoundingClientRect().bottom;
+        const below = [...transport().querySelectorAll<HTMLElement>('*')].filter((el) => shown(el) && el.getBoundingClientRect().bottom > bottom + 0.5).map((el) => el.getAttribute('aria-label') ?? el.tagName);
+        expect(below, `${label}: past the strip's bottom`).toEqual([]);
         if (w >= 1366) {
           expect(shown(exportKey()), `${label}: Export`).toBe(true);
           expect(stopWordShown(), `${label}: the word Stop`).toBe(true);
+          // The bar.beat readout gives way to Swing only in Advanced at 1366-1439 px.
+          expect(positionShown(), `${label}: bar.beat`).toBe(!(mode === 'advanced' && w < 1440));
+          expect(projectsShown(), `${label}: Projects`).toBe(w >= 1600);
+          expect(undoWordShown(), `${label}: the word Undo`).toBe(w >= 1800);
         }
         if (mode === 'simple' || w >= 1180) expect(Math.round(transport().getBoundingClientRect().height), `${label}: one row`).toBe(58);
         const sw = transport().querySelector('[role="radiogroup"][aria-label="Simple or Advanced"]');
@@ -138,6 +156,8 @@ describe('labels, words and counts', () => {
       // What the pads read for their loop progress: nothing plays in this stand-in.
       clipPhase: () => null,
       queuedAt: () => null,
+      // The pads' progress animation reads the tempo from it.
+      sequencer: { bpm: 120 },
     } as unknown as NonNullable<typeof session.transport>;
     const real = session.transport;
     session.transport = fake;

@@ -4,7 +4,8 @@
  *   the card; Esc acts as "Just look around" (the card goes, the hints start);
  * - coming back: Continue “<name>” is the focused main key and "Start a new
  *   groove" the secondary one; starting a new groove says which project it
- *   took the place of (still in My projects), with Open it;
+ *   took the place of (still in My projects), with Open it (which says that
+ *   playback stopped), after the quick guide when the guide comes first;
  * - after Jump In keyboard focus is on the quick guide's Next (or on Play /
  *   Pause once the guide was done);
  * - MIDI & audio opens with focus on Connect MIDI; Connect MIDI and Use input
@@ -13,6 +14,7 @@
 import { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
+import { patchRuntime } from '../../src/app/runtime';
 import { hintsStore } from '../../src/app/views/hints/hintsState';
 import { button, click, closeShell, keys, openShell, settle, toasts, transport, until } from './r4-shell-harness';
 
@@ -94,10 +96,23 @@ describe('Welcome, coming back', () => {
     expect(now.name).toBe(`${earlier.name} 2`);
     const toast = await until(() => toasts().find((t) => t.includes('Started a new')), 'the toast');
     expect(toast).toContain(`Started a new ${now.name}. Your earlier “${earlier.name}” is in My projects.`);
+    // Opening it stops what plays: the notice says so.
+    act(() => patchRuntime({ playing: true }));
     await click(button('Open it')!);
     await until(() => session.store.getState().id === earlier.id, 'the earlier project');
     await settle();
-    expect(toasts().some((t) => t.includes(`Opened “${earlier.name}”`))).toBe(true);
+    expect(toasts().some((t) => t.includes(`Opened “${earlier.name}”. Playback stopped: press Play (or Space) to hear it.`))).toBe(true);
+  });
+
+  it('with the quick guide still to come, the toast waits until the guide is closed (it never sits over the guide)', async () => {
+    await openShell({ stored: true, guideDone: false });
+    await click(button('Start a new groove')!);
+    await until(() => !card(), 'the card to go');
+    await until(() => document.querySelector('[data-guide-step]'), 'the quick guide');
+    await settle(800);
+    expect(toasts().some((t) => t.includes('Started a new'))).toBe(false);
+    await click(button('Skip guide')!);
+    await until(() => toasts().find((t) => t.includes('Started a new')), 'the toast after the guide');
   });
 });
 

@@ -22,6 +22,8 @@ export interface Obstacle {
   box: Box;
   /** Cost per covered pixel. */
   weight: number;
+  /** Never to be covered, whatever the room (see placeOk). */
+  hard?: boolean;
 }
 
 export interface Spot {
@@ -177,6 +179,34 @@ const GRAPHICS = 'canvas, svg, img, [role="img"], [role="meter"], [role="progres
 const READOUTS = '[role="meter"], [role="img"], [data-hint-avoid]';
 /** Room kept between the chip and what it avoids. */
 const MARGIN = 6;
+/**
+ * Never in the way: inert content (behind a dialog), and passing layers
+ * above the chip (the toasts' live region in body, tooltips). A toast that
+ * briefly covers the chip is fine; the chip running from it onto a control
+ * is not.
+ */
+const PASSING = '[inert], body > [aria-live], [role="tooltip"]';
+/** The banners under the transport (a project open in another tab, playback stopped): their keys must stay reachable. */
+const BANNERS = '[data-banners]';
+/**
+ * True when a spot covers nothing the chip must never cover, whatever the
+ * room: the transport and the banners, the pads and the keyboard, controls,
+ * and what a view marks data-hint-avoid (obstacles marked `hard`). Headings
+ * and status lines are avoided wherever there is room, but a crowded view
+ * may have the chip over one rather than nowhere.
+ */
+export function placeOk(x: number, y: number, size: { w: number; h: number }, obstacles: readonly Obstacle[]): boolean {
+  return spotCost(x, y, size, obstacles.filter((o) => o.hard)) <= 0.5;
+}
+
+/**
+ * The obstacles with what must never be covered made far dearer than any
+ * amount of text, so a search prefers covering every line of text to
+ * touching one control.
+ */
+export function hardened(obstacles: readonly Obstacle[]): Obstacle[] {
+  return obstacles.map((o) => (o.hard && o.weight < WEIGHT_FORBIDDEN ? { ...o, weight: o.weight * 1e4 } : o));
+}
 
 function grow(r: DOMRect, by: number): Box {
   return { left: r.left - by, top: r.top - by, right: r.right + by, bottom: r.bottom + by };
@@ -201,38 +231,43 @@ function onScreen(r: DOMRect, vw: number, vh: number): boolean {
 export function readObstacles(chip: Element | null, vw: number, vh: number, opts: { text?: boolean } = {}): Obstacle[] {
   const out: Obstacle[] = [];
   // A view's hint home ([data-hint-home]) is where the chip may sit: what it holds is not in the way.
-  const add = (el: Element, weight: number, margin = MARGIN) => {
-    if (chip?.contains(el) || el.closest('[inert], [data-hint-home]')) return;
+  const add = (el: Element, weight: number, margin = MARGIN, hard = false) => {
+    if (chip?.contains(el) || el.closest(`${PASSING}, [data-hint-home]`)) return;
     const r = el.getBoundingClientRect();
-    if (onScreen(r, vw, vh)) out.push({ box: grow(r, margin), weight });
+    if (onScreen(r, vw, vh)) out.push({ box: grow(r, margin), weight, hard });
   };
   const transport = document.querySelector('header[aria-label="Transport"]');
-  if (transport) add(transport, WEIGHT_FORBIDDEN, 4);
+  if (transport) add(transport, WEIGHT_FORBIDDEN, 4, true);
+  const banners = document.querySelector(BANNERS);
+  if (banners) add(banners, WEIGHT_FORBIDDEN, 4, true);
   const pads = document.getElementById('pad-surface');
-  if (pads) add(pads, WEIGHT_PLAYED);
+  if (pads) add(pads, WEIGHT_PLAYED, MARGIN, true);
   const keyboard = document.querySelector('main ~ footer');
-  if (keyboard) add(keyboard, WEIGHT_PLAYED);
-  for (const el of document.querySelectorAll(CONTROLS)) add(el, WEIGHT_CONTROL);
-  // What a view asks the chip to keep clear of counts like a status line; meters and the spectrum like other text.
-  for (const el of document.querySelectorAll(READOUTS)) add(el, el.hasAttribute('data-hint-avoid') ? WEIGHT_KEY_TEXT : WEIGHT_INFO, 2);
+  if (keyboard) add(keyboard, WEIGHT_PLAYED, MARGIN, true);
+  for (const el of document.querySelectorAll(CONTROLS)) add(el, WEIGHT_CONTROL, MARGIN, true);
+  // What a view asks the chip to keep clear of counts like a status line, and is never covered; meters and the spectrum like other text.
+  for (const el of document.querySelectorAll(READOUTS)) {
+    const avoid = el.hasAttribute('data-hint-avoid');
+    add(el, avoid ? WEIGHT_KEY_TEXT : WEIGHT_INFO, 2, avoid);
+  }
   const range = document.createRange();
   /** Each visible line of text under `root`, at `weight`. */
   const addText = (root: Node, weight: number, margin: number, skip?: (n: Node) => boolean) => {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      if (!n.nodeValue || !n.nodeValue.trim() || chip?.contains(n) || skip?.(n) || n.parentElement?.closest('[data-hint-home]')) continue;
+      if (!n.nodeValue || !n.nodeValue.trim() || chip?.contains(n) || skip?.(n) || n.parentElement?.closest(`${PASSING}, [data-hint-home]`)) continue;
       range.selectNodeContents(n);
       for (const r of range.getClientRects()) if (onScreen(r, vw, vh)) out.push({ box: grow(r, margin), weight });
     }
   };
   // Headings and status lines that are on screen (not the transport's, which is out of bounds anyway, nor visually hidden ones).
   for (const el of document.querySelectorAll(KEY_TEXT)) {
-    if (chip?.contains(el) || el.closest('[inert], header[aria-label="Transport"]') || !onScreen(el.getBoundingClientRect(), vw, vh)) continue;
+    if (chip?.contains(el) || el.closest(`${PASSING}, header[aria-label="Transport"], ${BANNERS}`) || !onScreen(el.getBoundingClientRect(), vw, vh)) continue;
     addText(el, WEIGHT_KEY_TEXT, 4);
   }
   // The rest of a panel header's text (its headings and status lines are in already).
   for (const el of document.querySelectorAll(PANEL_TEXT)) {
-    if (chip?.contains(el) || el.closest('[inert]') || !onScreen(el.getBoundingClientRect(), vw, vh)) continue;
+    if (chip?.contains(el) || el.closest(PASSING) || !onScreen(el.getBoundingClientRect(), vw, vh)) continue;
     addText(el, WEIGHT_PANEL_TEXT, 4, (n) => !!n.parentElement?.closest(KEY_TEXT));
   }
   if (opts.text !== false) {
@@ -244,9 +279,12 @@ export function readObstacles(chip: Element | null, vw: number, vh: number, opts
   return out;
 }
 
-/** The part of the window the chip may use: below the transport, inside the window edges. */
+/** The part of the window the chip may use: below the transport and any banner under it, inside the window edges. */
 export function workArea(vw: number, vh: number): Box {
-  const t = document.querySelector('header[aria-label="Transport"]')?.getBoundingClientRect();
-  const top = t && t.bottom > 0 && t.top < vh ? t.bottom + 8 : 8;
+  let top = 8;
+  for (const sel of ['header[aria-label="Transport"]', BANNERS]) {
+    const r = document.querySelector(sel)?.getBoundingClientRect();
+    if (r && r.height > 0 && r.bottom > 0 && r.top < vh) top = Math.max(top, r.bottom + 8);
+  }
   return { left: 10, top, right: vw - 10, bottom: vh - 10 };
 }

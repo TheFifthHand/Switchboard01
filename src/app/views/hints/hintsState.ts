@@ -104,16 +104,6 @@ export function showHintsAgain(store: HintsStore = hintsStore): void {
   store.setState({ started: true, hidden: false, done: [], finished: false, song: false });
 }
 
-/**
- * Exports that finished in this page (a WAV was made): the song track's
- * "Export a WAV" step is done by the next one. The shell counts them.
- */
-export const exportsDone = createStore<number>(0);
-
-export function noteExportDone(store: Store<number> = exportsDone): void {
-  store.setState((n) => n + 1);
-}
-
 /** True while the hints have something to show (whether or not they are on screen right now). */
 export function hintsRunning(s: HintsState): boolean {
   return s.started && !s.hidden && !s.finished;

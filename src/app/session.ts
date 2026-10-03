@@ -41,6 +41,7 @@ import { computeRenderPlan, measureExport, renderOffline, type ExportReport, typ
 import { encodeWav } from '../render/wav';
 import * as cmd from '../state/commands';
 import { ProjectStore, type ApplyResult } from '../state/projectStore';
+import { createStore, type ReadableStore } from '../state/store';
 import { selectSlot, selectTrack, setPadMode, setView, slotFor, uiStore, type UiState } from '../state/uiStore';
 import { createAutosaver, type Autosaver } from '../persistence/autosave';
 import { decodeAudioFile, checkAudioFile } from '../persistence/audioImport';
@@ -242,6 +243,11 @@ export class Session {
   private readonly loopHistory = new SongLoopHistory();
   /** Exports preparing or rendering (live playback is scheduled further ahead meanwhile). */
   private exportsRunning = 0;
+  private readonly exportsDoneStore = createStore<number>(0);
+  /** How many exports have finished (a WAV was made) since the app started: the hints' "Export a WAV" step follows it. */
+  get exportsFinished(): ReadableStore<number> {
+    return this.exportsDoneStore;
+  }
   /** When the last "skipped ahead" notice was shown (performance.now). */
   private lastSkipNotice = -Infinity;
   /** Per undo step that moved scene rows: each part's selected slot before and after it (see followScenes). */
@@ -2264,7 +2270,9 @@ export class Session {
    * main thread busy (building its engine, encoding) do not interrupt it.
    */
   async renderWav(opts: ExportOptions): Promise<Blob> {
-    return (await this.renderExport(opts, false)).blob;
+    const r = await this.renderExport(opts, false);
+    this.exportsDoneStore.setState((n) => n + 1);
+    return r.blob;
   }
 
   /**
@@ -2274,6 +2282,7 @@ export class Session {
    */
   async renderWavWithReport(opts: ExportOptions): Promise<{ blob: Blob; report: ExportReport }> {
     const r = await this.renderExport(opts, true);
+    this.exportsDoneStore.setState((n) => n + 1);
     return { blob: r.blob, report: r.report! };
   }
 

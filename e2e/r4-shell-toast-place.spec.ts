@@ -6,7 +6,9 @@
  * 960 x 540 at 2x (200 % zoom of a 1920 x 1080 screen, where the strip has two
  * rows) a toast's top lands just below the strip's bottom; with a banner under
  * the strip (playback stopped, a project open in another tab) it lands just
- * below the banner, so it never hides the banner's keys.
+ * below the banner, so it never hides the banner's keys; once the page has
+ * scrolled the banner away (below 1024 px the strip stays at the top), just
+ * below the strip again.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { jumpIn, openFresh, pageErrors } from './helpers';
@@ -44,13 +46,14 @@ for (const s of [
       if (await skip.isVisible().catch(() => false)) await skip.click();
       await page.getByRole('button', { name: 'Stop', exact: true }).click();
 
-      // No banner: just under the strip (8 px), centred.
+      // No banner: just under the strip (8 px). (Sideways the toast slides clear of controls under its band: the toast's own business.)
       await saveNow(page);
       const a = await placed(page, 'Saved in this browser.');
       expect(a.banners).toBeCloseTo(a.bar, 0);
       expect(a.top - a.bar, `toast top ${a.top}, strip bottom ${a.bar}`).toBeGreaterThanOrEqual(0);
       expect(a.top - a.bar).toBeLessThanOrEqual(12);
-      expect(Math.abs((a.left + a.right) / 2 - a.vw / 2)).toBeLessThanOrEqual(2);
+      expect(a.left).toBeGreaterThanOrEqual(0);
+      expect(a.right).toBeLessThanOrEqual(a.vw);
       await page.getByRole('status').filter({ hasText: 'Saved in this browser.' }).getByRole('button', { name: 'Dismiss' }).click().catch(() => undefined);
 
       // A banner under the strip (as when playback stopped in a background tab): the toast moves below it.
@@ -64,6 +67,18 @@ for (const s of [
       expect(b.banners).toBeGreaterThan(b.bar + 20);
       expect(b.top - b.banners, `toast top ${b.top}, banner bottom ${b.banners}`).toBeGreaterThanOrEqual(0);
       expect(b.top - b.banners).toBeLessThanOrEqual(12);
+      if (s.width < 1024) {
+        // Below 1024 px the strip stays at the top while the page scrolls, and the banner scrolls away with the page:
+        // the toast then sits just under the strip, not where the banner was.
+        await page.getByRole('status').filter({ hasText: 'Saved in this browser.' }).getByRole('button', { name: 'Dismiss' }).click().catch(() => undefined);
+        await page.evaluate(() => window.scrollTo(0, 400));
+        await expect.poll(() => page.evaluate(() => document.querySelector('[data-banners]')!.getBoundingClientRect().bottom)).toBeLessThan(0);
+        await saveNow(page);
+        const c = await placed(page, 'Saved in this browser.');
+        expect(c.top - c.bar, `scrolled: toast top ${c.top}, strip bottom ${c.bar}`).toBeGreaterThanOrEqual(0);
+        expect(c.top - c.bar).toBeLessThanOrEqual(12);
+        await page.evaluate(() => window.scrollTo(0, 0));
+      }
       await page.evaluate(() => {
         const rt = (window as any).__switchboard.runtime;
         rt.setState((st: any) => ({ ...st, stalled: null }));

@@ -57,9 +57,12 @@
   visibility: visible;
   animation: chipIn var(--t-med) var(--ease);
 }
+/*
+ * The chip arrives with a small slide only, never a fade: it reappears after
+ * every view switch, and its words must keep their full contrast throughout.
+ */
 @keyframes chipIn {
   from {
-    opacity: 0;
     transform: translateY(3px);
   }
 }
@@ -150,6 +153,15 @@
   width: 32px;
   padding: 0;
   gap: 0;
+}
+/* Terse (a step done in another view, narrowest spot): "Next, in Arrange:" and its button; the words stay for screen readers. */
+.chip[data-terse] .main {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 /* Compact: only the suggestion itself, for a small free spot. */
 .chip[data-compact] .more {
