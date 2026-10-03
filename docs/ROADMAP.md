@@ -16,22 +16,32 @@ The rules that hold today keep holding: Omni Song runs on your own device, needs
 nothing anywhere and ships its sounds with the app. Any later feature that needs more (a local AI
 model, a camera, a headset) is optional, stays on your machine and is off until you turn it on.
 
-## What exists now (2.0)
+## What exists now (2.2)
 
-- **Make music without theory:** Jump In plays a starter groove; eight parts by four rows of loops,
-  Play / Pause / Stop, labelled Mute and Solo, drag-and-drop clips, Musical Assist keeps notes in key,
-  Variation makes new takes on a pattern.
+- **Make music without theory:** Jump In plays a starter groove; eight parts by one to eight scenes of
+  loops (clips up to 8 bars), Play / Pause / Stop, labelled Mute and Solo, drag-and-drop clips, Musical
+  Assist keeps notes in key, Variation (Subtle, Bold, Back to original), chord pads named in the key and
+  Write a progression, and changing key can move the whole song.
+- **Edit notes and drums:** a piano roll with selection, moves across bars, finer grids, Tighten timing
+  and Loosen; a clickable, paintable drum grid with Fill and Shift; one computer key per kit sound.
 - **Sounds:** 15 drum kits and more than 60 synth sounds, all original synthesis, in a sound browser
-  with categories and Preview; six big knobs per part (Tone, Space, Echo, Motion, Drive, Pump).
+  with Cancel back to what you had; recordings and imports become their own clips; six big knobs per
+  part (Tone, Space, Echo, Motion, Drive, Pump), any knob can be given to a big knob.
 - **Simple and Advanced:** the essentials by default; every control (effects, cables, arpeggiator,
   key and scale) one switch away.
-- **Mix and master:** a channel strip per part, mastering presets, loudness targets with live
-  readings and Match target, a spectrum display and A/B.
-- **Record and keep:** performance recording and replay, note recording, an arrangement view, WAV
-  export rendered by the same engine, project files you can move between browsers, offline use.
-- **Help:** a three-step quick guide and "Try this" hints that follow what you do.
-- **New in 2.0:** MIDI keyboards and controllers (with MIDI learn), and recording your voice or an
-  instrument in time with the music, with simple edits of the take.
+- **Songs:** a song timeline at true scale with magnetic drag, layering, part switches across blocks,
+  fades, filter rises and echo throws, loops, intro/ending helpers, and takes turned into song blocks.
+- **Mix and master:** channel strips with aligned meters, Reverb and Echo returns, a channel drawer for
+  effects, mastering presets, loudness targets with a Match that keeps correcting, level-matched A/B,
+  a −1 dBTP true-peak ceiling.
+- **Record and keep:** performance and note recording, audio takes up to 8 bars, WAV export (24-bit by
+  default, with or without mastering, with a loudness report) that starts exactly on the beat,
+  project files you can move between browsers, version history and a rescue copy, a two-tab guard,
+  offline use.
+- **Help:** a three-step quick guide, "Try this" hints for loops and songs, and a Help sheet (?) with
+  every shortcut.
+- **MIDI and audio input:** MIDI keyboards and controllers (with MIDI learn), and recording your voice
+  or an instrument in time with the music.
 
 ## Plans
 

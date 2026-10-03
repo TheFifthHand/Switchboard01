@@ -132,7 +132,8 @@
    * never on an element of their own:
    * --keyboard-h: the height the on-screen keyboard strip covers at the bottom of the window
    *   (KeyboardStrip; 0 when it is hidden or not docked there, e.g. when the page scrolls);
-   * --transport-h: the height of the transport bar at the top (TransportBar).
+   * --transport-h: how far down the top chrome reaches: the transport strip plus any banners under
+   *   it (TransportBar), so toasts start just below both.
    */
   --keyboard-h: 0px;
   --transport-h: 56px;

@@ -41,17 +41,27 @@ Clip objects and arrays keep their identity when unchanged (immer structural sha
   with tokens from `src/ui/theme.css`. See `?gallery` (src/ui/gallery/Gallery.tsx) for every state.
 - Colour is information: **amber** = playing/signal/on, **teal** = selection/focus/modulation,
   **coral** = recording/mute/attention/destructive. Always pair colour with text or an icon.
-- Legible type (≥ 11 px, labels 12–13 px), click targets ≥ 32 px (28 px for dense secondary tools),
-  visible focus (the global `:focus-visible` ring), short animations, generous spacing.
+- Legible type (≥ 11 px, labels 12–13 px), click targets ≥ 32 px, visible focus (the global
+  `:focus-visible` ring), short animations (none under reduced motion), generous spacing.
 - Tooltips (`tip` = plain-language audible result first, `detail` = technical second) on every
   control whose effect is not obvious. Tips can be switched off by the user.
 - Every control must do something real. Never show a control that has no effect.
-- Meters/playheads: read `session.transport?.getPosition()` / meters inside `useRafLoop` and write
-  to DOM refs — never `setState` per frame, and never use animation frames to time audio.
+- Meters: use the kit's `Meter` (canvas meters on one shared loop that sleeps when nothing moves;
+  call `meterWake()` when sound starts outside the transport). Read levels with
+  `session.readMetersShared()` (one engine read per frame for every reader).
+- Playheads and loop progress: read `session.transport?.audibleTick()` / `clipPhase(trackId)` /
+  `queuedAt(trackId)` inside `useRafLoop` (or a stepped Web Animation anchored on the audio clock)
+  and write to DOM refs or a compositor animation — never `setState` per frame, never an inherited
+  custom property on a large subtree per frame, and never use animation frames to time audio.
+- Toasts go through `useToasts()` / `notify()`; they sit at the top centre under the transport and
+  slide clear of controls on their own. Don't position views around them.
+- Hints: mark a view's free spot with `data-hint-home` and readouts the chip must not cover with
+  `data-hint-avoid`.
 - Accessibility: real buttons/inputs, `aria-label`s that include state words, roving focus with
   arrow keys in grids, Escape closes popovers/dialogs, no keyboard traps.
-- Layout must fit the 1366×768 viewport (the main workspace between the 58 px transport and the
-  100 px keyboard strip is ~610 px tall) and still work at 1920×1080 and 200 % zoom.
+- Layout must fit the 1366×768 viewport (the workspace between the transport strip and the
+  keyboard strip, whose heights are `--transport-h` and `--keyboard-h` on :root) and still work at
+  1920×1080, 1024×768 and 200 % zoom (960×540 at 2×, where the page scrolls).
 
 ## Seeing your work
 
