@@ -21,8 +21,9 @@ Rules:
 
 - `src/project`, `src/music`, `src/content`, `src/time/clock.ts`, `src/time/sequencer.ts`,
   `src/time/moves.ts`, `src/time/recordWindow.ts`, `src/time/songLoop.ts`, `src/audio/spectrum.ts`
-  and the `*Layout` / `*Model` / `songDrag` helpers of the views are **pure TypeScript**: no DOM, no
-  Web Audio, no React. They run in Node unit tests.
+  and view helpers such as `arrange/songLayout.ts`, `songModel.ts`, `songDrag.ts`,
+  `steps/model.ts` and Shape's `macroAssign`, `cardKnob`, `squeeze` and `paramState` are **pure
+  TypeScript**: no DOM, no Web Audio, no React. They run in Node unit tests.
 - `src/audio` never imports React, stores, or UI. It is driven by `setProject()` and timed calls.
 - Audio nodes, class instances and functions never enter the Project. The Project is JSON.
 - The **audio clock is the timing authority**. Notes, song moves and audition stops are scheduled
