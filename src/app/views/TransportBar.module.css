@@ -229,6 +229,19 @@
 .master {
   --knob-value-h: 12px;
 }
+/*
+ * Master's value key keeps its 32 px target inside the 58 px strip: it
+ * reaches up over the "Master" caption (not a control) rather than down past
+ * the strip, where it would sit over the workspace (and the hint chip would
+ * have to keep clear of it). Its line stays where it was, at the key's foot.
+ */
+@media (min-width: 1024px) {
+  .bar .master > button {
+    margin-top: calc(var(--knob-value-h) + 1px - 32px);
+    margin-bottom: 0;
+    align-items: flex-end;
+  }
+}
 
 .muteAll[data-size] {
   --px: 10px;

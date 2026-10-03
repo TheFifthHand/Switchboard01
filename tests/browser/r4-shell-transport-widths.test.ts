@@ -2,7 +2,8 @@
  * The transport at every supported width, Simple and Advanced (shell-09,
  * design-05, design-22, design-04, shell-08, PLAY-25, perf-01/03):
  * - one row from 1024 px (Advanced: from 1180 px), no overflow, every target
- *   at least 32 px; Export (and the word "Stop") from 1366 px in both modes;
+ *   at least 32 px, nothing reaching past the strip onto the workspace;
+ *   Export (and the word "Stop") from 1366 px in both modes;
  *   the right-hand group as wide in both modes, so the Simple · Advanced
  *   switch does not move when pressed; the bar.beat readout (and its state
  *   word) in both modes except Advanced at 1366-1439 px; Projects on the
@@ -73,6 +74,10 @@ describe('the strip at every width', () => {
         expect(transport().scrollWidth, `${label}: overflow`).toBeLessThanOrEqual(transport().clientWidth + 1);
         expect(document.scrollingElement!.scrollWidth, `${label}: page`).toBeLessThanOrEqual(window.innerWidth);
         expect(smallTargets(), `${label}: small targets`).toEqual([]);
+        // Nothing on the strip reaches past its bottom onto the workspace (Master's 32 px value key reaches up instead).
+        const bottom = transport().getBoundingClientRect().bottom;
+        const below = [...transport().querySelectorAll<HTMLElement>('*')].filter((el) => shown(el) && el.getBoundingClientRect().bottom > bottom + 0.5).map((el) => el.getAttribute('aria-label') ?? el.tagName);
+        expect(below, `${label}: past the strip's bottom`).toEqual([]);
         if (w >= 1366) {
           expect(shown(exportKey()), `${label}: Export`).toBe(true);
           expect(stopWordShown(), `${label}: the word Stop`).toBe(true);
