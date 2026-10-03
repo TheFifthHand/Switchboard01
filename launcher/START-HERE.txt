@@ -84,6 +84,10 @@ Use headphones or speakers; start with a moderate volume.
       a WAV file you can listen to anywhere, press "Export" (top right),
       choose your performance under "What to export" and press
       "Export WAV".
+    * New in 2.2: up to 8 scenes and 8-bar clips, chord pads and
+      progressions, note selection and drum painting in Steps, song
+      fades and filter rises, Reverb and Echo returns in Mix, and a Help
+      sheet with every shortcut (press ?).
     * New in 2.1: build a song in Arrange by moving blocks. Drag a block
       and the others make room; drag its right edge to make it longer;
       hold Ctrl while dragging to copy it; click a part in a block to
