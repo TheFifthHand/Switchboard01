@@ -211,6 +211,43 @@
   }
 }
 
+/* The word a spinner carries: shown instead of the ring when motion is reduced (the ring would stand still). */
+.spinnerWord {
+  display: none;
+}
+
+/*
+ * Reduced motion (design-01): nothing blinks or spins. The recording dot is a steady coral dot, the
+ * Stop recording key keeps a steady coral ring, and a spinner becomes the word "Loading…".
+ */
+@media (prefers-reduced-motion: reduce) {
+  .recActive {
+    animation: none;
+    box-shadow: 0 0 0 3px var(--coral-wash);
+  }
+
+  .recDot {
+    animation: none;
+    opacity: 1;
+  }
+
+  .spinner {
+    width: auto;
+    height: auto;
+    border: 0;
+    border-radius: 0;
+    animation: none;
+  }
+
+  .spinnerWord {
+    display: inline;
+    color: var(--ink-2);
+    font-size: var(--fs-xs);
+    font-weight: 650;
+    white-space: nowrap;
+  }
+}
+
 /* ---------- edits ---------- */
 
 .editKeys {
