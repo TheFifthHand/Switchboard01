@@ -222,12 +222,44 @@
 }
 
 .columns {
+  position: relative;
   display: grid;
   flex: 1 1 auto;
   /* The effects rack gets the most room: two effect cards side by side at 1366 px. */
   grid-template-columns: minmax(350px, 390px) minmax(0, 0.78fr) minmax(0, 1.22fr);
   gap: 10px;
   min-height: 0;
+}
+
+/*
+ * A part switch still catching up (a busy machine): after a moment a small note says which part is
+ * on its way (clicks meanwhile go nowhere). A small element of its own, so showing it repaints
+ * nothing else.
+ */
+.busy {
+  position: absolute;
+  z-index: 6;
+  top: 8px;
+  left: 50%;
+  padding: 4px 12px;
+  border-radius: var(--r-pill, 999px);
+  background: var(--ink);
+  color: var(--surface-hi);
+  font-size: var(--fs-sm);
+  font-weight: 560;
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: busy-in 1ms linear 120ms both;
+}
+
+@keyframes busy-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 /* Tabs: one column at a time, the whole width and height. */

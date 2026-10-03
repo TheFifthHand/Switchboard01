@@ -130,7 +130,7 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-auto-rows: minmax(min-content, auto);
   align-content: start;
-  gap: 10px 8px;
+  gap: 8px;
 }
 
 /* Wide enough for every caption on one line, but not tall enough for 'xl' knobs: all six in one row. */
@@ -138,6 +138,19 @@
   .macros:not([data-xl]) {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
+}
+
+/* Short on room under the instrument card (a sampler on a short window): all six in one row, 'md'. */
+.macros[data-row] {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.macros[data-row] .macroCaption {
+  font-size: var(--fs-xs);
+  line-height: 14px;
+  white-space: normal;
+  text-wrap: balance;
 }
 
 /* A big panel: three 'xl' knobs across, two rows that share the height (the knobs sit in the middle). */

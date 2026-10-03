@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react';
 import { session } from '../../src/app/instance';
 import { effectiveValue } from '../../src/app/views/shape/paramState';
-import { button, clickEl, closeShape, keysOn, menuItem, openShape, press, project, slider, track } from './r4-shape-helpers';
+import { button, clickEl, closeShape, keysOn, menuItem, nullDb, openShape, press, project, renderSolo, slider, track } from './r4-shape-helpers';
 import { centre, settleFrames, touch } from './r4-uikit-input';
 
 beforeEach(async () => {
@@ -56,6 +56,29 @@ describe('Assign to big knob', () => {
     expect(track('t4').macroMap.motion).toHaveLength(n);
   });
 
+  it('an option control: Filter Mode → Space (at 28 %) keeps Low-pass and the sound (render), and steps on only past 28 %', async () => {
+    await clickEl(tab('Effects'));
+    const mode = () => effectiveValue(project(), 't4:filter', 'mode')!;
+    expect(track('t4').macros.space).toBeCloseTo(0.28, 5);
+    expect(mode()).toBe(0);
+    const before = await renderSolo(structuredClone(project()), 't4');
+    await clickEl(slider(rackCard('t4:filter'), 'Mode'), { button: 'right' });
+    await clickEl(menuItem('Space'));
+    const added = track('t4').macroMap.space.at(-1)!;
+    expect(added).toMatchObject({ module: 't4:filter', param: 'mode', min: 0, max: 2, macroFrom: 0.28, macroTo: 1 });
+    expect(mode()).toBe(0);
+    const after = await renderSolo(structuredClone(project()), 't4');
+    const diff = nullDb(before, after);
+    console.info(`[assign] Filter Mode → Space at 28 %: null ${diff.toFixed(1)} dB`);
+    expect(diff).toBeLessThan(-60);
+    // Space down: still Low-pass; Space all the way up: Band-pass.
+    await clickEl(tab('Macros'));
+    await keysOn(document.getElementById('shape-macro-space')!, '{Home}');
+    expect(mode()).toBe(0);
+    await keysOn(document.getElementById('shape-macro-space')!, '{End}');
+    expect(mode()).toBe(2);
+  }, 90_000);
+
   it('a setting a big knob moves: its menu checks that big knob, and “Stop Motion moving it” hands it back to its own knob', async () => {
     await clickEl(tab('Effects'));
     const cutoff = slider(rackCard('t4:filter'), 'Cutoff');
@@ -94,6 +117,47 @@ describe('Assign to big knob', () => {
     expect(menu(), 'menu after a long press').not.toBeNull();
     expect(track('t4').instrument.params.detune).toBe(value);
     await press('{Escape}');
+  });
+
+  it('a long press that then moves the finger opens the menu and still turns nothing', async () => {
+    await clickEl(tab('Instrument'));
+    const col = document.getElementById('shape-col-instrument')!;
+    const detune = slider(col, 'Detune');
+    detune.scrollIntoView({ block: 'center' });
+    await settleFrames();
+    const value = track('t4').instrument.params.detune;
+    for (const at of [centre(detune, 0.5, 0.3), centre(detune, 0.15, 0.85)]) {
+      await touch('touchStart', [at]);
+      await new Promise((r) => setTimeout(r, 800));
+      for (let i = 1; i <= 8; i++) {
+        await touch('touchMove', [{ x: at.x, y: at.y - i * 6 }]);
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      await touch('touchEnd', []);
+      await settleFrames(3);
+      expect(menu(), 'menu after a long press').not.toBeNull();
+      expect(track('t4').instrument.params.detune, 'the finger moved after the menu opened').toBe(value);
+      await press('{Escape}');
+      await settleFrames(2);
+    }
+  });
+
+  it('while a performance records, the Macros column’s mapping controls are unavailable and say why', async () => {
+    await clickEl(tab('Macros'));
+    act(() => session.store.setLock('Recording a performance.'));
+    await settleFrames();
+    const row = document.querySelector<HTMLElement>('[role="group"][aria-label="Tone moves Instrument Cutoff"]')!;
+    const curve = [...row.querySelectorAll('button')].find((b) => b.textContent?.startsWith('curve:'))!;
+    expect(curve.disabled).toBe(true);
+    for (const f of row.querySelectorAll('input')) expect((f as HTMLInputElement).disabled).toBe(true);
+    for (const k of row.querySelectorAll('[role="slider"]')) expect(k.getAttribute('aria-disabled')).toBe('true');
+    expect(row.querySelector<HTMLButtonElement>('button[aria-label^="Remove"]')!.disabled).toBe(true);
+    expect(button('Reset mappings').disabled).toBe(true);
+    // Unlocked again: all of them work.
+    act(() => session.store.setLock(null));
+    await settleFrames();
+    expect(curve.disabled).toBe(false);
+    expect(button('Reset mappings').disabled).toBe(false);
   });
 
   it('while a performance records, the rows are unavailable and say why', async () => {

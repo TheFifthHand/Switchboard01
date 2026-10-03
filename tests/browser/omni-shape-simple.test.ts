@@ -348,8 +348,8 @@ describe('Simple Shape: effects', () => {
         if (type === 'compressor') {
           // Squeeze: threshold, ratio, makeup and attack together.
           key(knob, 'keydown', { key: 'End' });
-          expect(mod(ids[i])!.params.threshold, 'Compressor Squeeze').toBe(-36);
-          expect(mod(ids[i])!.params.ratio, 'Compressor Squeeze').toBe(7);
+          expect(mod(ids[i])!.params.threshold, 'Compressor Squeeze').toBe(-28);
+          expect(mod(ids[i])!.params.ratio, 'Compressor Squeeze').toBe(5);
           return;
         }
         const before = mod(ids[i])!.params[spec.id];

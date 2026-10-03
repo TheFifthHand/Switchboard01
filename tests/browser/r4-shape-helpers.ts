@@ -190,8 +190,8 @@ export function rowFor(p: Project, trackId: Id): number {
   return i < 0 ? 0 : i;
 }
 
-/** `p` with only `trackId` heard (solo), its scene played for `bars` bars, offline. */
-export async function renderSolo(p: Project, trackId: Id, bars = 2): Promise<Rendered> {
+/** `p` with only `trackId` heard (solo), its scene (`row`, default rowFor) played for `bars` bars, offline. */
+export async function renderSolo(p: Project, trackId: Id, bars = 2, row?: number): Promise<Rendered> {
   const q: Project = structuredClone(p);
   for (const t of q.tracks) {
     t.solo = t.id === trackId;
@@ -200,7 +200,7 @@ export async function renderSolo(p: Project, trackId: Id, bars = 2): Promise<Ren
   const bank = new SampleBank(SR);
   const buf = await renderOffline({
     project: q,
-    source: { kind: 'scene', row: rowFor(q, trackId), bars },
+    source: { kind: 'scene', row: row ?? rowFor(q, trackId), bars },
     sampleRate: SR,
     tailSeconds: 0.1,
     createEngine: (ctx) => AudioEngine.create(ctx, { samples: bank, seed: q.seed, meters: false }),
