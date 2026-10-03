@@ -144,6 +144,11 @@ body[data-popover-open] .viewport {
   z-index: 840;
 }
 
+/* While the stack measures what lies under it (Toast.tsx placeClearOfControls). */
+.viewport[data-measuring] .toast {
+  pointer-events: none;
+}
+
 body[data-modal-open] .toast .action {
   display: none;
 }

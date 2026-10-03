@@ -100,7 +100,11 @@ async function tab(page, name) {
   // The song lane while the song plays, with Drums switched off in block 2; then block 4 lifted
   // mid-drag towards position 2 (the blocks in between slide aside), cancelled with Esc.
   await page.getByRole('button', { name: /^Drums in .+ \(block 2\): plays/ }).click();
-  await page.getByRole('button', { name: /^Play song from block 1/ }).click();
+  // A narrow block shows its ▶ on hover; with the pads playing, the mode box also offers Play the song.
+  await page.locator('[data-block-id]').first().hover();
+  const fromBlock1 = page.getByRole('button', { name: /^Play song from block 1/ });
+  if (await fromBlock1.isVisible().catch(() => false)) await fromBlock1.click();
+  else await page.getByRole('button', { name: /Play the song/ }).click();
   await page.waitForTimeout(2500);
   await shot(page, '22-arrange-song-playing-1366');
   {
