@@ -1,9 +1,10 @@
 /**
- * Tighten timing and Loosen (capability-02) from the Steps header's Clip group, real mouse:
+ * Tighten timing and Loosen (capability-02) from the Timing… menu of the Steps header's Clip group, real mouse:
  * - Tighten timing… says how many notes will move, then moves them to the grid with the chosen
  *   strength, as one undo step with a toast ('8 notes moved…');
  * - Loosen (humanize)… shifts timing and level a little, stored in the notes (so exports
- *   match), one undo step with a toast.
+ *   match), one undo step with a toast;
+ * - notes that merge (two of one pitch pulled onto one tick) are named in the preview and the toast.
  */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -12,6 +13,12 @@ import * as cmd from '../../src/state/commands';
 import { button, item, menu, setUp, tearDown } from './r4-play-helpers';
 import { centre, click } from './r4-uikit-input';
 import { BASS, notesOf, notice, openSteps } from './r4-steps-helpers';
+
+/** The Timing… menu, then one of its items (Tighten timing… or Loosen (humanize)…). */
+async function timing(which: 'Tighten timing…' | 'Loosen (humanize)…'): Promise<void> {
+  await click(centre(button('Timing…')!));
+  await click(centre(item(which)));
+}
 
 beforeEach(setUp);
 afterEach(tearDown);
@@ -37,7 +44,7 @@ const ticks = () =>
 describe('Tighten timing… (quantize)', () => {
   it('previews the count, moves every note onto the 1/16 grid, says "8 notes moved", and Undo puts them back', async () => {
     await looseClip();
-    await click(centre(button('Tighten timing…')!));
+    await timing('Tighten timing…');
     expect(menu()).not.toBeNull();
     expect(menu()!.textContent).toContain('8 notes of 8 will move towards the 1/16 grid');
     await click(centre(item('Tighten 8 notes')));
@@ -52,7 +59,7 @@ describe('Tighten timing… (quantize)', () => {
 
   it('a 50% strength halves each note’s distance to the grid; a coarser grid is offered too', async () => {
     await looseClip();
-    await click(centre(button('Tighten timing…')!));
+    await timing('Tighten timing…');
     await click(centre(menu()!.querySelector<HTMLElement>('[aria-label="Strength 50%"]')!));
     await click(centre(menu()!.querySelector<HTMLElement>('[aria-label="Grid 1/8"]')!));
     expect(menu()!.textContent).toContain('towards the 1/8 grid');
@@ -63,12 +70,29 @@ describe('Tighten timing… (quantize)', () => {
   });
 });
 
+describe('merged notes are named', () => {
+  it('two notes of one pitch pulled onto one tick become one, and the preview and the toast say so', async () => {
+    await openSteps(BASS, 0);
+    act(() => {
+      cmd.createClip(session.store, BASS, 0, 1);
+      for (const tick of [94, 100, 150]) cmd.addNote(session.store, BASS, 0, { tick, pitch: 43, velocity: 0.8, duration: 20 });
+    });
+    await new Promise((r) => requestAnimationFrame(r));
+    await timing('Tighten timing…');
+    expect(menu()!.textContent).toContain('3 notes of 3 will move towards the 1/16 grid');
+    expect(menu()!.textContent).toContain('1 pair of notes merged');
+    await click(centre(item('Tighten 3 notes')));
+    expect(ticks()).toEqual([96, 144]);
+    expect(notice()?.text).toBe('3 notes moved to the 1/16 grid. 1 pair of notes merged.');
+  });
+});
+
 describe('Loosen (humanize)…', () => {
   it('shifts note times and levels a little, kept in the notes, as one undo step', async () => {
     await looseClip();
     act(() => void cmd.quantizeClip(session.store, BASS, 0, { grid: '1/16' }));
     const before = notesOf(BASS, 0).map((n) => ({ tick: n.tick, velocity: n.velocity }));
-    await click(centre(button('Loosen (humanize)…')!));
+    await timing('Loosen (humanize)…');
     expect(menu()!.textContent).toContain('Loosen (humanize)');
     await click(centre(item('Loosen 8 notes')));
     const after = notesOf(BASS, 0);

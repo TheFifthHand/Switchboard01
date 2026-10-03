@@ -156,10 +156,15 @@
 }
 
 /* ---------- bar strip: the whole clip over one key per bar ---------- */
+/* The bar line: strip, Follow, grid and the tools on one line (the tools fold into "⋯" when it would wrap). */
+.barLine {
+  flex-wrap: wrap;
+}
 .barRow {
+  flex: none;
   display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   min-width: 0;
   max-width: 100%;
@@ -173,7 +178,7 @@
   border-radius: 9px;
 }
 .stripInner {
-  --bar-w: 46px;
+  --bar-w: 34px;
   position: relative;
   width: calc(var(--bars, 1) * var(--bar-w) + 4px);
   padding: 2px;
@@ -185,14 +190,18 @@
     0 1px 0 rgba(255, 255, 255, 0.7);
 }
 .strip[data-bars='1'] .stripInner {
-  --bar-w: 96px;
+  --bar-w: 84px;
 }
 .strip[data-bars='2'] .stripInner {
-  --bar-w: 72px;
+  --bar-w: 64px;
 }
 .strip[data-bars='3'] .stripInner,
 .strip[data-bars='4'] .stripInner {
-  --bar-w: 56px;
+  --bar-w: 46px;
+}
+.strip[data-bars='5'] .stripInner,
+.strip[data-bars='6'] .stripInner {
+  --bar-w: 40px;
 }
 /* The overview: the clip's notes drawn across the keys, each bar's notes over its own key. */
 .overview {
@@ -200,8 +209,8 @@
   z-index: 2;
   left: 2px;
   right: 2px;
-  top: 5px;
-  height: 15px;
+  top: 4px;
+  height: 10px;
   color: var(--ink-2);
   pointer-events: none;
 }
@@ -218,9 +227,9 @@
   justify-content: flex-end;
   align-items: center;
   /* Nothing clickable under 32 px: each key is the bar's number under its slice of the overview. */
-  height: 44px;
+  height: 32px;
   margin: 0;
-  padding: 0 0 3px;
+  padding: 0 0 1px;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -267,8 +276,9 @@
 .pageNum {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  line-height: 16px;
+  gap: 3px;
+  line-height: 15px;
+  font-size: var(--fs-xs);
 }
 /* The lamp on the bar that is heard lights amber and turns into a play arrow (not colour alone). */
 .pageLamp {
@@ -338,10 +348,20 @@
 
 /* ---------- tools ---------- */
 .tools {
+  flex: none;
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: nowrap;
+}
+/* Folded as far as it goes: let what is left wrap rather than run off the side. */
+.tools[data-fold='3'] {
+  flex: 0 1 auto;
   flex-wrap: wrap;
+}
+.more {
+  flex: none;
 }
 .group {
   display: inline-flex;
@@ -352,15 +372,6 @@
 }
 .group .tool[data-size] {
   --px: 8px;
-}
-.groupLabel {
-  margin-right: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-  white-space: nowrap;
 }
 /* − Transpose + reads as one stepper. */
 .transpose {

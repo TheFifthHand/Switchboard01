@@ -23,7 +23,7 @@ const overview = () => document.querySelector<SVGElement>('[class*="stripInner"]
 
 describe('bar strip and overview (capability-07, PLAY-14)', () => {
   it('an 8-bar clip: 8 bar keys under an overview of the whole clip; pressing the overview shows that bar', async () => {
-    await openSteps(CHORDS, 1);
+    await openSteps(CHORDS, 1, { w: 1920, h: 1080 });
     expect(lengthKeys()).toEqual(['1', '2', '3', '4', '8']);
     expect(tabs()).toHaveLength(4);
     await click(centre(lengthKey(8)!));
@@ -57,7 +57,7 @@ describe('bar strip and overview (capability-07, PLAY-14)', () => {
   });
 
   it('Double works up to 8 bars: 4 -> 8, then off; 3 -> 6 shows 6 in Length', async () => {
-    await openSteps(CHORDS, 1);
+    await openSteps(CHORDS, 1, { w: 1920, h: 1080 });
     const double = () => button(/Double$/)!;
     await click(centre(double()));
     expect(clipOf(CHORDS, 1).bars).toBe(8);
