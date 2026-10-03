@@ -69,14 +69,13 @@ reviewed as a pull request from the development branch.
 | Round 2 | done | loop a section (Loop button, ruler band, block menu; seamless repeats; edits keep working inside it); Build up / Strip down / Breakdown; touch press-and-hold to pick up, swipe to scroll; a drop does about a third less work; gestures that end where they started leave no undo step |
 | Round 3 | done | a first-time-user review and a correctness review: one Play per screen (in Arrange the transport Play, Space, Stop and Export act on the song); export the looped section; playing on through an export; helpers on the playing block play what the lane shows; loops survive undo/redo; Fit song never zooms in, compact headers for long songs; taller part rows; calmer "Off" cells; menus never cover their button; tooltips wait for the pointer; toggles keep their "on" look under the pointer; Undo/Redo always on the top bar; plain words ("times", "Echo tail") |
 
-## Round 4: the whole-app upgrade (on `r4-int`, version still 2.1.0)
+## Omni Song 2.2: the whole-app upgrade (round 4)
 
 An audit of every view found performance, design, Play, Mix, Shape, shell and capability problems
 (finding ids such as PLAY-01, MIX-01, shape-01, perf-01). They were built in 14 slices, each with
 its own tests, most followed by an independent review and a fix round, and merged into `r4-int`.
-The **arrange**, **shape** and **shell** slices were still in a final fix round when this entry was
-written; the commits listed for them are the ones merged so far. Interface rules: `docs/OMNI_UX.md`; contracts: `docs/ARCHITECTURE.md`; checks:
-`docs/ACCEPTANCE.md`.
+This round ships as **version 2.2.0**. Interface rules: `docs/OMNI_UX.md`; contracts:
+`docs/ARCHITECTURE.md`; checks: `docs/ACCEPTANCE.md`.
 
 | Slice | Final commit | What it delivered | Key measurements (from the slice and review reports) |
 |------|------|------|------|
@@ -91,15 +90,17 @@ written; the commits listed for them are the ones merged so far. Interface rules
 | pads-keys | `6a1c447` | Clickable, paintable drum grid with a sound menu; one key, one kit sound; key letters and a name rail; wider keys and a third octave; `--keyboard-h`; folding per view; the key-change question; chord pads and Write a progression; Root marking | Keyboard 1320 px wide at 1920 × 1080 |
 | steps | `2f66fb8` | Note selection, drag across bars, keys and clipboard; 1/16, 1/32 and triplet grids; Tighten timing and Loosen; per-note velocity; transpose in key; bar strip with overview; Follow; touch; heard-step playhead; key chip | Header back to two rows at 1366 × 768 (80 px, 18.6 rows of notes; 16.1 at 1280) |
 | sound-sampler | `a5994fc` | Sound browser Cancel and one undo step; imports checked first and made into clips (asking on drum or synth parts); per-clip recordings in the editor; tempo helper; waveform zoom, overview and snap; Record audio up to 8 bars; reduced motion | — |
-| shape *(fix round pending)* | `b52d3a8` | Simple cards whose knob always changes the sound (P1, shape-01); big knobs that reach nothing say so, Reset big knobs (P1, shape-02); resets to the sound's own values; Assign to big knob; Sound row and Drum mix; Advanced tabs and cables overlay; Squeeze and gain-reduction bars; copy / paste effects; dimmed knobs with reasons | Part switch medians: 1366 × 768 Simple 308 ms / Advanced 128 ms; 1920 × 1080 Simple 200 ms / Advanced 112 ms |
-| shell *(fix round pending)* | `1b5f09a` | Two-tab banners; returning Welcome; leave warning; Tempo / Swing keys; transport widths; save-state icons, title and headings; one failure toast per run; Help and the ? key; song hints; cheaper hint placement with hint homes; drop-to-import; Ctrl+S; record count-in; `--transport-h` including banners | Two-row strip at most 81 px (15 %) at 960 × 540 at 2× |
-| arrange *(fix round pending)* | `5c102f2` | A card dropped mid-block layers instead of inserting (P1); true scale; ▶ Play the song; Mute / Solo beside part names; Loop button and chip; plain wheel scrolls; taller rows; take drawer; part switches across a selection; song moves; scenes palette with audition; Make song blocks; Shape the song; Rec cells; edge grip; zoom memory | Review: 485 of 488 drops correct (3 wrong on stalled runs; base: 17 of 36 wrong) |
+| shape | `21c99b8` | Simple cards whose knob always changes the sound (P1, shape-01); big knobs that reach nothing say so, Reset big knobs (P1, shape-02); "Drive is off" for a big knob waiting on a switched-off effect; resets to the sound's own values; Assign to big knob (options and end-of-travel values hold until the big knob passes); Sound row and a Drum mix of the groups a part plays; one-row big knobs on short windows; Advanced tabs and cables overlay; Squeeze (full: −28 dB, 5:1, make-up ≤ 8 dB) and gain-reduction bars; copy / paste effects; dimmed knobs with reasons; knob drags end on a part switch; "Showing <part>…"; Open in Shape in the Play cables drawer; the rack embedded in Mix's drawer with part-named undo steps | Part switch medians: 1366 × 768 Simple 308 ms / Advanced 128 ms; 1920 × 1080 Simple 200 ms / Advanced 112 ms. Full Squeeze keeps every starter part at or under −4.4 dBFS peak. Advanced columns catching up with a note instead of dimming: median switch 56 ms (104 ms dimmed) |
+| shell | `c0f6c89` | Two-tab banners; returning Welcome; leave warning (not for Record Notes); Tempo / Swing keys; transport widths (Projects from 1600 px, Undo / Redo words from 1800 px, Advanced loses bar.beat only at 1366–1439 px); save-state icons that open My projects; title and headings; one failure toast per run; Help and the ? key; song hints; a hint chip that never covers a control, ignores toasts, waits off screen when there is no room and slides in without a fade; drop-to-import; Ctrl+S; record count-in; Space on the guide's Play step; start toasts after the guide; `--transport-h` as the visible bottom of strip and banners; `session.exportsFinished` | Two-row strip at most 81 px (15 %) at 960 × 540 at 2×. Play / Pause in Mix re-renders 28 components (was 174). Final serial e2e run at load about 2: 51 of 51 |
+| arrange | `a4d17a6` | A card dropped mid-block layers instead of inserting (P1); scene cards drag from anywhere, with a grip, and lift on a touch hold; slot direction from net travel; true scale with "1/4 Lift" compact headers and a "Min" zoom level; ▶ Play the song; a names column (108 px, one Tab stop, widening on hover) with Mute / Solo there and in the part menu; Loop button and chip; plain wheel scrolls; taller rows; take drawer; part switches across a selection; song moves; scenes palette with audition that runs to its pass end anywhere; Make song blocks (naming launches left out); Shape the song; Rec cells; edge grip; zoom memory | Review: 485 of 488 drops correct (3 wrong on stalled runs; base: 17 of 36 wrong). Arrange browser tests, serial: 221 of 221 |
 
 Integration changes on `r4-int` (outside any slice): Jump In keeps the library's project result;
 typed entry reads `ParamSpec.negate`; return Mix tooltips; views name undo steps in their own
-words; toasts at the top centre under the transport, sliding clear of controls in their band;
-chord symbols take each degree's own letter in seven-note keys; no browser Back/Forward swipe from
+words; toasts at the top centre under the transport, moving to the nearest spot clear of controls
+(narrower if need be); the Channel drawer shows the rack embedded; chord symbols take each degree's own letter in seven-note keys; no browser Back/Forward swipe from
 a drag; xl knobs keep a 32 px value key; starter cards spell keys like the app (E♭ major).
+Integration perf check (1366 × 768, Play, playing, load about 4): main-thread task time 91–123 ms/s
+on `r4-int` against 135–175 ms/s for the shipped 2.1 build, 60 fps in both.
 
 **Deferred** (by the briefs): stem export, drum rolls, per-card preview in the sound browser,
 sampler slicing, ADSR and filter types, the per-voice drum strip, a voice-source picker, user
@@ -110,31 +111,32 @@ preview cannot pass a recording yet).
 
 **Test runs.** Slice runs were on a shared, heavily loaded machine (load averages 7 to 57 on 4
 CPUs). Timing tests (`drumSynth`, `r4-engine-idle`, `validate`, `variation`, the e2e keyboard tours
-and Jump In timings) failed under load in several runs, and on the base under the same load; the
-final full-suite numbers are in `TEST_REPORT.md`.
+and Jump In timings) failed under load in several runs, and on the base under the same load. On a
+quiet machine (load about 2) the shell slice's final serial e2e run passed 51 of 51. The final
+full-suite numbers are in `TEST_REPORT.md`.
 
 ## State at handoff
 
-- Release package: `release/omni-song-2.1.0.zip` (production build in `app/`, `Start Omni
-  Song.bat`, `START HERE.txt`, `launcher/`, `ASSETS.md`, and the repository source in `source/`).
-  Rebuild with `npm run package`. Older zips stay in git history (2.0 is on `main`).
+- Release package: `npm run package` builds `release/omni-song-2.2.0.zip` (production build in
+  `app/`, `Start Omni Song.bat`, `START HERE.txt`, `launcher/`, `ASSETS.md`, and the repository
+  source in `source/`). Until it is rebuilt, the zip in the repository is
+  `release/omni-song-2.1.0.zip`. Older zips stay in git history (2.0 is on `main`).
 - Evidence: `TEST_REPORT.md` (results and measurements), `docs/ACCEPTANCE.md` (every requirement of
   the brief with its evidence), `docs/screenshots/`, `evidence/wav/`, `evidence/launcher-smoke.txt`.
 - Guides: `docs/GUIDE.md` (first loop; record, mix, master and export; MIDI keyboard; recording
   your voice or guitar).
-- At the 2.1 handoff: typecheck clean; unit 1106, browser 1085, e2e 25 tests pass. Round 4's
-  results are in `TEST_REPORT.md`; the release zip has not been rebuilt for round 4.
+- At the 2.1 handoff: typecheck clean; unit 1106, browser 1085, e2e 25 tests pass. The 2.2
+  results are in `TEST_REPORT.md`.
 - Remaining work is local only: listening, physical latency, a real MIDI keyboard and microphone,
   the Windows launcher on Windows, Chrome/Edge on Windows, real background-tab throttling (see
   TEST_REPORT.md).
 
 ## Next action
 
-Finish the arrange, shape and shell fix rounds, run the full suites on a quiet machine, and
-rebuild the release zip. For local verification: extract
-`release/omni-song-2.1.0.zip` on Windows,
-double-click `Start Omni Song.bat`, press Jump In, then follow `docs/GUIDE.md`. Possible next
-steps are in `docs/ROADMAP.md` (local music-generator bridge, webcam movement control, WebXR).
+Run the full suites on a quiet machine and build the 2.2 release zip. For local verification:
+extract `release/omni-song-2.2.0.zip` on Windows, double-click `Start Omni Song.bat`, press Jump In,
+then follow `docs/GUIDE.md`. Possible next steps are in `docs/ROADMAP.md` (local music-generator
+bridge, webcam movement control, WebXR, and the items round 4 deferred).
 
 ## Known limitations / environment notes
 
