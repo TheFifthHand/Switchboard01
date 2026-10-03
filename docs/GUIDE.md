@@ -138,8 +138,9 @@ Press **Shape** (top left) for the selected part in detail.
 
 - **Sound** knobs in the instrument card change the instrument itself: **Soft start** and **Length**
   for synths (with **Octave** and **Character** on a bass synth, **Character** and **Thickness** on
-  the other synths), a **Drum mix** of kick, snare and hats (and the kick's tune) for a drum kit,
-  and **Start**, **Length** and **Pitch** for a recording. **Edit sound** shows every setting.
+  the other synths), a **Drum mix** for a drum kit (levels for the drums the part plays most, such
+  as **Kick**, **Snare & clap** and **Hats**, and a tune knob), and **Start**, **Length** and
+  **Pitch** for a recording. **Edit sound** shows every setting.
 - **Effects** appear as cards, one knob each, and every knob changes what you hear. The
   **Compressor**'s knob is **Squeeze**: turn it up to hold the loud moments down; the small bar
   beside it shows how much it is turning down right now. **Add effect** offers effects by purpose
@@ -150,7 +151,8 @@ Press **Shape** (top left) for the selected part in detail.
   Shift+F10) → **Assign to big knob** and pick one of the six. The sound does not jump; from now on
   that big knob moves the setting too. The same menu takes it away again.
 - **Double-click** a knob to put it back where this sound had it; **Alt+double-click** goes to the
-  plain default. If a big knob says **Moves nothing here** (say, after you removed the effect it
+  plain default. A big knob that says, for example, **Drive is off** works again once you switch
+  that effect back on. If it says **Moves nothing here** (say, after you removed the effect it
   moved), **Reset big knobs** gives each one back what the sound is designed to move.
 
 ## Build a song (about three minutes)
@@ -180,13 +182,15 @@ plays: every edit is heard right away.
    seam.
 4. **Switch a part in one block.** Click a part's bar in a block to switch it off there; click
    again to bring it back. With several blocks selected, one click switches that part in all of
-   them. Beside the part names on the left, **Mute** and **Solo** work like in Play, and a part's
-   name offers to switch it off (or back on) in the selected blocks or everywhere.
-5. **Combine scenes.** Drag a scene card from **SCENES** onto the middle of a block: the parts that
-   are silent in that block take the card's clips. Hold **Shift** while you let go to replace the
-   block's parts instead. To add the card as a new block, rest it on the line between two blocks
-   until a gap opens, then let go; **+** on a card adds it at the end. **▶** on a card plays that
-   scene once on the pads, so you can hear it before you place it.
+   them. Point at a part's name on the left (or Tab to it) and its **Mute** and **Solo** keys appear;
+   they work like in Play. A part's name opens its menu: Mute, Solo, and switching it off (or back
+   on) in the selected blocks or everywhere.
+5. **Combine scenes.** Drag a scene card from **SCENES** (grab it anywhere; on a touch screen hold
+   it a moment) onto the middle of a block: the parts that are silent in that block take the card's
+   clips. Hold **Shift** while you let go to replace the block's parts instead. To add the card as a
+   new block, rest it on the line between two blocks until a gap opens, then let go; **+** on a card
+   adds it at the end. **▶** on a card plays that scene once on the pads, so you can hear it before
+   you place it.
 6. **Select several.** Click a block to select it (teal), Shift+click for a range, Ctrl+click to add
    or remove one; **Select blocks named …** in a block's menu picks every block of that name.
    Dragging, **Ctrl+D** (duplicate), **Ctrl+C** / **Ctrl+X** / **Ctrl+V** and **Delete** work on all
@@ -274,11 +278,11 @@ timing grid. Grid, metronome and count-in are in the recording options (the butt
 
 - **It saves by itself.** Even if the page closes or reloads right after an edit, the next start
   brings it back ("Recovered your last edits").
-- **Versions.** Open the projects button (folder icon, top right, or **⋯ → Projects…**) → **My
-  projects** → **Versions…** on a project. Omni Song keeps a version about every ten minutes while
-  you work and before big changes (a Variation, deleting a scene, moving the song to another key …).
-  **Restore as a copy** opens one as a new project; **Save version…** keeps the project as it is
-  now, with a name if you like.
+- **Versions.** Open your projects (press the save state at the top right, the folder key on wide
+  windows, or **⋯ → Projects…**) → **My projects** → **Versions…** on a project. Omni Song keeps a
+  version about every ten minutes while you work and before big changes (a Variation, deleting a
+  scene, moving the song to another key …). **Restore as a copy** opens one as a new project; **Save
+  version…** keeps the project as it is now, with a name if you like.
 - **One tab per project.** If the same project is open in a second tab, only one of them saves it.
   The other says "This project is open in another tab. Changes here are not saved." and offers
   **Take over** (this tab saves from now on) or **Open a copy**.
