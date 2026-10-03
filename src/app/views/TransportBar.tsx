@@ -604,17 +604,22 @@ export interface TransportBarProps {
 }
 
 /**
- * The strip's height on the page root (--transport-h), so toasts that move
- * to the top while a menu is open sit just under it (Toast.module.css).
+ * How far down the top chrome reaches, on the page root (--transport-h): the
+ * strip's height, plus the banners the shell shows right under it (a project
+ * open in another tab, playback stopped: [data-banners], the strip's next
+ * sibling), so toasts, which sit just under it (Toast.module.css), never hide
+ * a banner's keys. Kept up to date as the strip wraps or grows (narrow
+ * windows, 200 % zoom) and as banners come and go.
  */
 function useTransportHeight(ref: RefObject<HTMLElement | null>): void {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const root = document.documentElement;
+    const below = el.nextElementSibling instanceof HTMLElement && el.nextElementSibling.matches('[data-banners]') ? el.nextElementSibling : null;
     let last = -1;
     const write = () => {
-      const h = Math.round(el.getBoundingClientRect().height);
+      const h = Math.ceil(el.getBoundingClientRect().height + (below?.getBoundingClientRect().height ?? 0));
       if (h === last) return;
       last = h;
       root.style.setProperty('--transport-h', `${h}px`);
@@ -622,6 +627,7 @@ function useTransportHeight(ref: RefObject<HTMLElement | null>): void {
     write();
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(write) : null;
     ro?.observe(el);
+    if (below) ro?.observe(below);
     return () => {
       ro?.disconnect();
       root.style.removeProperty('--transport-h');
