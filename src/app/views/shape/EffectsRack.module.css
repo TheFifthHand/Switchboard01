@@ -258,9 +258,31 @@
   grid-template-columns: repeat(var(--cols), minmax(58px, 1fr));
 }
 
-.knobRow[data-fixed] + .knobRow[data-fixed] {
+.knobRowWrap + .knobRowWrap > .knobRow[data-fixed] {
   padding-top: 4px;
   border-top: 1px dashed var(--line-soft);
+}
+
+/* An EQ band whose Pitch and Width wait for its gain. */
+.bandHint {
+  margin: 0;
+  padding: 0 4px 2px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-style: italic;
+  line-height: 1.3;
+}
+
+.gr {
+  padding: 2px 2px 0;
+}
+
+.headActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
 .cardState {

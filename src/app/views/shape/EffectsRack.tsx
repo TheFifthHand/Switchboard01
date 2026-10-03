@@ -25,8 +25,10 @@ import { notify } from '../../runtime';
 import { AddEffectMenu } from './AddEffectMenu';
 import { RACK_ROWS, rackRows } from './effectCatalog';
 import { ParamKnob } from './ParamKnob';
-import { moduleName, sameItems } from './paramState';
-import { FlowLine, LockNotice, PathWarning, effectCount, focusLater, onAudiblePath, useEditLock, usePartEffects } from './shared';
+import { EffectsClipboard } from './EffectsClipboard';
+import { GrMeter } from './GrMeter';
+import { gateReason, moduleName, partKey, sameItems } from './paramState';
+import { FlowLine, LockNotice, PathWarning, bigKnobsMoveNothing, effectCount, focusLater, onAudiblePath, removedEffectNotice, useEditLock, usePartEffects } from './shared';
 import { useEffectDrag, type EffectDragView } from './useEffectDrag';
 import styles from './EffectsRack.module.css';
 
@@ -52,13 +54,18 @@ function CardKnobs(props: { trackId: Id; moduleId: Id; type: ModuleType }) {
   const { trackId, moduleId, type } = props;
   const rows = rackRows(type);
   const fixed = RACK_ROWS[type] !== undefined;
+  // EQ bands: a band's Pitch and Width act only once its gain moves; the row says so while they do nothing.
+  const waiting = useProject<boolean[]>((p) => (type === 'eq' ? rows.map((r) => r.some((spec) => gateReason(p, moduleId, spec) !== null)) : []), sameItems);
   return (
     <div className={styles.cardKnobs}>
       {rows.map((row, i) => (
-        <div key={i} className={styles.knobRow} data-fixed={fixed || undefined} style={fixed ? ({ '--cols': Math.max(...rows.map((r) => r.length)) } as CSSProperties) : undefined}>
-          {row.map((spec) => (
-            <ParamKnob key={spec.id} moduleId={moduleId} param={spec.id} spec={spec} ownerTrackId={trackId} size="sm" />
-          ))}
+        <div key={i} className={styles.knobRowWrap}>
+          <div className={styles.knobRow} data-fixed={fixed || undefined} style={fixed ? ({ '--cols': Math.max(...rows.map((r) => r.length)) } as CSSProperties) : undefined}>
+            {row.map((spec) => (
+              <ParamKnob key={spec.id} moduleId={moduleId} param={spec.id} spec={spec} ownerTrackId={trackId} size="sm" />
+            ))}
+          </div>
+          {waiting[i] && <p className={styles.bandHint}>Set this band’s gain first: its Pitch{row.some((s) => s.id === 'midQ') ? ' and Width act' : ' acts'} once it boosts or cuts.</p>}
         </div>
       ))}
     </div>
@@ -104,7 +111,7 @@ const EffectCard = memo(function EffectCard(props: EffectCardProps) {
     const r = cmd.removeEffect(session.store, moduleId);
     if (!session.accepted(r)) return;
     if (selected) selectModule(null);
-    notify(silent ? `Removed ${name}.` : `Removed ${name}. The sound now flows straight past it.`, 'info', 'undo');
+    notify(removedEffectNotice(name, silent, r.affectedMacros ?? []), 'info', 'undo');
     focusLater(next ? `rack-${next}-name` : ADD_ID, ADD_ID);
   };
 
@@ -141,6 +148,7 @@ const EffectCard = memo(function EffectCard(props: EffectCardProps) {
         ) : null}
       </header>
       <CardKnobs trackId={trackId} moduleId={moduleId} type={info.type} />
+      {(info.type === 'compressor' || info.type === 'gate') && <GrMeter moduleId={moduleId} kind={info.type} name={name} className={styles.gr} />}
       <footer className={styles.cardFoot}>
         <Switch
           size="sm"
@@ -295,7 +303,8 @@ function LfoRow(props: { trackId: Id; id: Id; locked: boolean }) {
   const remove = () => {
     const r = cmd.removeEffect(session.store, id);
     if (session.accepted(r)) {
-      notify(`Removed ${name} and its cables.`, 'info', 'undo');
+      const affected = r.affectedMacros ?? [];
+      notify(`Removed ${name} and its cables.${affected.length ? ` ${bigKnobsMoveNothing(affected)}` : ''}`, 'info', 'undo');
       focusLater('shape-add-lfo');
     }
   };
@@ -376,7 +385,7 @@ function Lfos(props: { trackId: Id; locked: boolean }) {
     >
       {ids.length === 0 && <p className={styles.hint}>This part has no LFO.</p>}
       {ids.map((id) => (
-        <LfoRow key={id} trackId={trackId} id={id} locked={locked} />
+        <LfoRow key={partKey(id)} trackId={trackId} id={id} locked={locked} />
       ))}
     </Section>
   );
@@ -404,6 +413,7 @@ export function EffectsRack(props: { trackId: Id; className?: string }) {
     nameOf,
     cellOf: (id) => document.querySelector<HTMLElement>(`[data-rack-cell="${CSS.escape(id)}"]`),
     cardOf: (id) => document.getElementById(`rack-card-${id}`),
+    partId: trackId,
   });
   const addReason = locked
     ? 'Effects cannot be added while a performance records.'
@@ -422,7 +432,12 @@ export function EffectsRack(props: { trackId: Id; className?: string }) {
       className={className}
       bodyClassName={styles.scroll}
       dense
-      actions={<AddEffectMenu id={ADD_ID} trackId={trackId} disabled={!linear || full || locked} disabledReason={addReason} onAdded={onAdded} />}
+      actions={
+        <span className={styles.headActions}>
+          <EffectsClipboard trackId={trackId} size="sm" idPrefix="rack" />
+          <AddEffectMenu id={ADD_ID} trackId={trackId} disabled={!linear || full || locked} disabledReason={addReason} onAdded={onAdded} />
+        </span>
+      }
     >
       <PathWarning trackId={trackId} />
       <LockNotice lock={lock} />
@@ -449,7 +464,7 @@ export function EffectsRack(props: { trackId: Id; className?: string }) {
         ) : (
           <div className={styles.cards} role="list" aria-label={linear ? 'Insert effects in signal order' : 'Effects of this part'} data-dragging={drag ? true : undefined}>
             {effects.map((id, i) => (
-              <div key={id} role="listitem" className={styles.cardCell} data-rack-cell={id} data-drop={dropMark(drag, effects, id)}>
+              <div key={partKey(id)} role="listitem" className={styles.cardCell} data-rack-cell={id} data-drop={dropMark(drag, effects, id)}>
                 <EffectCard
                   trackId={trackId}
                   moduleId={id}
@@ -474,7 +489,7 @@ export function EffectsRack(props: { trackId: Id; className?: string }) {
         >
           <div className={styles.cards} role="list" aria-label="Effects outside the chain">
             {offPath.map((id, i) => (
-              <div key={id} role="listitem" className={styles.cardCell}>
+              <div key={partKey(id)} role="listitem" className={styles.cardCell}>
                 <EffectCard trackId={trackId} moduleId={id} mode="outside" next={offPath[i + 1] ?? offPath[i - 1] ?? effects[0] ?? null} locked={locked} />
               </div>
             ))}

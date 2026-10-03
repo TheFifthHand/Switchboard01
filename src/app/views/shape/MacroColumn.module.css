@@ -113,6 +113,31 @@
   color: var(--ink-2);
 }
 
+/* "curve: gentle": a quiet key in the meta line, as tall as the row's remove key. */
+.meta {
+  align-items: center;
+}
+
+.curve[data-size] {
+  --h: 28px;
+  margin-left: -6px;
+  padding: 0 6px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+/* "over Tone [60]–[100] %" */
+.travel {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.travelField {
+  font-size: var(--fs-xs);
+}
+
 .range {
   display: flex;
   align-items: flex-start;

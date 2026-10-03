@@ -4,21 +4,27 @@
  *
  * - Knobs change the macro through the session (recorded in performances).
  * - Each mapping shows its target, its range (min → max, editable with small
- *   knobs), the curve, the part of the macro's travel it uses and where the
- *   macro currently puts it. A range edit is committed when the gesture ends
- *   so one drag is one undo step.
- * - Removing a mapping hands the setting back to its own knob.
+ *   knobs), its curve in words ("curve: gentle" / "curve: even", a key that
+ *   switches it), the part of the macro's travel it uses ("over Tone
+ *   [60]–[100] %", typed, dragged or stepped with the arrow keys) and where
+ *   the macro puts it now. One drag or key burst is one undo step.
+ * - Removing a mapping hands the setting back to its own knob. Any knob's
+ *   menu (right-click, long press, Shift+F10) assigns it to a big knob.
  */
-import { Button, IconButton, Knob, Panel } from '../../../ui/components';
+import { Button, IconButton, Knob, NumberField, Panel, newGestureId } from '../../../ui/components';
 import { moduleId } from '../../../project/factory';
 import { PUMP_DIVISIONS, formatParam, type ParamSpec } from '../../../project/params';
 import { describeMacro, macroTargetValue } from '../../../project/resolve';
 import { MACRO_IDS, type Id, type MacroId, type MacroTarget } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { session, useProject } from '../../instance';
-import { MACRO_CAPTION, MACRO_SPECS } from '../../macros';
+import { MACRO_CAPTION, MACRO_SPECS, macroHomeNote, macroPlainDefault, macroSpecFor } from '../../macros';
 import { notify } from '../../runtime';
-import { moduleName } from './paramState';
+import { shallowEqual } from '../../../state/store';
+import { resetBigKnobs } from './bigKnobs';
+import { useKnobExtras } from './knobExtras';
+import { curveWord, mappingWords, rangeWords } from './macroAssign';
+import { moduleName, partKey } from './paramState';
 import styles from './MacroColumn.module.css';
 
 /** One-line summary of what each macro is for. */
@@ -58,6 +64,78 @@ export function macroDetail(rows: readonly MacroRow[]): string {
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+/** The smallest part of a big knob's travel a mapping can use. */
+const MIN_SPAN = 0.05;
+
+/** A mapping's curve as a key: "curve: gentle" / "curve: even"; a press switches it (one undo step). */
+function CurveToggle(props: { target: MacroTarget; label: string; onSet(curve: MacroTarget['curve']): void }) {
+  const { target, label, onSet } = props;
+  const now = curveWord(target.curve);
+  const next: MacroTarget['curve'] = target.curve === 'exp' ? 'lin' : 'exp';
+  const blocked = next === 'exp' && !(target.min > 0 && target.max > 0);
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      className={styles.curve}
+      disabled={blocked}
+      aria-label={`${label} curve: ${now}. Switch to ${curveWord(next)}`}
+      onClick={() => onSet(next)}
+      tip={
+        blocked
+          ? 'Gentle needs a range that stays above zero.'
+          : target.curve === 'exp'
+            ? 'Gentle: equal steps in pitch or time across the big knob’s travel (best for frequencies and times). Press for even.'
+            : 'Even: equal steps in the setting’s own units. Press for gentle (equal steps in pitch or time).'
+      }
+    >
+      curve: {now}
+    </Button>
+  );
+}
+
+/** "over Tone [60]–[100] %": the part of the big knob's travel the mapping uses; typed, dragged or stepped with the arrow keys. */
+function TravelRange(props: { macroName: string; label: string; from: number; to: number; onSet(part: Partial<MacroTarget>, gesture: string): void }) {
+  const { macroName, label, from, to, onSet } = props;
+  return (
+    <span className={styles.travel} role="group" aria-label={`${label}: part of ${macroName}’s travel`}>
+      <span aria-hidden="true">over {macroName}</span>
+      <NumberField
+        label={`${label}: from ${macroName} at`}
+        hideLabel
+        layout="inline"
+        size="sm"
+        chars={3}
+        min={0}
+        max={100}
+        step={5}
+        fineStep={1}
+        unit="%"
+        value={Math.round(from * 100)}
+        className={styles.travelField}
+        tip={`Where on ${macroName}’s travel this setting starts to move.`}
+        onChange={(v, info) => onSet({ macroFrom: Math.min(v / 100, to - MIN_SPAN) }, info.gesture)}
+      />
+      <span aria-hidden="true">–</span>
+      <NumberField
+        label={`${label}: to ${macroName} at`}
+        hideLabel
+        layout="inline"
+        size="sm"
+        chars={3}
+        min={0}
+        max={100}
+        step={5}
+        fineStep={1}
+        unit="%"
+        value={Math.round(to * 100)}
+        className={styles.travelField}
+        tip={`Where on ${macroName}’s travel this setting stops moving.`}
+        onChange={(v, info) => onSet({ macroTo: Math.max(v / 100, from + MIN_SPAN) }, info.gesture)}
+      />
+    </span>
+  );
+}
 
 function MappingRow(props: { trackId: Id; macro: MacroId; index: number; row: Row; macroValue: number }) {
   const { trackId, macro, index, row, macroValue } = props;
@@ -65,9 +143,9 @@ function MappingRow(props: { trackId: Id; macro: MacroId; index: number; row: Ro
   const macroName = MACRO_SPECS[macro].label;
   const from = target.macroFrom ?? 0;
   const to = target.macroTo ?? 1;
-  const partial = from !== 0 || to !== 1;
   const now = macroTargetValue(target, macroValue);
   const fmt = (v: number) => (spec ? formatParam(spec, v) : String(Number(v.toFixed(3))));
+  const words = mappingWords(macroName, target, fmt(now));
 
   const commit = (partialTarget: Partial<MacroTarget>, gesture?: string) => {
     session.accepted(cmd.setMacroTarget(session.store, trackId, macro, index, partialTarget, gesture));
@@ -81,19 +159,13 @@ function MappingRow(props: { trackId: Id; macro: MacroId; index: number; row: Ro
     <div className={styles.row} role="group" aria-label={`${macroName} moves ${label}`}>
       <div className={styles.info}>
         <span className={styles.target}>{label}</span>
-        <span className={`${styles.meta} mono`}>
-          <span aria-hidden="true">{target.curve === 'exp' ? 'exp' : 'lin'}</span>
-          {partial && (
-            <span aria-hidden="true">
-              {macroName} {Math.round(from * 100)}–{pct(to)}
-            </span>
-          )}
+        <span className={styles.meta}>
+          <CurveToggle target={target} label={label} onSet={(curve) => commit({ curve })} />
+          <TravelRange macroName={macroName} label={label} from={from} to={to} onSet={commit} />
           <span className={styles.now} aria-hidden="true">
-            now {fmt(now)}
+            {words.now}
           </span>
-          <span className="visually-hidden">
-            {`${target.curve === 'exp' ? 'Exponential' : 'Linear'} curve${partial ? `, over ${macroName} ${pct(from)} to ${pct(to)}` : ''}, now ${fmt(now)}.`}
-          </span>
+          <span className="visually-hidden">{`${words.curve}, ${words.over ?? `over all of ${macroName}`}, ${rangeWords(spec, target)}, ${words.now}.`}</span>
         </span>
       </div>
       {spec ? (
@@ -105,7 +177,7 @@ function MappingRow(props: { trackId: Id; macro: MacroId; index: number; row: Ro
             size="sm"
             label={`${label} min`}
             tip={`${label} when ${macroName} is at ${pct(from)}.`}
-            detail={`${target.curve === 'exp' ? 'Exponential' : 'Linear'} curve.`}
+            detail={`${words.curve}.`}
             onChange={(v, info) => commit({ min: v }, info.gesture)}
           />
           <span className={styles.arrow} aria-hidden="true">
@@ -118,7 +190,7 @@ function MappingRow(props: { trackId: Id; macro: MacroId; index: number; row: Ro
             size="sm"
             label={`${label} max`}
             tip={`${label} when ${macroName} is at ${pct(to)}.`}
-            detail={`${target.curve === 'exp' ? 'Exponential' : 'Linear'} curve.`}
+            detail={`${words.curve}.`}
             onChange={(v, info) => commit({ max: v }, info.gesture)}
           />
         </div>
@@ -152,30 +224,42 @@ function PumpNote(props: { trackId: Id }) {
 
 function MacroCard(props: { trackId: Id; macro: MacroId }) {
   const { trackId, macro } = props;
-  const spec = MACRO_SPECS[macro];
-  const value = useProject((p) => p.tracks.find((t) => t.id === trackId)?.macros[macro] ?? 0);
+  const base = MACRO_SPECS[macro];
+  const st = useProject(
+    (p) => {
+      const t = p.tracks.find((x) => x.id === trackId);
+      return { value: t?.macros[macro] ?? 0, home: macroSpecFor(t, macro).default, inert: cmd.macroReach(p, trackId, macro) === 'none' };
+    },
+    shallowEqual,
+  );
   const rows = useMacroRows(trackId, macro);
+  const spec = st.home === base.default ? base : { ...base, default: st.home };
+  const id = `shape-macro-${macro}`;
+  useKnobExtras(id, { onAltReset: st.inert ? undefined : () => session.setMacro(trackId, macro, macroPlainDefault(macro), newGestureId('knob-reset')) });
+  const value = st.value;
   return (
-    <section className={styles.card} aria-label={`${spec.label} macro`} data-macro={macro}>
+    <section className={styles.card} aria-label={`${base.label} macro`} data-macro={macro}>
       <div className={styles.knobCell}>
         <Knob
           spec={spec}
           value={value}
           size="md"
-          id={`shape-macro-${macro}`}
-          tip={spec.tip}
-          detail={macroDetail(rows)}
+          id={id}
+          disabled={st.inert}
+          tip={st.inert ? `${base.label} moves nothing heard here. “Reset mappings” restores what this sound’s design moves.` : base.tip}
+          detail={[macroDetail(rows), macroHomeNote(macro, st.home)].filter(Boolean).join(' ')}
           onChange={(v, info) => session.setMacro(trackId, macro, v, info.gesture)}
         />
       </div>
       <div className={styles.body}>
-        <div className={styles.caption}>{MACRO_CAPTION[macro]}</div>
+        <div className={styles.caption}>{st.inert && rows.length > 0 ? 'Moves nothing here' : MACRO_CAPTION[macro]}</div>
+        {st.inert && rows.length > 0 && <p className={styles.empty}>What {base.label} moves is not heard: an effect it moved was removed, or an LFO it moves has no cable.</p>}
         {rows.length === 0 ? (
-          <p className={styles.empty}>No mappings — {spec.label} does nothing. “Reset mappings” restores the sound’s design.</p>
+          <p className={styles.empty}>No mappings: {spec.label} does nothing. “Reset mappings” restores the sound’s design, or right-click any knob to give it to {spec.label}.</p>
         ) : (
           <div className={styles.rows}>
             {rows.map((row, i) => (
-              <MappingRow key={`${row.target.module}.${row.target.param}.${i}`} trackId={trackId} macro={macro} index={i} row={row} macroValue={value} />
+              <MappingRow key={`${partKey(row.target.module)}.${row.target.param}.${i}`} trackId={trackId} macro={macro} index={i} row={row} macroValue={value} />
             ))}
           </div>
         )}
@@ -187,23 +271,7 @@ function MacroCard(props: { trackId: Id; macro: MacroId }) {
 
 export function MacroColumn(props: { trackId: Id; className?: string }) {
   const { trackId, className } = props;
-  const onReset = () => {
-    // Same result resetMacroMap would store (the sound's map, minus modules no longer in the patch):
-    // when nothing would change, say so instead of adding an empty undo step.
-    const p = session.store.getState();
-    const t = p.tracks.find((x) => x.id === trackId);
-    if (t) {
-      const ids = new Set(p.patch.modules.map((m) => m.id));
-      const designed = cmd.soundMacroMap(t);
-      const same = MACRO_IDS.every((m) => cmd.deepEqual(t.macroMap[m], designed[m].filter((x) => ids.has(x.module))));
-      if (same) {
-        notify('The macro mappings already match the sound’s design.', 'info');
-        return;
-      }
-    }
-    const r = cmd.resetMacroMap(session.store, trackId);
-    if (session.accepted(r)) notify('Macro mappings restored to the sound’s design.', 'info', 'undo');
-  };
+  const onReset = () => resetBigKnobs(trackId);
   return (
     <Panel
       title="Macros (big knobs)"
@@ -216,14 +284,18 @@ export function MacroColumn(props: { trackId: Id; className?: string }) {
           variant="ghost"
           icon="undo"
           onClick={onReset}
-          tip="Put every macro mapping of this part back the way its sound was designed."
+          tip="Put every macro mapping of this part back the way its sound was designed (and the LFO's cable to the filter, when a removed filter took it)."
           detail="Mappings on modules that are no longer in the patch are skipped. Undo restores your edits."
         >
           Reset mappings
         </Button>
       }
     >
-      <p className={styles.intro}>Each macro turns several settings at once. A setting a macro moves is read-only elsewhere (teal badge) — remove the mapping to set it by hand.</p>
+      {/* A "Try this" chip may sit over this explanation (data-hint-home): the controls around it stay clear. */}
+      <p className={styles.intro} data-hint-home="">
+        Each macro turns several settings at once. A setting a macro moves is read-only elsewhere: its knob shows a chain mark and a teal arc over the span the macro sweeps. Remove the mapping to set it by hand;
+        right-click any knob (or press Shift+F10 on it) to give it to a big knob.
+      </p>
       <div className={styles.cards}>
         {MACRO_IDS.map((m) => (
           <MacroCard key={m} trackId={trackId} macro={m} />
