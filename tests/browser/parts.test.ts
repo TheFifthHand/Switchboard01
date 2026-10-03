@@ -144,7 +144,7 @@ describe('Part menu', () => {
     expect(menu()).toBeNull();
     const d = dialog()!;
     expect(d.getAttribute('aria-labelledby')).toBeTruthy();
-    expect(d.textContent).toContain('Sound for Chords');
+    expect(d.textContent).toContain('Change instrument: Chords');
     const before = track('t4').instrument;
     expect(before.kind).toBe('poly');
     // Current sound is marked and focused.
@@ -308,7 +308,7 @@ describe('Part panel sound selector', () => {
     expect(btn.getAttribute('aria-label')).toContain('Bass synth');
     expect(btn.textContent).toBe('Change instrument');
     click(btn);
-    expect(dialog()!.textContent).toContain('Sound for Bass');
+    expect(dialog()!.textContent).toContain('Change instrument: Bass');
     // The Bass category is preselected for a bass part.
     expect(dialog()!.querySelector('[role="tab"][aria-selected="true"]')!.textContent).toContain('Bass');
     click([...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Done')!);

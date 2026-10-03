@@ -229,10 +229,6 @@
   width: 26px;
 }
 /* The keys' tooltip anchor holds them in one row. */
-.keyRow > span:has(> .keys) {
-  display: inline-flex;
-}
-
 /* Inline rename */
 .rename {
   display: flex;

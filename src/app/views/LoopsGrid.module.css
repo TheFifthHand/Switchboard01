@@ -6,6 +6,39 @@
   gap: 8px;
 }
 
+/*
+ * The grid and, over its foot, a fade shown while more rows are below (data-more). Its own stacking
+ * context: the sticky head's and the fade's z-index order them inside the grid only, so they never
+ * paint over the transport's popovers (Saving failed), app banners or menus that reach over the grid.
+ */
+.gridFrame {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.gridFade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -4px;
+  z-index: 4;
+  display: grid;
+  place-items: end center;
+  height: 34px;
+  padding-bottom: 2px;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--surface) 0%, transparent), var(--surface) 80%);
+  color: var(--ink-3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.gridFrame[data-more] .gridFade {
+  opacity: 1;
+}
+
 .grid {
   /* The shortest a pad row gets before the rows scroll (under the sticky part headers). */
   --row-min: 64px;
@@ -23,7 +56,9 @@
   /* Room for focus rings and drop outlines at the edges (the grid scrolls, so it clips). */
   padding: 4px;
   margin: -4px;
-  scroll-padding-top: 120px;
+  /* A pad or scene button brought into view by the keyboard stays clear of the sticky head (--head-h is measured) and of the fade at the foot. */
+  scroll-padding-top: calc(var(--head-h, 170px) + 8px);
+  scroll-padding-bottom: 30px;
 }
 
 .row {
@@ -36,7 +71,8 @@
   display: grid;
   grid-template-columns: subgrid;
   position: sticky;
-  top: 0;
+  /* Flush with the grid's edge (over its 4 px padding), so no row shows above it. */
+  top: -4px;
   z-index: 5;
   background: var(--surface);
   /* Covers the gap under it, so pads scrolling up pass behind a clean edge. */
@@ -780,7 +816,11 @@
 .scene:active {
   box-shadow: var(--shadow-pressed);
 }
-/* The playing scene: how far through its loop (the row's longest clip), as a 3 px amber bar along the bottom (--loop-progress, written by the grid's frame loop). */
+/*
+ * The playing scene: how far through its loop (the row's longest clip), as a 3 px amber bar along
+ * the bottom. A compositor animation of its scaleX runs it (see ProgressAnimator); data-progress
+ * shows it. Its own layer, so moving it repaints nothing else.
+ */
 .scene::after {
   content: '';
   position: absolute;
@@ -789,10 +829,14 @@
   bottom: 0;
   height: 3px;
   background: var(--amber);
-  transform: scaleX(clamp(0, var(--loop-progress, -1), 1));
+  transform: scaleX(0);
   transform-origin: left;
-  opacity: clamp(0, calc((var(--loop-progress, -1) + 1) * 1000), 1);
+  opacity: 0;
+  will-change: transform;
   pointer-events: none;
+}
+.scene[data-progress]::after {
+  opacity: 1;
 }
 .sceneLit {
   border-color: var(--amber);
@@ -970,9 +1014,28 @@
     box-shadow: 0 6px 0 var(--surface);
   }
 }
-@media (max-height: 640px) {
+/*
+ * A short, wide window (a laptop browser's 657 px, 1280 x 720; narrower windows scroll the page): smaller rows, so more of them show. The pads drop
+ * their length line (LoopsGrid), and a scene's play mark sits beside its name.
+ */
+@media (max-height: 740px) and (min-width: 1024px) {
   .grid {
     --row-min: 56px;
+  }
+  .scene {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-content: center;
+    column-gap: 5px;
+    row-gap: 0;
+    /* The name's line keeps clear of the scene's ⋯ key in the top-right corner. */
+    padding: 4px 34px 4px 8px;
+  }
+  .sceneIcon {
+    align-self: center;
+  }
+  .sceneCount {
+    grid-column: 1 / -1;
   }
 }
 @media (max-width: 1179px) {

@@ -10,10 +10,11 @@
  * popup's trigger, or the `ignore` element) is not an outside press: the
  * key's own click closes it again. A menu closed by an outside press takes
  * that press: nothing under the pointer starts (a pad, Stop, a knob) and its
- * click is swallowed (once; keys are never affected). While any popover is
+ * click is swallowed (once; keys are never affected), except on another
+ * menu's trigger, which opens its own menu at once. While any popover is
  * open, body carries data-popover-open (counted, so nested or overlapping
- * popovers keep it until the last one closes): toasts move to the top, clear
- * of the menu. For a moment after it opens, a click that
+ * popovers keep it until the last one closes): the toasts (at the top, under
+ * the transport) stack below the menu. For a moment after it opens, a click that
  * comes without the pointer moving (the second half of a double-click on the
  * trigger) does nothing. Rows light up under the pointer only once it moves
  * over the menu (keyboard focus always shows); then the row under the
@@ -337,7 +338,8 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
       if (!t || ref.current?.contains(t) || (ignore && ignore.contains(t))) return;
       if (t instanceof Element && t.closest('[aria-haspopup][aria-expanded="true"]')) return;
       focusInside.current = false;
-      if (roleRef.current === 'menu') consumePress(e);
+      // A press on another menu's trigger is not swallowed: this menu closes and that one opens, on the first click.
+      if (roleRef.current === 'menu' && !(t instanceof Element && t.closest('[aria-haspopup]'))) consumePress(e);
       onCloseRef.current();
     };
     const onResize = () => onCloseRef.current();
@@ -571,46 +573,49 @@ export function MenuKeyRow<T extends string | number>(props: {
   const labelId = useId();
   const tipId = useId();
   const described = (disabled && disabledReason) || tip;
+  // The tooltip wraps the whole row (the group): in a menu only items, groups and separators may carry ARIA, so its
+  // description goes on the group, never on a wrapper of the keys. Each key carries the row's sentence itself (also
+  // with Tips off).
   return (
-    <div className={styles.keyRow} role="group" aria-labelledby={labelId} aria-describedby={described ? tipId : undefined}>
-      <span id={labelId} className={styles.keyRowLabel}>
-        {label}
-      </span>
-      {described && (
-        <span id={tipId} hidden>
-          {described}
+    <Tooltip tip={described || undefined} disabled={!described}>
+      <div className={styles.keyRow} role="group" aria-labelledby={labelId}>
+        <span id={labelId} className={styles.keyRowLabel}>
+          {label}
         </span>
-      )}
-      <Tooltip tip={described || undefined} disabled={!described}>
-      <span className={styles.keys}>
-        {options.map((o) => (
-          <button
-            key={String(o.value)}
-            type="button"
-            role="menuitemradio"
-            tabIndex={-1}
-            data-row={row}
-            aria-checked={value === o.value}
-            aria-label={o.ariaLabel}
-            aria-disabled={disabled || undefined}
-            aria-describedby={described ? tipId : undefined}
-            className={styles.key}
-            data-on={value === o.value || undefined}
-            onClick={() => {
-              if (!disabled) onSelect(o.value);
-            }}
-          >
-            {o.label}
-          </button>
-        ))}
-      </span>
-      </Tooltip>
-      {unit && (
-        <span className={styles.keyRowUnit} aria-hidden="true">
-          {unit}
+        {described && (
+          <span id={tipId} hidden>
+            {described}
+          </span>
+        )}
+        <span className={styles.keys}>
+          {options.map((o) => (
+            <button
+              key={String(o.value)}
+              type="button"
+              role="menuitemradio"
+              tabIndex={-1}
+              data-row={row}
+              aria-checked={value === o.value}
+              aria-label={o.ariaLabel}
+              aria-disabled={disabled || undefined}
+              aria-describedby={described ? tipId : undefined}
+              className={styles.key}
+              data-on={value === o.value || undefined}
+              onClick={() => {
+                if (!disabled) onSelect(o.value);
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
         </span>
-      )}
-    </div>
+        {unit && (
+          <span className={styles.keyRowUnit} aria-hidden="true">
+            {unit}
+          </span>
+        )}
+      </div>
+    </Tooltip>
   );
 }
 

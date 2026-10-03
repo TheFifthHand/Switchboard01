@@ -9,7 +9,7 @@
  * with it). While a performance take records, the rows that would edit say so
  * and do nothing (Launch and Export stay).
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MAX_SCENES, MIN_SCENES, type Id } from '../../project/types';
 import { DEFAULT_BLOCK_REPEATS, addBlock, captureScene, deleteScene, duplicateScene, insertScene, renameScene, sceneUse } from '../../state/commands';
 import { shallowEqual } from '../../state/store';
@@ -65,9 +65,15 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
     },
     shallowEqual,
   );
-  const anyPlaying = useRuntime((s) => Object.values(s.tracks).some((t) => t?.playingSlot != null));
+  // What plays now (or holds at a pause); armed clips while stopped are not "playing".
+  const anyPlaying = useRuntime((s) => (s.playing || s.paused) && Object.values(s.tracks).some((t) => t?.playingSlot != null));
   const locked = useEditLocked();
   const [mode, setMode] = useState<'menu' | 'rename' | 'confirmDelete'>(startInRename && !locked ? 'rename' : 'menu');
+  // Its scene went (an undo elsewhere, another project): the menu closes, rather than come back if the row does.
+  const gone = !info;
+  useEffect(() => {
+    if (gone) onClose();
+  }, [gone, onClose]);
   if (!info) return null;
   const eyebrow = `Scene ${row + 1} of ${info.rows}`;
   const full = info.rows >= MAX_SCENES;
@@ -99,6 +105,8 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
     if (!session.accepted(r)) return;
     const gone = r.blocksUsing?.length ?? 0;
     notify(`Deleted the scene ${info.name} and its clips${gone ? `, and the ${blocksText(gone)} that played it` : ''}.`, 'info', 'undo');
+    // Focus goes to the scene that took its place (the one above, when it was the last).
+    focusScene(Math.min(row, session.store.getState().scenes.length - 1));
   };
 
   if (mode === 'confirmDelete') {

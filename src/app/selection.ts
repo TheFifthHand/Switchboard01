@@ -5,7 +5,8 @@
  * Notes all act on the part's chosen slot (uiStore `selectedSlot`, read with
  * `slotFor`). A part that has no chosen slot yet gets one the moment it is
  * selected, or when a project opens with it selected: the clip it plays, else
- * its first clip, else the first slot. So the ring always shows what the other
+ * its first clip, else the first slot. Opening another project forgets the
+ * slots chosen in the last one. So the ring always shows what the other
  * controls will act on, and none of them needs a fallback of its own.
  *
  * Registered on first import (PlayView imports it, and the app loads PlayView
@@ -49,11 +50,13 @@ export function registerSelection(): () => void {
   const offUi = uiStore.subscribe((s) => {
     if (s.selectedSlot[s.selectedTrackId] === undefined) ensureSelected();
   });
-  // Another project (open, import, a starter): the selected part's slot in it.
+  // Another project (open, import, a starter): the slots chosen in the last one mean nothing here, so they go,
+  // and the selected part gets its slot in this one.
   let projectId = session.store.getState().id;
   const offProject = session.store.subscribe((p) => {
     if (p.id === projectId) return;
     projectId = p.id;
+    uiStore.setState((s) => (Object.keys(s.selectedSlot).length ? { ...s, selectedSlot: {} } : s));
     ensureSelected();
   });
   ensureSelected();
