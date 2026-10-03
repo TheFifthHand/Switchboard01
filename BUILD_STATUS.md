@@ -73,9 +73,9 @@ reviewed as a pull request from the development branch.
 
 An audit of every view found performance, design, Play, Mix, Shape, shell and capability problems
 (finding ids such as PLAY-01, MIX-01, shape-01, perf-01). They were built in 14 slices, each with
-its own tests and an independent review followed by a fix round, and merged into `r4-int`. The
-**arrange**, **shape** and **shell** slices were still in a final fix round when this entry was
-written. Interface rules: `docs/OMNI_UX.md`; contracts: `docs/ARCHITECTURE.md`; checks:
+its own tests, most followed by an independent review and a fix round, and merged into `r4-int`.
+The **arrange**, **shape** and **shell** slices were still in a final fix round when this entry was
+written; the commits listed for them are the ones merged so far. Interface rules: `docs/OMNI_UX.md`; contracts: `docs/ARCHITECTURE.md`; checks:
 `docs/ACCEPTANCE.md`.
 
 | Slice | Final commit | What it delivered | Key measurements (from the slice and review reports) |
