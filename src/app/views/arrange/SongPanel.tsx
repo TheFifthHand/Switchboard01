@@ -35,7 +35,7 @@ import type { SceneSummary } from './BlockMenu';
 import { loopName, loopSpan } from './laneLoop';
 import { SongLane } from './SongLane';
 import { blockView, viewKey, type BlockView } from './songModel';
-import { getSongPlan, startSong, useSongPlan } from './songPlan';
+import { getSongPlan, startSong, useSongPlan } from '../../songPlayback';
 import styles from './SongPanel.module.css';
 
 /* ------------------------------------------------------------------ */

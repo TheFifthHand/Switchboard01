@@ -20,7 +20,7 @@ import { session as appSession } from '../../src/app/instance';
 import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { Session } from '../../src/app/session';
 import { TransportBar } from '../../src/app/views/TransportBar';
-import { songTimelineBar } from '../../src/app/views/arrange/songPlan';
+import { songTimelineBar } from '../../src/app/songPlayback';
 import { createClip, createProject } from '../../src/project/factory';
 import type { Clip, ClipBars, Id, Project } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';

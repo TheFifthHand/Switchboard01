@@ -26,7 +26,7 @@ import { session } from '../../src/app/instance';
 import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { ArrangeView } from '../../src/app/views/arrange/ArrangeView';
 import { clearBlockClipboard } from '../../src/app/views/arrange/songActions';
-import { getSongPlan } from '../../src/app/views/arrange/songPlan';
+import { getSongPlan } from '../../src/app/songPlayback';
 import { getStarter } from '../../src/content/starters';
 import type { Id } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';

@@ -55,7 +55,7 @@ import { BlockFace, SongBlock, type BlockHandlers, type RecTarget } from './Song
 import { EMPTY_SELECTION, menuTargets, nudgeGap, pasteGap, pruneSelection, selectAll, selectByClick, selectByKey, type LaneSelection, type LaneSelectionState } from './songDrag';
 import { COMPACT_HEADER_BELOW, ZOOM_BUTTON_STEPS, ZOOM_STEPS, anchorAt, anchorX, barToX, blockWidth, fitSong, followScroll, layoutSong, scrollToShow, zoomIndex, zoomStep, type LaneAnchor, type SongLayout } from './songLayout';
 import { cellTip, cellToggle, layerPreview, layerText, liveLengthText, resizeText, timesText, type BlockView, type LayerPreview } from './songModel';
-import { getSongPlan, songTimelineBar, startSong } from './songPlan';
+import { getSongPlan, songTimelineBar, startSong } from '../../songPlayback';
 import styles from './SongPanel.module.css';
 
 /** pendingFocus value meaning "the song is now empty: focus Add all scenes". */

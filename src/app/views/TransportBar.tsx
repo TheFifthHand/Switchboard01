@@ -20,7 +20,7 @@ import { keysFor } from './hints/shortcuts';
 import { RecordOptions, quantizeCaption, recordOptionsCaption } from './RecordOptions';
 import { MOD_ARIA, MOD_KEY, MenuItem, MenuSeparator, MoreIcon, Popover, anchorFromElement } from './ClipMenu';
 import { DevicesDialog, DevicesKey, midi } from './devices';
-import { songTimelineBar, useSongPlan } from './arrange/songPlan';
+import { songTimelineBar, useSongPlan } from '../songPlayback';
 import styles from './TransportBar.module.css';
 
 const VIEW_OPTIONS = [

@@ -11,11 +11,11 @@
  * is laid out a little ahead as it plays; the playhead (`songTimelineBar`)
  * reads the sequencer's plan directly so it is never behind.
  */
-import { createStore, useStore } from '../../../state/store';
-import { songBlocks, songLaneTick, type SongBlockPlan } from '../../../time/sequencer';
-import { TICKS_PER_BAR, type Project } from '../../../project/types';
-import { session } from '../../instance';
-import { runtimeStore } from '../../runtime';
+import { createStore, useStore } from '../state/store';
+import { songBlocks, songLaneTick, type SongBlockPlan } from '../time/sequencer';
+import { TICKS_PER_BAR, type Project } from '../project/types';
+import { session } from './instance';
+import { runtimeStore } from './runtime';
 
 const planStore = createStore<readonly SongBlockPlan[] | null>(null);
 
