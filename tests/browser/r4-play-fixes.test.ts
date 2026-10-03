@@ -270,3 +270,33 @@ describe('Variation honesty', () => {
     await press('{Escape}');
   });
 });
+
+describe('stacking', () => {
+  it('the transport\'s "Saving failed" popover is never under the grid\'s sticky head: Try again takes a real click', async () => {
+    await openApp(1366, 768, { play: true });
+    const put = IDBObjectStore.prototype.put;
+    // A full disk: every write to browser storage fails.
+    IDBObjectStore.prototype.put = function () {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    };
+    try {
+      act(() => session.setBpm(101));
+      await until(() => !!button(/Not saved/), 'the Not saved status');
+      await clickEl(button(/Not saved/));
+      const pop = document.querySelector<HTMLElement>('[role="alertdialog"][aria-label="Saving failed"]')!;
+      expect(pop).not.toBeNull();
+      const retry = button('Try again', pop)!;
+      // The popover reaches over the grid's head here (the case that mattered) ...
+      const head = document.querySelector<HTMLElement>('[data-grid-head]')!.getBoundingClientRect();
+      const r = retry.getBoundingClientRect();
+      const p = centre(retry);
+      expect(r.left < head.right && r.right > head.left && r.top < head.bottom && r.bottom > head.top).toBe(true);
+      // ... and the key is what the pointer meets there.
+      expect(retry.contains(document.elementFromPoint(p.x, p.y))).toBe(true);
+    } finally {
+      IDBObjectStore.prototype.put = put;
+    }
+    await clickEl(button('Try again'));
+    await until(() => !!button(/Autosave: Saved/), 'saving again');
+  });
+});

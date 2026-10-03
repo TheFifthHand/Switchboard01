@@ -6,9 +6,14 @@
   gap: 8px;
 }
 
-/* The grid and, over its foot, a fade shown while more rows are below (data-more). */
+/*
+ * The grid and, over its foot, a fade shown while more rows are below (data-more). Its own stacking
+ * context: the sticky head's and the fade's z-index order them inside the grid only, so they never
+ * paint over the transport's popovers (Saving failed), app banners or menus that reach over the grid.
+ */
 .gridFrame {
   position: relative;
+  isolation: isolate;
   flex: 1;
   min-height: 0;
   display: flex;
