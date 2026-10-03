@@ -89,25 +89,37 @@
   pointer-events: none;
 }
 
-/* Side panel: chord size and inversion under the Chords switch; Write a progression… below. */
-.chordControls {
+/* Key block: the Chords switch; chord size and inversion below it. */
+.playRow {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 10px;
+  align-items: center;
+  margin-top: 6px;
 }
-.writeRow {
-  margin-top: 10px;
+.chordRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.inversion {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Part block: its eyebrow and Write a progression… on one line. */
+.partHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.partHead > p {
+  margin: 0;
 }
 .writeWhy {
   margin: 6px 0 0;
   font-size: var(--fs-xs);
   line-height: 1.4;
-  color: var(--ink-3);
-}
-
-/* Chromatic mode: notes outside the key sit a shade darker, like the keyboard's out-of-key keys. */
-.cell[data-outside] .pad:not([data-state='playing']) {
-  background: linear-gradient(180deg, #e9ebed 0%, #dfe2e5 50%, #d6dadd 100%);
   color: var(--ink-3);
 }

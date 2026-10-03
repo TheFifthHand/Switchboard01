@@ -7,18 +7,23 @@
 import { expect, test, type Page } from '@playwright/test';
 import { openFresh, pageErrors } from './helpers';
 
-/** Highest master peak from now for `ms`, read every 10 ms once audio runs. */
+/**
+ * Highest master peak from now until `ms` after the engine first sounds a voice (on a busy
+ * machine audio and the engine come up a while after the key), read every 5 ms; at most 15 s.
+ */
 function peakFrom(page: Page, ms: number): Promise<number> {
   return page.evaluate(async (ms) => {
     const sb = (window as any).__switchboard;
     let peak = 0;
-    const end = performance.now() + ms;
-    while (performance.now() < end) {
+    let soundingSince: number | null = null;
+    const giveUp = performance.now() + 15_000;
+    while (performance.now() < giveUp && (soundingSince === null || performance.now() - soundingSince < ms)) {
       if (sb.audioState() === 'running') {
+        if (soundingSince === null && (sb.stats().engine?.voices ?? 0) > 0) soundingSince = performance.now();
         const m = sb.meters();
         peak = Math.max(peak, m.masterPeakL, m.masterPeakR);
       }
-      await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 5));
     }
     return peak;
   }, ms);
@@ -34,9 +39,9 @@ for (const [code, sound, voice] of [
     expect(await page.evaluate(() => (window as any).__switchboard.ui.getState().selectedTrackId)).toBe('t1');
     expect(await page.evaluate(() => (window as any).__switchboard.audioState())).toBe('none');
     await page.locator('body').click({ position: { x: 700, y: 5 } }).catch(() => undefined);
-    const peak = peakFrom(page, 1500);
+    const peak = peakFrom(page, 800);
     await page.keyboard.down(code);
-    await expect.poll(() => page.evaluate(() => ((window as any).__switchboard.runtime.getState().held.t1 ?? []) as number[]), { timeout: 5000 }).toEqual([voice]);
+    await expect.poll(() => page.evaluate(() => ((window as any).__switchboard.runtime.getState().held.t1 ?? []) as number[]), { timeout: 10_000 }).toEqual([voice]);
     expect(await peak).toBeGreaterThan(0.005);
     await page.keyboard.up(code);
     await expect.poll(() => page.evaluate(() => ((window as any).__switchboard.runtime.getState().held.t1 ?? []).length)).toBe(0);

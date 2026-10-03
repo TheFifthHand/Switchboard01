@@ -13,10 +13,11 @@ import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
 import { DRUM_VOICES, type Note } from '../../src/project/types';
-import { drumVoiceFor, selectSlot, selectTrack, setPadMode, uiStore } from '../../src/state/uiStore';
+import { drumVoiceFor, selectDrumVoice, selectSlot, selectTrack, setPadMode, uiStore } from '../../src/state/uiStore';
 import { item, menu, notice, openApp, press, setUp, tearDown, track, until } from './r4-play-helpers';
-import { centre, click, drag, settleFrames, touch } from './r4-uikit-input';
-import { resetKeyboardFold, rightClick } from './r4-keys-helpers';
+import { centre, click, drag, finger, settleFrames, touch } from './r4-uikit-input';
+import { recordPlayed, resetKeyboardFold, rightClick } from './r4-keys-helpers';
+import { wait } from './ui-harness';
 
 beforeEach(async () => {
   await setUp();
@@ -113,6 +114,49 @@ describe('the overview is a grid of hit targets (PLAY-03)', () => {
     await settleFrames();
     expect(hitsOf(8)).toEqual([4]);
   });
+
+  it('a finger dragged sideways along a row paints every step it crosses (Blip, steps 2..9)', async () => {
+    await openSteps();
+    expect(hitsOf(14)).toEqual([]);
+    await finger(centre(cell(14, 2)), centre(cell(14, 9)), { steps: 16 });
+    expect(hitsOf(14)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(drumVoiceFor(uiStore.getState(), 't1')).toBe(14);
+    // One undo step for the whole drag.
+    await press('{Control>}z{/Control}');
+    expect(hitsOf(14)).toEqual([]);
+  });
+
+  for (const [w, hh] of [
+    [1366, 768],
+    [960, 540],
+  ] as const) {
+    it(`at ${w} x ${hh}: a finger that swipes up or down from a sound name chooses and plays nothing; a tap on a name does`, async () => {
+      await openSteps(w, hh);
+      act(() => selectDrumVoice('t1', 0));
+      await settleFrames();
+      name(12).scrollIntoView({ block: 'center' });
+      await settleFrames();
+      const rec = recordPlayed();
+      try {
+        const p = centre(name(12));
+        await finger(p, { x: p.x + 2, y: p.y - 160 }, { steps: 12 });
+        expect(drumVoiceFor(uiStore.getState(), 't1'), 'swipe').toBe(0);
+        expect(rec.ons(), 'swipe').toEqual([]);
+        // Let a scroll the swipe started settle, then tap where the name is now.
+        await wait(500);
+        name(12).scrollIntoView({ block: 'center' });
+        await settleFrames(3);
+        const q = centre(name(12));
+        await touch('touchStart', [q]);
+        await touch('touchEnd', []);
+        await settleFrames();
+        expect(drumVoiceFor(uiStore.getState(), 't1'), 'tap').toBe(12);
+        expect(rec.ons().map((n) => [n.pitch, n.source]), 'tap').toEqual([[12, 'preview']]);
+      } finally {
+        rec.restore();
+      }
+    });
+  }
 });
 
 describe('paint drags and the sound menu (PLAY-09)', () => {

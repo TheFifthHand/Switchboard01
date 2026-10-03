@@ -18,15 +18,17 @@
  * Notes, Performance takes and the arpeggiator get it as played, and Musical
  * Assist leaves it alone (the chord is already in the key; in pentatonic and
  * blues keys it holds notes of the parent scale that Assist would re-snap).
- * Two pads sharing a note sound it once, until both are let go.
- * "Write a progression…" writes a common progression into the selected clip.
+ * Two pads sharing a note sound it once, until both are let go (the counts
+ * start again whenever the app releases every note).
+ * "Write a progression…" (in the Part block) writes a common progression into
+ * the part's selected clip. The side panel fits at 1366 x 768 in every mode.
  *
  * Pads play through the session with a velocity from where they are struck
  * and light while held. Changing the pad view never touches playback or the
  * project.
  */
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
-import { Button, IconButton, Pad, SegmentedControl, Switch, type PadPressEvent } from '../../ui/components';
+import { Button, IconButton, Pad, SegmentedControl, Select, Switch, type PadPressEvent } from '../../ui/components';
 import { chordAt, chordName } from '../../music/chords';
 import { isInScale, keyLabel, noteName, pitchClass, scaleDegreesInRange, type MusicalKey } from '../../music/scales';
 import type { Id, Project, ScaleId } from '../../project/types';
@@ -111,11 +113,26 @@ function sameLayout(a: ChordPadInfo[], b: ChordPadInfo[]): boolean {
   return a.length === b.length && a.every((c, i) => c.name === b[i].name && c.notes.join() === b[i].notes.join());
 }
 
-/** How many chord pads hold each sounding note, per part, so a note two pads share sounds once until both let go. */
+/**
+ * How many chord pads hold each sounding note, per part, so a note two pads share sounds once
+ * until both let go. When the app releases every note (Stop, Mute All, a window switch…) the
+ * counts start again: the pads still down must not keep the next chord's shared notes silent,
+ * and their later release (from before) must not end notes pressed since. Counts are per part,
+ * so changing the part leaves them right (each pad releases on the part it played).
+ */
 const chordHolds = new Map<string, number>();
+let holdEpoch = 0;
+
+/** Forget every count (the session has just released every note). */
+export function resetChordHolds(): void {
+  chordHolds.clear();
+  holdEpoch += 1;
+}
+session.onAllNotesReleased(resetChordHolds);
 
 /** Play a chord through the session ('chord' source); returns its release. */
 export function playChord(trackId: Id, notes: readonly number[], velocity: number): () => void {
+  const epoch = holdEpoch;
   for (const n of notes) {
     const k = `${trackId}:${n}`;
     const held = chordHolds.get(k) ?? 0;
@@ -126,6 +143,8 @@ export function playChord(trackId: Id, notes: readonly number[], velocity: numbe
   return () => {
     if (done) return;
     done = true;
+    // Released by the app meanwhile: these notes are already off, and the counts are newer presses'.
+    if (epoch !== holdEpoch) return;
     for (const n of notes) {
       const k = `${trackId}:${n}`;
       const held = chordHolds.get(k) ?? 0;
@@ -142,13 +161,14 @@ const SIZE_OPTIONS = [
   { value: '4', label: '7ths', tip: 'Four-note chords: a seventh on top, richer and jazzier.' },
 ] as const;
 
+/** Inversion choices (a 7th chord has a third inversion). */
 function inversionOptions(size: 3 | 4) {
   const all = [
-    { value: 'smooth', label: 'Smooth', tip: 'Each chord sits close to the others, so changes move little.' },
-    { value: '0', label: 'Root', tip: 'Root position: the chord’s name note at the bottom.' },
-    { value: '1', label: '1st', tip: 'First inversion: the third at the bottom.' },
-    { value: '2', label: '2nd', tip: 'Second inversion: the fifth at the bottom.' },
-    { value: '3', label: '3rd', tip: 'Third inversion: the seventh at the bottom.' },
+    { value: 'smooth', label: 'Smooth' },
+    { value: '0', label: 'Root position' },
+    { value: '1', label: '1st inversion' },
+    { value: '2', label: '2nd inversion' },
+    { value: '3', label: '3rd inversion' },
   ];
   return size === 4 ? all : all.slice(0, 4);
 }
@@ -293,8 +313,9 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
       ? chromaticScale
         ? 'Musical Assist: the Chromatic scale includes every semitone.'
         : `Musical Assist: pads play only notes in ${keyName}.`
-      : 'Chromatic: every semitone.';
-  const detail = chordsOn ? null : assist || chromaticScale ? 'Root notes are marked Root.' : `Shaded pads are outside ${keyName}. Root notes are marked Root.`;
+      : chromaticScale
+        ? 'Chromatic: every semitone.'
+        : `Chromatic: every semitone. Shaded pads are outside ${keyName}.`;
 
   const canDown = octave > OCTAVE_RANGE.min;
   const canUp = octave < top;
@@ -304,58 +325,39 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
     <div className={shared.root}>
       <div className={shared.layout}>
         <div className={shared.info} role="group" aria-label={`Note pads for ${part.name}`}>
+          {/* The key, and how the pads play it: single notes or chords. One block, so the panel fits at 1366 x 768. */}
           <div className={shared.block}>
             <p className={shared.eyebrow}>Key</p>
             <h3 className={shared.title}>{keyName}</h3>
             <p className={styles.explain} aria-live="polite">
               {explain}
             </p>
-            {detail && <p className={shared.desc}>{detail}</p>}
-          </div>
-
-          <div className={shared.block}>
-            <Switch
-              checked={chordsOn}
-              onChange={(on) => setNotesChords({ on })}
-              label="Chords"
-              size="sm"
-              tone="teal"
-              tip="One pad plays a whole chord from the key. The small number on a pad is the chord’s step in the key (1 = home)."
-              detail="Off: each pad plays one note. Chords play exactly as written (Musical Assist has nothing to fix: they are already in the key). Record Notes, Performance and the arpeggiator take them like keys."
-            />
+            <div className={styles.playRow}>
+              <Switch
+                checked={chordsOn}
+                onChange={(on) => setNotesChords({ on })}
+                label="Chords"
+                size="sm"
+                tone="teal"
+                tip="One pad plays a whole chord from the key. The small number on a pad is the chord’s step in the key (1 = home)."
+                detail="Off: each pad plays one note. Chords play exactly as written (Musical Assist has nothing to fix: they are already in the key). Record Notes, Performance and the arpeggiator take them like keys."
+              />
+            </div>
             {chordsOn && (
-              <div className={styles.chordControls}>
-                <SegmentedControl<'3' | '4'> label="Chord size" size="sm" block options={SIZE_OPTIONS} value={String(size) as '3' | '4'} onChange={(v) => setNotesChords({ size: v === '4' ? 4 : 3 })} />
-                <SegmentedControl<string>
+              <div className={styles.chordRow}>
+                <SegmentedControl<'3' | '4'> label="Chord size" size="sm" options={SIZE_OPTIONS} value={String(size) as '3' | '4'} onChange={(v) => setNotesChords({ size: v === '4' ? 4 : 3 })} />
+                <Select
                   label="Inversion"
+                  hideLabel
                   size="sm"
-                  block
-                  options={inversionOptions(size)}
                   value={String(inversion)}
+                  options={inversionOptions(size)}
                   onChange={(v) => setChordInversion(v === 'smooth' ? 'smooth' : (Number(v) as 0 | 1 | 2 | 3))}
+                  tip="Which note of each chord is at the bottom. Smooth keeps every chord close to the others, so changes move little."
+                  className={styles.inversion}
                 />
               </div>
             )}
-            <div className={styles.writeRow}>
-              <Button
-                ref={writeRef}
-                size="sm"
-                variant="secondary"
-                icon="pencil"
-                block
-                disabled={writeDisabled}
-                onClick={() => setWriting(true)}
-                aria-describedby={writeDisabled ? `write-why-${trackId}` : undefined}
-                tip="Write a common chord progression into the selected clip, in the key."
-              >
-                Write a progression…
-              </Button>
-              {writeDisabled && (
-                <p id={`write-why-${trackId}`} className={styles.writeWhy}>
-                  {locked ? `${LOCKED_REASON}.` : refusal}
-                </p>
-              )}
-            </div>
           </div>
 
           {!chordsOn && (
@@ -379,9 +381,29 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
             </div>
           )}
 
+          {/* The part, and writing a progression into its selected clip. */}
           <div className={shared.block}>
-            <p className={shared.eyebrow}>Part</p>
+            <div className={styles.partHead}>
+              <p className={shared.eyebrow}>Part</p>
+              <Button
+                ref={writeRef}
+                size="sm"
+                variant="secondary"
+                icon="pencil"
+                disabled={writeDisabled}
+                onClick={() => setWriting(true)}
+                aria-describedby={writeDisabled ? `write-why-${trackId}` : undefined}
+                tip="A common chord progression, in the key, written into this part's selected clip."
+              >
+                Write a progression…
+              </Button>
+            </div>
             <PartSwitch parts={melodicParts} selectedId={trackId} label="Part the note pads play" columns={melodicParts.length > 3 ? 2 : 1} compact={melodicParts.length > 3} />
+            {writeDisabled && (
+              <p id={`write-why-${trackId}`} className={styles.writeWhy}>
+                {locked ? `${LOCKED_REASON}.` : refusal}
+              </p>
+            )}
           </div>
 
           <div className={shared.block}>
@@ -389,8 +411,7 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
           </div>
 
           <div className={shared.foot}>
-            <p className={shared.hint}>Tap pads to play {part.name}.</p>
-            <p className={shared.subHint}>Strike lower on a pad to play louder.</p>
+            <p className={shared.hint}>Strike lower on a pad to play louder.</p>
           </div>
         </div>
 
