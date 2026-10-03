@@ -82,6 +82,14 @@ export interface ModuleNode {
    * module keep processing that only a modulation can make audible.
    */
   setModulated?(ports: ReadonlySet<string>, time: number): void;
+  /**
+   * Whether the module is a send return: everything reaching its audio input
+   * comes from channel sends (Reverb, Echo). A return has no dry path: its
+   * output is the wet sound × Mix, so Mix is the return level. Reported after
+   * every rewiring; the first report (right after the module was built,
+   * before anything plays through it) applies at once, later ones glide.
+   */
+  setSendReturn?(isReturn: boolean, time: number): void;
   dispose(): void;
 }
 

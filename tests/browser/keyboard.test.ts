@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Dialog, MiniKeyboard } from '../../src/ui/components';
 import { drumKeyHint, noteKeyLabels, useComputerKeyboard, type ComputerKeyboardLayout } from '../../src/ui/hooks/useComputerKeyboard';
 import { cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
+import { centre, click } from './r4-uikit-input';
 
 afterEach(cleanup);
 
@@ -398,5 +399,44 @@ describe('useComputerKeyboard', () => {
     ]);
     key(document.body, 'keydown', { code: 'KeyL', key: 'l' });
     expect(log).toHaveLength(4);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* MiniKeyboard: kit row and key-spelled names (real mouse)            */
+/* ------------------------------------------------------------------ */
+
+describe('MiniKeyboard kit row and spelling', () => {
+  it("kit 'row': 16 named keys in one row of four groups (Z–V, A–F, Q–R, 1–4); the mouse plays the key under it, a gap plays its nearest key", async () => {
+    const events: Ev[] = [];
+    const names = Array.from({ length: 16 }, (_, i) => `Sound ${i + 1}`);
+    const letters = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [60 + i, drumKeyHint(i)!]));
+    const m = mount(
+      h('div', { style: { width: '900px' } }, h(MiniKeyboard, { variant: 'kit', kitLayout: 'row', baseNote: 60, height: 90, kitNames: names, keyLabels: letters, onNoteOn: (n: number, v: number) => events.push(['on', n, v]), onNoteOff: (n: number) => events.push(['off', n]) })),
+      { width: 940 },
+    );
+    const board = m.container.querySelector<HTMLElement>('[role="group"]')!;
+    const keys = [...board.querySelectorAll<HTMLElement>('[data-midi]')];
+    expect(keys).toHaveLength(16);
+    expect(new Set(keys.map((k) => Math.round(k.getBoundingClientRect().top))).size).toBe(1);
+    expect(keys.map((k) => k.textContent)).toEqual(names.map((n, i) => `${n}${drumKeyHint(i)}`));
+    for (const k of keys) expect(k.getBoundingClientRect().height).toBeGreaterThanOrEqual(80);
+    // Groups of four: the space between groups is wider than between keys in a group.
+    const gap = (a: number, b: number) => keys[b].getBoundingClientRect().left - keys[a].getBoundingClientRect().right;
+    expect(gap(3, 4)).toBeGreaterThan(gap(2, 3) + 2);
+    await click(centre(keys[5], 0.5, 0.9));
+    const between = { x: (keys[3].getBoundingClientRect().right + keys[4].getBoundingClientRect().left) / 2 + 2, y: centre(keys[4]).y };
+    await click(between);
+    expect(events.filter((e) => e[0] === 'on').map((e) => e[1])).toEqual([65, 64]);
+    expect(events.filter((e) => e[0] === 'off').map((e) => e[1])).toEqual([65, 64]);
+  });
+
+  it('pitchNames spell the root on the rail and in legends the way the key writes it (B♭, not A#)', () => {
+    const flats = ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'G♭', 'G', 'A♭', 'A', 'B♭', 'B'];
+    const rail = mount(h('div', { style: { width: '760px' } }, h(MiniKeyboard, { baseNote: 60, height: 90, rootPc: 10, pitchNames: flats, noteNames: 'above', onNoteOn: () => {}, onNoteOff: () => {} })), { width: 800 });
+    expect([...rail.container.querySelectorAll('[class*="railName"]')].map((r) => r.textContent)).toEqual(['C4', 'B♭', 'C5', 'B♭', 'C6']);
+    const legend = mount(h('div', { style: { width: '760px' } }, h(MiniKeyboard, { baseNote: 60, height: 90, rootPc: 10, pitchNames: flats, onNoteOn: () => {}, onNoteOff: () => {} })), { width: 800 });
+    // B♭ is a black key: its name shows on the rail only; the white C keys keep C4 / C5.
+    expect(legend.container.querySelector('[data-midi="60"] [class*="name"]')!.textContent).toBe('C4');
   });
 });

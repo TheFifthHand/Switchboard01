@@ -214,14 +214,14 @@ export const DELAY_PARAMS: readonly ParamSpec[] = [
   p({ id: 'tone', label: 'Tone', min: 500, max: 12000, default: 3800, unit: 'Hz', curve: 'exp', tip: 'Darker echoes sit further back.', detail: 'Low-pass in the feedback path.' }),
   // Stored as "width".
   p({ id: 'width', label: 'Ping-pong', min: 0, max: 1, default: 0.6, unit: '%', curve: 'lin', tip: 'Bounces the echoes between left and right.', detail: 'How far each repeat swings to the other side: 0% keeps the echoes where the sound is.' }),
-  p({ id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '%', curve: 'lin', tip: 'Echo level. As a send return, leave at 100%.', detail: 'Wet level (dry passes at 1 - mix when used as an insert).' }),
+  p({ id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '%', curve: 'lin', tip: 'Echo level. As a send return this is the return level.', detail: 'Wet level. As a return fed only by sends there is no dry sound; as an insert the dry sound passes at 1 - mix.' }),
 ];
 
 export const REVERB_PARAMS: readonly ParamSpec[] = [
   p({ id: 'decay', label: 'Size', min: 0.3, max: 9, default: 2.4, unit: 's', curve: 'exp', tip: 'Small rooms to huge halls.', detail: 'Impulse-response decay time (RT60 approx.).' }),
   p({ id: 'predelay', label: 'Pre-delay', min: 0, max: 120, default: 12, unit: 'ms', curve: 'lin', tip: 'A short gap before the room answers keeps sounds clear.', detail: 'Pre-delay before the convolver.' }),
   p({ id: 'tone', label: 'Tone', min: 1000, max: 16000, default: 6500, unit: 'Hz', curve: 'exp', tip: 'Darker rooms feel softer and further away.', detail: 'Low-pass on the reverb output.' }),
-  p({ id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '%', curve: 'lin', tip: 'Room level. As a send return, leave at 100%.', detail: 'Wet level (dry passes at 1 - mix when used as an insert).' }),
+  p({ id: 'mix', label: 'Mix', min: 0, max: 1, default: 1, unit: '%', curve: 'lin', tip: 'Room level. As a send return this is the return level.', detail: 'Wet level. As a return fed only by sends there is no dry sound; as an insert the dry sound passes at 1 - mix.' }),
 ];
 
 export const CHORUS_PARAMS: readonly ParamSpec[] = [

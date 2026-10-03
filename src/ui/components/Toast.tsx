@@ -3,18 +3,17 @@
  *
  * - `Notice`: an inline banner (e.g. "This part has no path to the output"
  *   with a Restore Connection action, or an autosave error with Retry).
- * - `ToastProvider` + `useToasts()`: transient messages stacked at the bottom
- *   of the screen, e.g. "Variation applied" [Undo]. Toasts pause while
+ * - `ToastProvider` + `useToasts()`: transient messages stacked at the top
+ *   centre of the screen, e.g. "Variation applied" [Undo]. Toasts pause while
  *   hovered or focused; errors stay until dismissed unless given a duration
  *   (any caller may pass one, e.g. 3000 ms for "Undid: …").
- * - Placement contract (Toast.module.css): the stack sits above the on-screen
- *   keyboard (`--keyboard-h`, written by the KeyboardStrip: the height it
- *   covers at the window's bottom, 0 when hidden or not docked there); while a
- *   menu is open (`body[data-popover-open]`, set by Popover) it moves to the
- *   top, under the transport (`--transport-h`, written by the TransportBar),
- *   below the menu; while a modal dialog is open (`body[data-modal-open]`, set
- *   by Dialog) its action keys are hidden. Both measures must be set on
- *   `document.documentElement`: toasts render into body, outside the app tree.
+ * - Placement contract (Toast.module.css): the stack sits at the top centre,
+ *   just under the transport (`--transport-h`, written by the TransportBar on
+ *   `document.documentElement`: toasts render into body, outside the app
+ *   tree), where every view keeps headers rather than anything played or
+ *   chosen; while a menu is open (`body[data-popover-open]`, set by Popover)
+ *   it goes below the menu; while a modal dialog is open
+ *   (`body[data-modal-open]`, set by Dialog) its action keys are hidden.
  *
  * Tone is shown by an icon and wording, not colour alone: coral marks
  * warnings and errors (attention); info/success are neutral.

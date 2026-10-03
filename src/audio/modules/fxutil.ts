@@ -741,6 +741,14 @@ export abstract class EffectModule implements ModuleNode {
     }
   }
 
+  /** Set `param` to `value` at once (a node nothing plays through yet), tracked like a smoothed target. */
+  protected setNow(param: AudioParam, value: number): void {
+    if (!Number.isFinite(value)) return;
+    param.cancelScheduledValues(0);
+    param.value = value;
+    this.targets.set(param, value);
+  }
+
   /** Stop tracking these params' last targets (their nodes are being discarded). */
   protected forgetParams(params: Iterable<AudioParam>): void {
     for (const p of params) this.targets.delete(p);

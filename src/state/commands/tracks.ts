@@ -147,13 +147,14 @@ export function setArp(store: ProjectStore, trackId: Id, partial: Partial<ArpSet
   }, gesture);
 }
 
-export function setMacro(store: ProjectStore, trackId: Id, macro: MacroId, value: number, gesture?: string): CommandResult {
+/** Set a big knob (0..1). `opts.display` names the undo step in the calling view's words ("Drums reverb"). */
+export function setMacro(store: ProjectStore, trackId: Id, macro: MacroId, value: number, gesture?: string, opts: { display?: string } = {}): CommandResult {
   if (!findTrack(store.getState(), trackId)) return NOT_FOUND('part');
   if (!MACRO_IDS.includes(macro) || !isFiniteNumber(value)) return refuse('invalid', 'Unknown macro.');
   const v = clamp(value, 0, 1);
   return run(store, `track:Change ${macro[0].toUpperCase()}${macro.slice(1)}`, (d) => {
     draftTrack(d, trackId).macros[macro] = v;
-  }, gesture);
+  }, gesture, opts.display !== undefined ? { display: opts.display } : {});
 }
 
 /** Validate a complete macro target against the project; returns an error message or the cleaned target. */
