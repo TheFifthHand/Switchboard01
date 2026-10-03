@@ -5,6 +5,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  container: perf / inline-size;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -123,14 +124,50 @@
   font-weight: 600;
   color: var(--ink-2);
 }
+/* Folded with takes: "2 takes ▸", then the newest take and its Replay. */
+.barTakes {
+  flex: none;
+  gap: 6px;
+  font-weight: 650;
+  color: var(--ink);
+}
+.barCount {
+  white-space: nowrap;
+}
+.barNewest {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.barNewestName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ---------- list ---------- */
 
+/* The take list, and beside it (while a take's events are open) the tall drawer. */
+.split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
 .body {
   position: relative;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
+}
+.panel[data-drawer] .body {
+  flex: 0 0 clamp(260px, 30%, 380px);
+  border-right: 1px solid var(--line-soft);
 }
 .body::-webkit-scrollbar {
   width: 8px;
@@ -576,5 +613,91 @@
 @media (max-width: 1280px) {
   .takeHead {
     grid-template-columns: 32px minmax(160px, 1fr) minmax(0, 1.4fr) auto;
+  }
+}
+/* Beside the drawer a take is its name, length and keys. */
+.take[data-compact] .takeHead {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  min-height: 46px;
+}
+.take[data-compact][data-expanded] {
+  border-color: var(--teal);
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+/* ---------- the take drawer ---------- */
+
+.drawer {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+}
+/* The take's header stays in view while its events scroll. */
+.drawerHead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  flex: none;
+  padding: 8px 10px 8px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-hi);
+}
+.drawerHead[data-replaying] {
+  background: linear-gradient(180deg, var(--surface-hi), var(--amber-wash));
+}
+.drawerTitle {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+}
+.drawerName {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--fs-md);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.drawerBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.drawerBody .events {
+  padding: 2px 14px 12px;
+  border-top: 0;
+}
+/* The column headings stay too. */
+.drawerBody .headRow {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+/* (overflow: clip, not hidden: the table must not become the scroller its sticky headings stick to.) */
+.drawerBody .table {
+  overflow: clip;
+}
+
+/* A narrow panel (a narrow or zoomed window): the drawer takes the whole width; its close key brings the list back. */
+@container perf (max-width: 760px) {
+  .panel[data-drawer] .body {
+    display: none;
+  }
+}
+/* Where the page scrolls (a narrow or zoomed window), the drawer is as tall as the window below the sticky
+   transport allows, and its events scroll inside it, under its header. */
+@media (max-width: 1023px), (max-height: 559px) {
+  .panel[data-drawer] .split {
+    flex: none;
+    height: max(280px, calc(100dvh - 190px));
   }
 }

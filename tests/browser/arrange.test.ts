@@ -21,7 +21,7 @@ import { formatSeconds } from '../../src/app/session';
 import { ArrangeView } from '../../src/app/views/arrange/ArrangeView';
 import { EVENT_MORE, EVENT_PAGE } from '../../src/app/views/arrange/PerformancesPanel';
 import { formatPosition, parsePosition, performanceRows } from '../../src/app/views/arrange/perfEvents';
-import { MIN_BLOCK_WIDTH } from '../../src/app/views/arrange/songLayout';
+import { FULL_HEADER_WIDTH } from '../../src/app/views/arrange/songLayout';
 import { getStarter } from '../../src/content/starters';
 import type { Id, Performance, PerformanceEvent } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
@@ -32,6 +32,8 @@ import { makeSnapshot } from '../../src/time/snapshot';
 import { actFrame, cleanup, fire, key, mount, pointer, wait } from './ui-harness';
 
 beforeEach(() => {
+  // The lane's remembered settings (Follow, the Performances panel open or folded) start fresh.
+  localStorage.removeItem('switchboard01.songLane');
   session.store.replace(getStarter('house')!.build(), { resetHistory: true });
   act(() => {
     patchRuntime({ held: {}, notice: null, recording: 'off', playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null, replayId: null });
@@ -160,7 +162,7 @@ describe('Song lane', () => {
     expect(lengthText()).toBe(expectedLength());
     // Widths follow the length: a 16-bar block is twice as wide as an 8-bar one, and blocks touch.
     const rect = (i: number) => items[i].getBoundingClientRect();
-    expect(rect(0).width).toBeGreaterThan(MIN_BLOCK_WIDTH);
+    expect(rect(0).width).toBeGreaterThanOrEqual(FULL_HEADER_WIDTH);
     expect(rect(1).width / rect(0).width).toBeCloseTo(2, 1);
     for (let i = 1; i < items.length; i++) expect(Math.abs(rect(i).left - rect(i - 1).right)).toBeLessThan(1.5);
     // One cell per part, named for the part and what it plays.
@@ -613,6 +615,12 @@ function addTake(events: PerformanceEvent[], opts: { name?: string; startTick?: 
 
 const perfById = (id: Id) => project().performances.find((x) => x.id === id);
 
+/** Open the Performances panel when it is folded to its one-line bar ("2 takes ▸"). */
+function openTakes() {
+  const open = document.querySelector<HTMLButtonElement>('[data-testid="takes-open"]');
+  if (open) click(open);
+}
+
 function sampleEvents(start = 768): PerformanceEvent[] {
   return [
     { t: start + 10, type: 'launch', trackId: 't3', slot: 1, atTick: start + 384 },
@@ -644,6 +652,7 @@ describe('Performances', () => {
   it('lists a take with its length and event counts, renames it inline, deletes it with undo', async () => {
     const id = addTake(sampleEvents(), { name: 'Take 1' });
     await setup();
+    openTakes();
     const panel = document.querySelector<HTMLElement>('section[aria-labelledby="perf-title"]')!;
     expect(panel.textContent).toContain('Take 1');
     // 4 bars at the snapshot tempo.
@@ -679,6 +688,7 @@ describe('Performances', () => {
   it('Replay plays the take on the real transport, the row shows it, and Stop ends it; Export targets the take', async () => {
     const id = addTake(sampleEvents());
     await setup();
+    openTakes();
     const seen: unknown[] = [];
     const on = (e: Event) => seen.push((e as CustomEvent).detail);
     window.addEventListener('sb:open-export', on);
@@ -704,6 +714,7 @@ describe('Performances', () => {
   it('refuses an empty take name and keeps the old one', async () => {
     const id = addTake(sampleEvents(), { name: 'Keeper' });
     await setup();
+    openTakes();
     const panel = document.querySelector<HTMLElement>('section[aria-labelledby="perf-title"]')!;
     const name = byLabel('Keeper. Rename', panel);
     act(() => name.focus());
@@ -753,13 +764,15 @@ describe('Performances', () => {
     const start = 768;
     const id = addTake(sampleEvents(start));
     await setup();
+    openTakes();
     click(byLabel('Show the events of Take 1'));
     const table = document.querySelector<HTMLElement>('[role="table"]')!;
     const rows = () => [...table.querySelectorAll<HTMLElement>('[role="rowgroup"] [role="row"]')];
     // The noteOff is folded into its note: 4 rows for 5 events.
     expect(rows().length).toBe(4);
     const text = rows().map((r) => r.textContent);
-    expect(text[0]).toContain(formatPosition(10));
+    // Times are the music's bar.beat.step (where the transport was), not counted from the take's start.
+    expect(text[0]).toContain(formatPosition(start + 10));
     expect(text[0]).toContain('Launch');
     expect(text[0]).toContain('→');
     expect(text[1]).toContain('Note');
@@ -793,6 +806,7 @@ describe('Performances', () => {
     const start = 768;
     const id = addTake([...sampleEvents(start), { t: start + 400, type: 'tempo', bpm: 124 }]);
     await setup();
+    openTakes();
     click(byLabel('Show the events of Take 1'));
     const table = document.querySelector<HTMLElement>('[role="table"]')!;
     const valueButtons = () => [...table.querySelectorAll<HTMLButtonElement>('button[aria-label^="Change the value"]')];
@@ -834,9 +848,10 @@ describe('Performances', () => {
   });
 
   it('a long recorded value stays in its column at a narrow width, and its focus ring is not cut off', async () => {
-    act(() => void cmd.renameTrack(session.store, 't3', 'Deep rolling sub bass line'));
+    act(() => void cmd.renameTrack(session.store, 't3', 'Deep rolling sub bass line under it all'));
     addTake(sampleEvents(768));
     await setup(560);
+    openTakes();
     click(byLabel('Show the events of Take 1'));
     const table = document.querySelector<HTMLElement>('[role="table"]')!;
     const value = table.querySelector<HTMLButtonElement>('button[aria-label^="Change the value: Deep rolling"]')!;
@@ -855,19 +870,22 @@ describe('Performances', () => {
     const id = addTake(sampleEvents(start));
     const bpm = perfById(id)!.snapshot.bpm;
     await setup();
+    openTakes();
     const panel = document.querySelector<HTMLElement>('section[aria-labelledby="perf-title"]')!;
     click(byLabel('Show the events of Take 1'));
     const table = () => document.querySelector<HTMLElement>('[role="table"]')!;
     const rows = () => [...table().querySelectorAll<HTMLElement>('[role="rowgroup"] [role="row"]')];
-    expect(panel.textContent).toContain(`Ends at ${formatPosition(4 * 384)}`);
+    // The take's bounds read in the music's bars (it was recorded from bar 3).
+    expect(panel.textContent).toContain(`Starts at ${formatPosition(start)}`);
+    expect(panel.textContent).toContain(`Ends at ${formatPosition(start + 4 * 384)}`);
 
-    // End at the macro move (1.3.1): it and the knob move after it go; the launch and the note before it stay.
-    click(byLabel(`End Take 1 at ${formatPosition(192)}`, table()));
+    // End at the macro move (3.3.1): it and the knob move after it go; the launch and the note before it stay.
+    click(byLabel(`End Take 1 at ${formatPosition(start + 192)}`, table()));
     expect(perfById(id)!.endTick).toBe(start + 192);
     expect(perfById(id)!.events.map((e) => e.type)).toEqual(['launch', 'noteOn']);
     expect(rows().length).toBe(2);
     expect(byLabel('Length', panel).textContent).toBe(`${ticksToSeconds(192, bpm).toFixed(1)} s`);
-    expect(runtimeStore.getState().notice!.text).toBe(`Take 1 now ends at ${formatPosition(192)}; 2 recorded actions from there on removed.`);
+    expect(runtimeStore.getState().notice!.text).toBe(`Take 1 now ends at ${formatPosition(start + 192)}; 2 recorded actions from there on removed.`);
     expect(runtimeStore.getState().notice!.action).toBe('undo');
     act(() => session.undo());
     expect(perfById(id)!.endTick).toBe(start + 4 * 384);
@@ -878,21 +896,21 @@ describe('Performances', () => {
     click([...panel.querySelectorAll('button')].find((b) => b.textContent === 'End earlier…')!);
     const input = panel.querySelector<HTMLInputElement>('input[aria-label^="New end of Take 1"]')!;
     expect(document.activeElement).toBe(input);
-    expect(input.value).toBe(formatPosition(4 * 384));
+    expect(input.value).toBe(formatPosition(start + 4 * 384));
     typeInto(input, '9.1.1');
     key(input, 'keydown', { key: 'Enter' });
-    expect(panel.querySelector('[role="alert"]')!.textContent).toBe(`Type a bar.beat.step position after 1.1.1 and before ${formatPosition(4 * 384)}.`);
+    expect(panel.querySelector('[role="alert"]')!.textContent).toBe(`Type a bar.beat.step after ${formatPosition(start)} and before ${formatPosition(start + 4 * 384)}.`);
     expect(perfById(id)!.endTick).toBe(start + 4 * 384);
-    typeInto(input, '1.4');
+    typeInto(input, '3.4');
     key(input, 'keydown', { key: 'Enter' });
     expect(perfById(id)!.endTick).toBe(start + 288);
     // The knob move (tick 300) is after the new end (tick 288); the note's release (tick 200) is kept.
     expect(perfById(id)!.events.map((e) => e.type)).toEqual(['launch', 'noteOn', 'macro', 'noteOff']);
-    expect(panel.textContent).toContain('Ends at 1.4.1');
+    expect(panel.textContent).toContain('Ends at 3.4.1');
     expect(panel.querySelector('input')).toBeNull();
 
     // Ending at the first action leaves none: keyboard focus stays in the take, on its end control.
-    click(byLabel(`End Take 1 at ${formatPosition(10)}`, table()));
+    click(byLabel(`End Take 1 at ${formatPosition(start + 10)}`, table()));
     expect(perfById(id)!.events).toEqual([]);
     expect(perfById(id)!.endTick).toBe(start + 10);
     expect(document.activeElement?.textContent).toBe('End earlier…');
@@ -914,6 +932,7 @@ describe('Performances', () => {
     for (let i = 0; i < 250; i++) events.push({ t: start + i * 6, type: 'macro', trackId: 't1', macro: 'space', value: (i % 100) / 100 });
     const id = addTake(events, { startTick: start, endTick: start + 8 * 384 });
     await setup();
+    openTakes();
     click(byLabel('Show the events of Take 1'));
     const rows = () => document.querySelectorAll('[role="table"] [role="rowgroup"] [role="row"]').length;
     expect(rows()).toBe(EVENT_PAGE);

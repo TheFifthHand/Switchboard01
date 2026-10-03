@@ -336,18 +336,33 @@ export function cardEdge(width: number): number {
   return Math.min(40, Math.max(14, width * 0.25));
 }
 
+/** The insertion slot a scene card has opened (its blocks after it are drawn shifted right by `width`). */
+export interface OpenSlot {
+  width: number;
+  /**
+   * Which way the pointer was going when the slot opened (1 = right, -1 =
+   * left, 0 = not known): the way it came to rest on the boundary.
+   */
+  dir: -1 | 0 | 1;
+}
+
 /**
  * Where a scene card being dragged at lane position `x` would go. Blocks are
- * given at their resting positions; while an insertion slot of `slotWidth`
- * is open at a gap, the blocks after it are drawn shifted right by that much.
+ * given at their resting positions; while an insertion slot is open at a gap
+ * (`slot`), the blocks after it are drawn shifted right by its width.
  *
- * The current target is kept while the pointer stays over what it shows (the
- * open slot and the edges next to it, or the middle of the layer target), so
- * opening or closing the slot never flips the target back and forth. Past
- * that, the target comes from the resting layout: the middle of a block
- * layers into it, its ends insert before or after it.
+ * Away from a target the answer comes from the resting layout: the middle of
+ * a block layers into it, its ends (cardEdge) insert before or after it. The
+ * current target is kept while the pointer stays over what it shows, so
+ * opening or closing the slot never flips the target back and forth:
+ * - a layer target: the middle of its block;
+ * - an insertion with its slot open: only the edge zones next to the boundary
+ *   and the slot itself. If the pointer goes on the way it came (`moving` is
+ *   the slot's `dir`) past the next block's resting edge zone, it was passing
+ *   through, not dropping: the slot closes and the resting layout decides (the
+ *   middle of that block layers into it).
  */
-export function cardTarget(blocks: readonly CardBlock[], x: number, current: CardTarget, slotWidth: number): CardTarget {
+export function cardTarget(blocks: readonly CardBlock[], x: number, current: CardTarget, slot: OpenSlot | null = null, moving: -1 | 0 | 1 = 0): CardTarget {
   const n = blocks.length;
   if (n === 0) return { kind: 'insert', gap: 0 };
   const end = blocks[n - 1].x + blocks[n - 1].width;
@@ -356,12 +371,23 @@ export function cardTarget(blocks: readonly CardBlock[], x: number, current: Car
     const left = g < n ? blocks[g].x : end;
     const before = g > 0 ? cardEdge(blocks[g - 1].width) : Infinity;
     const after = g < n ? cardEdge(blocks[g].width) : Infinity;
-    if (x >= left - before && x <= left + slotWidth + after) return current;
+    const width = slot ? Math.max(0, slot.width) : 0;
+    const passedRight = !!slot && slot.dir > 0 && moving > 0 && x > left + after;
+    const passedLeft = !!slot && slot.dir < 0 && moving < 0 && x < left - before;
+    if (!passedRight && !passedLeft && x >= left - before && x <= left + Math.max(width, after)) return current;
   } else if (current.kind === 'layer' && current.index >= 0 && current.index < n) {
     const b = blocks[current.index];
     const e = cardEdge(b.width);
     if (b.layerable && x >= b.x + e && x <= b.x + b.width - e) return current;
   }
+  return restingCardTarget(blocks, x);
+}
+
+/** Where a card at lane position `x` goes on the resting layout (no slot open). */
+export function restingCardTarget(blocks: readonly CardBlock[], x: number): CardTarget {
+  const n = blocks.length;
+  if (n === 0) return { kind: 'insert', gap: 0 };
+  const end = blocks[n - 1].x + blocks[n - 1].width;
   if (x < 0) return { kind: 'insert', gap: 0 };
   if (x >= end) return { kind: 'insert', gap: n };
   for (let i = 0; i < n; i++) {
@@ -374,6 +400,56 @@ export function cardTarget(blocks: readonly CardBlock[], x: number, current: Car
     return { kind: 'layer', index: i };
   }
   return { kind: 'insert', gap: n };
+}
+
+/* ------------------------------------------------------------------ */
+/* Resting on a boundary: when the insertion slot opens                */
+/* ------------------------------------------------------------------ */
+
+/** A pointer that moves more than this (px) since it last came to rest is moving again. */
+export const DWELL_SLOP_PX = 3;
+/** A pointer faster than this (px per ms) between two samples is moving, however short the step. */
+export const DWELL_MAX_SPEED = 0.1;
+/** Horizontal travel (px) that sets which way the pointer is going. */
+const DIR_STEP_PX = 2;
+
+/**
+ * Whether a dragged scene card has come to rest: the insertion slot opens
+ * only after it rests on a boundary for SLOT_DELAY_MS. Each pointer sample
+ * (lane x, client y, time in ms) either keeps the rest going or starts it
+ * again: moving more than DWELL_SLOP_PX from where it came to rest, or faster
+ * than DWELL_MAX_SPEED between two samples, restarts it. Also tracks which
+ * way the pointer is going (`dir`, from the last DIR_STEP_PX of travel).
+ */
+export class Dwell {
+  private anchor: { x: number; y: number; t: number } | null = null;
+  private last: { x: number; t: number } | null = null;
+  private dirX = NaN;
+  /** Which way the pointer goes: 1 right, -1 left, 0 not yet known. */
+  dir: -1 | 0 | 1 = 0;
+
+  /** Take a sample; true when it starts a new rest (the pointer moved). */
+  sample(x: number, y: number, t: number): boolean {
+    const last = this.last;
+    this.last = { x, t };
+    if (!Number.isFinite(this.dirX)) this.dirX = x;
+    else if (Math.abs(x - this.dirX) >= DIR_STEP_PX) {
+      this.dir = x > this.dirX ? 1 : -1;
+      this.dirX = x;
+    }
+    const a = this.anchor;
+    const fast = !!last && t > last.t && Math.abs(x - last.x) / (t - last.t) > DWELL_MAX_SPEED;
+    if (!a || fast || Math.abs(x - a.x) > DWELL_SLOP_PX || Math.abs(y - a.y) > DWELL_SLOP_PX) {
+      this.anchor = { x, y, t };
+      return true;
+    }
+    return false;
+  }
+
+  /** When the current rest began (ms), or null before the first sample. */
+  get since(): number | null {
+    return this.anchor?.t ?? null;
+  }
 }
 
 export function sameCardTarget(a: CardTarget, b: CardTarget): boolean {

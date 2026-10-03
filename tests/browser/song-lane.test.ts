@@ -335,10 +335,15 @@ describe('length, split and join', () => {
     await actFrame();
     expect(getComputedStyle(liveLen).display).toBe('none');
     expect(blockEl(id).querySelector('[data-testid="block-length"]')!.textContent).toBe('20 bars');
-    // The ruler numbers block 2's first bar after the longer Intro.
+    // The ruler marks block 2's first bar after the longer Intro (a block-start line at its left edge), and its
+    // numbers stay on a regular bar step.
     await actFrame();
     const ruler = document.querySelector('[data-testid="song-ruler"]')!;
-    expect([...ruler.querySelectorAll('span')].map((s) => s.textContent)).toContain('21');
+    const starts = [...ruler.querySelectorAll<HTMLElement>('[data-start]')].map((m) => Math.round(parseFloat(m.style.left)));
+    expect(starts).toContain(Math.round(placedX(ids[1])));
+    const nums = [...ruler.querySelectorAll<HTMLElement>('[data-label]')].map((m) => Number(m.textContent));
+    expect(nums[0]).toBe(1);
+    expect(nums.every((n) => (n - 1) % (nums[1] - 1) === 0)).toBe(true);
     expect(document.querySelector('[data-testid="song-length"]')!.textContent).toContain('84 bars');
     act(() => session.undo());
     expect(blocks()[0].repeats).toBe(2);
@@ -755,12 +760,12 @@ describe('real input (the browser own pointer events and pointer capture)', () =
 /* The fix round: scale, follow, lock, second pointer, feedback        */
 /* ------------------------------------------------------------------ */
 
-const scroller = () => lane().children[1] as HTMLElement;
+const scroller = () => document.querySelector<HTMLElement>('[data-testid="lane-scroller"]')!;
 /** Web Animations started by the lane (not CSS transitions such as a box-shadow fading). */
 const scriptAnimations = (el: Element) => el.getAnimations().filter((a) => !(a instanceof CSSTransition) && !(a instanceof CSSAnimation));
 const widthOf = (id: Id) => parseFloat(blockEl(id).style.width);
 const notice = () => runtimeStore.getState().notice;
-const laneButton = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Song lane view"] button')].find((b) => (b.getAttribute('aria-label') ?? b.textContent) === name)!;
+const laneButton = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Song lane view"] button')].find((b) => (b.getAttribute('aria-label') ?? b.textContent ?? '').startsWith(name))!;
 
 describe('the scale stays put while editing', () => {
   it('a drop that makes the song longer keeps every block its size; the dropped block stays under the pointer and the lane scrolls instead', async () => {
@@ -833,12 +838,27 @@ describe('the scale stays put while editing', () => {
     const b2 = blockEl(ids[2]).getBoundingClientRect();
     expect(b2.width).toBeGreaterThan(b.width);
     expect(Math.abs(b2.left + b2.width * fracBefore - px)).toBeLessThan(2);
-    // A plain wheel only scrolls: the scale stays.
+    // A plain wheel only scrolls: the page first while it can (this test page is taller than its window),
+    // then the lane sideways, as the zoomed lane is wider than its view. The scale stays.
     const w = widthOf(ids[2]);
+    expect(scroller().scrollWidth).toBeGreaterThan(scroller().clientWidth);
+    const page = document.scrollingElement!;
+    const pageCanScroll = page.scrollHeight > page.clientHeight + 1;
+    if (pageCanScroll) {
+      page.scrollTop = 0;
+      expect(wheel({ deltaY: 300 }).defaultPrevented).toBe(false);
+      page.scrollTop = page.scrollHeight;
+    }
+    act(() => {
+      scroller().scrollLeft = 0;
+      scroller().dispatchEvent(new Event('scroll'));
+    });
+    const left0 = scroller().scrollLeft;
     const plain = wheel({ deltaY: 300 });
-    expect(plain.defaultPrevented).toBe(false);
-    await settle(100);
+    expect(plain.defaultPrevented).toBe(true);
+    await settle(260);
     expect(widthOf(ids[2])).toBe(w);
+    expect(scroller().scrollLeft).toBeGreaterThan(left0);
   });
 
   it('a window resize fits the song again; an edit never does', async () => {

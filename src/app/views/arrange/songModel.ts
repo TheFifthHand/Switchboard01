@@ -4,8 +4,8 @@
  * export read, so a cell that says "plays" is a part that sounds.
  */
 import { blockBars, blockParts, sceneRow } from '../../../project/arrangement';
-import { MAX_BLOCK_REPEATS, type ArrangementBlock, type Id, type Project } from '../../../project/types';
-import { layerChanges, type LayerMode } from '../../../state/commands/arrangement';
+import { BLOCK_MOVE_KINDS, MAX_BLOCK_REPEATS, type ArrangementBlock, type BlockMoveKind, type Id, type Project } from '../../../project/types';
+import { BLOCK_MOVE_NAMES, layerChanges, type LayerMode } from '../../../state/commands/arrangement';
 
 /**
  * How one part sounds in one block:
@@ -15,6 +15,17 @@ import { layerChanges, type LayerMode } from '../../../state/commands/arrangemen
  * - 'empty': follows the block's scene, which has no clip for this part (silent).
  */
 export type CellKind = 'scene' | 'layer' | 'off' | 'empty';
+
+/**
+ * Why a part is not heard anywhere in the song right now, whatever its cells
+ * say: muted, or another part is soloed. Its row is dimmed and its cells say so.
+ */
+export type Silenced = 'muted' | 'notSoloed' | null;
+
+/** A part's Mute / Solo state in words, as Play and Mix say it (null: plays normally). */
+export function partStatus(t: { mute: boolean; solo: boolean }, anySolo: boolean): 'Muted' | 'Solo' | 'Not soloed' | null {
+  return t.mute ? 'Muted' : anySolo && !t.solo ? 'Not soloed' : t.solo ? 'Solo' : null;
+}
 
 export interface CellView {
   trackId: Id;
@@ -26,6 +37,10 @@ export interface CellView {
   fromScene: string | null;
   /** The block's own scene has a clip for this part. */
   sceneHasClip: boolean;
+  /** Scene row of the clip that plays here (its scene's, or the layered one), or null when silent. */
+  clipRow: number | null;
+  /** The part is muted, or another part is soloed. */
+  silenced: Silenced;
 }
 
 export interface BlockView {
@@ -46,6 +61,8 @@ export interface BlockView {
   cells: CellView[];
   /** Parts that differ from the block's scene (layered or switched off). */
   changes: number;
+  /** The song moves over this block, in menu order (Fade in, Fade out, Filter rise, Echo throw). */
+  moves: BlockMoveKind[];
 }
 
 export function blockView(p: Project, b: ArrangementBlock, index: number): BlockView {
@@ -54,19 +71,23 @@ export function blockView(p: Project, b: ArrangementBlock, index: number): Block
   const missing = !scene;
   const sceneName = scene ? scene.name : 'Missing scene';
   const parts = missing ? null : blockParts(p, b);
+  const anySolo = p.tracks.some((t) => t.solo);
   const cells: CellView[] = p.tracks.map((t, i) => {
     const sceneHasClip = row >= 0 && !!t.clips[row];
+    const silenced: Silenced = t.mute ? 'muted' : anySolo && !t.solo ? 'notSoloed' : null;
+    const base = { trackId: t.id, partName: t.name, sceneHasClip, silenced };
     const part = parts?.[i];
-    if (!part) return { trackId: t.id, partName: t.name, kind: 'empty', clipName: null, fromScene: null, sceneHasClip };
-    if (part.kind === 'off') return { trackId: t.id, partName: t.name, kind: 'off', clipName: null, fromScene: null, sceneHasClip };
+    if (!part) return { ...base, kind: 'empty', clipName: null, fromScene: null, clipRow: null };
+    if (part.kind === 'off') return { ...base, kind: 'off', clipName: null, fromScene: null, clipRow: null };
     if (part.kind === 'layer') {
       const from = p.scenes[part.row ?? -1]?.name ?? 'another scene';
-      return { trackId: t.id, partName: t.name, kind: 'layer', clipName: part.clip?.name ?? null, fromScene: from, sceneHasClip };
+      return { ...base, kind: 'layer', clipName: part.clip?.name ?? null, fromScene: from, clipRow: part.clip ? part.row : null };
     }
-    return { trackId: t.id, partName: t.name, kind: part.clip ? 'scene' : 'empty', clipName: part.clip?.name ?? null, fromScene: null, sceneHasClip };
+    return { ...base, kind: part.clip ? 'scene' : 'empty', clipName: part.clip?.name ?? null, fromScene: null, clipRow: part.clip ? part.row : null };
   });
   const passBars = missing ? 0 : blockBars(p, b);
   const repeats = Math.min(MAX_BLOCK_REPEATS, Math.max(1, Math.round(b.repeats) || 1));
+  const kinds = new Set((b.moves ?? []).map((m) => m.kind));
   return {
     id: b.id,
     index,
@@ -81,7 +102,15 @@ export function blockView(p: Project, b: ArrangementBlock, index: number): Block
     missing,
     cells,
     changes: cells.filter((c) => c.kind === 'layer' || c.kind === 'off').length,
+    moves: BLOCK_MOVE_KINDS.filter((k) => kinds.has(k)),
   };
+}
+
+/** "Fade in and Filter rise": the moves of a block in words. */
+export function movesText(moves: readonly BlockMoveKind[]): string {
+  const names = moves.map((k) => BLOCK_MOVE_NAMES[k]);
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
 export function laneBlocks(p: Project): BlockView[] {
@@ -123,7 +152,8 @@ export function blockLabel(v: BlockView, count: number, opts: { current?: boolea
   const named = v.label ? `${v.label} (scene ${v.sceneName})` : v.name;
   const changes = v.changes ? `, ${v.changes === 1 ? '1 part changed' : `${v.changes} parts changed`}` : '';
   const now = opts.current ? ', playing now' : opts.next ? ', plays next' : '';
-  return `Block ${v.index + 1} of ${count}: ${named}, ${barsText(v.passBars)} × ${v.repeats} = ${barsText(v.totalBars)}${changes}${now}${opts.selected ? ', selected' : ''}`;
+  const moves = v.moves.length ? `, moves: ${movesText(v.moves)}` : '';
+  return `Block ${v.index + 1} of ${count}: ${named}, ${barsText(v.passBars)} × ${v.repeats} = ${barsText(v.totalBars)}${changes}${moves}${now}${opts.selected ? ', selected' : ''}`;
 }
 
 /** What a cell says, in words (its accessible name and tooltip). */
@@ -140,8 +170,13 @@ export function cellState(c: CellView): string {
   }
 }
 
-export function cellLabel(v: BlockView, c: CellView): string {
-  return `${c.partName} in ${v.name} (block ${v.index + 1}): ${cellState(c)}`;
+/** " (muted)" / " (not soloed)": why a cell that plays is not heard. */
+export function silencedText(c: Pick<CellView, 'silenced'>): string {
+  return c.silenced === 'muted' ? ' (muted)' : c.silenced === 'notSoloed' ? ' (not soloed)' : '';
+}
+
+export function cellLabel(v: BlockView, c: CellView, rec = false): string {
+  return `${c.partName} in ${v.name} (block ${v.index + 1}): ${cellState(c)}${silencedText(c)}${rec ? ', recording notes into this clip' : ''}`;
 }
 
 /** Whether a cell counts as "playing" (aria-pressed). */

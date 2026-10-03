@@ -137,14 +137,25 @@ export function loopTargetName(names: readonly string[], span: LoopSpan): string
   return span.from === span.to ? loopName(names, span) : `blocks ${span.from + 1}–${span.to + 1}`;
 }
 
-/** The Loop button's name and tooltip for `target`, with the loop that is on now. */
-export function loopButtonText(names: readonly string[], current: LoopSpan | null, target: LoopSpan | null): { label: string; tip: string } {
-  if (!target) return { label: 'Loop', tip: 'Add scene blocks first.' };
+/**
+ * The Loop button for `target`, with the loop that is on now: its words and
+ * whether it shows pressed. Pressed only when it names the loop that is on
+ * (pressing then plays the song through); with the loop elsewhere it offers
+ * to move the loop ("Move loop to Groove (block 2)"), unpressed.
+ */
+export function loopButtonText(names: readonly string[], current: LoopSpan | null, target: LoopSpan | null): { label: string; tip: string; verb: string; what: string; pressed: boolean } {
+  if (!target) return { label: 'Loop', tip: 'Add scene blocks first.', verb: 'Loop', what: '', pressed: false };
   const what = loopTargetName(names, target);
-  const label = `Loop ${what}`;
-  if (!current) return { label, tip: `Repeat ${what} while the song plays.` };
-  if (sameSpan(current, target)) return { label, tip: `Loop on: ${loopName(names, current)}. Press to play the song through.` };
-  return { label, tip: `Loop on: ${loopName(names, current)}. Press to move the loop to ${what}.` };
+  if (!current) return { label: `Loop ${what}`, tip: `Repeat ${what} while the song plays.`, verb: 'Loop', what, pressed: false };
+  if (sameSpan(current, target)) return { label: `Loop ${what}`, tip: `Loop on: ${loopName(names, current)}. Press to play the song through.`, verb: 'Loop', what, pressed: true };
+  return { label: `Move loop to ${what}`, tip: `Loop on: ${loopName(names, current)}. Press to loop ${what} instead.`, verb: 'Move loop to', what, pressed: false };
+}
+
+/** The loop's state chip: "Loop: Lift–Lift" ("Loop: Groove" for one block). */
+export function loopChipText(names: readonly string[], span: LoopSpan): string {
+  const a = names[span.from] ?? 'block';
+  const b = names[span.to] ?? 'block';
+  return span.from === span.to ? `Loop: ${a}` : `Loop: ${a}–${b}`;
 }
 
 /**
