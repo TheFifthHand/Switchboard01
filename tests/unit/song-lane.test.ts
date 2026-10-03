@@ -78,7 +78,9 @@ import {
 } from '../../src/app/views/arrange/songLayout';
 import { cubicBezier, easeSlide, easeSpring } from '../../src/app/views/arrange/laneMotion';
 import { LANE_SETTINGS_KEY, readFollow, writeFollow } from '../../src/app/views/arrange/laneSettings';
-import { blockLabel, blockView, cellLabel, cellTip, cellToast, cellToggle, laneBlocks, layerPreview, layerText, liveLengthText, partChoices, resizeText, timesText } from '../../src/app/views/arrange/songModel';
+import { blockLabel, blockView, cellLabel, cellTip, cellToast, cellToggle, compactName, laneBlocks, layerPreview, layerText, leftOutLaunches, liveLengthText, partChoices, resizeText, stretchText, timesText } from '../../src/app/views/arrange/songModel';
+import { getStarter } from '../../src/content/starters';
+import { makeSnapshot } from '../../src/time/snapshot';
 
 /* ------------------------------------------------------------------ */
 /* Geometry                                                            */
@@ -579,10 +581,10 @@ describe('scene card target', () => {
       t = cardTarget(blocks, x, t, open(1), moving);
       expect(t).toEqual({ kind: 'insert', gap: 1 });
     }
-    // With no known direction the slot holds across its whole width.
-    expect(cardTarget(blocks, 200 + S, { kind: 'insert', gap: 1 }, open(0), 1)).toEqual({ kind: 'insert', gap: 1 });
+    // Coming back towards the boundary (the other way), it holds across the slot's whole width.
+    expect(cardTarget(blocks, 200 + S, { kind: 'insert', gap: 1 }, open(-1), 1)).toEqual({ kind: 'insert', gap: 1 });
     // Past the slot (and the edge zones): the resting layout decides again.
-    expect(cardTarget(blocks, 200 + S + 2, { kind: 'insert', gap: 1 }, open(0), 0)).toEqual({ kind: 'layer', index: 1 });
+    expect(cardTarget(blocks, 200 + S + 2, { kind: 'insert', gap: 1 }, open(-1), 0)).toEqual({ kind: 'layer', index: 1 });
   });
 
   it('going on the way it came past the next block’s resting edge zone closes the slot: the middle of that block layers', () => {
@@ -593,6 +595,16 @@ describe('scene card target', () => {
     // From the right, the same to the left: past block 0's resting edge zone it layers into block 0.
     expect(cardTarget(blocks, 200 - e - 1, { kind: 'insert', gap: 1 }, open(-1), -1)).toEqual({ kind: 'layer', index: 0 });
     expect(cardTarget(blocks, 200 - e + 1, { kind: 'insert', gap: 1 }, open(-1), -1)).toEqual({ kind: 'insert', gap: 1 });
+  });
+
+  it('came straight up or down (no way across): leaving the edge zone either way passes through', () => {
+    // Right, into the middle of block 1 as it rests (the slot drawn open there): it layers into block 1.
+    expect(cardTarget(blocks, 200 + e + 1, { kind: 'insert', gap: 1 }, open(0), 1)).toEqual({ kind: 'layer', index: 1 });
+    // Left, into block 0.
+    expect(cardTarget(blocks, 200 - e - 1, { kind: 'insert', gap: 1 }, open(0), -1)).toEqual({ kind: 'layer', index: 0 });
+    // Still in the edge zones: the slot.
+    expect(cardTarget(blocks, 200 + e - 1, { kind: 'insert', gap: 1 }, open(0), 1)).toEqual({ kind: 'insert', gap: 1 });
+    expect(cardTarget(blocks, 200 - e + 1, { kind: 'insert', gap: 1 }, open(0), -1)).toEqual({ kind: 'insert', gap: 1 });
   });
 
   it('keeps layering while the pointer stays in the middle of the target', () => {
@@ -656,6 +668,28 @@ describe('resting on a boundary (Dwell)', () => {
     expect(d.dir).toBe(1);
     d.sample(4, 0, 40);
     expect(d.dir).toBe(-1);
+  });
+
+  it('knows which way it came from its net travel across (12 px), not from a wobble; straight up or down is neither', () => {
+    // From the left, then a 3 px wobble back at the boundary: it came from the left.
+    const d = new Dwell();
+    for (let x = 0; x <= 120; x += 8) d.sample(x, 200, x);
+    expect(d.netDir).toBe(1);
+    d.sample(117, 200, 200);
+    d.sample(116, 200, 220);
+    expect(d.dir).toBe(-1);
+    expect(d.netDir).toBe(1);
+    // Straight up from a card under the boundary, ending with a few pixels to the left.
+    const up = new Dwell();
+    for (let i = 0; i <= 20; i++) up.sample(305 - Math.round((3 * i) / 20), 400 - i * 13, i * 16);
+    expect(up.dir).toBe(-1);
+    expect(up.netDir).toBe(0);
+    // Across and then up: up wins (it came from below).
+    const turn = new Dwell();
+    for (let x = 0; x <= 60; x += 6) turn.sample(x, 300, x);
+    expect(turn.netDir).toBe(1);
+    for (let i = 1; i <= 10; i++) turn.sample(60, 300 - i * 8, 100 + i * 16);
+    expect(turn.netDir).toBe(0);
   });
 });
 
@@ -781,5 +815,62 @@ describe('part cells', () => {
     expect(v.missing).toBe(true);
     expect(v.totalBars).toBe(0);
     expect(blockLabel(v, 2)).toContain('no longer exists');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Compact names; what a take's song blocks left out                   */
+/* ------------------------------------------------------------------ */
+
+describe('a compact header names a helper block by its step first', () => {
+  it('"Lift · build 1/4" reads "1/4 Lift"; other names have no short form', () => {
+    expect(compactName('Lift · build 1/4')).toBe('1/4 Lift');
+    expect(compactName('Groove 2 · strip 3/3')).toBe('3/3 Groove 2');
+    expect(compactName('Lift · breakdown')).toBeNull();
+    expect(compactName('Intro')).toBeNull();
+  });
+});
+
+describe('song blocks from a take: launches too short to make a block', () => {
+  const BAR = 384;
+  function withTake(stretches: [number, number][]): { p: Project; id: Id } {
+    const base = getStarter('house')!.build();
+    const start = 2 * BAR;
+    let at = start;
+    const events = stretches.map(([row, bars]) => {
+      const e = { t: Math.max(start, at - 20), type: 'scene' as const, row, atTick: at };
+      at += Math.round(bars * BAR);
+      return e;
+    });
+    const perf = { id: 'take1', name: 'Take 1', createdAt: 1, startTick: start, endTick: at, snapshot: makeSnapshot(base, base.tracks.map((t) => ({ trackId: t.id, playing: null })), start), events };
+    return { p: { ...base, performances: [perf] }, id: 'take1' };
+  }
+
+  it('names the last launch that makes no block, with its length in beats', () => {
+    const { p, id } = withTake([
+      [0, 4],
+      [1, 8],
+      [2, 1.25],
+    ]);
+    const plan = cmd.takeToBlocks(p, id)!;
+    expect(plan.blocks.map((b) => b.sceneId)).toEqual([p.scenes[0].id, p.scenes[1].id]);
+    expect(leftOutLaunches(p, id, plan.blocks)).toEqual([{ name: 'Lift', ticks: 5 * 96 }]);
+    expect(stretchText(5 * 96)).toBe('5 beats');
+  });
+
+  it('nothing when every launch made a block (a scene launched again right after itself is the same block)', () => {
+    const { p, id } = withTake([
+      [0, 4],
+      [0, 4],
+      [3, 4],
+    ]);
+    const plan = cmd.takeToBlocks(p, id)!;
+    expect(leftOutLaunches(p, id, plan.blocks)).toEqual([]);
+  });
+
+  it('lengths read in beats under two bars, then in bars', () => {
+    expect(stretchText(96)).toBe('1 beat');
+    expect(stretchText(7 * 96)).toBe('7 beats');
+    expect(stretchText(2.5 * 384)).toBe('2.5 bars');
   });
 });

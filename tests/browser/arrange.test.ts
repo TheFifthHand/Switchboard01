@@ -476,7 +476,7 @@ describe('Song lane', () => {
     expect(head().getBoundingClientRect().left + 1).toBeGreaterThan(x0);
 
     // Blocks before the playhead move (Intro goes after Lift): it glides to its new place (about 150 ms) instead of jumping.
-    const contentLeft = () => document.querySelector<HTMLElement>('[data-testid="song-lane"] > div:nth-child(2) > div')!.getBoundingClientRect().left;
+    const contentLeft = () => document.querySelector<HTMLElement>('[data-testid="lane-scroller"] > div')!.getBoundingClientRect().left;
     const into = head().getBoundingClientRect().left - (contentLeft() + placedX(ids[2]));
     const shift = blockEl(ids[0]).getBoundingClientRect().width;
     act(() => blockEl(ids[0]).focus());

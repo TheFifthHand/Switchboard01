@@ -12,6 +12,7 @@ import { session } from '../../src/app/instance';
 import { auditionedScene } from '../../src/app/views/arrange/ScenePalette';
 import { TICKS_PER_BAR } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
+import { setView } from '../../src/state/uiStore';
 import { card, centre, clickAt, mouse, openApp, project, resetArrange, rt, sceneId, settle, teardownArrange } from './r4-arrange-helpers';
 
 beforeEach(resetArrange);
@@ -109,4 +110,30 @@ describe('hearing a scene from its card', () => {
       await mouse('mouseMoved', { x: 2, y: 2 });
     });
   }
+
+  it('goes on to the end of its pass in another view, then stops; back in Arrange nothing is stopped', async () => {
+    await openApp(1366, 768);
+    act(() => void cmd.setBpm(session.store, 240));
+    // Groove: 4 bars, 4 s at 240 BPM.
+    await press('Groove');
+    expect(auditionedScene()).toBe(sceneId('Groove'));
+    act(() => setView('play'));
+    await settle(200);
+    expect(document.querySelector('[data-testid="song-lane"]')).toBeNull();
+    expect(rt().playing).toBe(true);
+    // The pass ends while the user is in Play: it stops there, on its own.
+    for (let i = 0; i < 140 && rt().playing; i++) await settle(50);
+    expect(rt().playing).toBe(false);
+    expect(auditionedScene()).toBeNull();
+    // The user plays the pads in Play, then comes back to Arrange: nothing stops them.
+    await act(async () => {
+      await session.launchScene(0);
+    });
+    for (let i = 0; i < 40 && !rt().playing; i++) await settle(50);
+    act(() => setView('arrange'));
+    await settle(1500);
+    expect(rt().playing).toBe(true);
+    expect(rt().mode).toBe('live');
+    act(() => session.stop());
+  });
 });

@@ -275,7 +275,10 @@
   --rows: 8;
   --cells-pad: 4px;
   --track-h: calc(var(--head-h) + 2 * var(--cells-pad) + var(--rows) * var(--row-h) + (var(--rows) - 1) * var(--row-gap) + 2px);
-  --names-w: 146px;
+  /* The part names column: the names and their state; Mute and Solo appear over a row's right end on
+     hover or keyboard focus (always where there is no hover: a touch screen, wider). */
+  --names-w: 108px;
+  --names-open-w: 160px;
   /* Motion: blocks slide aside and settle into a slot with Web Animations (laneMotion.ts); these are for the rest. */
   --lane-ease: cubic-bezier(0.2, 0.8, 0.25, 1);
   --clip: #d2d7db;
@@ -291,14 +294,23 @@
   box-shadow: inset 0 1px 3px rgba(20, 24, 28, 0.16), 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
-/* Part names, beside the blocks (they do not scroll): name and state, Mute and Solo, the part's actions. */
-.names {
+/* Part names, beside the blocks (they do not scroll): name and state, Mute and Solo, the part's actions.
+   The slot keeps the lane's room; the column itself lies over it (and widens over the lane's edge). */
+.namesSlot {
   flex: none;
+  position: relative;
+  width: var(--names-w);
+}
+.names {
+  position: absolute;
+  top: calc(var(--ruler-h) + var(--head-h) + var(--cells-pad) + 1px);
+  left: 0;
+  z-index: 6;
   display: flex;
   flex-direction: column;
   gap: var(--row-gap);
   width: var(--names-w);
-  padding-top: calc(var(--ruler-h) + var(--head-h) + var(--cells-pad) + 1px);
+  border-radius: 0 6px 6px 0;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -315,7 +327,7 @@
   gap: 4px;
   width: var(--names-w);
   height: calc(var(--ruler-h) + var(--head-h));
-  padding: 1px 6px 3px 5px;
+  padding: 1px 3px 3px 3px;
 }
 .zoomRow {
   display: flex;
@@ -324,9 +336,9 @@
 }
 .zoomLevel {
   flex: 1;
-  min-width: 40px;
+  min-width: 0;
   height: 32px;
-  padding: 0 4px;
+  padding: 0 2px;
   margin: 0;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
@@ -357,9 +369,9 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   height: var(--row-h);
-  padding: 0 3px 0 4px;
+  padding: 0 2px 0 3px;
   /* Its height (the row height) decides how the name and its state are laid out. */
   container: partrow / size;
 }
@@ -460,6 +472,40 @@
   background: transparent;
   color: var(--ink-3);
   cursor: pointer;
+}
+/* A 32 x 32 hit area whatever the row height (a short row draws a shorter key). */
+.rowToggle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 32px;
+  height: 32px;
+  transform: translate(-50%, -50%);
+}
+/* The column is the names and their state. Hovered (a finger: tapped) or with keyboard focus, it widens
+   over the lane's edge (the lane does not move), and the part under the pointer (or with focus) shows its
+   Mute and Solo there. One row's keys at a time: their 32 x 32 hit areas never meet another's. A part's
+   menu (its name) has Mute and Solo too. */
+.rowToggle {
+  display: none;
+}
+.names:hover,
+.names:focus-within {
+  width: var(--names-open-w);
+  background: var(--surface-lo);
+  box-shadow: 6px 0 12px -6px rgba(20, 24, 28, 0.28);
+}
+.nameRow:hover .rowToggle,
+.nameRow:focus-within .rowToggle,
+.nameRow[data-keys] .rowToggle {
+  display: grid;
+}
+/* Above its neighbours, so its keys' hit areas reach over their edges. */
+.nameRow:hover,
+.nameRow:focus-within,
+.nameRow[data-keys] {
+  z-index: 1;
 }
 .rowToggle:hover {
   border-color: var(--line);
@@ -997,12 +1043,43 @@
    actions (32 px keys) appear on hover, on keyboard focus and while its menu is open, over the right end
    of the header (right-click and Enter open the menu too). The scissors give way (Split in half is in
    the menu); below about 76 px only the actions key shows. */
+/* A block a little wider than that (to 150 px): the whole name and length at rest, ▶ and ⋯ over the
+   header's right end on hover, focus or while its menu is open (32 px keys would leave the name a word). */
+@container (min-width: 110px) and (max-width: 149.98px) {
+  .hbtn {
+    position: absolute;
+    top: 3px;
+    right: 1px;
+    display: none;
+    width: 32px;
+    height: 32px;
+    border-color: var(--line);
+    background: var(--shell-hi);
+    box-shadow: var(--shadow-raised);
+    z-index: 4;
+  }
+  .hbtn[data-play] {
+    right: 34px;
+  }
+  .block:hover .hbtn,
+  .block:focus-within .hbtn,
+  .hbtn[aria-expanded='true'] {
+    display: grid;
+  }
+}
 @container (max-width: 109.98px) {
   .bhead {
     padding: 0 1px 0 5px;
   }
   .name {
     font-size: var(--fs-sm);
+  }
+  /* A helper's blocks: the step first ("1/4 Lift"), so neighbours stay told apart. */
+  .name[data-short] .titleFull {
+    display: none;
+  }
+  .name[data-short]::before {
+    content: attr(data-short);
   }
   .len,
   .calc,
@@ -1827,10 +1904,11 @@ button.cell[data-kind='empty']:hover {
   /* 196 px, giving way to 188 px (then the cards scroll) so the hint home beside them keeps its room. */
   flex: 0 1 196px;
   min-width: 188px;
+  position: relative;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   height: 44px;
-  padding: 0 2px 0 4px;
+  padding: 0 2px 0 9px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: linear-gradient(180deg, var(--shell-hi), var(--shell));
@@ -1843,8 +1921,25 @@ button.cell[data-kind='empty']:hover {
   -webkit-touch-callout: none;
   transition: scale 180ms var(--lane-ease);
 }
+/* The grip: two columns of dots at the left edge, as on anything that can be picked up and dragged. */
+.card::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 6px;
+  height: 16px;
+  margin-top: -8px;
+  background-image: radial-gradient(circle, var(--ink-3) 0.9px, transparent 1.3px);
+  background-size: 3px 4px;
+  opacity: 0.55;
+  pointer-events: none;
+}
 .card:hover {
   border-color: var(--line-strong);
+}
+.card:hover::before {
+  opacity: 0.9;
 }
 .card[data-pressing] {
   scale: 0.97;
@@ -1913,7 +2008,7 @@ button.cell[data-kind='empty']:hover {
   flex: 1;
   flex-direction: column;
   min-width: 0;
-  padding-left: 3px;
+  padding-left: 1px;
 }
 .cardName {
   overflow: hidden;
@@ -2141,8 +2236,5 @@ button.cell[data-kind='empty']:hover {
   }
   .hint {
     text-align: left;
-  }
-  .lane {
-    --names-w: 140px;
   }
 }

@@ -29,6 +29,7 @@ import * as cmd from '../../src/state/commands';
 import { setGuideDone, setKeyboardCollapsed, setTipsEnabled, setUiMode, setView } from '../../src/state/uiStore';
 import { makeSnapshot } from '../../src/time/snapshot';
 import { actFrame, cleanup, key, mount, wait } from './ui-harness';
+import { mouse } from './r4-uikit-input';
 
 let boot: BootInfo;
 
@@ -115,10 +116,13 @@ describe('Arrange layout', () => {
       const names = [...laneEl().querySelectorAll<HTMLElement>('[data-name-row]')].filter((d) => d.querySelector('[class*="partNameText"]')?.textContent === 'Drums');
       expect(names.length).toBe(1);
       expect(Math.abs(names[0].getBoundingClientRect().top - cells[0].getBoundingClientRect().top)).toBeLessThan(2);
-      // Each part row has its Mute and Solo keys, 32 px wide.
+      // Each part row has its Mute and Solo keys, 32 px wide (shown while the row has focus or the pointer).
+      act(() => names[0].querySelector<HTMLElement>('[aria-haspopup="menu"]')!.focus());
+      await settle(30);
       for (const k of names[0].querySelectorAll<HTMLElement>('button[aria-pressed]')) expect(k.getBoundingClientRect().width).toBeGreaterThanOrEqual(32);
+      act(() => (document.activeElement as HTMLElement | null)?.blur());
       // The blocks are inside the lane, which scrolls by itself when the song is longer than it.
-      const scroller = blockEls()[0].closest<HTMLElement>('[data-testid="song-lane"] > div:nth-child(2)')!;
+      const scroller = blockEls()[0].closest<HTMLElement>('[data-testid="lane-scroller"]')!;
       const last = blockEls()[blockEls().length - 1];
       expect(scroller.scrollWidth).toBeGreaterThanOrEqual(Math.floor(last.getBoundingClientRect().right - scroller.getBoundingClientRect().left + scroller.scrollLeft) - 1);
       expect(scroller.getBoundingClientRect().right).toBeLessThanOrEqual(panel.right);
@@ -135,8 +139,12 @@ describe('Arrange layout', () => {
         expect(more.right).toBeLessThanOrEqual(b0.getBoundingClientRect().right + 1);
         act(() => b0.blur());
       } else {
+        // From 110 px the keys are 32 px (under 150 px they show on hover and focus).
+        act(() => b0.focus());
+        await settle();
         const play = b0.querySelector<HTMLElement>('[aria-label^="Play song from block 1"]')!;
         expect(play.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
+        act(() => b0.blur());
       }
       const wide = blockEls()[1];
       if (wide.getBoundingClientRect().width >= 110) {
@@ -151,7 +159,9 @@ describe('Arrange layout', () => {
       expect(split.getBoundingClientRect().width).toBeGreaterThanOrEqual(24);
       expect(split.getBoundingClientRect().height).toBeGreaterThanOrEqual(24);
       act(() => wide.blur());
-      // Out of the layout otherwise (nothing invisible to click, or for the hint chip to avoid).
+      // Out of the layout otherwise (nothing invisible to click, or for the hint chip to avoid); the pointer away.
+      await mouse('mouseMoved', { x: 2, y: 2 });
+      await settle(30);
       expect(split.getBoundingClientRect().width).toBe(0);
       // The lane's view tools (Follow, zoom, Fit song) are on screen, in the lane's corner.
       for (const name of ['Follow playhead', 'Zoom out', 'Zoom in', 'Fit song']) {
@@ -272,7 +282,7 @@ describe('Arrange layout', () => {
       for (let i = 0; i < 40; i++) cmd.addBlock(session.store, session.store.getState().scenes[i % 4].id, undefined, 4);
     });
     await settle(300);
-    const scroller = laneEl().children[1] as HTMLElement;
+    const scroller = laneEl().querySelector<HTMLElement>('[data-testid="lane-scroller"]')!;
     expect(scroller.scrollWidth).toBeGreaterThan(scroller.clientWidth);
     expect(document.scrollingElement!.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
     const blocks = blockEls();

@@ -76,7 +76,7 @@ const trackId = (name: string) => project().tracks.find((t) => t.name === name)!
 const blockEl = (id: Id) => document.querySelector<HTMLElement>(`[data-block-id="${id}"]`)!;
 const cellEl = (id: Id, track: Id) => blockEl(id).querySelector<HTMLElement>(`[data-cell][data-track="${track}"]`)!;
 const lane = () => document.querySelector<HTMLElement>('[data-testid="song-lane"]')!;
-const scroller = () => lane().children[1] as HTMLElement;
+const scroller = () => lane().querySelector<HTMLElement>('[data-testid="lane-scroller"]')!;
 /** On a block's name, near its start (a compact block's ▶ and ⋯ appear over the right of its header on hover). */
 const nameAt = (id: Id) => {
   const r = blockEl(id).querySelector<HTMLElement>('[class*="name"]')!.getBoundingClientRect();

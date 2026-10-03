@@ -251,6 +251,7 @@ export class LaneGestures {
   /** Blocks that just landed: they settle from where they were dropped. */
   private settle: { from: Map<Id, number>; tries: number } | null = null;
   private slotTimer = 0;
+  private slotRaf = 0;
   private badge: { side: string; shift: number } | null = null;
   /** Where the lifted copy was last put (view coordinates), to write only changes. */
   private cloneAt: { el: HTMLElement | null; x: number } = { el: null, x: NaN };
@@ -502,11 +503,17 @@ export class LaneGestures {
     this.begin({ ...this.origin(e), kind: 'edgePress', captureEl: el, id, down: e });
   }
 
-  /** Pointer down on a scene card in the palette (a finger: it lifts once it is held). */
+  /**
+   * Pointer down on a scene card in the palette. As on a block: with a mouse
+   * or pen its keys (▶, +, ⋯: [data-drag-ok]) stay keys for a click and move
+   * the card once the press becomes a drag; a finger held anywhere on the card
+   * lifts it (a quick tap still presses the key under it).
+   */
   pressCard(e: PointerEvent, sceneId: Id, el: HTMLElement): void {
     if (!this.canStart(e)) return;
     const t = e.target as Element | null;
-    if (t?.closest('button, input, a')) return;
+    if (t?.closest('[data-no-drag], input, a')) return;
+    if (t?.closest('button') && e.pointerType !== 'touch' && !t.closest('[data-drag-ok]')) return;
     this.begin({ ...this.origin(e), kind: 'cardPress', captureEl: el, id: sceneId, down: e });
   }
 
@@ -1034,11 +1041,23 @@ export class LaneGestures {
     if (next.kind !== 'insert' || g.open) {
       window.clearTimeout(this.slotTimer);
       this.slotTimer = 0;
-    } else if (moved || restarted || !this.slotTimer) {
+      cancelAnimationFrame(this.slotRaf);
+      this.slotRaf = 0;
+    } else if (moved || restarted || (!this.slotTimer && !this.slotRaf)) {
       window.clearTimeout(this.slotTimer);
+      cancelAnimationFrame(this.slotRaf);
+      this.slotRaf = 0;
       this.slotTimer = window.setTimeout(() => {
         this.slotTimer = 0;
-        this.openSlot(g);
+        // Not before the pointer moves queued meanwhile are heard (after a busy moment the timer can fire
+        // first): in the next frame, once they have been (a move among them starts the rest again and
+        // cancels this), and only if the pointer has really rested that long.
+        this.slotRaf = requestAnimationFrame(() => {
+          this.slotRaf = 0;
+          const since = g.dwell.since;
+          if (since === null || performance.now() - since < SLOT_DELAY_MS - 1) return;
+          this.openSlot(g);
+        });
       }, SLOT_DELAY_MS);
     }
     if (changed) {
@@ -1065,7 +1084,7 @@ export class LaneGestures {
   private openSlot(g: CardDrag): void {
     if (this.g !== g || g.target.kind !== 'insert' || g.open || g.outside) return;
     g.open = true;
-    g.slotDir = g.dwell.dir;
+    g.slotDir = g.dwell.netDir;
     this.preview(g);
   }
 
@@ -1306,6 +1325,8 @@ export class LaneGestures {
     this.g = null;
     window.clearTimeout(this.slotTimer);
     this.slotTimer = 0;
+    cancelAnimationFrame(this.slotRaf);
+    this.slotRaf = 0;
     this.stopHold();
     if (this.touchOwned) {
       this.touchOwned = false;

@@ -152,7 +152,7 @@ describe('touch', () => {
     session.store.clearHistory();
     await setup();
     const ids = blockIds();
-    const scroller = lane().children[1] as HTMLElement;
+    const scroller = lane().querySelector<HTMLElement>('[data-testid="lane-scroller"]')!;
     expect(scroller.scrollWidth).toBeGreaterThan(scroller.clientWidth + 200);
     expect(scroller.scrollLeft).toBe(0);
     let carried = false;

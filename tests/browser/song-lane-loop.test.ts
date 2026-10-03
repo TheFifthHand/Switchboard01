@@ -398,7 +398,10 @@ describe('the block menu', () => {
         const t = menuItem(text).querySelector<HTMLElement>('[class*="itemText"]')!;
         expect(t.scrollWidth, `${text} is cut off`).toBeLessThanOrEqual(t.clientWidth + 1);
       }
-      // Every list keeps the menu's place and size.
+      // Every list keeps the menu's place and size (measured once its opening animation has finished).
+      await act(async () => {
+        await Promise.all(m.getAnimations({ subtree: true }).map((x) => x.finished.catch(() => undefined)));
+      });
       const at = rect();
       for (const list of ['Parts in this block…', 'Scenes and clips…', 'Shape this block…', 'Loop…', 'Copy, cut, move…']) {
         act(() => menuItem(list).click());

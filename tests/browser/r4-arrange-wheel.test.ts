@@ -116,5 +116,22 @@ describe('the mouse wheel over the lane', () => {
     await settle(250);
     expect(sc.scrollLeft).toBeLessThan(150);
     expect(page.scrollTop).toBe(0);
+    // At the bottom of the page (the lane's lower edge still in view under the sticky transport), a wheel
+    // down over the lane has nowhere to take the page: it scrolls the lane on.
+    sc.scrollLeft = 0;
+    page.scrollTop = page.scrollHeight;
+    await settle(120);
+    const bottom = page.scrollTop;
+    const t = document.querySelector<HTMLElement>('header[aria-label="Transport"]')!.getBoundingClientRect();
+    const v = sc.getBoundingClientRect();
+    const y = (Math.max(t.bottom, v.top) + v.bottom) / 2;
+    const at = { x: v.left + v.width / 2, y };
+    expect(v.bottom - Math.max(t.bottom, v.top)).toBeGreaterThan(8);
+    expect(sc.contains(document.elementFromPoint(at.x, at.y))).toBe(true);
+    await wheelAt(at, 100);
+    await wheelAt(at, 100);
+    await settle(250);
+    expect(sc.scrollLeft).toBeGreaterThan(100);
+    expect(page.scrollTop).toBe(bottom);
   });
 });

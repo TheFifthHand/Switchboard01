@@ -20,6 +20,13 @@ const row = (part: string) => names().querySelector<HTMLElement>(`[data-name-row
 const word = (part: string) => row(part).querySelector<HTMLElement>('[data-testid="part-status"]')!.textContent;
 const key = (part: string, kind: 'Mute' | 'Solo') => names().querySelector<HTMLButtonElement>(`button[aria-label="${kind} ${part}"]`)!;
 const cellRowOpacity = (blockId: string, part: string) => Number(getComputedStyle(cellEl(blockId, trackId(part)).parentElement!).opacity);
+/** A real click on a part's Mute or Solo: they show on the row under the pointer, so point at its name first. */
+async function clickKey(part: string, kind: 'Mute' | 'Solo') {
+  row(part).scrollIntoView({ block: 'center' });
+  await mouse('mouseMoved', centre(row(part).querySelector<HTMLElement>('[aria-haspopup="menu"]')!, 0.2));
+  await settle(30);
+  await clickAt(centre(key(part, kind)));
+}
 
 describe('mute and solo in the lane', () => {
   for (const [w, hh] of [
@@ -37,9 +44,10 @@ describe('mute and solo in the lane', () => {
       const colourBefore = getComputedStyle(blockEl(intro)).backgroundImage;
       expect(cellRowOpacity(intro, 'Drums')).toBe(1);
 
+      // At rest the column is the names and their state; Mute and Solo show on the row under the pointer.
+      expect(key('Drums', 'Mute').getBoundingClientRect().width).toBe(0);
       // Mute Drums with a real click.
-      row('Drums').scrollIntoView({ block: 'center' });
-      await clickAt(centre(key('Drums', 'Mute')));
+      await clickKey('Drums', 'Mute');
       expect(project().tracks.find((t) => t.name === 'Drums')!.mute).toBe(true);
       await settle(60);
       expect(word('Drums')).toBe('Muted');
@@ -51,7 +59,7 @@ describe('mute and solo in the lane', () => {
       expect(cellEl(intro, trackId('Drums')).getAttribute('aria-label')).toMatch(/^Drums in Intro \(block 1\): plays “.+” \(muted\)$/);
 
       // Solo Bass: the others say Not soloed and dim; Bass says Solo.
-      await clickAt(centre(key('Bass', 'Solo')));
+      await clickKey('Bass', 'Solo');
       await settle(60);
       expect(project().tracks.find((t) => t.name === 'Bass')!.solo).toBe(true);
       expect(word('Bass')).toBe('Solo');
@@ -62,6 +70,8 @@ describe('mute and solo in the lane', () => {
       expect(cellEl(ids[1], trackId('Chords')).getAttribute('aria-label')).toContain('(not soloed)');
 
       // The word of a key shows on hover (and on keyboard focus).
+      await mouse('mouseMoved', centre(row('Lead').querySelector<HTMLElement>('[aria-haspopup="menu"]')!, 0.2));
+      await settle(30);
       const solo = key('Lead', 'Solo');
       const tip = solo.querySelector<HTMLElement>('[class*="toggleWord"]')!;
       expect(Number(getComputedStyle(tip).opacity)).toBe(0);
@@ -88,18 +98,19 @@ describe('mute and solo in the lane', () => {
     });
   }
 
-  it('the keys work from the keyboard: Tab reaches them, Space toggles, the word shows on focus', async () => {
+  it('the keys work from the keyboard: the arrows reach them, Space toggles, the word shows on focus', async () => {
     await openApp(1366, 768);
-    // From the part's name, Tab reaches its Mute key.
+    // From the part's name, → reaches its Mute key.
     act(() => row('Percussion').querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.focus());
-    await press('Tab');
+    await press('ArrowRight');
     const mute = key('Percussion', 'Mute');
     expect(document.activeElement).toBe(mute);
+    expect(mute.getBoundingClientRect().width).toBeGreaterThanOrEqual(32);
     await press(' ');
     expect(project().tracks.find((t) => t.name === 'Percussion')!.mute).toBe(true);
     expect(word('Percussion')).toBe('Muted');
     // Keyboard focus (focus-visible) shows the word.
-    await press('Tab');
+    await press('ArrowRight');
     const solo = key('Percussion', 'Solo');
     expect(document.activeElement).toBe(solo);
     expect(Number(getComputedStyle(solo.querySelector<HTMLElement>('[class*="toggleWord"]')!).opacity)).toBe(1);

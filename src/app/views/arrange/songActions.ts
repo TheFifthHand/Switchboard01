@@ -17,7 +17,7 @@ import { MAX_BLOCK_REPEATS, type BlockMoveKind, type Id } from '../../../project
 import * as cmd from '../../../state/commands';
 import { session } from '../../instance';
 import { notify } from '../../runtime';
-import { barsText, cellToast, timesText } from './songModel';
+import { barsText, cellToast, leftOutLaunches, stretchText, timesText } from './songModel';
 
 const blocks = () => session.store.getState().arrangement.blocks;
 const sceneName = (sceneId: Id) => session.store.getState().scenes.find((s) => s.id === sceneId)?.name ?? 'Missing scene';
@@ -473,6 +473,8 @@ export function songFromTake(takeId: Id): { ids: Id[]; text: string } | null {
   const take = p.performances.find((x) => x.id === takeId);
   if (!take) return null;
   const wasEmpty = p.arrangement.blocks.length === 0;
+  const plan = cmd.takeToBlocks(p, takeId);
+  const short = plan ? leftOutLaunches(p, takeId, plan.blocks) : [];
   const r = cmd.makeSongFromTake(session.store, takeId, { mode: 'append' });
   if (!session.accepted(r) || !r.blockIds?.length) return null;
   const n = r.blockIds.length;
@@ -480,6 +482,11 @@ export function songFromTake(takeId: Id): { ids: Id[]; text: string } | null {
   const where = wasEmpty ? 'as the song' : n === 1 ? `as block ${first}` : `as blocks ${first}–${first + n - 1}`;
   const parts = [`Made ${n === 1 ? '1 song block' : `${n} song blocks`} from “${take.name}” ${where}.`];
   if (r.rounded) parts.push('Its launches were rounded to whole passes of each scene.');
+  if (short.length) {
+    const list = short.map((x) => `${x.name} (${stretchText(x.ticks)})`);
+    const named = list.length === 1 ? list[0] : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+    parts.push(short.length === 1 ? `${named} was too short to make a block and was left out.` : `${named} were too short to make blocks and were left out.`);
+  }
   const notes = r.ignored?.notes ?? 0;
   const knobs = r.ignored?.knobs ?? 0;
   if (notes || knobs) {
