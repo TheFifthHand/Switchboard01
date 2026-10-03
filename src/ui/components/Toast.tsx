@@ -14,11 +14,16 @@
  *   chosen; while a menu is open (`body[data-popover-open]`, set by Popover)
  *   it goes below the menu; while a modal dialog is open
  *   (`body[data-modal-open]`, set by Dialog) its action keys are hidden.
+ *   When a control (a tab, key, pad, field…) sits under the centred stack,
+ *   the stack slides into the widest clear stretch of its band near the
+ *   centre (narrowing to fit, never below 300 px), so it never covers what
+ *   is about to be pressed; it is placed each time the stack changes and
+ *   again after a scroll or resize.
  *
  * Tone is shown by an icon and wording, not colour alone: coral marks
  * warnings and errors (attention); info/success are neutral.
  */
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon, type IconName } from './Icon';
 import styles from './Toast.module.css';
@@ -138,11 +143,38 @@ export function ToastProvider({ children, max = 4 }: ToastProviderProps) {
 
   const api = useMemo<ToastApi>(() => ({ show, dismiss, clear }), [show, dismiss, clear]);
 
+  // Keep the stack off the controls under its band (see placeClearOfControls).
+  const viewportRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    if (!toasts.length) {
+      resetPlacement(el);
+      return;
+    }
+    placeClearOfControls(el);
+    // A scroll or resize brings other controls under the band: place again, once a frame at most.
+    let frame = 0;
+    const later = () => {
+      if (!frame) frame = requestAnimationFrame(() => {
+        frame = 0;
+        placeClearOfControls(el);
+      });
+    };
+    window.addEventListener('resize', later);
+    window.addEventListener('scroll', later, { capture: true, passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', later);
+      window.removeEventListener('scroll', later, { capture: true });
+    };
+  }, [toasts]);
+
   return (
     <ToastContext.Provider value={api}>
       {children}
       {createPortal(
-        <div className={styles.viewport} aria-live="polite" aria-relevant="additions text">
+        <div ref={viewportRef} className={styles.viewport} aria-live="polite" aria-relevant="additions text">
           {toasts.map((t) => (
             <ToastItem key={t.id} toast={t} onDismiss={() => dismiss(t.id)} />
           ))}
@@ -151,6 +183,64 @@ export function ToastProvider({ children, max = 4 }: ToastProviderProps) {
       )}
     </ToastContext.Provider>
   );
+}
+
+const CONTROL = 'button, a[href], input, select, textarea, [role="tab"], [role="button"], [role="slider"], [role="switch"], [role="checkbox"], [role="radio"], [role="menuitem"], [role="spinbutton"], [role="combobox"], [contenteditable="true"]';
+/** Narrowest the stack becomes to clear a control (the card's text still wraps sensibly). */
+const MIN_STACK_PX = 300;
+const STEP_PX = 8;
+
+function resetPlacement(el: HTMLElement): void {
+  el.style.removeProperty('left');
+  el.style.removeProperty('width');
+  el.style.removeProperty('transform');
+}
+
+/** A control the person might be about to press (not a large region that happens to be focusable). */
+function isControlAt(x: number, y: number, stack: HTMLElement, maxWidth: number): boolean {
+  const hit = document.elementsFromPoint(x, y).find((e) => !stack.contains(e));
+  const control = hit?.closest(CONTROL);
+  return !!control && control.getBoundingClientRect().width <= maxWidth;
+}
+
+/**
+ * Centred by default; when a control lies under that spot, slide the stack
+ * into the widest clear stretch of its band nearest the centre, narrowing it
+ * to fit (not below MIN_STACK_PX). With no such stretch it stays centred.
+ */
+function placeClearOfControls(el: HTMLElement): void {
+  resetPlacement(el);
+  const box = el.getBoundingClientRect();
+  if (box.height === 0) return;
+  const vw = document.documentElement.clientWidth;
+  const ys = [box.top + 6, (box.top + box.bottom) / 2, box.bottom - 6];
+  const maxControl = vw * 0.6;
+  const blockedAt = (x: number) => ys.some((y) => isControlAt(x, y, el, maxControl));
+  const covered = (from: number, to: number) => {
+    for (let x = from; x <= to; x += STEP_PX) if (blockedAt(x)) return true;
+    return blockedAt(to);
+  };
+  if (!covered(box.left, box.right)) return;
+  // Clear stretches of the band (16 px from the window's edges, 8 px from controls).
+  const runs: { start: number; end: number }[] = [];
+  let start: number | null = null;
+  for (let x = 16; x <= vw - 16; x += STEP_PX) {
+    if (blockedAt(x)) {
+      if (start !== null && x - 16 - start >= MIN_STACK_PX) runs.push({ start, end: x - 16 });
+      start = null;
+    } else if (start === null) start = x === 16 ? 16 : x + 8;
+  }
+  if (start !== null && vw - 16 - start >= MIN_STACK_PX) runs.push({ start, end: vw - 16 });
+  if (!runs.length) return;
+  const centre = vw / 2;
+  const distance = (r: { start: number; end: number }) => (centre < r.start ? r.start - centre : centre > r.end ? centre - r.end : 0);
+  runs.sort((a, b) => distance(a) - distance(b) || b.end - b.start - (a.end - a.start));
+  const run = runs[0];
+  const width = Math.min(box.width, run.end - run.start);
+  const left = Math.min(Math.max(centre - width / 2, run.start), run.end - width);
+  el.style.left = `${Math.round(left)}px`;
+  el.style.width = `${Math.round(width)}px`;
+  el.style.transform = 'none';
 }
 
 /** Toast API from the nearest ToastProvider. */

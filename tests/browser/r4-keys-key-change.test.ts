@@ -89,12 +89,38 @@ describe('a key change asks once', () => {
     expect(pitches('t3')).toEqual(bass.map((c) => c && c.map((p) => p + 2)));
     expect(pitches('t1')).toEqual(drums);
     expect(pitches('t8')).toEqual(vocal);
-    expect(notice()).toMatch(/^Moved the song to A Dorian: \d+ notes in \d+ clips\. Drums stayed\./);
+    expect(notice()).toMatch(/^Moved the song to A Dorian: \d+ notes in \d+ clips\. Drums stayed\. Vocal kept its pitch\./);
     expect(session.store.undoLabel()).toBe('Move the song to A Dorian');
     // One Undo takes it all back.
     await press('{Control>}z{/Control}');
     expect(project().root).toBe(7);
     expect(pitches('t3')).toEqual(bass);
+  });
+
+  it('with the keyboard: ArrowDown twice on Key goes G -> A and the question names A; focus stays on the picker; Tab from Scale enters the question', async () => {
+    await openAdvanced();
+    const bass = pitches('t3');
+    keySelect().focus();
+    await press('{ArrowDown}');
+    await until(() => !!popover(), 'the question');
+    expect(document.activeElement).toBe(keySelect());
+    await press('{ArrowDown}');
+    expect(keySelect().value).toBe('9');
+    expect(popover()!.textContent).toContain('Move the song to A Dorian too?');
+    expect(document.activeElement).toBe(keySelect());
+    // Nothing moved yet: Enter on the picker does not answer for the user.
+    expect(project().root).toBe(7);
+    // Tab: Key -> Scale -> into the question.
+    await press('{Tab}');
+    expect(document.activeElement).toBe(scaleSelect());
+    await press('{Tab}');
+    expect(popover()!.contains(document.activeElement)).toBe(true);
+    // Its first control is the sampler checkbox; Tab on to Move the song, Enter answers.
+    for (let i = 0; i < 4 && document.activeElement !== inPopover('Move the song'); i++) await press('{Tab}');
+    expect(document.activeElement).toBe(inPopover('Move the song'));
+    await press('{Enter}');
+    expect(project().root).toBe(9);
+    expect(pitches('t3')).toEqual(bass.map((c) => c && c.map((p) => p + 2)));
   });
 
   it('a ticked sampler part moves too', async () => {

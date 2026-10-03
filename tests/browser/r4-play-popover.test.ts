@@ -84,7 +84,7 @@ describe('a press outside a menu only closes it (shell-20)', () => {
 });
 
 describe('popovers and toasts (arrange-toast-covers-block-menu)', () => {
-  it('body[data-popover-open] is counted across popovers; a toast moves to the top while a menu is open and never covers it', async () => {
+  it('body[data-popover-open] is counted across popovers; a toast sits at the top under the transport and never covers an open menu', async () => {
     await openApp(1366, 768);
     // Counted: two popovers, the attribute stays until the last one closes.
     const anchor = { left: 100, top: 100, width: 10, height: 10 };
@@ -96,13 +96,20 @@ describe('popovers and toasts (arrange-toast-covers-block-menu)', () => {
     b.unmount();
     expect(open()).toBe(false);
 
-    // A toast, then a menu low on the screen (the last scene's menu): the toast goes to the top, clear of it.
+    // A toast sits just under the transport (toasts no longer start at the bottom), and a menu opened while it shows
+    // (the last scene's, low on the screen) is never covered: the toast stays clear of it and below it.
     act(() => notify('Something happened.', 'info'));
     const toast = await (async () => {
       await until(() => [...document.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]')].some((t) => t.textContent?.includes('Something happened.')), 'the toast');
       return [...document.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]')].find((t) => t.textContent?.includes('Something happened.'))!;
     })();
-    const low = toast.getBoundingClientRect().top;
+    const transport = document.querySelector<HTMLElement>('header[aria-label="Transport"]')!.getBoundingClientRect();
+    // Measured at rest (it slides in).
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 400));
+    });
+    expect(toast.getBoundingClientRect().top).toBeGreaterThanOrEqual(transport.bottom);
+    expect(toast.getBoundingClientRect().top).toBeLessThan(transport.bottom + 40);
     await clickEl(button('Options for scene Break'));
     expect(menu()).not.toBeNull();
     await act(async () => {
@@ -110,10 +117,10 @@ describe('popovers and toasts (arrange-toast-covers-block-menu)', () => {
     });
     const t = toast.getBoundingClientRect();
     const m = menu()!.getBoundingClientRect();
-    expect(t.top).toBeLessThan(low);
     expect(t.top).toBeLessThan(140);
     const overlap = t.left < m.right && m.left < t.right && t.top < m.bottom && m.top < t.bottom;
     expect(overlap).toBe(false);
+    expect(open()).toBe(true);
   });
 });
 

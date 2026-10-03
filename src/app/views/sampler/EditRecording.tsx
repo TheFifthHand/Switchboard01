@@ -1,8 +1,9 @@
 /**
  * Edit the recording, Audacity-style: Normalize, Reverse, Crop to the
- * region, Fade in, Fade out and Gain, each on the trimmed region (what the
- * part plays). Each edit makes a new version of the recording for the part
- * in one undo step (sampleVersions.ts); the status line says what changed.
+ * region, Fade in, Fade out and Gain, each on the trimmed region (what
+ * plays). Each edit makes a new version of the recording being edited (the
+ * selected clip's own, or the part's; see samplerTarget.ts) in one undo
+ * step (sampleVersions.ts); the status line says what changed.
  */
 import { useId, useState } from 'react';
 import { Button, Icon, NumberField, Select } from '../../../ui/components';
@@ -12,7 +13,7 @@ import { useRuntime } from '../../runtime';
 import { useAudioInput } from '../devices';
 import { FADE_LENGTHS, GAIN_EDIT_LIMIT_DB, type FadeLength, type SampleEdit, type SampleEditKind } from './sampleEdit';
 import { clearEditStatus, editRecording, editStore } from './sampleVersions';
-import { useSamplerValues } from './samplerValues';
+import { useTargetValues, type SamplerTarget } from './samplerTarget';
 import styles from './RecordEdit.module.css';
 
 const FADE_OPTIONS = FADE_LENGTHS.map((f) => ({ value: f.value, label: f.label }));
@@ -26,13 +27,15 @@ const WORKING: Record<SampleEditKind, string> = {
   gain: 'Changing the gain…',
 };
 
-export function EditRecording(props: { trackId: Id; available: boolean }) {
-  const { trackId, available } = props;
+export function EditRecording(props: { target: SamplerTarget; available: boolean }) {
+  const { target, available } = props;
+  const trackId: Id = target.trackId;
+  const clip = target.kind === 'clip';
   const titleId = useId();
   const status = useStore(editStore, (s) => s[trackId] ?? { phase: 'idle' as const });
   const takeLocked = useRuntime((s) => s.recording === 'performance');
   const recordingHere = useAudioInput((s) => s.take !== null && s.take.trackId === trackId);
-  const region = useSamplerValues(trackId, ['start', 'end'] as const);
+  const region = useTargetValues(target, ['start', 'end'] as const);
   const [fade, setFade] = useState<FadeLength>('half');
   const [gainDb, setGainDb] = useState(3);
   const working = status.phase === 'working';
@@ -47,7 +50,7 @@ export function EditRecording(props: { trackId: Id; available: boolean }) {
 
   const run = (edit: SampleEdit) => {
     if (working || blocked) return;
-    void editRecording(trackId, edit);
+    void editRecording(trackId, edit, undefined, clip ? { slot: target.slot } : {});
   };
 
   const key = (kind: SampleEditKind, label: string, tip: string, edit: () => SampleEdit, extra: { disabledWhy?: string | null } = {}) => {
@@ -76,7 +79,9 @@ export function EditRecording(props: { trackId: Id; available: boolean }) {
         </h3>
         <span className={styles.rule} aria-hidden="true" />
       </div>
-      <p className={styles.fine}>Edits change the trimmed region (what plays, in amber). Each one makes a new version for this part; Undo goes back.</p>
+      <p className={styles.fine}>
+        Edits change the trimmed region (what plays, in amber). Each one makes a new version {clip ? `for this clip (${target.partName} · ${target.sceneName})` : 'for this part'}; Undo goes back.
+      </p>
       <div className={styles.editKeys} role="group" aria-label="Edits">
         {key('normalize', 'Normalize', 'Makes the region as loud as it can be without clipping: its loudest peak reaches -1 dB.', () => ({ kind: 'normalize' }))}
         {key('reverse', 'Reverse', 'Plays the region backwards.', () => ({ kind: 'reverse' }))}

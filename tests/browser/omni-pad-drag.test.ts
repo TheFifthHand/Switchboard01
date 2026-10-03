@@ -317,14 +317,19 @@ describe('carrying a clip pad', () => {
     expect(moving(cell('t3', a))).toBe(true);
     await settle();
 
-    // While a performance take records, the drop is refused with the lock's reason.
+    // While a performance take records, the lifted pad says Locked (no pad is a target) and the drop changes nothing,
+    // without a new notice: the label already said why.
     session.store.setLock('Recording a performance', () => false);
     p0 = project();
+    const noticeBefore = runtimeStore.getState().notice;
     await press(centre(pad('t3', a)));
     await moveTo(centre(pad('t3', a)), centre(pad('t3', empty)), 8);
+    expect(label()).toBe('Locked');
+    expect(lift()!.dataset.kind).toBe('no');
+    expect(cell('t3', empty).dataset.target).toBeUndefined();
     await release(centre(pad('t3', empty)));
     expect(project()).toBe(p0);
-    expect(runtimeStore.getState().notice?.tone).toBe('warn');
+    expect(runtimeStore.getState().notice).toBe(noticeBefore);
     expect(presses).toEqual([]);
   });
 

@@ -326,7 +326,9 @@ button.value {
   cursor: text;
 }
 
+/* (.knob[data-size='xl'] .value sets the xl line's height; the key itself stays 32 px.) */
 .knob[data-size='xl'] button.value {
+  height: 32px;
   margin-bottom: calc(var(--knob-value-h, 18px) + 1px - 32px);
 }
 

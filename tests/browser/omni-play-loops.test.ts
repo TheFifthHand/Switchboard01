@@ -115,9 +115,13 @@ describe('Column headers', () => {
     const header = mute.closest<HTMLElement>('[data-dim]')!;
     expect(header.textContent).toContain('Muted');
     expect(cell('t3', 0).hasAttribute('data-dim')).toBe(true);
-    await act(async () => {
-      await wait(250);
-    });
+    // The dim fades in (a short transition; on a busy machine frames can come late, so allow up to 2 s).
+    const end = performance.now() + 2000;
+    while (Number(getComputedStyle(cell('t3', 0)).opacity) >= 0.7 && performance.now() < end) {
+      await act(async () => {
+        await wait(50);
+      });
+    }
     expect(Number(getComputedStyle(cell('t3', 0)).opacity)).toBeLessThan(0.7);
     click(mute);
     expect(project().tracks[2].mute).toBe(false);

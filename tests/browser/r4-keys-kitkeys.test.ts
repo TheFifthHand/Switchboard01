@@ -119,3 +119,53 @@ describe('the strip for a kit', () => {
     expect([...strip().querySelectorAll('[role="switch"]')].some((s) => s.textContent?.includes('Musical Assist'))).toBe(false);
   });
 });
+
+describe('narrow strips (1024 x 768)', () => {
+  for (const mode of ['simple', 'advanced'] as const) {
+    it(`${mode}: the 16 kit keys go in two rows of eight (Q–4 above Z–F), every name whole and every key at least 32 px tall`, async () => {
+      await openApp(1024, 768);
+      act(() => {
+        selectTrack('t1');
+        setUiMode(mode);
+      });
+      await settleFrames(3);
+      const names = kitNames();
+      const keys = [...keyboard().querySelectorAll<HTMLElement>('[data-midi]')];
+      expect(keys).toHaveLength(16);
+      const top = (i: number) => Math.round(keys[i].getBoundingClientRect().top);
+      expect(new Set(keys.map((_, i) => top(i))).size).toBe(2);
+      // Z (Kick) bottom-left, 1 (sound 13) top-left.
+      expect(top(0)).toBeGreaterThan(top(12));
+      expect(Math.abs(keys[0].getBoundingClientRect().left - keys[8].getBoundingClientRect().left)).toBeLessThan(1);
+      for (const k of DRUM_KEYS) {
+        const el = keys[k.index];
+        const r = el.getBoundingClientRect();
+        expect(r.height, names[k.index]).toBeGreaterThanOrEqual(32);
+        expect(r.width, names[k.index]).toBeGreaterThanOrEqual(40);
+        expect(el.textContent).toBe(`${names[k.index]}${k.label}`);
+        const nameEl = el.firstElementChild as HTMLElement;
+        expect(nameEl.scrollWidth, names[k.index]).toBeLessThanOrEqual(nameEl.clientWidth + 1);
+        expect(nameEl.scrollHeight, names[k.index]).toBeLessThanOrEqual(nameEl.clientHeight + 1);
+        // The letter never covers the name.
+        const cap = el.lastElementChild!.getBoundingClientRect();
+        const text = document.createRange();
+        text.selectNodeContents(nameEl);
+        for (const line of text.getClientRects()) {
+          const apart = line.right <= cap.left || cap.right <= line.left || line.bottom <= cap.top || cap.bottom <= line.top;
+          expect(apart, `${names[k.index]}: letter over the name`).toBe(true);
+        }
+      }
+      expect(strip().scrollWidth).toBeLessThanOrEqual(strip().clientWidth + 1);
+      // A click still plays the key under it: Snare (bottom row) and sound 14 (top row).
+      const rec = recordPlayed();
+      try {
+        await click(centre(keys[2], 0.5, 0.5));
+        expect(rec.ons().map((p) => p.pitch)).toEqual([2]);
+        await click(centre(keys[13], 0.5, 0.5));
+        expect(rec.ons().map((p) => p.pitch)).toEqual([2, 13]);
+      } finally {
+        rec.restore();
+      }
+    });
+  }
+});

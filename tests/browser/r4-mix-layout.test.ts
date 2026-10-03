@@ -5,6 +5,11 @@
  *   without scrolling; fader travel is at least 220 px; part names are whole (two lines at most).
  * - Every fader at its minimum: each value row reads "Silent" inside its own strip.
  * - 200 % zoom (960 × 540): eight parts, two returns and the master fit, nothing scrolls sideways.
+ * - The faders line up across the mixer: every strip's dB marks (0, −10, −20, −40, −60) sit at the
+ *   same height, the parts' and the master's faders are equally long, Mute and Solo line up; peak
+ *   numbers (and their press targets) and the master's ceiling number stay inside their strips.
+ * - Until it is chosen, the Sends and effects row (Advanced) follows the window: shown from 1000 px
+ *   tall, hidden below; once chosen, the choice stays.
  * - A strip meter shares its fader's scale: −16 dBFS lights up next to the fader's −16, and the
  *   peak number under it turns coral above −1 dBFS.
  * - Hint homes and obstacles are marked for the hint placer.
@@ -30,8 +35,8 @@ import { cleanup, mount, wait } from './ui-harness';
 import { centre, click, finger, send, settleFrames } from './r4-uikit-input';
 
 const LEVEL = specById(CHANNEL_PARAMS, 'level')!;
-/** Transport (58 px) and keyboard (100 px) take this much of the window height. */
-const CHROME = 158;
+/** Transport (58 px) and the keyboard bar (collapsed in Mix, 44 px) take this much of the window height. */
+const CHROME = 102;
 const project = () => session.store.getState();
 const level = (trackId: string) => project().patch.modules.find((m) => m.id === `${trackId}:ch`)!.params.level ?? 0;
 
@@ -60,7 +65,7 @@ async function setup(mode: UiMode, w: number, hh: number) {
   await fonts();
   await act(async () => wait(200));
   await settleFrames();
-  const view = m.container.querySelector<HTMLElement>('[role="region"][aria-label="Mix"]')!;
+  const view = m.container.querySelector<HTMLElement>('[role="region"][aria-label="Mix view"]')!;
   return { m, view };
 }
 
@@ -207,6 +212,78 @@ describe('200 % zoom (960 × 540)', () => {
       }
     });
   }
+});
+
+describe('the faders line up across the mixer', () => {
+  /** Where each of a fader's printed marks sits (its centre, px from the top of the page). */
+  const marks = (s: HTMLElement) =>
+    Object.fromEntries(
+      [...fader(s).parentElement!.parentElement!.querySelectorAll<HTMLElement>('[class*="mark"]')].map((m) => {
+        const r = m.getBoundingClientRect();
+        return [m.textContent!.trim(), r.top + r.height / 2];
+      }),
+    );
+  for (const [w, hh, mode] of [
+    [1366, 768, 'simple'],
+    [1280, 720, 'advanced'],
+    [1920, 1080, 'advanced'],
+  ] as const) {
+    it(`${w} × ${hh} ${mode}: every dB mark at the same height on all eleven strips; Mute and Solo in one row`, async () => {
+      const { view } = await setup(mode, w, hh);
+      const all = strips(view);
+      expect(all).toHaveLength(11);
+      const ref = marks(all[0]);
+      for (const label of ['0', '−10', '−20', '−40', '−60']) {
+        for (const s of all) expect(Math.abs(marks(s)[label] - ref[label]), `${s.dataset.testid} ${label}`).toBeLessThanOrEqual(1);
+      }
+      // Parts and master share the −60…+6 dB scale: equally long faders. A return ends at 0 dB (its
+      // Mix all the way up), so its fader is that much shorter, from the same bottom.
+      const len = (s: HTMLElement) => fader(s).getBoundingClientRect().height;
+      const master = all.find((s) => s.dataset.testid === 'strip-master')!;
+      for (const s of partStrips(view)) expect(Math.abs(len(s) - len(master)), s.dataset.testid).toBeLessThanOrEqual(1);
+      for (const s of all.filter((x) => x.dataset.testid!.startsWith('strip-return'))) {
+        expect(len(s)).toBeLessThan(len(master));
+        expect(Math.abs(fader(s).getBoundingClientRect().bottom - fader(master).getBoundingClientRect().bottom)).toBeLessThanOrEqual(1);
+      }
+      // Mute (and Mute All) keys start at the same height on every strip.
+      const tops = all.map((s) => s.querySelector<HTMLElement>('button[aria-label^="Mute"]')!.getBoundingClientRect().top);
+      for (const t of tops) expect(Math.abs(t - tops[0])).toBeLessThanOrEqual(1);
+      // Peak numbers and their press targets stay inside their strips.
+      for (const s of all) {
+        const sr = s.getBoundingClientRect();
+        for (const el of s.querySelectorAll<HTMLElement>('[data-meter-hold], [data-meter-hold] span')) {
+          const r = el.getBoundingClientRect();
+          expect(r.left, s.dataset.testid).toBeGreaterThanOrEqual(sr.left - 0.5);
+          expect(r.right, s.dataset.testid).toBeLessThanOrEqual(sr.right + 0.5);
+        }
+      }
+      // The ceiling's number (shown on a wide enough master strip) stays inside it.
+      const text = master.querySelector<HTMLElement>('[data-testid="ceiling-mark"] > span')!;
+      if (getComputedStyle(text).display !== 'none') expect(text.getBoundingClientRect().right).toBeLessThanOrEqual(master.getBoundingClientRect().right + 0.5);
+    });
+  }
+});
+
+describe('the Sends and effects row follows the window until it is chosen', () => {
+  it('appears when the window gets 1000 px tall, goes when it gets shorter; a choice then stays', async () => {
+    const { view } = await setup('advanced', 1366, 768);
+    const row = () => view.querySelector('[data-testid^="sends-"]');
+    const resize = async (hh: number) => {
+      await page.viewport(1366, hh);
+      await settleFrames();
+      await act(async () => wait(50));
+    };
+    expect(row()).toBeNull();
+    await resize(1080);
+    expect(row()).not.toBeNull();
+    await resize(768);
+    expect(row()).toBeNull();
+    // Chosen from the mixer's header: it stays whatever the window does.
+    act(() => setSendsRow(true));
+    await resize(1080);
+    await resize(768);
+    expect(row()).not.toBeNull();
+  });
 });
 
 describe('a strip meter shares its fader’s scale', () => {

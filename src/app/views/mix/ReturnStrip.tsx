@@ -20,7 +20,7 @@
 import { memo, useMemo } from 'react';
 import { Fader, Icon, Knob, Meter, Tooltip, faderPosition, type FaderChangeInfo } from '../../../ui/components';
 import { DELAY_ID, REVERB_ID } from '../../../project/factory';
-import { DELAY_PARAMS, REVERB_PARAMS, specById, type ParamSpec } from '../../../project/params';
+import { CHANNEL_PARAMS, DELAY_PARAMS, REVERB_PARAMS, specById, type ParamSpec } from '../../../project/params';
 import type { Id } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { shallowEqual } from '../../../state/store';
@@ -100,6 +100,13 @@ export function dbToMix(db: number): number {
 }
 
 const RETURN_SCALE = (db: number) => faderPosition(levelSpec('Return'), db);
+
+/**
+ * How much of a part fader's travel the return fader gets (where 0 dB sits on a part's −60…+6 dB
+ * fader). With the same taper and the same bottom, every dB mark then lines up with the parts' and
+ * the master's: the return has no +6 dB of headroom, so its 0 dB is its top.
+ */
+export const RETURN_REACH = faderPosition(specById(CHANNEL_PARAMS, 'level')!, 0);
 const formatReturn = (db: number) => (db <= RETURN_LEVEL_MIN_DB ? `${formatDb(db)}, silent` : formatDb(db));
 const shortReturn = (db: number) => (db <= RETURN_LEVEL_MIN_DB ? 'Silent' : formatDb(db));
 
@@ -118,7 +125,7 @@ const ReturnKnob = memo(function ReturnKnob(props: { def: ReturnDef; param: stri
     const s = specById(def.params, param)!;
     return { ...s, label: `${def.name} ${label.toLowerCase()}`, short: label };
   }, [def, param, label]);
-  return <Knob spec={spec} value={value} size="sm" controlledBy={by ?? undefined} disabled={disabled} onChange={(v, i) => session.setModuleParam(def.id, param, v, i.gesture)} />;
+  return <Knob spec={spec} value={value} size="sm" controlledBy={by ?? undefined} disabled={disabled} onChange={(v, i) => session.setModuleParam(def.id, param, v, i.gesture, { display: spec.label })} />;
 });
 
 export const ReturnStrip = memo(function ReturnStrip(props: { kind: ReturnKind }) {
@@ -130,9 +137,9 @@ export const ReturnStrip = memo(function ReturnStrip(props: { kind: ReturnKind }
   const spec = useMemo(() => levelSpec(def.name), [def.name]);
   const muted = info.bypass;
 
-  const setLevel = (db: number, i: FaderChangeInfo) => session.setModuleParam(def.id, 'mix', dbToMix(db), i.gesture);
+  const setLevel = (db: number, i: FaderChangeInfo) => session.setModuleParam(def.id, 'mix', dbToMix(db), i.gesture, { display: `${def.name} return level` });
   const toggleMute = () => {
-    const r = cmd.setBypass(session.store, def.id, !muted);
+    const r = cmd.setBypass(session.store, def.id, !muted, { display: muted ? `Unmute ${def.name} return` : `Mute ${def.name} return` });
     if (session.accepted(r))
       notify(muted ? `The shared ${def.name} is back on.` : `The shared ${def.name} is muted: every part is heard without it. Its settings are kept.`, 'info', 'undo');
   };
@@ -161,20 +168,22 @@ export const ReturnStrip = memo(function ReturnStrip(props: { kind: ReturnKind }
       </div>
       {info.exists ? (
         <>
-          <div className={styles.returnKnobs}>
-            {def.knobs.map((k) => (
-              <ReturnKnob key={k.param} def={def} param={k.param} label={k.label} disabled={false} />
-            ))}
+          <div className={styles.middle}>
+            <div className={styles.returnKnobs}>
+              {def.knobs.map((k) => (
+                <ReturnKnob key={k.param} def={def} param={k.param} label={k.label} disabled={false} />
+              ))}
+            </div>
+            <div className={styles.ms}>
+              <Tooltip tip={muted ? `Hear the shared ${def.name} again.` : `Silence the shared ${def.name} for every part. Its settings, and each part’s amount, are kept.`}>
+                <button type="button" className={`${styles.msButton} ${styles.mute} ${styles.muteWide}`} aria-pressed={muted} aria-label={`Mute ${def.name} return`} onClick={toggleMute}>
+                  <Icon name={muted ? 'mute' : 'speaker'} size={14} />
+                  <span>Mute</span>
+                </button>
+              </Tooltip>
+            </div>
           </div>
-          <div className={styles.ms}>
-            <Tooltip tip={muted ? `Hear the shared ${def.name} again.` : `Silence the shared ${def.name} for every part. Its settings, and each part’s amount, are kept.`}>
-              <button type="button" className={`${styles.msButton} ${styles.mute} ${styles.muteWide}`} aria-pressed={muted} aria-label={`Mute ${def.name} return`} onClick={toggleMute}>
-                <Icon name={muted ? 'mute' : 'speaker'} size={14} />
-                <span>Mute</span>
-              </button>
-            </Tooltip>
-          </div>
-          <div className={styles.faderRow}>
+          <div className={styles.faderRow} style={{ ['--reach' as string]: RETURN_REACH }}>
             <Fader
               spec={spec}
               value={mixToDb(info.mix)}

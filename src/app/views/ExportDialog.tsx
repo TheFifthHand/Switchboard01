@@ -27,6 +27,7 @@ import { session, useProject } from '../instance';
 import { notify, runtimeStore, useRuntime } from '../runtime';
 import { formatSeconds } from '../session';
 import { downloadBlob } from '../download';
+import { requestMatchFocus } from './mix/loudnessMatch';
 import { loudnessTarget } from './mix/mixPrefs';
 import styles from './ExportDialog.module.css';
 
@@ -64,7 +65,7 @@ interface Result {
   text: string;
   /** The loudness report line ("Integrated −17.6 LUFS · true peak −1.0 dBTP (Streaming target −14)"). */
   report?: string;
-  /** More than 1 dB off the loudness target (a mastered export): offer Match target. */
+  /** More than 1 dB off the loudness target (a mastered export, with the project's mastering on): offer Match target. */
   offTarget?: boolean;
 }
 
@@ -118,6 +119,8 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
     setMessage(null);
     setProgress(null);
     setTail(defaultTail);
+    // Each export starts from the mix as heard: "without mastering" is a choice for one file, not a setting kept.
+    setOutput('mix');
     const rt = runtimeStore.getState();
     // From Arrange, or while the song plays or is paused, the song is what there is to export.
     const song = blocks > 0 && (uiStore.getState().view === 'arrange' || (rt.mode === 'song' && (rt.playing || rt.paused)));
@@ -236,9 +239,11 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
       const t = loudnessTarget();
       const integrated = report.integratedLufs;
       const off = Number.isFinite(integrated) && Math.abs(integrated - t.lufs) > 1;
+      // Match target moves the mastering's Loudness drive: only offered while the project's mastering is on.
+      const canMatch = mastering && session.store.getState().mastering.enabled;
       const line = `Integrated ${dbText(integrated, 'LUFS')} · true peak ${dbText(report.truePeakDb, 'dBTP')} (${t.name} target ${MINUS}${Math.abs(t.lufs)})`;
       const text = `Saved ${name} (${(blob.size / 1024 / 1024).toFixed(1)} MB, ${formatSeconds(report.seconds)}${mastering ? '' : ', without mastering'}).`;
-      setMessage({ tone: 'ok', text, report: line, offTarget: mastering && off });
+      setMessage({ tone: 'ok', text, report: line, offTarget: canMatch && off });
       toast('info', `${text} ${line}.`);
     } catch (e) {
       if ((e as Error)?.name === 'AbortError') {
@@ -257,6 +262,8 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
   };
 
   const matchInMix = () => {
+    // Mix opens with Match target in view and focused.
+    requestMatchFocus();
     close();
     setView('mix');
   };

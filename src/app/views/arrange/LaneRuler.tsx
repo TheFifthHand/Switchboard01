@@ -14,16 +14,25 @@
  *   the lane's ends the lane scrolls.
  * - The band's two ends drag to other block edges (never past each other); a
  *   plain click on an end still plays from that bar.
+ * - A finger: a swipe along the ruler scrolls the lane (touch-action pan-x),
+ *   as on the blocks. A finger that rests RULER_HOLD_MS first takes the ruler
+ *   (the browser no longer pans): dragging then sets a loop, which the lane
+ *   confirms with a toast that can stop it. A tap still plays from that bar;
+ *   the band's ends take a finger at once.
  *
  * Geometry is read once per press; pointer moves only compute from it. The
  * band re-renders only when the snapped loop changes.
  */
 import { memo, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { HOLD_SLOP_PX } from './laneGestures';
 import { LaneIcon } from './laneIcons';
 import { loopEdgeDrag, loopFromDrag, sameSpan, spanX, type LoopSpan } from './laneLoop';
 import { DRAG_THRESHOLD_PX, autoScrollVelocity } from './songDrag';
 import { barToX, blockAtBar, rulerMarks, xToBar, type SongLayout } from './songLayout';
 import styles from './SongPanel.module.css';
+
+/** A finger resting this long (ms) on the ruler takes it: dragging then sets a loop (a finger that moves first scrolls). */
+export const RULER_HOLD_MS = 200;
 
 export interface LaneRulerProps {
   layout: SongLayout;
@@ -58,6 +67,10 @@ interface RulerPress {
   clientX: number;
   base: LoopSpan | null;
   dragging: boolean;
+  /** A finger on the ruler (not on a band end): it drags a loop only once held. */
+  touch: boolean;
+  /** The finger rested RULER_HOLD_MS: the ruler owns it (no panning). */
+  held: boolean;
 }
 
 export const LaneRuler = memo(function LaneRuler({ layout, names, loop, contentRef, scrollerRef, contentWidth, onPlayFromBar, onLoop }: LaneRulerProps) {
@@ -69,6 +82,9 @@ export const LaneRuler = memo(function LaneRuler({ layout, names, loop, contentR
   const previewRef = useRef<LoopSpan | null>(null);
   const swallowClick = useRef(false);
   const raf = useRef(0);
+  const holdTimer = useRef(0);
+  const rulerRef = useRef<HTMLDivElement>(null);
+  const [holding, setHolding] = useState(false);
   const live = useRef({ layout, loop, contentWidth });
   live.current = { layout, loop, contentWidth };
 
@@ -148,6 +164,9 @@ export const LaneRuler = memo(function LaneRuler({ layout, names, loop, contentR
     const p = press.current;
     press.current = null;
     stopScroll();
+    window.clearTimeout(holdTimer.current);
+    holdTimer.current = 0;
+    setHolding(false);
     window.removeEventListener('keydown', onKey, true);
     if (!p) return;
     try {
@@ -174,17 +193,31 @@ export const LaneRuler = memo(function LaneRuler({ layout, names, loop, contentR
   useEffect(
     () => () => {
       cancelAnimationFrame(raf.current);
+      window.clearTimeout(holdTimer.current);
       window.removeEventListener('keydown', onKey, true);
     },
     [onKey],
   );
+  // Once a finger has taken the ruler (held), its moves must not pan the lane: only a non-passive
+  // touchmove listener can stop that after the touch has started.
+  useEffect(() => {
+    const el = rulerRef.current;
+    if (!el) return;
+    const onTouchMove = (e: TouchEvent) => {
+      if (press.current?.held && e.cancelable) e.preventDefault();
+    };
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => el.removeEventListener('touchmove', onTouchMove);
+  }, []);
 
   const band = preview ?? loop;
   const bx = band ? spanX(layout, band) : null;
 
   return (
     <div
+      ref={rulerRef}
       className={styles.ruler}
+      data-holding={holding || undefined}
       role="slider"
       tabIndex={0}
       aria-label="Song position: arrow keys choose a bar, Enter plays the song from it"
@@ -204,9 +237,11 @@ export const LaneRuler = memo(function LaneRuler({ layout, names, loop, contentR
         const scroll = scroller.scrollLeft;
         const r = scroller.getBoundingClientRect();
         const contentLeft0 = content.getBoundingClientRect().left + scroll;
-        press.current = {
+        const touch = e.pointerType === 'touch' && mode === 'ruler';
+        const el = e.currentTarget;
+        const p: RulerPress = {
           pointerId: e.pointerId,
-          el: e.currentTarget,
+          el,
           mode,
           x0: e.clientX,
           lane0: e.clientX - contentLeft0 + scroll,
@@ -217,10 +252,29 @@ export const LaneRuler = memo(function LaneRuler({ layout, names, loop, contentR
           clientX: e.clientX,
           base: live.current.loop,
           dragging: false,
+          touch,
+          held: false,
         };
+        press.current = p;
         if (mode !== 'ruler') e.preventDefault();
+        if (touch) {
+          // A finger scrolls unless it rests first: no capture yet, the browser may pan (pan-x).
+          window.clearTimeout(holdTimer.current);
+          holdTimer.current = window.setTimeout(() => {
+            holdTimer.current = 0;
+            if (press.current !== p) return;
+            p.held = true;
+            setHolding(true);
+            try {
+              el.setPointerCapture(p.pointerId);
+            } catch {
+              /* the browser took the touch for scrolling */
+            }
+          }, RULER_HOLD_MS);
+          return;
+        }
         try {
-          e.currentTarget.setPointerCapture(e.pointerId);
+          el.setPointerCapture(e.pointerId);
         } catch {
           /* not an active pointer */
         }
@@ -232,6 +286,11 @@ export const LaneRuler = memo(function LaneRuler({ layout, names, loop, contentR
           return;
         }
         p.clientX = e.clientX;
+        if (p.touch && !p.held) {
+          // Moved before the hold: a swipe (the browser scrolls the lane); the press is over.
+          if (Math.abs(e.clientX - p.x0) > HOLD_SLOP_PX) end(false);
+          return;
+        }
         if (!p.dragging) {
           if (Math.abs(e.clientX - p.x0) < DRAG_THRESHOLD_PX) return;
           p.dragging = true;

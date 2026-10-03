@@ -12,6 +12,14 @@
   box-shadow: var(--shadow-panel);
 }
 
+/* Folded (a take's events are open below): the header row only; the lane keeps its state, hidden. */
+.panel[data-folded] > :not(header) {
+  display: none;
+}
+.panel[data-folded] .buttons {
+  display: none;
+}
+
 /* ---------- header ---------- */
 
 .head {
@@ -39,7 +47,10 @@
 }
 
 .mode {
+  display: flex;
   flex: 1;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
   max-width: 560px;
   margin-right: auto;
@@ -47,6 +58,25 @@
   border-radius: var(--r-md);
   border: 1px solid var(--line-soft);
   background: var(--surface-hi);
+}
+.modeText {
+  flex: 1;
+  min-width: 0;
+}
+/* While the pads play: the song is one press away (amber: it starts sound). */
+.mode .playSong {
+  --h: 40px;
+  flex: none;
+  border-color: var(--amber);
+  background: linear-gradient(180deg, #fff5e3, var(--amber-hi));
+  color: var(--amber-ink);
+  font-weight: 650;
+}
+.mode .playSong:hover {
+  border-color: var(--amber-ink);
+}
+.modeRec {
+  color: var(--coral-ink) !important;
 }
 .mode[data-mode='song'],
 .mode[data-mode='replay'] {
@@ -127,16 +157,16 @@
 .readout {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   padding: 0 2px;
   border-radius: var(--r-sm);
   outline: none;
 }
+/* "Length" reads like the "Echo tail" label beside it (the NumberField label style). */
 .readoutLabel {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  color: var(--ink-3);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium, 500);
 }
 .readoutValue {
   display: flex;
@@ -148,17 +178,20 @@
   box-shadow: inset 0 1px 2px rgba(20, 24, 28, 0.14), 0 1px 0 rgba(255, 255, 255, 0.7);
   font-size: var(--fs-md);
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
   color: var(--ink);
   white-space: nowrap;
 }
 
 .buttons {
   display: flex;
+  align-items: center;
   gap: 8px;
   min-width: 0;
 }
 /* Loop: the lane's own icon in the label, teal when on (the loop band is teal too), and what it acts on. */
-.loopButton svg {
+.loopButton svg,
+.shapeSong svg {
   flex: none;
   margin: -2px 6px -3px -1px;
   vertical-align: middle;
@@ -166,6 +199,51 @@
 }
 .loopButton[data-on] svg {
   color: var(--teal-ink);
+}
+/* The loop that is on (teal, like the band over the ruler), with its own Stop looping key. */
+.loopChip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 0 0 9px;
+  border: 1px solid var(--teal);
+  border-radius: 17px;
+  background: var(--teal-wash);
+  color: var(--teal-ink);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.loopChip > svg {
+  flex: none;
+}
+.loopChipText {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.loopChipStop {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+  color: var(--teal-ink);
+  cursor: pointer;
+}
+.loopChipStop:hover {
+  background: rgba(35, 149, 142, 0.18);
+}
+.loopChipStop:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: -2px;
 }
 .loopWhat {
   display: inline-block;
@@ -189,14 +267,15 @@
   --head-h: 38px;
   /* The strip under the blocks: Join chips on seams, the drag label (their 24 px targets may reach past it). */
   --seams-h: 22px;
-  /* Part rows grow with the free height: the Arrange view shares it out (--lane-row-h, 18 to 32 px);
-     without it (a narrow window that scrolls) they grow with the window's height. */
-  --row-h: var(--lane-row-h, clamp(18px, calc(18px + (100vh - 768px) * 0.045), 32px));
+  /* Part rows grow with the free height: the Arrange view shares it out (--lane-row-h, 18 to 48 px);
+     without it (a narrow or zoomed window, where the page scrolls) they are 26 to 32 px, room enough for
+     the part names' Mute and Solo keys. */
+  --row-h: var(--lane-row-h, clamp(26px, calc(26px + (100vh - 768px) * 0.03), 32px));
   --row-gap: 2px;
   --rows: 8;
   --cells-pad: 4px;
   --track-h: calc(var(--head-h) + 2 * var(--cells-pad) + var(--rows) * var(--row-h) + (var(--rows) - 1) * var(--row-gap) + 2px);
-  --names-w: 84px;
+  --names-w: 146px;
   /* Motion: blocks slide aside and settle into a slot with Web Animations (laneMotion.ts); these are for the rest. */
   --lane-ease: cubic-bezier(0.2, 0.8, 0.25, 1);
   --clip: #d2d7db;
@@ -212,7 +291,7 @@
   box-shadow: inset 0 1px 3px rgba(20, 24, 28, 0.16), 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
-/* Part names, beside the blocks (they do not scroll). */
+/* Part names, beside the blocks (they do not scroll): name and state, Mute and Solo, the part's actions. */
 .names {
   flex: none;
   display: flex;
@@ -223,32 +302,206 @@
   user-select: none;
   -webkit-user-select: none;
 }
-.namesHead {
+/* How the lane is viewed, in the corner over the part names (beside the ruler and the block headers):
+   zoom out, the zoom level (a press fits the song; "Fit" while it is fitted), zoom in; Follow. */
+.laneTools {
   position: absolute;
-  top: calc(4px + var(--ruler-h));
+  top: 4px;
   left: 0;
-  width: var(--names-w);
-  height: var(--head-h);
-  padding: 0 10px 6px 0;
+  z-index: 7;
   display: flex;
-  align-items: flex-end;
-  justify-content: flex-end;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 4px;
+  width: var(--names-w);
+  height: calc(var(--ruler-h) + var(--head-h));
+  padding: 1px 6px 3px 5px;
+}
+.zoomRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.zoomLevel {
+  flex: 1;
+  min-width: 40px;
+  height: 32px;
+  padding: 0 4px;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
   color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.zoomLevel:hover:not([aria-disabled='true']) {
+  border-color: var(--line);
+  background: linear-gradient(180deg, #fdfdfc, #eff0f1);
+  color: var(--ink);
+}
+.zoomLevel[data-fit] {
+  color: var(--teal-ink);
+  cursor: default;
+}
+.zoomLevel:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+.followButton {
+  align-self: stretch;
 }
 .nameRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 1px;
   height: var(--row-h);
-  padding: 0 10px 0 6px;
-  overflow: hidden;
-  font-size: var(--fs-xs);
-  line-height: var(--row-h);
+  padding: 0 3px 0 4px;
+  /* Its height (the row height) decides how the name and its state are laid out. */
+  container: partrow / size;
+}
+/* The name (a button: the part's song actions) and its state in words. Short rows: one line, the word
+   after the name; from 28 px rows the word has its own line under the name, kept even while empty, so
+   switching Mute or Solo moves nothing. */
+.partName {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px 0 5px;
+  margin: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   color: var(--ink-2);
-  text-align: right;
-  text-overflow: ellipsis;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.partName:hover {
+  background: rgba(20, 24, 28, 0.05);
+  color: var(--ink);
+}
+.partName[aria-expanded='true'] {
+  box-shadow: inset 0 0 0 1.5px var(--teal);
+  color: var(--ink);
+}
+.partNameText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 1.15;
   white-space: nowrap;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 12px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 12px), transparent);
+}
+.partStatus {
+  flex: none;
+  font-size: var(--fs-2xs, 10px);
+  font-weight: 650;
+  line-height: 12px;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+.partStatus[data-status='muted'] {
+  color: var(--coral-ink);
+}
+.partStatus[data-status='solo'] {
+  color: var(--amber-ink);
+}
+@container partrow (min-height: 28px) {
+  .partName {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    gap: 1px;
+  }
+  .partNameText {
+    flex: none;
+  }
+  .partStatus {
+    min-height: 12px;
+  }
+}
+/* Tall rows (a tall window): 13 px names. */
+@container partrow (min-height: 38px) {
+  .partNameText {
+    font-size: var(--fs-md);
+  }
+  .partStatus {
+    font-size: var(--fs-xs);
+    line-height: 14px;
+  }
+}
+.nameRow[data-status='muted'] .partNameText,
+.nameRow[data-status='quiet'] .partNameText {
+  color: var(--ink-3);
+}
+/* Compact Mute and Solo keys (the same commands as Play and Mix): the icon, the word on hover or focus.
+   Mute on is coral (attention), Solo on is amber, as in Play. */
+.rowToggle {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: min(32px, var(--row-h));
+  padding: 0;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.rowToggle:hover {
+  border-color: var(--line);
+  background: linear-gradient(180deg, #fdfdfc, #eff0f1);
+  color: var(--ink);
+}
+.rowToggle[data-kind='mute'][aria-pressed='true'] {
+  border-color: var(--coral-key);
+  background: var(--coral-key);
+  color: #fff;
+  box-shadow: var(--shadow-pressed);
+}
+.rowToggle[data-kind='solo'][aria-pressed='true'] {
+  border-color: var(--amber);
+  background: var(--amber-hi);
+  color: var(--amber-ink);
+  box-shadow: var(--shadow-pressed);
+}
+.rowToggle:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+.toggleWord {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 3px);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--ink);
+  color: var(--ink-inverse);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 8;
+}
+.rowToggle:hover .toggleWord,
+.rowToggle:focus-visible .toggleWord {
+  opacity: 1;
 }
 
 .scroller {
@@ -309,8 +562,13 @@
   cursor: pointer;
   outline: none;
   border-radius: 3px;
-  /* A finger dragging along the ruler sets the loop (the blocks below scroll the lane). */
-  touch-action: none;
+  /* A finger swipe along the ruler scrolls the lane, as on the blocks; a finger that rests first takes
+     the ruler (LaneRuler) and drags a loop. */
+  touch-action: pan-x;
+}
+/* A finger has rested on the ruler: it now sets a loop (teal: the loop). */
+.ruler[data-holding] {
+  background: var(--teal-wash);
 }
 .ruler[data-looping] {
   cursor: ew-resize;
@@ -573,10 +831,10 @@
   display: flex;
   flex: none;
   align-items: center;
-  gap: 1px;
+  gap: 0;
   height: var(--head-h);
   min-width: 0;
-  padding: 0 2px 0 8px;
+  padding: 0 1px 0 7px;
   border-bottom: 1px solid var(--line-soft);
 }
 .block[data-current] .bhead {
@@ -593,14 +851,16 @@
   gap: 1px;
   min-width: 0;
 }
+/* A name longer than its block fades out at the end (never "Gro…"); the header's tooltip has it in full. */
 .name {
   overflow: hidden;
   font-size: var(--fs-md);
   font-weight: 650;
   line-height: 16px;
   color: var(--ink);
-  text-overflow: ellipsis;
   white-space: nowrap;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 14px), transparent);
 }
 /* One line of whole words: an item that does not fit wraps onto a second line, which is cut off, so a
    narrow block drops the pass detail and the scene first, then its length (the line's tooltip has it
@@ -619,9 +879,11 @@
   color: var(--ink-3);
   white-space: nowrap;
 }
+/* Lengths read in the UI font (numbers line up: tabular figures). */
 .len {
   flex: none;
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
   color: var(--ink-2);
 }
 /* While the right edge is dragged, the header says the length the drop gives (teal: the edge is the selection). */
@@ -629,6 +891,7 @@
   display: none;
   flex: none;
   font-weight: 650;
+  font-variant-numeric: tabular-nums;
   color: var(--teal-ink);
 }
 .block[data-resizing] .liveLen {
@@ -640,7 +903,21 @@
 }
 .calc {
   flex: none;
+  font-variant-numeric: tabular-nums;
   color: var(--ink-3);
+}
+/* The block's song moves, in words (teal: they change the sound over time, like modulation). */
+.moveTag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  font-weight: 600;
+  color: var(--teal-ink);
+}
+.moveTag > svg {
+  flex: none;
+  align-self: center;
 }
 .sceneTag {
   flex: 1 1 32px;
@@ -649,13 +926,13 @@
   text-overflow: ellipsis;
   font-style: italic;
 }
+/* Playing / Next: first on the line and never shrunk below the word (the length gives way first). */
 .nowTag,
 .nextTag {
   display: inline-flex;
-  flex: 0 1 auto;
+  flex: none;
   align-items: center;
   gap: 3px;
-  min-width: 0;
   font-weight: 650;
   color: var(--amber-ink);
 }
@@ -664,9 +941,7 @@
   flex: none;
 }
 .tagText {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .layerTag {
   display: inline-flex;
@@ -689,8 +964,8 @@
   display: grid;
   flex: none;
   place-items: center;
-  width: 26px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   margin: 0;
   border: 1px solid transparent;
@@ -717,18 +992,12 @@
   opacity: 0.4;
   cursor: default;
 }
-/* Where the block is wide enough, its play and actions buttons get a full 32 px target. */
-@container (min-width: 150px) {
-  .hbtn {
-    width: 32px;
-    height: 32px;
-  }
-}
-/* A narrow block (an overview zoom step): its header is its name (and Playing / Next); the length,
-   play and actions appear on hover, on keyboard focus and while its menu is open, over the right end
+/* A block narrower than a full header (112 px at any scale: the lane is to scale; the query reads the
+   block's content box, its borders left out): its header is its name (and Playing / Next); play and
+   actions (32 px keys) appear on hover, on keyboard focus and while its menu is open, over the right end
    of the header (right-click and Enter open the menu too). The scissors give way (Split in half is in
-   the menu); on the narrowest blocks only the actions button shows. */
-@container (max-width: 95px) {
+   the menu); below about 76 px only the actions key shows. */
+@container (max-width: 109.98px) {
   .bhead {
     padding: 0 1px 0 5px;
   }
@@ -737,29 +1006,33 @@
   }
   .len,
   .calc,
-  .sceneTag {
+  .sceneTag,
+  .moveTag {
     display: none;
   }
   .hbtn {
     position: absolute;
     top: 3px;
-    right: 2px;
+    right: 1px;
     display: none;
-    width: 24px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     border-color: var(--line);
     background: var(--shell-hi);
     box-shadow: var(--shadow-raised);
+    z-index: 4;
   }
   .hbtn[data-play] {
-    right: 28px;
+    right: 34px;
   }
   .block:hover .hbtn,
   .block:focus-within .hbtn,
   .hbtn[aria-expanded='true'] {
     display: grid;
   }
-  .cells .split {
+  .cells .split,
+  .block:hover .cells .split,
+  .block:focus-within .cells .split {
     display: none;
   }
   /* Clip names would show a letter or two: a part that plays is its filled bar (a layered one keeps its
@@ -773,7 +1046,7 @@
     display: none;
   }
 }
-@container (max-width: 63px) {
+@container (max-width: 73.98px) {
   .block:hover .hbtn[data-play],
   .block:focus-within .hbtn[data-play] {
     display: none;
@@ -843,6 +1116,14 @@
   display: flex;
   height: var(--row-h);
   min-width: 0;
+}
+/* A muted (or not soloed) part is dimmed in every block, cells only (the block keeps its colours);
+   the part names column says Muted / Not soloed and the cells' names say it too. */
+.cellRow[data-silenced] {
+  opacity: 0.38;
+}
+.cellRow[data-silenced='notSoloed'] {
+  opacity: 0.5;
 }
 .cell {
   position: relative;
@@ -918,6 +1199,42 @@ button.cell[data-kind='empty']:hover {
 .block[data-current] .cell[data-kind='layer'] {
   background-image: repeating-linear-gradient(135deg, #f2d6a6 0 4px, #e9c88f 4px 8px);
 }
+/* Record Notes writes into the clip this cell plays: coral (recording) and the word Rec. */
+.cell[data-rec] {
+  box-shadow: inset 0 0 0 2px var(--coral), inset 4px 0 0 var(--coral);
+}
+.recTag {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--coral-key);
+  color: #fff;
+  font-size: var(--fs-2xs, 10px);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+}
+/* Song moves: thin teal ramp lines over the cells (the header names them). */
+.ramps {
+  position: absolute;
+  top: var(--cells-pad);
+  bottom: var(--cells-pad);
+  left: 3px;
+  width: calc(100% - 6px);
+  height: calc(100% - 2 * var(--cells-pad));
+  z-index: 1;
+  overflow: visible;
+  fill: none;
+  stroke: var(--teal);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  pointer-events: none;
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.95));
+}
+.ramps path {
+  vector-effect: non-scaling-stroke;
+}
 .cell[data-preview] {
   background: var(--teal-wash) !important;
   box-shadow: inset 0 0 0 1px var(--teal) !important;
@@ -983,7 +1300,8 @@ button.cell[data-kind='empty']:hover {
   /* Touching the block's bottom edge, so moving onto it keeps the block hovered; a 24 px target around the chip. */
   top: calc(100% - 1px);
   left: -12px;
-  display: grid;
+  /* Out of the layout until its block is hovered or has focus (it sits below the block, over the lane's margin). */
+  display: none;
   place-items: start center;
   width: 24px;
   height: 24px;
@@ -992,8 +1310,6 @@ button.cell[data-kind='empty']:hover {
   border: 0;
   background: transparent;
   color: var(--ink-2);
-  opacity: 0;
-  pointer-events: auto;
   cursor: pointer;
   transition: opacity var(--t-fast) var(--ease);
 }
@@ -1008,9 +1324,15 @@ button.cell[data-kind='empty']:hover {
   box-shadow: var(--shadow-raised);
 }
 .block:hover .split,
-.block:focus-within .split,
-.split:focus-visible {
+.block:focus-within .split {
+  display: grid;
   opacity: 1;
+}
+@starting-style {
+  .block:hover .split,
+  .block:focus-within .split {
+    opacity: 0;
+  }
 }
 .split:hover .splitChip,
 .split:focus-visible .splitChip {
@@ -1025,13 +1347,14 @@ button.cell[data-kind='empty']:hover {
   box-shadow: 0 0 0 2px var(--shell-hi), 0 0 0 4px var(--teal);
 }
 
-/* Right-edge handle: drag to change how many times the block plays. Its target reaches over the seam;
-   a subtle grip just inside the block's right edge is always there, stronger on hover, focus and selection. */
+/* Right-edge handle: drag to change how many times the block plays. The whole 12 px handle lies inside
+   the block (so no neighbour, selected or not, can cover half of it); a subtle grip just inside the
+   block's right edge is always there, stronger on hover, focus and selection. */
 .edge {
   position: absolute;
   top: var(--head-h);
   bottom: 0;
-  right: -6px;
+  right: 0;
   width: 12px;
   z-index: 3;
   cursor: col-resize;
@@ -1041,7 +1364,7 @@ button.cell[data-kind='empty']:hover {
   content: '';
   position: absolute;
   top: 50%;
-  left: 0;
+  right: 2px;
   width: 5px;
   height: 26px;
   margin-top: -13px;
@@ -1052,11 +1375,14 @@ button.cell[data-kind='empty']:hover {
   opacity: 0.38;
   transition: opacity var(--t-fast) var(--ease);
 }
-/* A hovered, focused or selected block sits above its right neighbour so its handle is reachable. */
-.block:hover,
+/* A selected or focused block sits above its neighbours (its frame and focus ring show whole); the one
+   under the pointer sits above them all. */
 .block:focus-within,
 .block[data-selected] {
   z-index: 2;
+}
+.block:hover {
+  z-index: 3;
 }
 .block:hover .edge::after,
 .block:focus-within .edge::after,
@@ -1070,11 +1396,10 @@ button.cell[data-kind='empty']:hover {
 }
 @media (pointer: coarse) {
   .edge {
-    right: -10px;
     width: 20px;
   }
   .edge::after {
-    left: 3px;
+    right: 3px;
     opacity: 0.75;
   }
 }
@@ -1470,33 +1795,42 @@ button.cell[data-kind='empty']:hover {
 
 /* ---------- palette ---------- */
 
+/* SCENES (every scene, then Add scene; the cards scroll sideways when there are more than fit), then the
+   hint home: the strip the "Try this" chip uses in Arrange, over the gesture help. */
 .palette {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
 }
 .paletteLabel {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-2xs, 10px);
   font-weight: 600;
   letter-spacing: 0.14em;
   color: var(--ink-3);
 }
 .cards {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(118px, 188px));
-  gap: 8px;
+  display: flex;
   flex: 0 1 auto;
+  gap: 6px;
   min-width: 0;
+  padding: 3px 2px 3px 2px;
+  margin: -3px -2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
 }
 .card {
   display: flex;
+  /* 196 px, giving way to 188 px (then the cards scroll) so the hint home beside them keeps its room. */
+  flex: 0 1 196px;
+  min-width: 188px;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-  height: 42px;
-  padding: 0 5px 0 6px;
+  gap: 2px;
+  height: 44px;
+  padding: 0 2px 0 4px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: linear-gradient(180deg, var(--shell-hi), var(--shell));
@@ -1520,34 +1854,14 @@ button.cell[data-kind='empty']:hover {
   opacity: 0.5;
   border-style: dashed;
 }
-.grip {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 12px;
-  color: var(--ink-3);
+/* Heard from its ▶ (amber: sound playing), with the word in its second line. */
+.card[data-hearing] {
+  border-color: var(--amber);
+  box-shadow: var(--shadow-raised), 0 0 0 1px var(--amber-glow);
 }
-.cardText {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-}
-.cardName {
-  overflow: hidden;
-  font-size: var(--fs-md);
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cardMeta {
-  overflow: hidden;
-  font-size: var(--fs-xs);
-  color: var(--ink-3);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cardAdd {
+.cardPlay,
+.cardAdd,
+.cardMore {
   display: grid;
   flex: none;
   place-items: center;
@@ -1555,18 +1869,121 @@ button.cell[data-kind='empty']:hover {
   height: 32px;
   padding: 0;
   margin: 0;
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.cardAdd {
+  border-color: var(--line);
   background: linear-gradient(180deg, #fdfdfc, #eff0f1);
   box-shadow: var(--shadow-raised);
   color: var(--ink);
 }
+.cardPlay:hover:not([aria-disabled='true']),
+.cardMore:hover,
+.cardMore[aria-expanded='true'] {
+  border-color: var(--line);
+  background: linear-gradient(180deg, #fdfdfc, #eff0f1);
+  color: var(--ink);
+}
+.cardPlay:hover:not([aria-disabled='true']) {
+  color: var(--amber-ink);
+}
+.cardPlay[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: default;
+}
+.cardPlay[data-hearing] {
+  border-color: var(--amber);
+  background: var(--amber-hi);
+  color: var(--amber-ink);
+  box-shadow: var(--shadow-pressed);
+}
+.cardMore[aria-expanded='true'] {
+  border-color: var(--teal);
+  color: var(--teal-ink);
+}
 .cardAdd:hover {
   border-color: var(--line-strong);
 }
+.cardText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding-left: 3px;
+}
+.cardName {
+  overflow: hidden;
+  font-size: var(--fs-md);
+  font-weight: 650;
+  white-space: nowrap;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 10px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 10px), transparent);
+}
+.cardMeta {
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card[data-hearing] .cardMeta {
+  color: var(--amber-ink);
+  font-weight: 600;
+}
+.cardRename {
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--teal);
+  border-radius: 3px;
+  background: #fff;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--teal-wash);
+}
+.addScene {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 9px 0 7px;
+  margin: 0;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.addScene:hover:not([aria-disabled='true']) {
+  border-style: solid;
+  color: var(--ink);
+}
+.addScene[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
+}
+.hintHome {
+  display: flex;
+  /* Room for the "Try this" chip (about 370 × 65 px at 1366 px, over the lane's margin above and this strip). */
+  flex: 1 0 340px;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  min-height: 44px;
+}
 
 .hint {
-  flex: 1 1 180px;
   min-width: 0;
   margin: 0;
   font-size: var(--fs-xs);
@@ -1581,6 +1998,11 @@ button.cell[data-kind='empty']:hover {
 .hintTouch {
   display: none;
 }
+/* While the "Try this" chip is on screen it takes the gesture help's place (its home, [data-hint-home]):
+   the help steps aside rather than peek out around it. */
+:global(body:has([data-hint])) .hintHome .hint {
+  display: none;
+}
 @media (pointer: coarse) {
   .hintPointer {
     display: none;
@@ -1590,13 +2012,6 @@ button.cell[data-kind='empty']:hover {
   }
 }
 
-/* Follow playhead, zoom and Fit song: how the lane is viewed (not the song). */
-.laneTools {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 4px;
-}
 
 /* What a click on a part cell does (one bubble for the whole lane, shown on hover). */
 .cellTip {
@@ -1650,6 +2065,15 @@ button.cell[data-kind='empty']:hover {
 }
 .shapeItem + .shapeItem {
   margin-top: 2px;
+}
+/* A song move that is on: its words in teal (it changes the sound over the block), with "On". */
+.shapeItem [role='menuitemcheckbox'][aria-checked='true'] {
+  color: var(--teal-ink);
+  font-weight: 600;
+}
+.shapeItem [role='menuitemcheckbox'][aria-checked='true'] [class*='itemHint'] {
+  color: var(--teal-ink);
+  font-weight: 650;
 }
 
 /* ---------- motion ---------- */
@@ -1711,11 +2135,14 @@ button.cell[data-kind='empty']:hover {
     flex-wrap: wrap;
     row-gap: 4px;
   }
-  .hint {
+  .hintHome {
     flex-basis: 100%;
+    justify-content: flex-start;
+  }
+  .hint {
     text-align: left;
   }
   .lane {
-    --names-w: 70px;
+    --names-w: 140px;
   }
 }

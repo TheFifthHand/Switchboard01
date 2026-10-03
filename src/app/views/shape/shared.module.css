@@ -57,3 +57,27 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
+
+/* ---------- knobs ---------- */
+
+/* A control that does nothing until another one is raised (ParamSpec.gate): dimmed, still usable;
+   its tip starts with the reason. Full strength again under the pointer or with keyboard focus. */
+.gated {
+  opacity: 0.5;
+  transition: opacity var(--t-fast) var(--ease);
+}
+
+.gated:hover,
+.gated:focus-within {
+  opacity: 0.85;
+}
+
+/* Copy effects / Paste effects, side by side in an effects header. */
+.clipboard {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.clipboard [data-variant='ghost']:focus-visible {
+  box-shadow: var(--focus-ring);
+}

@@ -25,6 +25,7 @@ import { describeMacro } from '../../project/resolve';
 import { MACRO_IDS, TICKS_PER_BAR, type Clip, type Id, type Instrument, type MacroId, type Note } from '../../project/types';
 import { INTENSITY, applyVariation, setClipNotes, setLocked } from '../../state/commands';
 import { variationSeed } from '../../music/variation';
+import { ProjectStore } from '../../state/projectStore';
 import { setView, slotFor, uiStore } from '../../state/uiStore';
 import { session, useProject, useUi } from '../instance';
 import { notify, runtimeStore } from '../runtime';
@@ -122,6 +123,21 @@ function canRestore(clip: Clip | null): boolean {
   return sig !== k.sig && k.made.has(sig);
 }
 
+/** Why Back to original has nothing to do (shown on the row). */
+function restoreReason(clip: Clip | null): string {
+  if (!clip) return 'No clip selected';
+  const k = originals.get(clip.id);
+  const sig = notesSig(clip.notes);
+  // Varied once, then edited some other way (Steps, a recording): those edits are the original now.
+  if (k && sig !== k.sig && !k.made.has(sig)) return 'Edited since: these notes are the new original';
+  return 'Already the original';
+}
+
+/** Clips this short have little to vary: a press often changes nothing. */
+const TINY_CLIP_NOTES = 3;
+/** Seeds tried (on a copy, nothing committed) before a press says it found no change. */
+const VARIATION_TRIES = 6;
+
 /** The selected part and its selected clip (the one the pad ring marks), for Variation. */
 function selectedClip(trackId: Id) {
   const p = session.store.getState();
@@ -140,17 +156,37 @@ function vary(trackId: Id, strength: Strength): void {
     return;
   }
   const original = originalFor(clip);
+  const what = `${track.name} · ${clip.name}`;
+  // Try the next seeds on a copy of the project first: a press that would change nothing is not committed
+  // (no do-nothing undo step), and a short clip gets a few chances to find a change.
+  const before = notesSig(clip.notes);
   const generation = (clip.variation?.generation ?? 0) + 1;
-  const seed = variationSeed(p.seed, clip.id, generation);
+  let seed: number | null = null;
+  for (let i = 0; i < VARIATION_TRIES && seed === null; i++) {
+    const s = variationSeed(p.seed, clip.id, generation + i);
+    const trial = new ProjectStore(p);
+    const t = applyVariation(trial, trackId, slot, s, INTENSITY[strength], { from: original.notes });
+    if (!t.changed) {
+      // Refused (a kept pattern, notes that no longer fit): say why, as the real press would.
+      session.accepted(t);
+      return;
+    }
+    const varied = trial.getState().tracks.find((x) => x.id === trackId)?.clips[slot]?.notes;
+    if (varied && notesSig(varied) !== before) seed = s;
+  }
+  if (seed === null) {
+    notify(
+      clip.notes.length <= TINY_CLIP_NOTES
+        ? `${what} is too short to vary: add a few notes first.`
+        : `Variation found nothing new for ${what} this time. Bold changes more.`,
+      'info',
+    );
+    return;
+  }
   const r = applyVariation(session.store, trackId, slot, seed, INTENSITY[strength], { from: original.notes });
   if (!session.accepted(r)) return;
   const after = session.store.getState().tracks.find((t) => t.id === trackId)?.clips[slot]?.notes ?? clip.notes;
   original.made.add(notesSig(after));
-  const what = `${track.name} · ${clip.name}`;
-  if (r.summary === 'No change') {
-    notify(`Variation on ${what}: no change this time (a short clip has few notes to vary). Press again for another.`, 'info', 'undo');
-    return;
-  }
   // Varying a clip other than the one playing is silent until it is launched: say so
   // (unless it is already queued to start).
   const rt = runtimeStore.getState();
@@ -232,7 +268,7 @@ function VariationKey({ trackId, partName, keep, locked }: { trackId: Id; partNa
           <MenuItem
             icon="undo"
             disabled={!canRestore(shown)}
-            disabledReason={shown ? 'Already the original' : 'No clip selected'}
+            disabledReason={restoreReason(shown)}
             onSelect={() => {
               setMenu(null);
               backToOriginal(trackId);
@@ -401,9 +437,10 @@ export function PartPanel() {
             size="md"
             variant="primary"
             onClick={() => setSoundOpen(true)}
+            disabled={takeLocked}
             aria-haspopup="dialog"
             aria-label={`Change instrument (now ${type.name}: ${header.sound})`}
-            tip="Choose a different drum kit, synth sound or recording for this part. Undo brings the old one back."
+            tip={takeLocked ? `${LOCKED_TEXT}: the take keeps the sounds it started with.` : 'Choose a different drum kit, synth sound or recording for this part. Undo brings the old one back.'}
             className={styles.change}
           >
             Change instrument

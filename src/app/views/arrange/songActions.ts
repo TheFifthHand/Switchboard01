@@ -13,7 +13,7 @@
  * the selected blocks (no ids), Ctrl+V inserts fresh copies.
  */
 import { blockBars } from '../../../project/arrangement';
-import { MAX_BLOCK_REPEATS, type Id } from '../../../project/types';
+import { MAX_BLOCK_REPEATS, type BlockMoveKind, type Id } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { session } from '../../instance';
 import { notify } from '../../runtime';
@@ -44,9 +44,25 @@ function position(id: Id): number {
  * came back to where it started; Undo would take back an older edit).
  */
 function done(text: string, r?: { noStep?: boolean }): string {
+  if (inMenuDepth > 0) return text;
   if (r?.noStep) notify(text.replace(/\.$/, ''));
   else notify(text.replace(/\.$/, ''), 'info', 'undo');
   return text;
+}
+
+let inMenuDepth = 0;
+/**
+ * Run an edit made from a menu that stays open (a checkable move or part):
+ * the menu's own check mark shows the result, so no toast pops up over the
+ * menu (the caller still announces the returned text). Refusals still say why.
+ */
+export function fromOpenMenu<T>(fn: () => T): T {
+  inMenuDepth++;
+  try {
+    return fn();
+  } finally {
+    inMenuDepth--;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -338,4 +354,140 @@ export function resetParts(id: Id): string | null {
   const text = `Every part of ${blockName(id)} follows its scene again.`;
   notify(text, 'info', 'undo');
   return text;
+}
+
+/* ------------------------------------------------------------------ */
+/* Parts across blocks                                                 */
+/* ------------------------------------------------------------------ */
+
+const partNameOf = (trackId: Id) => session.store.getState().tracks.find((t) => t.id === trackId)?.name ?? 'Part';
+
+/** "Drums off in 4 blocks", "Drums back on in Groove", "Drums plays Lift in 3 blocks". */
+export function blocksPartText(part: string, where: string, choice: Id | null | undefined, from: string | null): string {
+  if (choice === null) return `${part} off in ${where}`;
+  if (choice === undefined) return `${part} back on in ${where}`;
+  return `${part} plays ${from ?? 'another scene'} in ${where}`;
+}
+
+/**
+ * One part in several blocks at once (one undo step; quick clicks sharing
+ * `gesture` join it). Blocks where nothing changes are left as they are; the
+ * toast counts the ones that changed.
+ */
+export function setBlocksPart(ids: readonly Id[], trackId: Id, choice: Id | null | undefined, gesture?: string): string | null {
+  if (refusedWhileLocked()) return null;
+  const r = cmd.setBlocksPart(session.store, ids, trackId, choice, gesture);
+  if (!r.changed) {
+    if (r.refused || r.message) session.accepted(r);
+    return null;
+  }
+  const n = r.blocks ?? ids.length;
+  const changedOne = n === 1 ? ids.find((id) => blocks().some((b) => b.id === id)) : undefined;
+  const where = n === 1 && changedOne ? blockName(changedOne) : `${n} blocks`;
+  return done(`${blocksPartText(partNameOf(trackId), where, choice, typeof choice === 'string' ? sceneName(choice) : null)}.`, r);
+}
+
+/** A part off in every block where it plays (`on` false), or back on everywhere it was switched off (one undo step). */
+export function setPartEverywhere(trackId: Id, on: boolean): string | null {
+  if (refusedWhileLocked()) return null;
+  const part = partNameOf(trackId);
+  const r = cmd.setPartEverywhere(session.store, trackId, on);
+  if (!r.changed) {
+    if (r.refused || r.message) {
+      session.accepted(r);
+      return null;
+    }
+    const text = on ? `${part} is not switched off in any block.` : `${part} plays in no block, so there is nothing to switch off.`;
+    notify(text);
+    return text;
+  }
+  const n = r.blocks ?? 0;
+  return done(on ? `${part} back on everywhere (${n === 1 ? '1 block' : `${n} blocks`}).` : `${part} off everywhere (${n === 1 ? '1 block' : `${n} blocks`}).`);
+}
+
+/* ------------------------------------------------------------------ */
+/* Song moves, scenes from blocks, intro and ending                    */
+/* ------------------------------------------------------------------ */
+
+/** Add a song move to a block, or take it off (one undo step). */
+export function toggleMove(id: Id, kind: BlockMoveKind): string | null {
+  if (refusedWhileLocked()) return null;
+  const name = blockName(id);
+  const r = cmd.toggleBlockMove(session.store, id, kind);
+  if (!session.accepted(r)) return null;
+  const move = cmd.BLOCK_MOVE_NAMES[kind];
+  return done(r.on ? `${move} on ${name}: ${MOVE_SAYS[kind]}.` : `${move} taken off ${name}.`);
+}
+
+/** What each song move does, in one line (the menu says it, and the toast when one is added). */
+export const MOVE_SAYS: Readonly<Record<BlockMoveKind, string>> = {
+  fadeIn: 'the song rises from silence across this block',
+  fadeOut: 'the song falls to silence across this block',
+  filterRise: 'the melodic parts open up from dark to their own Tone across this block',
+  echoThrow: 'the melodic parts throw their Echo on the last beat, ringing on into the next bar',
+};
+
+/** "Make a scene from this block": a new scene with the clips the block plays; the block then plays it. */
+export function sceneFromBlock(id: Id): { sceneId: Id; text: string } | null {
+  if (refusedWhileLocked()) return null;
+  const at = position(id);
+  const r = cmd.sceneFromBlock(session.store, id);
+  if (!session.accepted(r) || !r.sceneId) return null;
+  const scene = sceneName(r.sceneId);
+  const text = `Made the scene “${scene}” from block ${at}: it plays the same clips, and you can edit them in Play (row ${(r.row ?? 0) + 1}).`;
+  notify(text, 'info', 'undo');
+  return { sceneId: r.sceneId, text };
+}
+
+/** A new empty scene row at the end (one undo step). */
+export function addSceneRow(): { sceneId: Id; text: string } | null {
+  if (refusedWhileLocked()) return null;
+  const r = cmd.insertScene(session.store);
+  if (!session.accepted(r) || !r.sceneId) return null;
+  const text = `Added the scene “${sceneName(r.sceneId)}” (row ${(r.row ?? 0) + 1}). It has no clips yet: add them to its pads in Play, or make a scene from a block.`;
+  notify(text, 'info', 'undo');
+  return { sceneId: r.sceneId, text };
+}
+
+/** "Add an intro" (a build-up of the first scene) or "Add an ending" (a strip-down of the last, with an echo tail). */
+export function addSongEnd(which: 'intro' | 'ending'): { ids: Id[]; text: string } | null {
+  if (refusedWhileLocked()) return null;
+  const tail = session.store.getState().arrangement.tailSeconds;
+  const r = which === 'intro' ? cmd.addIntro(session.store) : cmd.addEnding(session.store);
+  if (!session.accepted(r) || !r.blockIds?.length) return null;
+  const n = r.blockIds.length;
+  const name = blockName(r.blockIds[0]).replace(/ · .*$/, '');
+  const blocksWord = n === 1 ? '1 block' : `${n} blocks`;
+  const text =
+    which === 'intro'
+      ? `Added an intro: ${name} builds up over ${blocksWord} at the start, its parts coming in one at a time.`
+      : `Added an ending: ${name} strips down over ${blocksWord} at the end, its parts dropping out one at a time${tail === 0 ? `, with a ${cmd.ENDING_TAIL_SECONDS} s echo tail` : ''}.`;
+  notify(text, 'info', 'undo');
+  return { ids: r.blockIds, text };
+}
+
+/** "Make song blocks" from a recorded take, after the song (one undo step); says what was rounded and left out. */
+export function songFromTake(takeId: Id): { ids: Id[]; text: string } | null {
+  if (refusedWhileLocked()) return null;
+  const p = session.store.getState();
+  const take = p.performances.find((x) => x.id === takeId);
+  if (!take) return null;
+  const wasEmpty = p.arrangement.blocks.length === 0;
+  const r = cmd.makeSongFromTake(session.store, takeId, { mode: 'append' });
+  if (!session.accepted(r) || !r.blockIds?.length) return null;
+  const n = r.blockIds.length;
+  const first = position(r.blockIds[0]);
+  const where = wasEmpty ? 'as the song' : n === 1 ? `as block ${first}` : `as blocks ${first}–${first + n - 1}`;
+  const parts = [`Made ${n === 1 ? '1 song block' : `${n} song blocks`} from “${take.name}” ${where}.`];
+  if (r.rounded) parts.push('Its launches were rounded to whole passes of each scene.');
+  const notes = r.ignored?.notes ?? 0;
+  const knobs = r.ignored?.knobs ?? 0;
+  if (notes || knobs) {
+    const what = [notes ? `${notes} ${notes === 1 ? 'note' : 'notes'}` : '', knobs ? `${knobs} knob ${knobs === 1 ? 'move' : 'moves'}` : ''].filter(Boolean).join(' and ');
+    parts.push(`The take’s ${what} are not carried over: blocks hold only scenes and parts.`);
+  } else parts.push('Played notes and knob moves are never carried over: blocks hold only scenes and parts.');
+  if (r.deletedScenes?.length) parts.push(`Scenes deleted since (${r.deletedScenes.join(', ')}) were left out.`);
+  const text = parts.join(' ');
+  notify(text, 'info', 'undo');
+  return { ids: r.blockIds, text };
 }

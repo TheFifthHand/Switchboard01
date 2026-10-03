@@ -15,6 +15,7 @@ import { applyKitToProject, applyPresetToProject, applySamplerToProject } from '
 import { DELAY_ID, REVERB_ID, createClip, createProject, moduleId, uid } from '../../project/factory';
 import { CHANNEL_PARAMS, DRUM_VOICE_PARAM_SPECS, INSTRUMENT_PARAMS, MASTER_VOLUME_SPEC, MODULE_PARAMS, clampParam, specById } from '../../project/params';
 import { hashString } from '../../project/rng';
+import { keyLabel } from '../../music/scales';
 import {
   DRUM_VOICES,
   MACRO_IDS,
@@ -84,30 +85,11 @@ export function voicing(names: string): number[] {
   return parts.map(midi);
 }
 
-const KEY_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
 /**
- * Scale words as the keyboard strip and the Notes view write them (one name
- * per key everywhere): the modes are proper names ("G Dorian"), the others
- * read naturally in lower case ("A minor", "C major pentatonic").
+ * Human-readable key, spelled the way the rest of the app writes it (one spelling everywhere):
+ * keyLabel(9, 'minor') === 'A minor', keyLabel(7, 'dorian') === 'G Dorian', keyLabel(3, 'major') === 'E♭ major'.
  */
-const SCALE_LABELS: Record<ScaleId, string> = {
-  major: 'major',
-  minor: 'minor',
-  dorian: 'Dorian',
-  phrygian: 'Phrygian',
-  lydian: 'Lydian',
-  mixolydian: 'Mixolydian',
-  harmonicMinor: 'harmonic minor',
-  majorPentatonic: 'major pentatonic',
-  minorPentatonic: 'minor pentatonic',
-  blues: 'blues',
-  chromatic: 'chromatic',
-};
-
-/** Human-readable key, e.g. keyLabel(9, 'minor') === 'A minor', keyLabel(7, 'dorian') === 'G Dorian'. */
-export function keyLabel(root: number, scale: ScaleId): string {
-  return `${KEY_NAMES[((root % 12) + 12) % 12]} ${SCALE_LABELS[scale]}`;
-}
+export { keyLabel };
 
 /* ------------------------------------------------------------------ */
 /* Grids (drums, rhythms)                                              */

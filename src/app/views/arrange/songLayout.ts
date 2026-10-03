@@ -2,28 +2,33 @@
  * Song lane geometry (pure: no DOM, no React).
  *
  * Blocks sit edge to edge, left to right, with widths proportional to their
- * length in bars (one pass × repeats). A block is never narrower than the
- * minimum width of its scale (MIN_BLOCK_WIDTH, so its header stays usable;
- * at the overview steps below OVERVIEW_BELOW px per bar COMPACT_BLOCK_WIDTH,
- * with a compact header); the ruler, the playhead and the pass dividers map
- * bars through the same per-block geometry, so bar numbers always line up
- * with block edges even when a short block is widened.
+ * length in bars (one pass × repeats): the lane is a true timeline, so the
+ * playhead moves the same distance per bar everywhere and the song's shape
+ * reads at a glance. The only exception is a floor: no block is narrower than
+ * COMPACT_BLOCK_WIDTH (44 px, room for its name), so at 11 px per bar and up
+ * every block of 4 bars or more is exactly to scale; only shorter blocks and
+ * the overview steps (under OVERVIEW_BELOW px per bar) are widened. A block
+ * narrower than FULL_HEADER_WIDTH shows a compact header (its name; ▶ and ⋯
+ * on hover or focus). The ruler, the playhead and the pass dividers map bars
+ * through the same per-block geometry, so bar numbers always line up with
+ * block edges even when a short block is widened.
  *
- * After the last block the lane keeps free room (`room`, one block width at
- * the scale) where blocks are dropped at the end and where the last block's
- * edge can be dragged out without reaching the lane's visible edge.
+ * After the last block the lane keeps free room (`room`, one full block width
+ * at a readable scale) where blocks are dropped at the end and where the last
+ * block's edge can be dragged out without reaching the lane's visible edge.
  *
  * The scale (pixels per bar) comes from a fixed ladder of zoom steps. The
  * lane fits the song (the largest step at which the whole song and its room
- * fit) when it opens and when the window is resized: at a readable step, or,
- * for a song of OVERVIEW_MIN_BLOCKS blocks or more, at an overview step
- * (compact blocks) when only that shows it whole; otherwise it opens
- * scrolling at a readable step (its shortest block about the minimum width,
+ * fit) when it opens for a project for the first time and when the window is
+ * resized: at a readable step, or, for a song of OVERVIEW_MIN_BLOCKS blocks or
+ * more, at an overview step when only that shows it whole; otherwise it opens
+ * scrolling at a readable step (its shortest block about a full header wide,
  * within SCROLL_MAX_PX_PER_BAR). Fit song shows the whole song at any step
  * that does, else as much as the smallest step allows (fitSong). Edits keep
  * the scale the lane has (a longer song scrolls), so blocks never change size
  * under the pointer. Zooming keeps an anchor (a block and how far into it)
- * where it is on screen.
+ * where it is on screen; the zoom buttons move ZOOM_BUTTON_STEPS steps of the
+ * ladder at a time, Ctrl+wheel one.
  */
 
 export interface LaneBlockInput {
@@ -59,23 +64,31 @@ export interface SongLayout {
   room: number;
 }
 
-export const MIN_BLOCK_WIDTH = 112;
-/** Narrowest block at an overview step (its header shows the name; play and actions on hover, focus or the menu). */
+/** Narrowest a block may be, at any scale (room for its name; ▶ and ⋯ show on hover or focus). */
 export const COMPACT_BLOCK_WIDTH = 44;
 /**
  * A block narrower than this (px) is drawn compact: its name only in the
- * header, no clip names in its cells (SongPanel.module.css, the container
- * query at 95 px). Only overview steps make blocks this narrow.
+ * header (▶ and ⋯ on hover, keyboard focus and while its menu is open), no
+ * clip names in its cells (SongPanel.module.css, the container query below
+ * 112 px).
  */
-export const COMPACT_HEADER_BELOW = 96;
+export const FULL_HEADER_WIDTH = 112;
+/** Blocks narrower than this (px) have a compact header. */
+export const COMPACT_HEADER_BELOW = FULL_HEADER_WIDTH;
 /** Zoom steps (pixels per bar), smallest first. The steps below OVERVIEW_BELOW show a long song whole. */
 export const ZOOM_STEPS = [3, 4, 5, 6, 8, 10, 11, 12, 14, 16, 18, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56] as const;
-/** Scales under this many px per bar are overview steps: blocks may be compact. */
-export const OVERVIEW_BELOW = 10;
+/**
+ * Scales under this many px per bar are overview steps (a 4-bar block would be
+ * narrower than the floor there); from it up the lane is linear for every
+ * block of 4 bars or more.
+ */
+export const OVERVIEW_BELOW = 11;
 export const MIN_PX_PER_BAR = ZOOM_STEPS[0];
 export const MAX_PX_PER_BAR = ZOOM_STEPS[ZOOM_STEPS.length - 1];
 /** Largest scale of a song that scrolls (so one short block cannot make long ones huge). */
 export const SCROLL_MAX_PX_PER_BAR = 25;
+/** Ladder steps one press of the zoom buttons moves (about ×1.25–1.6 a press); Ctrl+wheel moves one. */
+export const ZOOM_BUTTON_STEPS = 2;
 /** Most repeats a block can have (mirrors MAX_BLOCK_REPEATS; kept here so the geometry stays dependency-free). */
 const MAX_REPEATS = 16;
 
@@ -83,19 +96,19 @@ export function clampRepeats(r: number): number {
   return Number.isFinite(r) ? Math.min(MAX_REPEATS, Math.max(1, Math.round(r))) : 1;
 }
 
-/** The narrowest a block may be at `pxPerBar` (compact at the overview steps). */
-export function minBlockWidth(pxPerBar: number): number {
-  return pxPerBar < OVERVIEW_BELOW ? COMPACT_BLOCK_WIDTH : MIN_BLOCK_WIDTH;
+/** The narrowest a block may be (the same at every scale: the lane stays to scale above it). */
+export function minBlockWidth(_pxPerBar?: number): number {
+  return COMPACT_BLOCK_WIDTH;
 }
 
-/** Free room after the last block at `pxPerBar`: one block width (drops at the end, the last block's edge). */
+/** Free room after the last block at `pxPerBar`: one full block width (drops at the end, the last block's edge); less at overview steps. */
 export function tailRoom(pxPerBar: number): number {
-  return minBlockWidth(pxPerBar);
+  return pxPerBar < OVERVIEW_BELOW ? COMPACT_BLOCK_WIDTH : FULL_HEADER_WIDTH;
 }
 
-/** Width of a block of `totalBars` at `pxPerBar` (a skipped block gets the minimum). */
+/** Width of a block of `totalBars` at `pxPerBar`: to scale, never under the floor (a skipped block gets the floor). */
 export function blockWidth(totalBars: number, pxPerBar: number): number {
-  return Math.floor(Math.max(minBlockWidth(pxPerBar), totalBars * pxPerBar));
+  return Math.floor(Math.max(COMPACT_BLOCK_WIDTH, totalBars * pxPerBar));
 }
 
 function widthAt(totals: readonly number[], ppb: number): number {
@@ -130,12 +143,12 @@ function openScale(totals: readonly number[], available: number): number {
   return fitScale(totals, room, true) ?? (totals.length >= OVERVIEW_MIN_BLOCKS ? fitScale(totals, room) : null) ?? scrollScale(totals);
 }
 
-/** Scale of a song that does not fit: about the step where its shortest block is the minimum width (never an overview step). */
+/** Scale of a song that does not fit: about the step where its shortest block has a full header (never an overview step). */
 function scrollScale(totals: readonly number[]): number {
   const shortest = Math.min(...totals.filter((t) => t > 0));
   const steps = ZOOM_STEPS.filter((s) => s >= OVERVIEW_BELOW);
   if (!Number.isFinite(shortest)) return steps[0];
-  const want = Math.min(SCROLL_MAX_PX_PER_BAR, MIN_BLOCK_WIDTH / shortest);
+  const want = Math.min(SCROLL_MAX_PX_PER_BAR, FULL_HEADER_WIDTH / shortest);
   let step: number = steps[0];
   for (const s of steps) if (s <= want) step = s;
   return step;
@@ -230,30 +243,34 @@ export interface RulerMark {
 
 const LABEL_STEPS = [1, 2, 4, 8, 16, 32, 64, 128];
 
+/** The bar step between ruler numbers at `pxPerBar` (numbers at least `minSpacing` px apart). */
+export function rulerStep(pxPerBar: number, minSpacing = 56): number {
+  return LABEL_STEPS.find((s) => s * pxPerBar >= minSpacing) ?? 128;
+}
+
 /**
- * Bar lines for the ruler. Every block start is numbered; bars in between
- * are numbered at a regular step when there is room (at least `minSpacing`
- * pixels from the neighbouring numbers).
+ * Bar lines for the ruler. Numbers sit at a regular bar step (1, 5, 9, …),
+ * so on the linear lane they are evenly spaced and read like a ruler; every
+ * block start has a taller line. Where widened short blocks (or an overview
+ * step) bring two numbers closer than about half the spacing, the later one
+ * is left out. Unnumbered bar lines only where bars are at least 5 px apart.
  */
 export function rulerMarks(layout: SongLayout, minSpacing = 56): RulerMark[] {
   const out: RulerMark[] = [];
-  const step = LABEL_STEPS.find((s) => s * layout.pxPerBar >= minSpacing) ?? 128;
+  const step = rulerStep(layout.pxPerBar, minSpacing);
   const blocks = layout.blocks.filter((b) => b.totalBars > 0);
-  blocks.forEach((b, i) => {
+  let lastLabelX = -Infinity;
+  for (const b of blocks) {
     const barW = b.width / b.totalBars;
-    const nextStart = i + 1 < blocks.length ? blocks[i + 1].x : b.x + b.width + minSpacing / 2;
-    let lastLabelX = -Infinity;
     for (let k = 0; k < b.totalBars; k++) {
       const bar = b.startBar + k;
       const x = b.x + k * barW;
       const blockStart = k === 0;
-      let label = blockStart;
-      if (!blockStart && bar % step === 0 && x - lastLabelX >= minSpacing * 0.6 && nextStart - x >= minSpacing * 0.6) label = true;
+      const label = bar % step === 0 && x - lastLabelX >= minSpacing * 0.6;
       if (label) lastLabelX = x;
-      // Unnumbered bar lines only where they are far enough apart to read.
-      if (label || barW >= 5) out.push({ bar, x, label, blockStart });
+      if (label || blockStart || barW >= 5) out.push({ bar, x, label, blockStart });
     }
-  });
+  }
   return out;
 }
 
@@ -262,13 +279,36 @@ export function rulerMarks(layout: SongLayout, minSpacing = 56): RulerMark[] {
 /* ------------------------------------------------------------------ */
 
 /**
- * The next zoom step from `pxPerBar` (dir 1 = zoom in, -1 = zoom out), or
- * null at the end of the ladder.
+ * The zoom step `by` steps of the ladder from `pxPerBar` (dir 1 = zoom in,
+ * -1 = zoom out), stopping at the end of the ladder; null when already there.
+ * A scale between two steps counts from the step past it in that direction.
  */
-export function zoomStep(pxPerBar: number, dir: 1 | -1): number | null {
-  if (dir > 0) return ZOOM_STEPS.find((s) => s > pxPerBar + 1e-6) ?? null;
-  for (let i = ZOOM_STEPS.length - 1; i >= 0; i--) if (ZOOM_STEPS[i] < pxPerBar - 1e-6) return ZOOM_STEPS[i];
-  return null;
+export function zoomStep(pxPerBar: number, dir: 1 | -1, by = 1): number | null {
+  const n = ZOOM_STEPS.length;
+  let i: number;
+  if (dir > 0) {
+    i = ZOOM_STEPS.findIndex((s) => s > pxPerBar + 1e-6);
+    if (i < 0) return null;
+    i = Math.min(n - 1, i + Math.max(1, by) - 1);
+  } else {
+    i = -1;
+    for (let j = n - 1; j >= 0; j--) {
+      if (ZOOM_STEPS[j] < pxPerBar - 1e-6) {
+        i = j;
+        break;
+      }
+    }
+    if (i < 0) return null;
+    i = Math.max(0, i - Math.max(1, by) + 1);
+  }
+  return ZOOM_STEPS[i];
+}
+
+/** The ladder index of a scale (the nearest step), for remembering it. */
+export function zoomIndex(pxPerBar: number): number {
+  let best = 0;
+  for (let i = 1; i < ZOOM_STEPS.length; i++) if (Math.abs(ZOOM_STEPS[i] - pxPerBar) < Math.abs(ZOOM_STEPS[best] - pxPerBar)) best = i;
+  return best;
 }
 
 /** A place on the lane that a zoom keeps still: a block and how far into it (0..1; past its end beyond 1). */
@@ -330,10 +370,12 @@ export function gapX(layout: SongLayout, gap: number): number {
 
 /** Part rows never get shorter than this (px)… */
 export const ROW_MIN_PX = 18;
-/** …nor taller than this. */
-export const ROW_MAX_PX = 32;
-/** Room the Performances panel keeps below the song when it lists takes (its header and about two takes). */
-export const PERF_ROOM_PX = 180;
+/** …nor taller than this (a tall window: about 1080 px and up). */
+export const ROW_MAX_PX = 48;
+/** Room the Performances panel keeps below the song when it is open (its header and about two takes). */
+export const PERF_ROOM_PX = 150;
+/** Height of the Performances panel folded to its one-line bar (px). */
+export const PERF_BAR_PX = 46;
 
 /** The row height that shares `free` px out among `rows` part rows, within ROW_MIN_PX..ROW_MAX_PX. */
 export function fitRowHeight(free: number, rows: number): number {
@@ -342,13 +384,21 @@ export function fitRowHeight(free: number, rows: number): number {
 }
 
 /**
+ * Room the lane may add below the blocks once the rows are as tall as they get
+ * (px): a drop zone and a breath, never an empty band (with the lane's own
+ * bottom margin, at most about 120 px stay empty under the last row).
+ */
+export const LANE_EXTRA_MAX_PX = 80;
+
+/**
  * How the lane fills `free` px of height: the part rows grow first (up to
- * ROW_MAX_PX); what is left once they are as tall as they get (`extra`) goes
- * to the lane itself, below the blocks, so a tall window has no empty band
- * under the song.
+ * ROW_MAX_PX); some of what is left once they are as tall as they get
+ * (`extra`, up to LANE_EXTRA_MAX_PX) goes to the lane itself, below the
+ * blocks. The rest stays below the panels (the page's end), not as an empty
+ * band inside the lane.
  */
 export function fitLaneHeight(free: number, rows: number): { row: number; extra: number } {
   const row = fitRowHeight(free, rows);
   if (!(rows > 0) || !Number.isFinite(free)) return { row, extra: 0 };
-  return { row, extra: Math.max(0, Math.floor(free - rows * row)) };
+  return { row, extra: Math.min(LANE_EXTRA_MAX_PX, Math.max(0, Math.floor(free - rows * row))) };
 }

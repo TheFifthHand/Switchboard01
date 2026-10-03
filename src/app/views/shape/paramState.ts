@@ -6,8 +6,10 @@
  * so a knob drag costs one resolution per change instead of one per knob.
  */
 import { MODULE_DEFS } from '../../../project/modules';
-import { macroControlledParams, resolveAllParams, type MacroControl } from '../../../project/resolve';
-import type { Id, ModuleType, ParamValues, PatchModule, Project } from '../../../project/types';
+import { clampParam, formatParam, gateOpen, type ParamSpec } from '../../../project/params';
+import { macroControlledParams, resolveAllParams, specsForModule, type MacroControl } from '../../../project/resolve';
+import type { Id, MacroTarget, ModuleType, ParamValues, PatchModule, Project } from '../../../project/types';
+import { INSERT_DEFAULTS, paramHomeFor } from '../../../state/commands';
 import { MACRO_SPECS } from '../../macros';
 
 interface Derived {
@@ -82,6 +84,79 @@ export function moduleName(p: Project, mod: PatchModule | undefined, fromTrackId
     return t ? `${t.name} ${base}` : base;
   }
   return base;
+}
+
+/** The macro target that sets a parameter (the one `controllerName` names), with its owner and index, or null. */
+export function controllingTarget(p: Project, moduleIdStr: Id, param: string): (MacroTarget & { trackId: Id; macro: MacroControl['macro']; index: number }) | null {
+  const c = derived(p).controlled.get(`${moduleIdStr}.${param}`);
+  if (!c) return null;
+  const list = p.tracks.find((t) => t.id === c.trackId)?.macroMap[c.macro] ?? [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].module === moduleIdStr && list[i].param === param) return { ...list[i], trackId: c.trackId, macro: c.macro, index: i };
+  }
+  return null;
+}
+
+/** A part's default module slots, by the suffix of their id ("t3:filter" → 'filter'). */
+const DEFAULT_SLOTS = { inst: 'instrument', drive: 'drive', filter: 'filter', lfo: 'lfo', ch: 'channel' } as const;
+
+/** Where a knob's double-click takes it, and why that value. */
+export interface KnobHome {
+  /** The value double-click (and Delete) returns to. */
+  home: number;
+  /** 'sound': as the part's sound (preset, kit) designed it; 'effect': where an added effect starts; 'plain': the registry default. */
+  kind: 'sound' | 'effect' | 'plain';
+}
+
+/**
+ * The value a knob returns to (double-click, Delete): what the part's sound
+ * was designed with (paramHomeFor: a preset's own value, a kit's matched
+ * level) for its instrument and its default Drive, Filter, LFO and channel;
+ * where an added effect starts (the value Add effect gives it); otherwise the
+ * registry default.
+ */
+export function knobHome(p: Project, moduleIdStr: Id, param: string, spec: ParamSpec): KnobHome {
+  const mod = p.patch.modules.find((m) => m.id === moduleIdStr);
+  const plain: KnobHome = { home: spec.default, kind: 'plain' };
+  if (!mod) return plain;
+  const colon = moduleIdStr.indexOf(':');
+  const slot = colon > 0 ? moduleIdStr.slice(colon + 1) : '';
+  const track = mod.trackId ? p.tracks.find((t) => t.id === mod.trackId) : undefined;
+  if (track && slot in DEFAULT_SLOTS && DEFAULT_SLOTS[slot as keyof typeof DEFAULT_SLOTS] === mod.type) {
+    const v = paramHomeFor(track, param, slot as keyof typeof DEFAULT_SLOTS);
+    return v === undefined || v === spec.default ? plain : { home: v, kind: 'sound' };
+  }
+  // A part's added effect starts where Add effect put it; shared returns (no part) have only the plain default.
+  const start = track && MODULE_DEFS[mod.type].insertable ? INSERT_DEFAULTS[mod.type]?.[param] : undefined;
+  return start === undefined || start === spec.default ? plain : { home: clampParam(spec, start), kind: 'effect' };
+}
+
+/** "Double-click returns it to this sound’s 38%; Alt+double-click to the plain default, 25%." (empty when they agree). */
+export function homeNote(spec: ParamSpec, h: KnobHome, plain: number = spec.default): string {
+  if (h.kind === 'plain' || h.home === plain) return '';
+  const at = formatParam(spec, h.home);
+  const where = h.kind === 'sound' ? `this sound’s ${at}` : `${at}, where this effect starts`;
+  return `Double-click returns it to ${where}; Alt+double-click to the plain default, ${formatParam(spec, plain)}.`;
+}
+
+/**
+ * Why a gated control does nothing right now (ParamSpec.gate, read against
+ * the module's effective values with big knobs applied), or null while it acts.
+ */
+export function gateReason(p: Project, moduleIdStr: Id, spec: ParamSpec): string | null {
+  if (!spec.gate) return null;
+  const values = derived(p).resolved.get(moduleIdStr);
+  return gateOpen(spec, values, specsForModule(p, moduleIdStr)) ? null : spec.gate.reason;
+}
+
+/**
+ * A React key for a part's module that is the same for the same role on
+ * every part ("t3:drive" and "t4:drive" → "drive", "t4:eq-2" → "eq-2"), so a
+ * part switch re-renders a card instead of remounting it. Unique within a part.
+ */
+export function partKey(moduleIdStr: Id): string {
+  const i = moduleIdStr.indexOf(':');
+  return i >= 0 ? moduleIdStr.slice(i + 1) : moduleIdStr;
 }
 
 /** Array equality by element identity (for selectors that build arrays). */

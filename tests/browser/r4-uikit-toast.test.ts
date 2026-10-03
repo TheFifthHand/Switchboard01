@@ -93,6 +93,48 @@ describe('where toasts sit', () => {
   });
 });
 
+describe('toasts keep off controls under their band', () => {
+  /** Tabs at the top left and a header key at the top right, both under the toasts' band (1024 wide). */
+  function TopControls({ wide = false }: { wide?: boolean }) {
+    const tab = (label: string, left: number) => h('button', { key: label, type: 'button', role: 'tab', 'data-testid': `tab-${label}`, style: { position: 'fixed', top: '72px', left: `${left}px`, width: '64px', height: '30px' } }, label);
+    return h(
+      'div',
+      null,
+      tab('Loops', 30),
+      tab('Drums', 100),
+      tab('Notes', 170),
+      tab('Steps', 240),
+      h('button', { type: 'button', 'data-testid': 'shape', style: { position: 'fixed', top: '74px', right: '20px', width: wide ? '600px' : '90px', height: '30px' } }, 'Shape'),
+    );
+  }
+
+  it('slide into the clear stretch between them, narrowing to fit; a click on a tab reaches the tab', async () => {
+    await page.viewport(1024, 768);
+    document.documentElement.style.setProperty('--transport-h', '60px');
+    let clicked = '';
+    mount(h(ToastProvider, null, h(Grab), h(TopControls)));
+    for (const b of document.querySelectorAll<HTMLButtonElement>('[data-testid^="tab-"]')) b.onclick = () => (clicked = b.textContent ?? '');
+    const { toast } = await show('Variation on Lead · Bell Hook: 2 notes changed, 1 added.');
+    const r = toast.getBoundingClientRect();
+    for (const b of document.querySelectorAll<HTMLElement>('[data-testid^="tab-"], [data-testid="shape"]')) {
+      expect(overlaps(r, b.getBoundingClientRect()), b.textContent ?? '').toBe(false);
+    }
+    expect(r.width).toBeGreaterThanOrEqual(300);
+    expect(r.top).toBeCloseTo(68, 0);
+    await click(centre(document.querySelector<HTMLElement>('[data-testid="tab-Steps"]')!));
+    expect(clicked).toBe('Steps');
+  });
+
+  it('stay centred when nothing is under them, and when no stretch is wide enough', async () => {
+    await page.viewport(1024, 768);
+    document.documentElement.style.setProperty('--transport-h', '60px');
+    mount(h(ToastProvider, null, h(Grab), h(TopControls, { wide: true })));
+    const { toast } = await show('Saved.');
+    const r = toast.getBoundingClientRect();
+    expect(Math.abs((r.left + r.right) / 2 - innerWidth / 2)).toBeLessThanOrEqual(1);
+  });
+});
+
 describe('toasts and an open menu', () => {
   it('stay at the top under the transport and below the menu; Undo still works', async () => {
     mount(h(ToastProvider, null, h(Grab), h(Keyboard, { height: 101 })));

@@ -1,8 +1,9 @@
 /**
  * Recorded performances in words (pure: no DOM, no React).
  *
- * A take stores absolute transport ticks; the list shows them as
- * bar.beat.step from the start of the take. Names come from the take's own
+ * A take stores absolute transport ticks; the list shows them as the
+ * music's own bar.beat.step (the bar the transport was in, so a launch on a
+ * downbeat reads "5.1.1" however mid-bar Record was pressed). Names come from the take's own
  * snapshot (the parts, clips and modules as they were when it was recorded),
  * so the list describes what the replay will actually do.
  *
@@ -26,7 +27,7 @@ export interface EventRow {
   index: number;
   /** Absolute transport tick. */
   tick: number;
-  /** bar.beat.step from the start of the take, e.g. "3.2.4". */
+  /** The music's bar.beat.step (absolute), e.g. "3.2.4". */
   time: string;
   kind: EventKind;
   /** Plain-language description, e.g. "Bass → Rolling, from bar 3". */
@@ -35,9 +36,9 @@ export interface EventRow {
   pairIndex?: number;
 }
 
-/** "bar.beat.step" (1-based) for a tick offset from the start of a take. */
-export function formatPosition(relTick: number): string {
-  const t = Math.max(0, relTick);
+/** "bar.beat.step" (1-based) of a transport tick (the music's bars: tick 0 is 1.1.1). */
+export function formatPosition(tick: number): string {
+  const t = Math.max(0, tick);
   const bar = Math.floor(t / TICKS_PER_BAR);
   const inBar = t - bar * TICKS_PER_BAR;
   const beat = Math.floor(inBar / TICKS_PER_BEAT);
@@ -47,8 +48,8 @@ export function formatPosition(relTick: number): string {
 
 /**
  * Parse a typed position ("5", "5.2" or "5.2.3": bar, beat, step, 1-based,
- * as the Time column shows them) into a tick offset from the start of a take.
- * Null when the text is not a position.
+ * as the Time column shows them) into a transport tick. Null when the text is
+ * not a position.
  */
 export function parsePosition(text: string): number | null {
   const m = /^\s*(\d{1,4})(?:[.:](\d{1,2}))?(?:[.:](\d{1,2}))?\s*$/.exec(text);
@@ -202,7 +203,7 @@ function launchText(perf: Performance, names: Names, trackId: Id, slot: number |
  */
 function when(perf: Performance, verb: 'starts' | 'stops', tick: number): string {
   if (tick >= perf.endTick) return `queued for after the take ends, so it is not heard`;
-  return `${verb} at ${formatPosition(tick - perf.startTick)}`;
+  return `${verb} at ${formatPosition(tick)}`;
 }
 
 /**
@@ -231,8 +232,7 @@ export function performanceRows(perf: Performance): EventRow[] {
   const rows: EventRow[] = [];
   perf.events.forEach((e, index) => {
     if (e.type === 'noteOff' && pairedOffs.has(index)) return;
-    const rel = e.t - perf.startTick;
-    const base = { index, tick: e.t, time: formatPosition(rel) };
+    const base = { index, tick: e.t, time: formatPosition(e.t) };
     switch (e.type) {
       case 'launch':
         rows.push({ ...base, kind: 'Launch', detail: `${launchText(perf, names, e.trackId, e.slot)}, ${when(perf, e.slot === null ? 'stops' : 'starts', e.atTick)}` });
