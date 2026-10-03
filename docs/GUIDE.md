@@ -136,10 +136,10 @@ sideways drag paints.
 
 Press **Shape** (top left) for the selected part in detail.
 
-- **Sound** knobs in the instrument card change the instrument itself: **Soft start** and
-  **Length** for synths (with **Octave** and **Character** on a bass synth, **Character** and
-  **Thickness** on the other synths), a **Drum mix** of kick, snare and hats (and the kick's tune) for a drum kit, and **Start**,
-  **Length** and **Pitch** for a recording. **Edit sound** shows every setting.
+- **Sound** knobs in the instrument card change the instrument itself: **Soft start** and **Length**
+  for synths (with **Octave** and **Character** on a bass synth, **Character** and **Thickness** on
+  the other synths), a **Drum mix** of kick, snare and hats (and the kick's tune) for a drum kit,
+  and **Start**, **Length** and **Pitch** for a recording. **Edit sound** shows every setting.
 - **Effects** appear as cards, one knob each, and every knob changes what you hear. The
   **Compressor**'s knob is **Squeeze**: turn it up to hold the loud moments down; the small bar
   beside it shows how much it is turning down right now. **Add effect** offers effects by purpose
@@ -275,10 +275,10 @@ timing grid. Grid, metronome and count-in are in the recording options (the butt
 - **It saves by itself.** Even if the page closes or reloads right after an edit, the next start
   brings it back ("Recovered your last edits").
 - **Versions.** Open the projects button (folder icon, top right, or **⋯ → Projects…**) → **My
-  projects** → **Versions…** on a project. Omni Song keeps a version about every ten minutes while you work and before big
-  changes (a Variation, deleting a scene, moving the song to another key …). **Restore as a copy**
-  opens one as a new project; **Save version…** keeps the project as it is now, with a name if you
-  like.
+  projects** → **Versions…** on a project. Omni Song keeps a version about every ten minutes while
+  you work and before big changes (a Variation, deleting a scene, moving the song to another key …).
+  **Restore as a copy** opens one as a new project; **Save version…** keeps the project as it is
+  now, with a name if you like.
 - **One tab per project.** If the same project is open in a second tab, only one of them saves it.
   The other says "This project is open in another tab. Changes here are not saved." and offers
   **Take over** (this tab saves from now on) or **Open a copy**.
@@ -320,9 +320,9 @@ stays on your computer. Details and options are in the **MIDI & audio** dialog.
    takes are two pads you can launch; the part's other clips keep their recordings. One Undo
    removes it.
 4. **Bring in a loop:** press **Import WAV or MP3…** (in the recording editor, or under
-   **Recordings** in **Change instrument**). It becomes a new clip on an empty pad and plays at its own pitch. If the
-   part has no empty pad, Omni Song says what to do; on a drum or synth part with clips it asks
-   first and can put the file on a sampler part instead.
+   **Recordings** in **Change instrument**). It becomes a new clip on an empty pad and plays at its
+   own pitch. If the part has no empty pad, Omni Song says what to do; on a drum or synth part with
+   clips it asks first and can put the file on a sampler part instead.
 5. The editor works on the selected clip's recording (its header says which). Zoom into the
    waveform with **Ctrl+wheel**, a two-finger pinch or **−** / **+**; drag the Start and End handles
    (hold **Shift** to snap to the nearest hit, **Alt** for fine steps). The recording picker can give

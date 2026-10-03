@@ -516,10 +516,11 @@ Off (a thin edge), Rec and the take lock.
 
 **Loop.** The looped blocks repeat while the song plays (playback state, not saved; Play starts at
 the loop). **Loop** names what it acts on and is pressed only when it names the loop that is on;
-otherwise it offers to move it ("Move loop to Groove (block 2)"). A chip shows the loop ("Loop: Groove",
-"Loop: Groove–Lift") with ✕ to stop it. A drag across the ruler sets a loop snapped to block edges, with a
-toast offering **Stop looping**; each end of the band has a grip. The menu's **Loop…** has Loop this
-block / selected blocks and Stop looping. Edits keep the loop (see ARCHITECTURE).
+otherwise it offers to move it ("Move loop to Groove (block 2)"). A chip shows the loop ("Loop:
+Groove", "Loop: Groove–Lift") with ✕ to stop it. A drag across the ruler sets a loop snapped to
+block edges, with a toast offering **Stop looping**; each end of the band has a grip. The menu's
+**Loop…** has Loop this block / selected blocks and Stop looping. Edits keep the loop (see
+ARCHITECTURE).
 
 **Block menu.** Play song from here, Rename…, Duplicate, Split in half, Join with next, One more time
 / One time fewer; then lists that open in place with **Back**: **Parts in this block…** ("Parts in 4
@@ -590,12 +591,11 @@ panel follows a frame later.
 
 - **Part strips:** name on two lines, number and state word, a fader (every dB mark at the same
   height on all strips) with the part's meter on the fader's own scale (a level lines up with its
-  mark), a
-  peak-hold number (click resets; coral above −1 dBFS), **Mute**, **Solo**, **Pan**. Knobs are named
-  "Drums pan", "Drums reverb"; fader undo steps read "Bass level". Double-click returns a fader to
-  0 dB. The fader's value is a key for typed entry; at the bottom it reads **Silent** ("−60.0 dB,
-  silent"). A touch swipe on a fader lane
-  scrolls the page; only the cap or a 250 ms hold takes the finger.
+  mark), a peak-hold number (click resets; coral above −1 dBFS), **Mute**, **Solo**, **Pan**. Knobs
+  are named "Drums pan", "Drums reverb"; fader undo steps read "Bass level". Double-click returns a
+  fader to 0 dB. The fader's value is a key for typed entry; at the bottom it reads **Silent**
+  ("−60.0 dB, silent"). A touch swipe on a fader lane scrolls the page; only the cap or a 250 ms
+  hold takes the finger.
 - **Return strips** (between the parts and the master): **Reverb** and **Echo**, the shared returns
   every part sends to. A one-line caption, Size / Tone or Time / Feedback, **Mute** (switches the
   return off for every part, keeping its settings; refused during a take), a level fader (the
@@ -607,9 +607,8 @@ panel follows a frame later.
   px tall; the choice is remembered.
 - **Channel drawer:** **Channel** in the Mixer header (Simple and Advanced), or an effect chip,
   opens the selected part's effects rack in a drawer that takes the mastering's place, the view
-  staying Mix: **Add EQ**, **Add Compressor** (unavailable at the
-  limit, during a take or with custom routing, the reason shown), **Open in Shape**. Opening it ends
-  an A/B comparison.
+  staying Mix: **Add EQ**, **Add Compressor** (unavailable at the limit, during a take or with
+  custom routing, the reason shown), **Open in Shape**. Opening it ends an A/B comparison.
 
 **Mastering.**
 - On/Off; preset chips (Clean, Gentle, Warm, Punchy, Bright, Wide, Loud, Lo-fi) with what each does;
@@ -631,9 +630,9 @@ panel follows a frame later.
 
 - **What to export** (clips playing now, a scene, the song, the loop, a performance), **Output**
   (**Mix** or **Mix without mastering**, back to Mix each time the dialog opens), Length (bars, for
-  the clips playing now or a scene), **Echo tail**, **Sample rate**, **Bit depth** (**24-bit** default; 16-bit is dithered),
-  **File name** (characters file systems refuse are dropped and a hint says so). One close pattern:
-  × and one primary key.
+  the clips playing now or a scene), **Echo tail**, **Sample rate**, **Bit depth** (**24-bit**
+  default; 16-bit is dithered), **File name** (characters file systems refuse are dropped and a
+  hint says so). One close pattern: × and one primary key.
 - While it renders the dialog cannot be dismissed (only **Cancel export** stops it) and shows time
   left ("about 55 s left"). Music playing on carries on.
 - After a render a report line: "Integrated −17.9 LUFS · true peak −5.2 dBTP (Streaming target −14)",
@@ -723,9 +722,9 @@ keys still show their name.
 dBFS; a held peak keeps its segment. Strip meters may use the fader's taper.
 
 **Reduced motion.** No slides or springs (blocks, pads and the lane jump to their places); loop
-progress moves once a beat; the record dot is a steady coral and its ring steady; spinners are
-hidden and their words ("Loading…", "Saving…") stay; the MIDI & audio light and cable-panel pulses
-hold still.
+progress moves once a beat; the record dot is a steady coral and its ring steady; the sampler's
+spinners are hidden and their words ("Loading…") stay; the save state's arc, the MIDI & audio light
+and the cable-panel pulses hold still.
 
 **Keyboard.** Ctrl/⌘+A with focus on the page (not a field or a list that selects with it) does
 nothing. Letter keys belong to the instrument; app shortcuts never take a playing key. Every

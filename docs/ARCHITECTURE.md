@@ -460,16 +460,17 @@ Rules:
   tagged with the tab and `dbId`). `library.openLast` / `openProject` take it back when it is newer
   than the stored project (`RESCUE_WARNING` "Recovered your last edits."); it is cleared once the
   project saves. If storage is full the project still opens with the edits, flagged unsaved.
-- **Versions** (`versions.ts`): kept automatically after about ten minutes of active editing,
-  before bulk edits (the session calls `snapshotBefore` before Variation, Clear, Delete clip or
-  scene, Replace, Build up / Strip down / Breakdown, Make song blocks, Make a scene from a block, a
-  kit, sound or recording change, an import or Move the song: at most once per kind of edit every 2 minutes in the session,
-  every 3 minutes per project in persistence, never for undo or redo) and on request (Save version…,
-  optionally named). **Thinning** runs before a new version is written: named versions stay until
-  deleted; unnamed ones keep everything from the last hour, then the newest of each hour for a day,
-  then the newest of each day, at most 30 per project (10 when storage is full), the hourly and daily
-  ones first, so a burst never pushes older history out. After a quota error versions pause for 10
-  minutes; saving the project itself is never held up. Restoring always makes a new project.
+- **Versions** (`versions.ts`): kept automatically after about ten minutes of active editing, before
+  bulk edits (the session calls `snapshotBefore` before Variation, Clear, Delete clip or scene,
+  Replace, Build up / Strip down / Breakdown, Make song blocks, Make a scene from a block, a kit,
+  sound or recording change, an import or Move the song: at most once per kind of edit every 2
+  minutes in the session, every 3 minutes per project in persistence, never for undo or redo) and on
+  request (Save version…, optionally named). **Thinning** runs before a new version is written:
+  named versions stay until deleted; unnamed ones keep everything from the last hour, then the
+  newest of each hour for a day, then the newest of each day, at most 30 per project (10 when
+  storage is full), the hourly and daily ones first, so a burst never pushes older history out.
+  After a quota error versions pause for 10 minutes; saving the project itself is never held up.
+  Restoring always makes a new project.
 - Garbage collection keeps every recording a project, a version or a clip (`Clip.sample`) uses.
 - Names are picked inside the write transaction, so two projects stored at the same moment get
   different names ("House Starter", "House Starter 2").

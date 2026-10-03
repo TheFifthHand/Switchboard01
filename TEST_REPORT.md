@@ -216,10 +216,10 @@ Downtempo's Intro peak was measured again after the level match became block-wis
 (it was −14.7 in the first round-4 measurement; its sparse driven drum hits peak 0.6 dB lower;
 RMS unchanged). The other five starters did not change.
 
-Core grooves sit between −18.7 and −21.9 dBFS RMS; the limiter (ceiling −1 dBFS) only touches the loudest peaks of the
-fullest scenes (< 1 % of samples, asserted for every scene in `tests/browser/starters.test.ts`).
-Intros are deliberately sparse and quieter. The Milestone 5 sound fixes (kit level matching, choke
-groups, one-shot playback) moved no scene by more than 0.06 dB.
+Core grooves sit between −18.7 and −21.9 dBFS RMS; the limiter (ceiling −1 dBFS) only touches the
+loudest peaks of the fullest scenes (< 1 % of samples, asserted for every scene in
+`tests/browser/starters.test.ts`). Intros are deliberately sparse and quieter. The Milestone 5 sound
+fixes (kit level matching, choke groups, one-shot playback) moved no scene by more than 0.06 dB.
 
 ### Determinism
 Two renders of the same project differ by at most ~1e-6 (below −100 dBFS): Chromium sums a node's
