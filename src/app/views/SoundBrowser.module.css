@@ -321,9 +321,18 @@
 
 .import {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+.importRow {
+  display: flex;
   align-items: center;
   gap: 12px;
-  padding-top: 4px;
+  min-width: 0;
+}
+.importRefused {
+  margin: 0;
 }
 .importNote {
   flex: 1;
@@ -356,6 +365,19 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Cancel says where it goes back to, in smaller words after the key's name. */
+.cancel {
+  max-width: min(360px, 40vw);
+}
+.cancelWhere {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Narrow windows: the categories become a wrapping row above the sounds. */

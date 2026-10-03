@@ -68,33 +68,44 @@ const yieldToUi = () => new Promise<void>((r) => setTimeout(r, 0));
 
 /**
  * Make a new version of the part's recording with `edit` applied to its
- * trimmed region, and play it on the part (one undo step). The project is
- * unchanged when anything fails; the result says what happened.
+ * trimmed region, and play it on the part (one undo step). With `slot`, the
+ * recording that clip plays itself (Clip.sample) and its own region are
+ * edited instead, and only that clip moves to the new version. The project
+ * is unchanged when anything fails; the result says what happened.
  */
-export async function editRecording(trackId: Id, edit: SampleEdit, s: Session = appSession): Promise<{ ok: boolean; message: string }> {
+export async function editRecording(trackId: Id, edit: SampleEdit, s: Session = appSession, opts: { slot?: number } = {}): Promise<{ ok: boolean; message: string }> {
   if (editStore.getState()[trackId]?.phase === 'working') return { ok: false, message: 'An edit is still being made. Wait for it to finish.' };
   const finish = (ok: boolean, message: string) => {
     setStatus(trackId, { phase: 'done', ok, message });
     return { ok, message };
   };
   try {
-    return await makeVersion(trackId, edit, s, finish);
+    return await makeVersion(trackId, edit, s, finish, opts.slot);
   } catch (e) {
     // Whatever went wrong, the edit ends with a message and the keys work again.
     return finish(false, `The edit could not be made: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
-async function makeVersion(trackId: Id, edit: SampleEdit, s: Session, finish: (ok: boolean, message: string) => { ok: boolean; message: string }): Promise<{ ok: boolean; message: string }> {
+async function makeVersion(
+  trackId: Id,
+  edit: SampleEdit,
+  s: Session,
+  finish: (ok: boolean, message: string) => { ok: boolean; message: string },
+  slot?: number,
+): Promise<{ ok: boolean; message: string }> {
   const lock = s.store.getLock();
   if (lock) return finish(false, lock);
   const p = s.store.getState();
   const projectId = p.id;
-  const inst = p.tracks.find((t) => t.id === trackId)?.instrument;
-  if (inst?.kind !== 'sampler' || !inst.sampleId) return finish(false, 'This part has no recording to edit.');
-  const sampleId = inst.sampleId;
-  // What plays: the effective Start and End (a macro may move them).
-  const region = readSamplerValues(p, trackId, ['start', 'end']);
+  const track = p.tracks.find((t) => t.id === trackId);
+  const inst = track?.instrument;
+  const own = slot !== undefined ? track?.clips[slot]?.sample : undefined;
+  if (slot !== undefined && (!own || inst?.kind !== 'sampler')) return finish(false, 'This clip has no recording of its own to edit.');
+  if (!own && (inst?.kind !== 'sampler' || !inst.sampleId)) return finish(false, 'This part has no recording to edit.');
+  const sampleId = own ? own.id : (inst as { sampleId: Id }).sampleId;
+  // What plays: the clip's own region, or the part's effective Start and End (a macro may move them).
+  const region = own ? { start: own.start, end: own.end } : readSamplerValues(p, trackId, ['start', 'end']);
   setStatus(trackId, { phase: 'working', kind: edit.kind });
   await yieldToUi();
   const audio = await loadSampleAudio(sampleId, s);
@@ -111,7 +122,7 @@ async function makeVersion(trackId: Id, edit: SampleEdit, s: Session, finish: (o
   const r =
     s.store.getState().id !== projectId
       ? { changed: false, refused: undefined, message: 'Another project opened, so the edit was not applied.' }
-      : cmd.addSampleVersion(s.store, trackId, sampleId, made.meta, { label: EDIT_LABEL[edit.kind], region: res.region ?? undefined });
+      : cmd.addSampleVersion(s.store, trackId, sampleId, made.meta, { label: EDIT_LABEL[edit.kind], region: res.region ?? undefined, slot: own ? slot : undefined });
   if (!r.changed) {
     // Nothing refers to the stored file: it goes again.
     s.bank?.remove(made.meta.id);
