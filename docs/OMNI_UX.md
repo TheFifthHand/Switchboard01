@@ -128,13 +128,15 @@ view has one hidden h1 naming it and the project.
 
 Order: **Update** first when one waits (a coral dot on ⋯ below 1600 px); Undo, Redo; Show every
 control (Advanced), Tips; **New project…**, **Projects…**, **Export WAV…**, **MIDI & audio…**,
-**Help…** (?). The offline state is its last line, plain text that cannot be focused.
+**Help…** (?). The offline state is its last line, plain text that cannot be focused. Focus starts
+on the first item that can be used.
 
 ### Help
 
 **Help** opens from ⋯ → Help… or the **?** key (not while typing). Tabs:
 - **Shortcuts**, generated from the one table in `src/app/views/hints/shortcuts.ts` (the
-  transport's tooltips take their key lines from it too, so they never disagree).
+  transport's tooltips take their key lines from it too, so they never disagree); each key is its
+  own key cap, and rows of them wrap rather than run into the words.
 - **Guides**: the three walkthroughs of the user guide as short steps, **Show the quick guide
   again** and **Show hints again**.
 - **About**: the version (from `package.json`) and what is new. After an update a one-time toast
