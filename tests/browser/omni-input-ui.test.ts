@@ -237,11 +237,12 @@ describe('Record audio (sampler editor)', () => {
     await until(() => !!m.container.querySelector('[data-phase]'), 'the progress line');
     await until(() => /Recording: bar 1 of 1/.test(m.container.textContent ?? ''), 'the bar counter');
     expect(button(m.container, 'Stop recording')).toBeTruthy();
-    await until(() => statusText(m.container).includes('Recorded “Recording 1”'), 'the result', 10000);
+    await until(() => /Recorded \d+\.\d s \(1 bar\)\. Recording 1 plays in its own clip on /.test(statusText(m.container)), 'the result', 10000);
     const meta = session.store.getState().samples.find((s) => s.name === 'Recording 1')!;
     created.push(meta.id);
     expect(meta.duration).toBeCloseTo(1.2, 1);
-    expect((t8().instrument as SamplerInstrument).sampleId).toBe(meta.id);
+    // The take is its own clip's recording (the part's other clips keep theirs).
+    expect(t8().clips.some((c) => c?.sample?.id === meta.id)).toBe(true);
     expect(m.container.textContent).toContain('Input: Desk microphone'.replace('Desk microphone', audioInput.state.getState().deviceLabel ?? ''));
     expect(session.store.info.getState().undoLabel).toBe('Record audio');
     act(() => session.undo());
@@ -265,7 +266,8 @@ describe('Record audio (sampler editor)', () => {
     await press(button(m.container, 'Input settings…'));
     const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]')!;
     expect(dialog).toBeTruthy();
-    expect(document.activeElement?.textContent).toBe('Audio input (microphone or instrument)');
+    // Focus starts on the audio section's first action (its heading is read out with the dialog).
+    expect(document.activeElement?.textContent).toBe('Use input');
     expect(dialog.contains(document.activeElement)).toBe(true);
     await press(button(dialog, 'Done'));
     expect(document.querySelector('[role="dialog"]')).toBeNull();

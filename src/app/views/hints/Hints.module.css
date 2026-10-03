@@ -127,9 +127,29 @@
 .main {
   font-weight: 600;
 }
+/* "Next, in Play:" — a step done in another view, on one line with the button that goes there. */
+.where {
+  color: var(--teal-ink);
+  font-weight: 600;
+  white-space: nowrap;
+}
 .more {
   color: var(--ink-2);
   font-size: var(--fs-sm);
+}
+/* Minimal: "Next hint" as its arrow alone (the button keeps its name), for a narrow free spot on one row. */
+.chip[data-minimal] .nextWord {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.chip[data-minimal] .next[data-size] {
+  width: 32px;
+  padding: 0;
+  gap: 0;
 }
 /* Compact: only the suggestion itself, for a small free spot. */
 .chip[data-compact] .more {
