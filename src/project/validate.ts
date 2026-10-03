@@ -14,6 +14,7 @@
  * It never throws: anything unexpected becomes an error result.
  */
 import { BUILTIN_SAMPLES, KITS } from '../content/catalog';
+import { tidyRegions, tidySections } from './arrangement';
 import { DEFAULT_ROLES, MASTER_ID, ROLE_LABELS, defaultArp, defaultMacros, uid } from './factory';
 import { validateConnection } from './graph';
 import { migrateProject } from './migrate';
@@ -32,25 +33,22 @@ import {
   type ParamSpec,
 } from './params';
 import {
-  BLOCK_MOVE_KINDS,
   DRUM_VOICES,
   MACRO_IDS,
-  MAX_BLOCK_LABEL,
-  MAX_BLOCK_REPEATS,
   MAX_CLIP_BARS,
   MAX_SCENES,
+  MAX_SECTION_NAME,
+  MAX_SONG_BARS,
   MAX_TRACKS,
   MIN_SCENES,
   PROJECT_SCHEMA,
   PROJECT_VERSION,
+  SONG_MOVE_KINDS,
   TICKS_PER_BAR,
   type ArpDivision,
   type ArpMode,
   type ArpSettings,
   type Arrangement,
-  type ArrangementBlock,
-  type BlockMove,
-  type BlockMoveKind,
   type Clip,
   type ClipBars,
   type ClipSample,
@@ -79,6 +77,10 @@ import {
   type SampleMeta,
   type ScaleId,
   type Scene,
+  type SongMove,
+  type SongMoveKind,
+  type SongRegion,
+  type SongSection,
   type Track,
   type TrackRole,
   type VariationInfo,
@@ -92,7 +94,10 @@ export const VALIDATION_LIMITS = {
   maxNotesPerClip: 2048,
   maxPerformanceEvents: 200_000,
   maxPerformances: 64,
-  maxBlocks: 128,
+  /** Loops on the song timeline (all parts together). */
+  maxRegions: 4000,
+  /** Named sections on the song timeline. */
+  maxSections: 256,
   maxSamples: 256,
   maxMacroTargets: 16,
   maxPeaks: 4096,
@@ -849,31 +854,31 @@ function validateMusicCore(raw: Obj, sampleIds: ReadonlySet<Id>, issues: Issues)
 }
 
 /* ------------------------------------------------------------------ */
-/* Arrangement                                                         */
+/* Song (arrangement)                                                  */
 /* ------------------------------------------------------------------ */
 
 /**
- * A block's song moves: known kinds only, at most one of each (the first is
- * kept), ids unique across the song, `parts` limited to existing parts
+ * A section's song moves: known kinds only, at most one of each (the first
+ * is kept), ids unique across the song, `parts` limited to existing parts
  * (fades never carry parts; an empty list is removed, so the move acts on
  * every melodic part, as the commands store it). Nothing usable (an empty
  * list included) leaves the field out. Every change is reported, so stored
  * data comes back exactly as it went in or with a warning.
  */
-function validateMoves(raw: unknown, trackIds: ReadonlySet<Id>, moveIds: Set<Id>, issues: Issues): BlockMove[] | undefined {
+function validateMoves(raw: unknown, trackIds: ReadonlySet<Id>, moveIds: Set<Id>, issues: Issues): SongMove[] | undefined {
   if (!Array.isArray(raw)) {
-    issues.warn('Removed damaged song moves from a block.');
+    issues.warn('Removed damaged song moves from a section.');
     return undefined;
   }
-  const out: BlockMove[] = [];
-  const kinds = new Set<BlockMoveKind>();
+  const out: SongMove[] = [];
+  const kinds = new Set<SongMoveKind>();
   for (const m of raw as unknown[]) {
-    if (!isObj(m) || !has(BLOCK_MOVE_KINDS, m.kind)) {
-      issues.warn('Removed an unknown song move from a block.');
+    if (!isObj(m) || !has(SONG_MOVE_KINDS, m.kind)) {
+      issues.warn('Removed an unknown song move from a section.');
       continue;
     }
     if (kinds.has(m.kind)) {
-      issues.warn('Removed a repeated song move from a block (one of each kind per block).');
+      issues.warn('Removed a repeated song move from a section (one of each kind per section).');
       continue;
     }
     kinds.add(m.kind);
@@ -883,7 +888,7 @@ function validateMoves(raw: unknown, trackIds: ReadonlySet<Id>, moveIds: Set<Id>
       id = uid('mv');
     }
     moveIds.add(id as string);
-    const move: BlockMove = { id: id as string, kind: m.kind };
+    const move: SongMove = { id: id as string, kind: m.kind };
     if (m.parts !== undefined) {
       const fade = m.kind === 'fadeIn' || m.kind === 'fadeOut';
       const list = Array.isArray(m.parts) ? (m.parts as unknown[]) : [];
@@ -894,74 +899,158 @@ function validateMoves(raw: unknown, trackIds: ReadonlySet<Id>, moveIds: Set<Id>
     }
     out.push(move);
   }
-  if (!out.length && !(raw as unknown[]).length) issues.warn('Removed an empty list of song moves from a block.');
+  if (!out.length && !(raw as unknown[]).length) issues.warn('Removed an empty list of song moves from a section.');
   return out.length ? out : undefined;
 }
 
-function validateArrangement(raw: unknown, scenes: readonly Scene[], tracks: readonly Track[], issues: Issues): Arrangement {
-  if (!isObj(raw)) {
-    issues.warn('Reset a missing arrangement.');
-    return { blocks: [], tailSeconds: 3 };
+const SONG_TOO_LONG = `Shortened the song to ${MAX_SONG_BARS} bars, the longest a song can be.`;
+
+/**
+ * A stretch of the song timeline in whole bars, kept inside [0, MAX_SONG_BARS):
+ * `cut` is how many bars were cut off its start (null when nothing is left).
+ * Non-numbers are damaged (undefined); fractions are rounded with a warning.
+ */
+function songSpan(start: unknown, bars: unknown, what: string, issues: Issues): { start: number; bars: number; cut: number } | null | undefined {
+  if (!isNum(start) || !isNum(bars)) return undefined;
+  let s = Math.round(start);
+  let e = Math.round(start + bars);
+  if (s !== start || e - s !== bars) issues.warn(`Moved ${what} onto the bar lines.`);
+  let cut = 0;
+  if (s < 0) {
+    issues.warn(`Cut ${what} that started before the song.`);
+    cut = -s;
+    s = 0;
   }
-  const sceneIds = new Set(scenes.map((s) => s.id));
+  if (e > MAX_SONG_BARS) {
+    issues.warn(SONG_TOO_LONG);
+    e = MAX_SONG_BARS;
+  }
+  if (e - s < 1) return null;
+  return { start: s, bars: e - s, cut };
+}
+
+/** One loop on the song timeline (overlaps are fixed afterwards, for the whole song). */
+function validateRegion(raw: unknown, tracks: readonly Track[], ids: Set<Id>, issues: Issues): SongRegion | null {
+  if (!isObj(raw)) {
+    issues.warn('Removed a damaged loop from the song.');
+    return null;
+  }
+  const track = tracks.find((t) => t.id === raw.trackId);
+  const clip = track ? track.clips.find((c) => c !== null && c.id === raw.clipId) : undefined;
+  if (!track || !clip) {
+    issues.warn('Removed a loop whose clip no longer exists from the song.');
+    return null;
+  }
+  const span = songSpan(raw.start, raw.bars, 'a loop', issues);
+  if (span === undefined || !isNum(raw.offset)) {
+    issues.warn('Removed a damaged loop from the song.');
+    return null;
+  }
+  if (span === null) {
+    if (isNum(raw.bars) && Math.round(raw.bars) < 1) issues.warn('Removed a loop with no length from the song.');
+    return null;
+  }
+  // Bars cut off the start: the music stays where it was, later in the clip.
+  const want = Math.round(raw.offset) + span.cut;
+  const offset = ((want % clip.bars) + clip.bars) % clip.bars;
+  if (offset !== raw.offset && span.cut === 0) issues.warn('Adjusted where a loop starts in its clip.');
+  let id = raw.id;
+  if (!isId(id) || ids.has(id)) {
+    issues.warn('Gave a loop in the song a new id.');
+    id = uid('rg');
+  }
+  ids.add(id as string);
+  return { id: id as string, trackId: track.id, clipId: clip.id, start: span.start, bars: span.bars, offset };
+}
+
+function validateSection(raw: unknown, trackIds: ReadonlySet<Id>, ids: Set<Id>, moveIds: Set<Id>, issues: Issues): SongSection | null {
+  if (!isObj(raw)) {
+    issues.warn('Removed a damaged section from the song.');
+    return null;
+  }
+  const span = songSpan(raw.start, raw.bars, 'a section', issues);
+  if (span === undefined) {
+    issues.warn('Removed a damaged section from the song.');
+    return null;
+  }
+  if (span === null) {
+    if (isNum(raw.bars) && Math.round(raw.bars) < 1) issues.warn('Removed a section with no length from the song.');
+    return null;
+  }
+  let name = typeof raw.name === 'string' ? raw.name.replace(/\s+/g, ' ').trim().slice(0, MAX_SECTION_NAME) : '';
+  if (!name) {
+    issues.warn('Named a song section that had no name.');
+    name = 'Section';
+  } else if (name !== raw.name) issues.warn('Adjusted a song section name.');
+  let id = raw.id;
+  if (!isId(id) || ids.has(id)) {
+    issues.warn('Gave a song section a new id.');
+    id = uid('sec');
+  }
+  ids.add(id as string);
+  const section: SongSection = { id: id as string, name, start: span.start, bars: span.bars };
+  if (raw.moves !== undefined) {
+    const moves = validateMoves(raw.moves, trackIds, moveIds, issues);
+    if (moves) section.moves = moves;
+  }
+  return section;
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * The song: loops (regions) whose part and clip exist, in whole bars inside
+ * the song's range, with their offset inside their clip and never
+ * overlapping on a part (the earlier keeps its bars; see tidyRegions), and
+ * sections that never overlap (tidySections). Both lists come out in time
+ * order. Every repair is said in plain words.
+ */
+function validateArrangement(raw: unknown, tracks: Track[], issues: Issues): Arrangement {
+  if (!isObj(raw)) {
+    issues.warn('Reset a missing song.');
+    return { regions: [], sections: [], tailSeconds: 3 };
+  }
+  if (!Array.isArray(raw.regions) || !Array.isArray(raw.sections)) issues.warn('Reset a damaged song.');
   const trackIds = new Set(tracks.map((t) => t.id));
-  const blocks: ArrangementBlock[] = [];
-  const ids = new Set<Id>();
-  const moveIds = new Set<Id>();
-  const rawBlocks = Array.isArray(raw.blocks) ? (raw.blocks as unknown[]) : [];
-  if (!Array.isArray(raw.blocks)) issues.warn('Reset a damaged arrangement.');
-  for (const b of rawBlocks) {
-    if (blocks.length >= VALIDATION_LIMITS.maxBlocks) {
-      issues.warn('Removed arrangement blocks beyond the limit.');
+
+  const regionIds = new Set<Id>();
+  const regions: SongRegion[] = [];
+  for (const r of Array.isArray(raw.regions) ? (raw.regions as unknown[]) : []) {
+    if (regions.length >= VALIDATION_LIMITS.maxRegions) {
+      issues.warn(`Removed loops beyond the limit of ${VALIDATION_LIMITS.maxRegions} from the song.`);
       break;
     }
-    if (!isObj(b) || typeof b.sceneId !== 'string' || !sceneIds.has(b.sceneId)) {
-      issues.warn('Removed an arrangement block for a missing scene.');
-      continue;
-    }
-    let id = b.id;
-    if (!isId(id) || ids.has(id)) {
-      issues.warn('Gave an arrangement block a new id.');
-      id = uid('blk');
-    }
-    ids.add(id as string);
-    const repeats = isNum(b.repeats) ? clamp(Math.round(b.repeats), 1, MAX_BLOCK_REPEATS) : 1;
-    if (repeats !== b.repeats) issues.warn('Adjusted an invalid repeat count.');
-    const block: ArrangementBlock = { id: id as string, sceneId: b.sceneId, repeats };
-    if (b.label !== undefined) {
-      const label = typeof b.label === 'string' ? b.label.replace(/\s+/g, ' ').trim().slice(0, MAX_BLOCK_LABEL) : '';
-      if (label) block.label = label;
-      if (label !== b.label) issues.warn('Adjusted a song block name.');
-    }
-    if (b.parts !== undefined) {
-      const parts: Record<Id, Id | null> = {};
-      let dropped = !isObj(b.parts);
-      if (isObj(b.parts)) {
-        for (const [trackId, v] of Object.entries(b.parts)) {
-          // A part change for a deleted part, or pointing at a deleted scene, is dropped (the part follows the block's scene).
-          if (!trackIds.has(trackId) || !(v === null || (typeof v === 'string' && sceneIds.has(v)))) {
-            dropped = true;
-            continue;
-          }
-          if (v === b.sceneId) continue;
-          parts[trackId] = v;
-        }
-      }
-      if (dropped) issues.warn('Removed part changes for parts or scenes that no longer exist.');
-      if (Object.keys(parts).length) block.parts = parts;
-    }
-    if (b.moves !== undefined) {
-      const moves = validateMoves(b.moves, trackIds, moveIds, issues);
-      if (moves) block.moves = moves;
-    }
-    blocks.push(block);
+    const region = validateRegion(r, tracks, regionIds, issues);
+    if (region) regions.push(region);
   }
+  // Every region is inside the song and its clip now: what tidying fixes are overlaps.
+  const tidy = tidyRegions({ tracks }, regions);
+  if (tidy.fixed) issues.warn(`Fixed ${plural(tidy.fixed, 'overlapping loop', 'overlapping loops')} in the song.`);
+  else if (tidy.regions.some((r, i) => r.id !== regions[i].id)) issues.warn('Put the song’s loops back in time order.');
+
+  const sectionIds = new Set<Id>();
+  const moveIds = new Set<Id>();
+  const sections: SongSection[] = [];
+  for (const s of Array.isArray(raw.sections) ? (raw.sections as unknown[]) : []) {
+    if (sections.length >= VALIDATION_LIMITS.maxSections) {
+      issues.warn(`Removed sections beyond the limit of ${VALIDATION_LIMITS.maxSections} from the song.`);
+      break;
+    }
+    const section = validateSection(s, trackIds, sectionIds, moveIds, issues);
+    if (section) sections.push(section);
+  }
+  const tidySecs = tidySections(sections);
+  if (tidySecs.fixed) issues.warn(`Fixed ${plural(tidySecs.fixed, 'overlapping section', 'overlapping sections')} in the song.`);
+  else if (tidySecs.sections.some((s, i) => s.id !== sections[i].id)) issues.warn('Put the song’s sections back in time order.');
+
   let tailSeconds = 3;
   if (isNum(raw.tailSeconds)) {
     tailSeconds = clamp(raw.tailSeconds, 0, 10);
     if (tailSeconds !== raw.tailSeconds) issues.warn('Adjusted the export tail length.');
   } else issues.warn('Reset the export tail length.');
-  return { blocks, tailSeconds };
+  return { regions: tidy.regions, sections: tidySecs.sections, tailSeconds };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1252,7 +1341,7 @@ function validateProjectInner(input: unknown, issues: Issues): Project | null {
     tracks: core.tracks,
     scenes: core.scenes,
     patch: core.patch,
-    arrangement: validateArrangement(raw.arrangement, core.scenes, core.tracks, issues),
+    arrangement: validateArrangement(raw.arrangement, core.tracks, issues),
     performances,
     samples,
     seed,

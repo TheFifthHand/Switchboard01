@@ -1,18 +1,17 @@
 /**
  * Scene rows (PLAY-10, capability-08, arrange-only-four-scenes): insert,
- * duplicate, delete (asking first when the song uses the scene), capture what
- * plays, and make a scene from a song block. Each is one undo step, refuses
- * bad input with nothing changed, and is refused while a take records.
+ * duplicate, delete (its clips' loops leave the song with it; the UI asks
+ * first, counting them with sceneUse), and capture what plays. Each is one
+ * undo step, refuses bad input with nothing changed, and is refused while a
+ * take records.
  */
 import { describe, expect, it } from 'vitest';
 import { HOUSE } from '../../src/content/starters/house';
-import { blockParts } from '../../src/project/arrangement';
-import { createClip, createProject } from '../../src/project/factory';
+import { createProject } from '../../src/project/factory';
 import { MAX_SCENES, type Project } from '../../src/project/types';
 import { validateProject } from '../../src/project/validate';
 import { ProjectStore } from '../../src/state/projectStore';
-import { setBlockPart } from '../../src/state/commands/arrangement';
-import { captureScene, deleteScene, duplicateScene, insertScene, sceneFromBlock, sceneUse, uniqueSceneName } from '../../src/state/commands/scenes';
+import { captureScene, deleteScene, duplicateScene, insertScene, sceneUse, uniqueSceneName } from '../../src/state/commands/scenes';
 
 function valid(p: Project): void {
   const r = validateProject(JSON.parse(JSON.stringify(p)));
@@ -36,7 +35,7 @@ describe('insertScene', () => {
     expect(row(p, 1).every((c) => c === null)).toBe(true);
     expect(row(p, 2)).toEqual(row(before, 1));
     expect(p.tracks.every((t) => t.clips.length === 5)).toBe(true);
-    // The song plays the same scenes (blocks point at scene ids).
+    // The song plays the same clips (loops point at clip ids).
     expect(p.arrangement).toEqual(before.arrangement);
     valid(p);
     expect(store.undoLabel()).toBe('Add scene');
@@ -92,38 +91,26 @@ describe('duplicateScene', () => {
 });
 
 describe('deleteScene', () => {
-  it('asks first when song blocks play the scene or layer it in, and says which', () => {
+  it('takes the loops that play its clips out of the song with it, in one undo step; sceneUse counts them first', () => {
     const store = new ProjectStore(HOUSE.build());
-    const p = store.getState();
-    const lift = p.scenes[2];
-    // Layer Lift's lead into the first block.
-    setBlockPart(store, p.arrangement.blocks[0].id, 't5', lift.id);
     const before = store.getState();
+    const lift = before.scenes[2];
+    const liftClips = new Set(before.tracks.map((t) => t.clips[2]?.id).filter(Boolean));
+    const playing = before.arrangement.regions.filter((r) => liftClips.has(r.clipId)).length;
+    expect(playing).toBeGreaterThan(0);
+    expect(sceneUse(before, lift.id)).toEqual({ regions: playing });
     const r = deleteScene(store, 2);
-    expect(r.changed).toBe(false);
-    expect(r.reason).toBe('in-use');
-    expect(r.blocksUsing).toEqual(sceneUse(before, lift.id).blocksUsing);
-    expect(r.blocksUsing!.length).toBeGreaterThan(0);
-    expect(r.blocksLayering).toEqual([before.arrangement.blocks[0].id]);
-    expect(r.message).toMatch(/^Lift is in the song: \d song blocks? plays? it and 1 block layers one of its clips in\./);
-    expect(store.getState()).toBe(before);
-  });
-
-  it('with removeBlocks: the row, its clips and the blocks that play it go; layered parts follow their block again; one undo step', () => {
-    const store = new ProjectStore(HOUSE.build());
-    const lift = store.getState().scenes[2];
-    setBlockPart(store, store.getState().arrangement.blocks[0].id, 't5', lift.id);
-    const before = store.getState();
-    const r = deleteScene(store, 2, { removeBlocks: true });
-    expect(r.changed).toBe(true);
+    expect(r).toMatchObject({ changed: true, regions: playing });
     const p = store.getState();
     expect(names(p)).toEqual(['Intro', 'Groove', 'Break']);
     expect(p.tracks.every((t) => t.clips.length === 3)).toBe(true);
     expect(row(p, 2)).toEqual(row(before, 3));
-    expect(p.arrangement.blocks.some((b) => b.sceneId === lift.id)).toBe(false);
-    expect(p.arrangement.blocks.length).toBe(before.arrangement.blocks.length - r.blocksUsing!.length);
-    expect(p.arrangement.blocks[0].parts).toBeUndefined();
+    expect(p.arrangement.regions.length).toBe(before.arrangement.regions.length - playing);
+    expect(p.arrangement.regions.some((x) => liftClips.has(x.clipId))).toBe(false);
+    // Sections are labels: they stay.
+    expect(p.arrangement.sections).toEqual(before.arrangement.sections);
     valid(p);
+    expect(store.historySize().undo).toBe(1);
     expect(store.undoLabel()).toBe('Delete scene');
     store.undo();
     expect(store.getState().scenes).toEqual(before.scenes);
@@ -133,8 +120,8 @@ describe('deleteScene', () => {
 
   it('deletes a scene the song does not use at once, and never the last scene', () => {
     const store = new ProjectStore(createProject({ now: 0, scenes: ['A', 'B'] }));
-    store.apply('arrange:Clear', (d) => void (d.arrangement.blocks = []));
-    expect(deleteScene(store, 1).changed).toBe(true);
+    expect(sceneUse(store.getState(), store.getState().scenes[1].id)).toEqual({ regions: 0 });
+    expect(deleteScene(store, 1)).toMatchObject({ changed: true, regions: 0 });
     expect(deleteScene(store, 0)).toMatchObject({ changed: false, message: 'A project needs at least one scene.' });
     expect(deleteScene(store, 5)).toMatchObject({ changed: false, reason: 'not-found' });
     valid(store.getState());
@@ -162,51 +149,12 @@ describe('captureScene', () => {
   });
 });
 
-describe('sceneFromBlock', () => {
-  it('freezes what a block plays (its scene, layered clips, parts off) into a new scene and points the block at it', () => {
-    const store = new ProjectStore(HOUSE.build());
-    const p0 = store.getState();
-    const block = p0.arrangement.blocks.find((b) => b.sceneId === p0.scenes[1].id)!;
-    setBlockPart(store, block.id, 't5', p0.scenes[2].id);
-    setBlockPart(store, block.id, 't1', null);
-    const before = store.getState();
-    const plays = blockParts(before, before.arrangement.blocks.find((b) => b.id === block.id)!).map((x) => x.clip?.name ?? null);
-    const r = sceneFromBlock(store, block.id);
-    expect(r).toMatchObject({ changed: true, row: 4 });
-    const p = store.getState();
-    expect(names(p)[4]).toBe('Groove 2');
-    expect(row(p, 4)).toEqual(plays);
-    const b = p.arrangement.blocks.find((x) => x.id === block.id)!;
-    expect(b.sceneId).toBe(r.sceneId);
-    expect(b.parts).toBeUndefined();
-    // It plays exactly the same clips (as copies).
-    expect(blockParts(p, b).map((x) => x.clip?.name ?? null)).toEqual(plays);
-    valid(p);
-    expect(store.undoLabel()).toBe('Make a scene from a block');
-    store.undo();
-    expect(store.getState().arrangement).toEqual(before.arrangement);
-    expect(store.getState().scenes).toEqual(before.scenes);
-  });
-
-  it('a block with a name gives the scene that name; a silent block is refused', () => {
-    const p = createProject({ now: 0 });
-    p.tracks[0].clips[0] = createClip('Beat', 1);
-    p.arrangement.blocks[0].label = 'Drop';
-    const store = new ProjectStore(p);
-    expect(sceneFromBlock(store, p.arrangement.blocks[0].id).changed).toBe(true);
-    expect(store.getState().scenes[4].name).toBe('Drop');
-    expect(sceneFromBlock(store, p.arrangement.blocks[1].id)).toMatchObject({ changed: false, reason: 'empty' });
-    expect(sceneFromBlock(store, 'nope')).toMatchObject({ changed: false, reason: 'not-found' });
-  });
-});
-
 describe('the take lock', () => {
   it('refuses every scene edit while a performance records, with nothing changed', () => {
     const store = new ProjectStore(HOUSE.build());
     const before = store.getState();
     takeLock(store);
-    const block = before.arrangement.blocks[0].id;
-    for (const r of [insertScene(store), duplicateScene(store, 0), deleteScene(store, 3, { removeBlocks: true }), captureScene(store, { t1: 1 }), sceneFromBlock(store, block)]) {
+    for (const r of [insertScene(store), duplicateScene(store, 0), deleteScene(store, 3), captureScene(store, { t1: 1 })]) {
       expect(r.changed).toBe(false);
       expect(r.refused).toBe('Recording a performance');
     }
@@ -230,23 +178,24 @@ describe('random scene, clip and song edits', () => {
         const p = store.getState();
         const t = pick(p.tracks).id;
         const rows = p.scenes.length;
-        const blocks = p.arrangement.blocks;
+        const regions = p.arrangement.regions;
+        const sections = p.arrangement.sections;
         const ops: (() => unknown)[] = [
           () => insertScene(store, int(rows + 1)),
           () => duplicateScene(store, int(rows)),
-          () => deleteScene(store, int(rows), { removeBlocks: rnd() < 0.7 }),
+          () => deleteScene(store, int(rows)),
           () => captureScene(store, Object.fromEntries(p.tracks.map((x) => [x.id, rnd() < 0.5 ? int(rows) : null]))),
-          () => blocks.length && sceneFromBlock(store, pick(blocks).id),
           () => clips.createClip(store, t, int(rows), pick([1, 2, 4, 8] as const)),
           () => clips.repeatClipToBars(store, t, int(rows), pick([2, 4, 8] as const)),
           () => clips.duplicateClipContent(store, t, int(rows)),
           () => clips.deleteClip(store, t, int(rows)),
-          () => blocks.length && arr.setBlocksPart(store, blocks.slice(int(blocks.length)).map((b) => b.id), t, pick([null, undefined, pick(p.scenes).id])),
-          () => blocks.length && arr.toggleBlockMove(store, pick(blocks).id, pick(['fadeIn', 'fadeOut', 'filterRise', 'echoThrow'] as const)),
-          () => blocks.length && arr.splitBlock(store, pick(blocks).id, 1),
-          () => blocks.length && arr.shapeBlock(store, pick(blocks).id, pick(['build', 'strip', 'breakdown'] as const)),
+          () => arr.addSceneToSong(store, int(rows), int(80)),
+          () => regions.length && arr.moveRegions(store, [pick(regions).id], int(9) - 4),
+          () => regions.length && arr.splitRegions(store, [pick(regions).id], int(80)),
+          () => sections.length && arr.toggleSectionMove(store, pick(sections).id, pick(['fadeIn', 'fadeOut', 'filterRise', 'echoThrow'] as const)),
+          () => sections.length && arr.shapeSection(store, pick(sections).id, pick(['build', 'strip', 'breakdown'] as const)),
           () => arr.addEnding(store),
-          () => blocks.length && arr.duplicateBlocks(store, [pick(blocks).id]),
+          () => sections.length && arr.duplicateSection(store, pick(sections).id),
         ];
         const before = store.historySize().undo;
         pick(ops)();

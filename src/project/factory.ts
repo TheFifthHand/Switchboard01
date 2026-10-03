@@ -270,7 +270,7 @@ export function createScenes(names: readonly string[] = DEFAULT_SCENE_NAMES, cou
 
 /**
  * A new project: eight parts with their roles' default sounds, the default
- * patch and a song that plays every scene twice. `scenes` names the scenes
+ * patch, empty clips and an empty song. `scenes` names the scenes
  * (and sets how many there are, MIN_SCENES to MAX_SCENES; default: Intro,
  * Groove, Lift, Break).
  */
@@ -296,10 +296,8 @@ export function createProject(opts: { name?: string; bpm?: number; roles?: reado
     tracks,
     scenes,
     patch: defaultPatch(tracks.map((t) => t.id)),
-    arrangement: {
-      blocks: scenes.map((s) => ({ id: uid('blk'), sceneId: s.id, repeats: 2 })),
-      tailSeconds: 3,
-    },
+    // The clips are empty, so the song is too: it is built from clips (see state/commands/arrangement.ts).
+    arrangement: { regions: [], sections: [], tailSeconds: 3 },
     performances: [],
     samples: [],
     seed: Math.floor(Math.random() * 2 ** 31),
