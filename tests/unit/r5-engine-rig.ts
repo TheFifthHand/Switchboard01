@@ -144,6 +144,11 @@ export class Rig {
   readonly editTicks: number[] = [];
   /** Voices released by a pause (note → tick). */
   private readonly released = new Map<NoteEvent, number>();
+  /**
+   * Every pass the song played or will play, by its transport start, kept
+   * past the sequencer's pruning (a later layout replaces what it changed).
+   */
+  readonly passLog = new Map<number, SongPass>();
 
   constructor(p: Project = fixture()) {
     this.store = new ProjectStore(p);
@@ -167,6 +172,19 @@ export class Rig {
   pump(): void {
     this.out.push(...this.seq.process(this.now + LOOKAHEAD));
     this.cuts.push(...this.seq.takeCuts());
+    this.logPasses();
+  }
+
+  private logPasses(): void {
+    const passes = this.seq.songPasses();
+    if (!passes?.length) return;
+    for (const at of [...this.passLog.keys()]) if (at >= passes[0].at) this.passLog.delete(at);
+    for (const p of passes) this.passLog.set(p.at, p);
+  }
+
+  /** Every pass logged so far, in order. */
+  allPasses(): SongPass[] {
+    return [...this.passLog.values()].sort((a, b) => a.at - b.at);
   }
 
   /** What the transport does after a change: cancel what was scheduled from `time`, regenerate. */
@@ -192,6 +210,7 @@ export class Rig {
     const at = this.now + MARGIN;
     this.editTicks.push(Math.ceil(this.seq.getPosition(this.seq.paused ? this.now : at).tick));
     if (this.seq.setSongLoop(loop, at) && this.seq.playing) this.cancelFrom(at);
+    this.logPasses();
     return this;
   }
 
@@ -257,6 +276,7 @@ export class Rig {
       if (replanned && this.seq.playing) this.cancelFrom(at);
     }
     if (!replanned && this.seq.playing) this.cancelFrom(at);
+    this.logPasses();
     return replanned;
   }
 

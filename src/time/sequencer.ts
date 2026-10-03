@@ -271,14 +271,17 @@ interface SongChange {
 /**
  * The changes of what each part plays over transport ticks (lo, hi], each
  * part going on from what it plays at `lo` (`last`, updated to what it plays
- * at `hi`).
+ * at `hi`). `at` (in (lo, hi]) is looked at too: an edit point, where what a
+ * part plays may change without a region starting or ending there.
  */
-function songChanges(trackIds: readonly Id[], parts: ReadonlyMap<Id, PartSpan[]>, passes: readonly SongPass[], last: Map<Id, SongPlay | null>, lo: number, hi: number): SongChange[] {
+function songChanges(trackIds: readonly Id[], parts: ReadonlyMap<Id, PartSpan[]>, passes: readonly SongPass[], last: Map<Id, SongPlay | null>, lo: number, hi: number, at?: number): SongChange[] {
   const out: SongChange[] = [];
   for (const id of trackIds) {
     const spans = parts.get(id);
     let cur = last.get(id) ?? null;
-    for (const t of changePoints(spans, passes, lo, hi)) {
+    const points = changePoints(spans, passes, lo, hi);
+    if (at !== undefined && at > lo && at <= hi && !points.includes(at)) points.unshift(at);
+    for (const t of points) {
       const play = playAt(spans, passes, t);
       if (samePlay(cur, play)) continue;
       out.push({ trackId: id, atTick: t, play });
@@ -497,6 +500,13 @@ interface SongState {
   laidTo: number;
   /** What each part plays at `laidTo` (the last change laid out). */
   last: Map<Id, SongPlay | null>;
+  /**
+   * The edit point of the last replan and what each part played just before
+   * it: another edit at the same point (two edits while paused) changes
+   * what follows from there, never what played before it.
+   */
+  editAt: number;
+  editBefore: Map<Id, SongPlay | null>;
 }
 
 /** Events with tick < untilTick and time < floorTime were already handed out (and not cancelled). */
@@ -859,7 +869,7 @@ export class Sequencer {
       // The transport tick of the first pass is its song tick: bar lines and beats match the song's.
       const at = clampInt(mode.fromBar, 0, MAX_SONG_BARS) * TICKS_PER_BAR;
       fromTick = at;
-      song = { passes: this.firstPasses(at), parts: songParts(base), laidTo: at - 0.5, last: new Map() };
+      song = { passes: this.firstPasses(at), parts: songParts(base), laidTo: at - 0.5, last: new Map(), editAt: -Infinity, editBefore: new Map() };
       endTick = songEndTick(song.passes, base);
     }
 
@@ -1428,14 +1438,21 @@ export class Sequencer {
     const from = Math.ceil(pos);
     const project = this.getProject();
     const ids = project.tracks.map((tr) => tr.id);
-    // What each part plays just before the edit point, as the song is laid out now (it stays).
-    const last = new Map<Id, SongPlay | null>();
-    for (const id of ids) last.set(id, playAt(song.parts.get(id), song.passes, from - 0.5));
+    // What each part plays just before the edit point (it stays). The layout follows the latest regions
+    // from the last edit point on, so after an earlier one they say it; at the same point, it was kept.
+    let before = song.editBefore;
+    if (song.editAt !== from) {
+      before = new Map();
+      for (const id of ids) before.set(id, playAt(song.parts.get(id), song.passes, from - 0.5));
+    }
+    song.editAt = from;
+    song.editBefore = before;
+    const last = new Map(before);
     const passes = loopChanged ? this.passesForLoop(song.passes, pos) : [...song.passes];
     const parts = songParts(project);
     const until = Math.max(song.laidTo, from);
     extendPasses(passes, this.loopTicks(), until + TICKS_PER_BAR);
-    const changes = songChanges(ids, parts, passes, last, from - 0.5, until);
+    const changes = songChanges(ids, parts, passes, last, from - 0.5, until, from);
     let end = songEndTick(passes, project);
     // The end never lies behind the playhead: a song cut short below it ends at the next bar line.
     if (end !== null && end <= pos) end = nextBarTick(pos);
