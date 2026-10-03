@@ -244,6 +244,16 @@ function Audition(props: { target: SamplerTarget; sampleId: Id; duration: number
     if (blocked) stop();
   }, [blocked, stop]);
 
+  // A clip's own recording plays outside the session's held keys: Stop, Pause, Mute All, a window
+  // switch and everything else that lets go of every note let go of it too.
+  useEffect(
+    () =>
+      session.onAllNotesReleased(() => {
+        if (current.current?.voice) stop();
+      }),
+    [stop],
+  );
+
   const start = () => {
     stop();
     pending.current = true;

@@ -1,9 +1,10 @@
 /**
  * design-01 (the sampler's part): with reduced motion nothing in the
  * sampler editor blinks or spins. The recording dot is a steady coral dot,
- * the Stop recording key keeps a steady ring, and a spinner shows the word
- * "Loading…" instead of a ring that would stand still. Sampled across
- * animation frames under the browser's own reduced-motion setting (CDP).
+ * the Stop recording key keeps a steady ring, and a spinner (a ring that
+ * would stand still) gives way to the words beside it, said once
+ * ("Normalizing…", "Decoding … on this device…"). Sampled across animation
+ * frames under the browser's own reduced-motion setting (CDP).
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -53,7 +54,7 @@ afterEach(async () => {
 });
 
 describe('Reduced motion in the sampler editor (design-01)', () => {
-  it('reduce: a steady coral dot and ring, and "Loading…" in place of each spinner', async () => {
+  it('reduce: a steady coral dot and ring; no spinner, the words beside it said once', async () => {
     await reducedMotion(true);
     const root = setUpTake();
     const dot = root.querySelector<HTMLElement>('[class*="recDot"]')!;
@@ -72,25 +73,24 @@ describe('Reduced motion in the sampler editor (design-01)', () => {
     const ring = await sample(stop, 'box-shadow');
     expect(new Set(ring).size).toBe(1);
     expect(ring[0]).not.toBe('none');
-    // Each spinner is the word, visible, and does not turn.
-    const spinners = [...root.querySelectorAll<HTMLElement>('[class*="spinner"]')].filter((s) => !/spinnerWord/.test(s.className));
+    // No spinner stands still: they go, and the words beside them say what is going on, once each.
+    const spinners = [...root.querySelectorAll<HTMLElement>('[class*="spinner"]')];
     expect(spinners.length).toBe(2);
-    for (const s of spinners) {
-      expect(getComputedStyle(s).animationName).toBe('none');
-      const word = s.querySelector<HTMLElement>('[class*="spinnerWord"]')!;
-      expect(word.textContent).toBe('Loading…');
-      expect(word.getBoundingClientRect().width).toBeGreaterThan(20);
-    }
+    for (const sp of spinners) expect(getComputedStyle(sp).display).toBe('none');
+    const text = root.textContent ?? '';
+    expect(text).toContain('Normalizing…');
+    expect(text).toContain('Decoding “Loop.wav” on this device…');
+    expect(text).not.toContain('Loading…');
   });
 
-  it('no preference: the dot blinks, the ring pulses and the spinners turn (no word)', async () => {
+  it('no preference: the dot blinks, the ring pulses and the spinners turn', async () => {
     const root = setUpTake();
     const dot = root.querySelector<HTMLElement>('[class*="recDot"]')!;
     expect(getComputedStyle(dot).animationName).not.toBe('none');
     expect(new Set(await sample(dot, 'opacity', 40)).size).toBeGreaterThan(3);
-    for (const s of [...root.querySelectorAll<HTMLElement>('[class*="spinner"]')].filter((x) => !/spinnerWord/.test(x.className))) {
-      expect(getComputedStyle(s).animationName).not.toBe('none');
-      expect(s.querySelector<HTMLElement>('[class*="spinnerWord"]')!.getBoundingClientRect().width).toBe(0);
+    for (const sp of root.querySelectorAll<HTMLElement>('[class*="spinner"]')) {
+      expect(getComputedStyle(sp).animationName).not.toBe('none');
+      expect(sp.getBoundingClientRect().width).toBeGreaterThan(0);
     }
   });
 });

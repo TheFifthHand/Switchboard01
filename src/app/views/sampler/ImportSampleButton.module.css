@@ -87,26 +87,10 @@
   }
 }
 
-/* The word a spinner carries: shown instead of the ring when motion is reduced (the ring would stand still). */
-.spinnerWord {
-  display: none;
-}
-
+/* Reduced motion: no ring that would stand still; the words beside it ("Decoding … on this device…") say it. */
 @media (prefers-reduced-motion: reduce) {
   .spinner {
-    width: auto;
-    height: auto;
-    border: 0;
-    border-radius: 0;
-    animation: none;
-  }
-
-  .spinnerWord {
-    display: inline;
-    color: var(--ink-2);
-    font-size: var(--fs-xs);
-    font-weight: 650;
-    white-space: nowrap;
+    display: none;
   }
 }
 

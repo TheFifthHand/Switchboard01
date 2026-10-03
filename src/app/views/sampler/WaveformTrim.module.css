@@ -251,6 +251,52 @@
   padding: 0 3px;
 }
 
+/* A handle beyond the view waits at the edge: its flag sits on the waveform's side of the line. */
+.handle[data-handle='start'][data-offview='right'] .flag {
+  right: 15px;
+  left: auto;
+  border-radius: 5px 1px 1px 5px;
+}
+
+.handle[data-handle='end'][data-offview='left'] .flag {
+  right: auto;
+  left: 15px;
+  border-radius: 1px 5px 5px 1px;
+}
+
+/* While a handle is dragged: what Shift and Alt do (Shift held: it snaps). */
+.dragHint {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  z-index: 3;
+  margin: 0;
+  padding: 2px 8px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 0 1px rgba(20, 24, 28, 0.12);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.dragHint[data-snapping] {
+  background: #e6f3f1;
+  box-shadow: 0 0 0 1px var(--teal);
+  color: var(--teal-ink);
+}
+
+.help {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+
 /* ---------- zoom row: − + · overview of the whole recording · zoom ---------- */
 
 .zoomRow {
@@ -299,6 +345,17 @@
 
 .mini[data-zoomed] .viewport {
   cursor: grab;
+}
+
+/* However narrow the window (close zoom), it takes the pointer over at least 32 px. */
+.viewport::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: 50%;
+  width: max(100% + 4px, 32px);
+  transform: translateX(-50%);
 }
 
 .mini:not([data-zoomed]) .viewport {

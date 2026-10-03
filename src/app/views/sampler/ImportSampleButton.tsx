@@ -119,9 +119,7 @@ export function ImportSampleButton({ trackId, variant = 'button' }: ImportSample
       )}
       {status.phase === 'decoding' && (
         <>
-          <span className={styles.spinner} aria-hidden="true">
-            <span className={styles.spinnerWord}>Loading…</span>
-          </span>
+          <span className={styles.spinner} aria-hidden="true" />
           <span className={styles.statusText}>Decoding “{status.fileName}” on this device…</span>
         </>
       )}
