@@ -172,7 +172,7 @@ test('a storage failure shows "Not saved" with Try again and Export project file
   const status = page.getByRole('button', { name: /Not saved/ });
   await expect(status).toBeVisible({ timeout: 5000 });
   await status.click();
-  const pop = page.getByRole('alertdialog', { name: 'Saving failed' });
+  const pop = page.getByRole('dialog', { name: 'Saving failed' });
   await expect(pop).toContainText('storage is full');
   await expect(pop.getByRole('button', { name: 'Try again' })).toBeVisible();
   // The recovery export downloads the project file and says so.
