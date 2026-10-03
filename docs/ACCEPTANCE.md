@@ -130,7 +130,7 @@ What remains is listed under "Limits" at the end.
 | Requirement | Status | Evidence |
 |---|---|---|
 | Clean-clone commands documented | ✅ | `README.md`, `CLAUDE.md` |
-| Production build + downloadable source/build package | ✅ | `npm run package` (builds first; app + Windows launcher + START HERE + `source/`) makes `release/omni-song-<version>.zip`, 2.2.0 for this version; the zip in the repository is the 2.1.0 one until 2.2 is packaged; unit `wp5-package`, `omni-rename-package` |
+| Production build + downloadable source/build package | ✅ | `npm run package` (builds first; app + Windows launcher + START HERE + `source/`) makes `release/omni-song-<version>.zip` (`release/omni-song-2.2.0.zip` is in the repository; launcher smoke test in `evidence/launcher-smoke.txt`); unit `wp5-package`, `omni-rename-package` |
 | Windows launch route + START HERE; loopback only; serves only the build folder | ⚠️ | `launcher/`, `Start Omni Song.bat`; unit `wp5-launcher`; the packaged launchers ran under PowerShell 7 and Node on Linux (`evidence/launcher-smoke.txt`: 127.0.0.1 only, traversal refused, a second start reuses the running copy, Jump In plays); not run on Windows here |
 | No claim that a cloud localhost address is reachable | ✅ | README / START HERE |
 

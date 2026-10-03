@@ -1,6 +1,6 @@
-Launcher smoke test, 2026-10-02, in the cloud container (Linux, PowerShell 7.4.6, Node 22). This is not a Windows run; see TEST_REPORT.md.
+Launcher smoke test, 2026-10-03, in the cloud container (Linux, PowerShell 7.4.6, Node 22). This is not a Windows run; see TEST_REPORT.md.
 
-== Package: release/omni-song-2.1.0.zip extracted to .../Jo Ann Downloads/omni-song
+== Package: release/omni-song-2.2.0.zip extracted to .../Jo Ann Downloads/omni-song
 == PowerShell 7.4.6 (Linux), same arguments as 'Start Omni Song.bat': -File launcher/serve.ps1 -Root <package>/app
    ps> 
    ps>   Omni Song
@@ -26,6 +26,6 @@ Launcher smoke test, 2026-10-02, in the cloud container (Linux, PowerShell 7.4.6
    ps2>   To start a different copy (for example a newer version), close the other window first.
    ps2> 
    ps2>   Open http://127.0.0.1:4173/ in your browser.
--- Jump In in Chromium against the package served by serve.ps1: {"audio":"running","project":"House Starter","masterRms":0.0684,"masterPeak":0.1542,"pageErrors":0}
+-- Jump In in Chromium against the package served by serve.ps1: {"audio":"running","project":"House Starter","masterRms":0.1736,"masterPeak":0.3094,"pageErrors":0}
 -- song lane in the package: block 4 dragged to position 2 with the mouse -> moved; Undo -> back as before; page errors 0
 -- launcher stopped (closing the window or Ctrl+C does this on Windows)

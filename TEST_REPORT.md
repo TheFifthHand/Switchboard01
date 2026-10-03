@@ -23,10 +23,14 @@ npm run package                       # build, then release/omni-song-<version>.
 
 | Suite | Files | Tests | Result |
 |-------|-------|-------|--------|
-| Typecheck (`tsc --noEmit`, app + tests) | — | — | _to be filled in from the final run_ |
-| Unit (`tests/unit`, Node) | — | — | _to be filled in from the final run_ |
-| Browser (`tests/browser`, real Chromium) | — | — | _to be filled in from the final run_ |
-| End-to-end (`e2e`, production build) | — | — | _to be filled in from the final run_ |
+| Typecheck (`tsc --noEmit`, app + tests) | — | — | clean |
+| Unit (`tests/unit`, Node) | 83 | 1475 | **1475 passed** |
+| Browser (`tests/browser`, real Chromium) | 199 | 1760 | **1755 passed, 5 failed** in the full run; the 5 were older tests still expecting the 2.1 transport widths (Projects from 1440 px, Undo/Redo words from 1600 px, the offline state as a menu item, Master's value key) and a narrow block's ⋯ shown without hover. Those tests were brought up to date and their 3 files pass (18/18); the full suite was not run again after that |
+| End-to-end (`e2e`, production build) | 20 | 51 | **51 passed**, one worker, 9.8 min |
+| Launcher smoke test (2.2.0 zip, PowerShell 7 on Linux) | — | — | passed: loopback only, traversal refused, a second start reuses the running copy, Jump In plays (master RMS 0.17, peak 0.31), a song block dragged with the mouse and undone (`evidence/launcher-smoke.txt`) |
+
+The final runs above were made on the merged tree on a quiet machine (load average about 2).
+
 
 The round-4 slices were built and tested on a shared machine that was heavily loaded the whole
 time (load averages from about 7 up to 57 on 4 CPUs, several suites running side by side). Full
@@ -183,7 +187,7 @@ Many older tests were updated to the new wording and behaviour (for example `ste
 `parts`, `clipmenu`, `omni-mix-view`, `omni-mix-session`, `omni-shape-*`, `omni-hints-*`,
 `library`, `starters`, and the e2e `journey`, `firstnote`, `persistence`, `resilience`, `a11y`).
 Screenshots in `docs/screenshots/`, the WAVs in `evidence/wav/` and the launcher smoke test
-(`evidence/launcher-smoke.txt`, run on the 2.1 zip) were not refreshed for 2.2.
+(`evidence/launcher-smoke.txt`) were refreshed from the 2.2.0 production build and package.
 
 ## Audio measurements (automated, not listening)
 

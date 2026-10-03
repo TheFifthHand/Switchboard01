@@ -119,8 +119,8 @@ full-suite numbers are in `TEST_REPORT.md`.
 
 - Release package: `npm run package` builds `release/omni-song-2.2.0.zip` (production build in
   `app/`, `Start Omni Song.bat`, `START HERE.txt`, `launcher/`, `ASSETS.md`, and the repository
-  source in `source/`). Until it is rebuilt, the zip in the repository is
-  `release/omni-song-2.1.0.zip`. Older zips stay in git history (2.0 is on `main`).
+  source in `source/`); that zip is in the repository. Older zips stay in git history (2.0 is on
+  `main`).
 - Evidence: `TEST_REPORT.md` (results and measurements), `docs/ACCEPTANCE.md` (every requirement of
   the brief with its evidence), `docs/screenshots/`, `evidence/wav/`, `evidence/launcher-smoke.txt`.
 - Guides: `docs/GUIDE.md` (first loop; record, mix, master and export; MIDI keyboard; recording
