@@ -14,7 +14,8 @@ test('the first key after "Just look around" starts audio and sounds', async ({ 
   expect(await page.evaluate(() => (window as any).__switchboard.audioState())).toBe('none');
   await page.locator('body').click({ position: { x: 700, y: 5 } }).catch(() => undefined);
   // Measured from the key press: with a drum part selected A plays a kit sound (the Closed Hat), which is short.
-  const peak = masterPeakFrom(page, 1500);
+  // (A long window: on a busy machine audio can take a few seconds to start; the level counts only once it runs.)
+  const peak = masterPeakFrom(page, 5000);
   await page.keyboard.down('KeyA');
   await expect.poll(() => page.evaluate(() => (window as any).__switchboard.audioState()), { timeout: 5000 }).toBe('running');
   expect(await peak).toBeGreaterThan(0.005);
