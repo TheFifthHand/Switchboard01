@@ -5,9 +5,10 @@
  *   the bass; Character and Thickness (Unison) on the poly synth. Each turns
  *   its own instrument setting through the same commands as Advanced (one
  *   undo step per gesture), and is heard (offline render).
- * - Drums: a drum mix: Kick, Snare and Hats levels and Kick tune, on the
- *   kit's own voices (Hats moves the closed and open hats together, keeping
- *   their balance).
+ * - Drums: a drum mix of the voices the part plays: up to three level knobs
+ *   by role (House: Kick, Snare & clap, Hats) and the first one's tune, on
+ *   the kit's own voices (a group keeps its voices' balance, also through 0).
+ *   Rendered for every starter: each knob changes that starter's drums.
  * - Samplers: Start (keeps the length), Length, Pitch and a small waveform.
  * - Edit sound opens the instrument in Advanced for this part (its tab on a
  *   short window), keyboard focus inside it.
@@ -20,7 +21,8 @@ import { act } from 'react';
 import { session } from '../../src/app/instance';
 import * as cmd from '../../src/state/commands';
 import { selectTrack, uiStore } from '../../src/state/uiStore';
-import { clickEl, closeShape, heard, keysOn, openShape, project, renderSolo, slider, track } from './r4-shape-helpers';
+import { clickEl, closeShape, heard, keysOn, levelDb, nullDb, openShape, project, renderSolo, rowFor, slider, track } from './r4-shape-helpers';
+import { STARTERS } from '../../src/content/starters';
 import { settleFrames } from './r4-uikit-input';
 import type { Instrument } from '../../src/project/types';
 
@@ -69,10 +71,10 @@ describe('synths', () => {
 });
 
 describe('drums: the drum mix', () => {
-  it('Kick, Snare, Hats and Kick tune move the kit’s voices; Hats keeps the closed / open balance', async () => {
+  it('Kick, Snare & clap, Hats and Kick tune move the kit’s voices; Hats keeps the closed / open balance, also through 0', async () => {
     await openShape({ mode: 'simple', trackId: 't1' });
     expect(sound().querySelector('h3')?.textContent).toBe('Drum mix');
-    expect(knobNames()).toEqual(['Kick', 'Snare', 'Hats', 'Kick tune']);
+    expect(knobNames()).toEqual(['Kick', 'Snare & clap', 'Hats', 'Kick tune']);
     // Make the open hat quieter than the closed one first (as Advanced could), so Hats must keep the ratio.
     act(() => void session.accepted(cmd.setDrumVoice(session.store, 't1', 5, { level: 0.5 })));
     await keysOn(slider(sound(), 'Hats'), '{PageDown}{PageDown}');
@@ -84,23 +86,20 @@ describe('drums: the drum mix', () => {
     act(() => session.undo());
     expect(voices()[4].level).toBe(1);
     expect(voices()[5].level).toBe(0.5);
+    // Through 0 and back up: the open hat is still half the closed one.
+    await keysOn(slider(sound(), 'Hats'), '{Home}');
+    expect([voices()[4].level, voices()[5].level]).toEqual([0, 0]);
+    await keysOn(slider(sound(), 'Hats'), '{PageUp}{PageUp}{PageUp}{PageUp}{PageUp}');
+    expect(voices()[4].level).toBeGreaterThan(0.2);
+    expect(voices()[5].level / voices()[4].level).toBeCloseTo(0.5, 2);
     await keysOn(slider(sound(), 'Kick'), '{End}');
     expect(voices()[0].level).toBe(1.5);
     await keysOn(slider(sound(), 'Kick tune'), '{ArrowUp}');
     expect(voices()[0].tune).toBeGreaterThan(0);
-    await keysOn(slider(sound(), 'Snare'), '{Home}');
-    expect(voices()[2].level).toBe(0);
+    // Snare & clap: both, keeping their balance.
+    await keysOn(slider(sound(), 'Snare & clap'), '{Home}');
+    expect([voices()[2].level, voices()[3].level]).toEqual([0, 0]);
   });
-
-  it('Kick level is heard (offline render, Drums soloed)', async () => {
-    await openShape({ mode: 'simple', trackId: 't1' });
-    await keysOn(slider(sound(), 'Kick'), '{Home}');
-    const lo = structuredClone(project());
-    await keysOn(slider(sound(), 'Kick'), '{End}');
-    const hi = structuredClone(project());
-    const h = heard(await renderSolo(lo, 't1'), await renderSolo(hi, 't1'));
-    expect(h.db >= 1 || h.centroid >= 0.1, h.text).toBe(true);
-  }, 180_000);
 
   it('drum voices are locked while a performance records, and the knobs say why', async () => {
     await openShape({ mode: 'simple', trackId: 't1' });
@@ -108,6 +107,47 @@ describe('drums: the drum mix', () => {
     await settleFrames();
     expect(slider(sound(), 'Kick').getAttribute('aria-disabled')).toBe('true');
   });
+});
+
+describe('every starter: each Drum mix knob changes that starter’s drums (offline render, part soloed)', () => {
+  for (const starter of STARTERS) {
+    it(starter.name, async () => {
+      const p0 = starter.build();
+      for (const t of p0.tracks.filter((x) => x.instrument.kind === 'drums')) {
+        await openShape({ mode: 'simple', trackId: t.id, project: structuredClone(p0) });
+        const all = [...sound().querySelectorAll<HTMLElement>('[role="slider"]')];
+        expect(all.length, `${starter.name} ${t.name}`).toBeGreaterThanOrEqual(2);
+        // Each knob in turn: the tune knob all the way up first, then the level knobs all the way down (each one
+        // compared with the state just before it). The scene row rendered is one whose clip plays a voice the knob moves.
+        const knobs = [...all.filter((k) => k.getAttribute('aria-label')!.endsWith(' tune')), ...all.filter((k) => !k.getAttribute('aria-label')!.endsWith(' tune'))];
+        const states = [structuredClone(project())];
+        const rows: number[] = [];
+        const kit = (t.instrument as Extract<Instrument, { kind: 'drums' }>).kitId;
+        for (const k of knobs) {
+          const before = voices(t.id).map((v) => ({ ...v }));
+          await keysOn(k, k.getAttribute('aria-label')!.endsWith(' tune') ? '{End}' : '{Home}');
+          const moved = voices(t.id).flatMap((v, s) => (v.level !== before[s].level || v.tune !== before[s].tune ? [s] : []));
+          expect(moved.length, `${starter.name} ${t.name} ${k.getAttribute('aria-label')} moves a voice`).toBeGreaterThan(0);
+          const clips = track(t.id).clips;
+          const row = [rowFor(project(), t.id), ...clips.keys()].find((r) => clips[r]?.notes.some((n) => moved.includes(n.pitch)));
+          expect(row, `${starter.name} ${t.name} ${k.getAttribute('aria-label')} is played somewhere (${kit})`).not.toBeUndefined();
+          rows.push(row!);
+          states.push(structuredClone(project()));
+        }
+        for (let i = 0; i < knobs.length; i++) {
+          const a = await renderSolo(states[i], t.id, 2, rows[i]);
+          const b = await renderSolo(states[i + 1], t.id, 2, rows[i]);
+          const h = heard(a, b);
+          const diff = nullDb(a, b);
+          const label = `${starter.name} ${t.name} ${knobs[i].getAttribute('aria-label')} (row ${rows[i]}): ${h.text}, null ${diff.toFixed(1)} dB`;
+          console.info(`[drum-mix] ${label}`);
+          expect(levelDb(a), `${label}: heard before`).toBeGreaterThan(-80);
+          expect(h.db >= 1 || h.centroid >= 0.1 || diff >= -20, label).toBe(true);
+        }
+        closeShape();
+      }
+    }, 300_000);
+  }
 });
 
 describe('samplers', () => {
@@ -169,9 +209,26 @@ describe('a big screen fills (design-02)', () => {
     expect(sound().querySelector('[data-size="md"]')).not.toBeNull();
   });
 
-  it('1366 × 768: the left column (instrument, sound, big knobs) fits without scrolling', async () => {
-    await openShape({ mode: 'simple', trackId: 't4', w: 1366, hh: 768 });
-    const left = sound().closest('[class*="left"]') as HTMLElement;
-    expect(left.scrollHeight).toBeLessThanOrEqual(left.clientHeight + 1);
-  });
+  for (const [w, hh] of [
+    [1366, 768],
+    [1280, 720],
+  ] as const) {
+    it(`${w} × ${hh}: for every part (the sampler with its recording controls too) the left column fits without scrolling, every big knob’s caption in view`, async () => {
+      await openShape({ mode: 'simple', trackId: 't1', w, hh });
+      for (const id of ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't8']) {
+        act(() => selectTrack(id));
+        await settleFrames(4);
+        const left = sound().closest('[class*="left"]') as HTMLElement;
+        const box = left.getBoundingClientRect();
+        const grid = document.querySelector<HTMLElement>('[data-macro]')!.parentElement!;
+        const layout = grid.hasAttribute('data-row') ? 'one row' : 'two rows';
+        expect(left.scrollHeight, `${w} ${id} (${layout}): the column scrolls`).toBeLessThanOrEqual(left.clientHeight + 1);
+        for (const cap of grid.querySelectorAll<HTMLElement>('[data-macro] > div:last-child')) {
+          const r = cap.getBoundingClientRect();
+          expect(r.bottom, `${w} ${id} (${layout}): “${cap.textContent}” cut off`).toBeLessThanOrEqual(box.bottom + 0.5);
+          expect(cap.scrollWidth, `${w} ${id}: “${cap.textContent}” cut short`).toBeLessThanOrEqual(cap.clientWidth + 1);
+        }
+      }
+    });
+  }
 });

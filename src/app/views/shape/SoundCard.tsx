@@ -7,16 +7,15 @@
  * - Synths: Soft start (Attack), Length (Release), then Octave and
  *   Character (the wave) on the bass synth; Character (Tone 1's wave) and
  *   Thickness (Unison) on the poly synth, which has no octave control.
- * - Drum kits: a drum mix: the kick, snare and hats levels and the kick's
- *   tune (the kit's own voices, setDrumVoice; Hats moves the closed and open
- *   hats together, keeping their balance).
+ * - Drum kits: a drum mix of the voices the part plays: up to three level
+ *   knobs by role (Kick, Snare & clap, Hats … see drumMix.ts) and the first
+ *   one's tune (the kit's own voices, setDrumVoice; a group keeps its
+ *   voices' balance).
  * - Samplers: Start and Length of the region that plays (moving Start keeps
  *   the length), Pitch, and a small picture of the recording.
  */
 import { useEffect, useId, useMemo, useRef } from 'react';
 import { Button, Knob, newGestureId, type KnobSize } from '../../../ui/components';
-import { getKitVoiceNames } from '../../../audio/instruments/kits';
-import { kitInfo } from '../../../content/catalog';
 import { moduleId } from '../../../project/factory';
 import { DRUM_VOICE_PARAM_SPECS, INSTRUMENT_PARAMS, SAMPLER_PARAMS, clampParam, specById, type ParamSpec } from '../../../project/params';
 import type { DrumVoiceSettings, Id, InstrumentKind } from '../../../project/types';
@@ -25,6 +24,7 @@ import { shallowEqual } from '../../../state/store';
 import { session, useProject } from '../../instance';
 import { useEditLocked, LOCKED_TEXT } from '../ClipMenu';
 import { useSampleOverview } from '../sampler/sampleOverview';
+import { drumMixGroups, drumTuneVoice, playedKey, playedSlots, setGroupLevels, type MixGroup } from './drumMix';
 import { useKnobExtras } from './knobExtras';
 import { ParamKnob } from './ParamKnob';
 import { controllerName, effectiveValue } from './paramState';
@@ -90,28 +90,6 @@ function SynthKnobs(props: { trackId: Id; kind: 'bass' | 'poly'; size: KnobSize 
 /** A level of a drum voice (1 = as the kit was designed), shown in percent. */
 const VOICE_LEVEL: ParamSpec = { ...DRUM_VOICE_PARAM_SPECS.level, unit: '%' };
 
-interface MixGroup {
-  key: string;
-  label: string;
-  /** Voice slots it moves; the first one's value is shown, the others keep their balance with it. */
-  slots: readonly number[];
-}
-
-/** The kit's kick, snare and hats (standard kits), or its first three sounds (percussion kits). */
-export function drumMixGroups(kitId: string): MixGroup[] {
-  const names = getKitVoiceNames(kitId);
-  const family = kitInfo(kitId)?.family ?? 'kit';
-  if (family === 'kit') {
-    const hats = [4, 5, 6].filter((s) => s < 6 || /hat/i.test(names[s] ?? ''));
-    return [
-      { key: 'kick', label: 'Kick', slots: [0] },
-      { key: 'snare', label: 'Snare', slots: [2] },
-      { key: 'hats', label: 'Hats', slots: hats },
-    ];
-  }
-  return [0, 2, 4].map((s) => ({ key: `v${s}`, label: names[s] ?? `Sound ${s + 1}`, slots: [s] }));
-}
-
 function useVoices(trackId: Id): DrumVoiceSettings[] | null {
   return useProject(
     (p) => {
@@ -147,20 +125,27 @@ function DrumMix(props: { trackId: Id; kitId: string; size: KnobSize }) {
   const { trackId, kitId, size } = props;
   const voices = useVoices(trackId);
   const locked = useEditLocked();
-  const groups = useMemo(() => drumMixGroups(kitId), [kitId]);
-  if (!voices) return null;
-  const kick = groups[0];
-  const levelOf = (g: MixGroup) => voices[g.slots[0]]?.level ?? 1;
+  // The voices the part's clips play, as a stable key (the groups follow what is actually heard).
+  const played = useProject((p) => {
+    const t = p.tracks.find((x) => x.id === trackId);
+    return t ? playedKey(playedSlots(t)) : '';
+  });
+  const groups = useMemo(() => {
+    const counts = new Map<number, number>(played ? played.split(',').map((x) => x.split(':').map(Number) as [number, number]) : []);
+    return drumMixGroups(kitId, counts);
+  }, [kitId, played]);
+  if (!voices || groups.length === 0) return null;
+  const tune = drumTuneVoice(kitId, groups);
+  const level = (s: number) => voices[s]?.level ?? 1;
   const setGroup = (g: MixGroup, v: number, gesture: string) => {
-    const cur = levelOf(g);
-    const ratio = cur > 0.001 ? v / cur : null;
+    const levels = setGroupLevels(trackId, g, g.slots.map(level), v);
     setVoices(
       trackId,
-      g.slots.map((s, i) => [s, { level: i === 0 || ratio === null ? v : clampParam(VOICE_LEVEL, (voices[s]?.level ?? 1) * ratio) }] as [number, Partial<DrumVoiceSettings>]),
+      g.slots.map((s, i) => [s, { level: levels[i] }] as [number, Partial<DrumVoiceSettings>]).filter(([s, x]) => x.level !== level(s)),
       gesture,
     );
   };
-  const tuneSpec: ParamSpec = { ...DRUM_VOICE_PARAM_SPECS.tune, label: `${kick.label} tune` };
+  const tuneSpec: ParamSpec = { ...DRUM_VOICE_PARAM_SPECS.tune, label: `${tune.name} tune` };
   return (
     <>
       {groups.map((g) => (
@@ -169,25 +154,34 @@ function DrumMix(props: { trackId: Id; kitId: string; size: KnobSize }) {
           id={`simple-drum-${g.key}`}
           label={g.label}
           spec={{ ...VOICE_LEVEL, label: g.label }}
-          value={levelOf(g)}
+          value={level(g.lead)}
           size={size}
           locked={locked}
-          tip={g.slots.length > 1 ? `How loud the ${g.label.toLowerCase()} are, together (100% is as the kit was designed).` : `How loud the ${g.label.toLowerCase()} is (100% is as the kit was designed).`}
+          tip={
+            g.slots.length > 1
+              ? `How loud the ${listNames(g.names)} are, together: they keep their balance (100% is as the kit was designed).`
+              : `How loud the ${g.label} is (100% is as the kit was designed).`
+          }
           onSet={(v, gesture) => setGroup(g, v, gesture)}
         />
       ))}
       <VoiceKnob
-        id="simple-drum-kick-tune"
+        id="simple-drum-tune"
         label={tuneSpec.label}
         spec={tuneSpec}
-        value={voices[kick.slots[0]]?.tune ?? 0}
+        value={voices[tune.slot]?.tune ?? 0}
         size={size}
         locked={locked}
-        tip={`Tunes the ${kick.label.toLowerCase()} up or down, in semitones.`}
-        onSet={(v, gesture) => setVoices(trackId, [[kick.slots[0], { tune: v }]], gesture)}
+        tip={`Tunes the ${tune.name} up or down, in semitones.`}
+        onSet={(v, gesture) => setVoices(trackId, [[tune.slot, { tune: v }]], gesture)}
       />
     </>
   );
+}
+
+/** "Snare and Clap", "Closed Hat, Open Hat and Pedal Hat". */
+function listNames(names: readonly string[]): string {
+  return names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -304,7 +298,7 @@ const TITLE: Record<InstrumentKind, string> = { bass: 'Sound', poly: 'Sound', dr
 const NOTE: Record<InstrumentKind, string> = {
   bass: 'How each note starts, rings and sounds',
   poly: 'How each note starts, rings and sounds',
-  drums: 'The kit’s main drums',
+  drums: 'The drums this part plays',
   sampler: 'Which part of the recording plays',
 };
 

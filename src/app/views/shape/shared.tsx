@@ -4,7 +4,7 @@
  * Connection, the recording lock notice, and the switch to Advanced with the
  * toast that says so.
  */
-import { useCallback } from 'react';
+import { createContext, useCallback, useContext } from 'react';
 import { Notice, useToasts, type ToastApi } from '../../../ui/components';
 import { MASTER_ID, moduleId as mid } from '../../../project/factory';
 import { connectionKind, findModule, trackChain } from '../../../project/graph';
@@ -139,6 +139,24 @@ export function useEditLock(): string | null {
 }
 
 /** Says why effects cannot be added, moved, switched or removed right now; knobs keep working. */
+/**
+ * The part's name, when the Shape controls are shown somewhere that is not about one part (the
+ * effects rack in Mix's channel drawer): their undo steps then name the part in words ("Drums
+ * filter cutoff"). Null in Shape itself, where the undo step names come from the commands.
+ */
+export const PartWordsContext = createContext<string | null>(null);
+
+export function usePartWords(): string | null {
+  return useContext(PartWordsContext);
+}
+
+/** "Drums filter cutoff" for a part's module, "Reverb size" for a shared return (null: no words of our own). */
+export function undoWords(part: string | null, mod: string, label: string, shared: boolean): string | undefined {
+  if (part === null) return undefined;
+  const what = `${mod.replace(/ \(shared\)$/, '')} ${label.toLowerCase()}`;
+  return shared ? what : `${part} ${what.charAt(0).toLowerCase()}${what.slice(1)}`;
+}
+
 export function LockNotice(props: { lock: string | null }) {
   if (!props.lock) return null;
   return (

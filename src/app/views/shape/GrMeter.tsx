@@ -16,8 +16,12 @@ import { session } from '../../instance';
 import styles from './GrMeter.module.css';
 
 const MINUS = '−';
-/** Reduction release on screen (dB per second): fast attack, readable fall. */
-const RELEASE_DB_PER_S = 30;
+/**
+ * How fast the bar falls back (dB per second); it rises at once. A compressor's reduction falls
+ * at a readable pace; a gate opens in a few milliseconds and its reduction is tens of dB, so its
+ * bar follows within about 150 ms (it must not read −40 dB while the engine says it is open).
+ */
+const RELEASE_DB_PER_S: Record<'compressor' | 'gate', number> = { compressor: 30, gate: 400 };
 
 export interface GrMeterProps {
   moduleId: Id;
@@ -69,7 +73,7 @@ export function GrMeter({ moduleId, kind, name, className }: GrMeterProps) {
         const v = read();
         known = v !== null;
         const target = v ?? 0;
-        shown = target >= shown ? target : Math.max(target, shown - RELEASE_DB_PER_S * dt);
+        shown = target >= shown ? target : Math.max(target, shown - RELEASE_DB_PER_S[kind] * dt);
         if (doWrite) write();
         return shown >= 0.05 || lastText !== (!known ? '—' : kind === 'gate' ? 'Open' : 'Resting');
       },

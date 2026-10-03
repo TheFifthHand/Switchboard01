@@ -74,7 +74,7 @@ export const EFFECT_INFO: Partial<Record<ModuleType, EffectInfo>> = {
     summary: 'Evens out loud and quiet moments for more punch.',
     does: 'Holds loud moments down for a tighter, punchier sound.',
     knobs: [
-      { id: 'squeeze', says: 'Squeeze holds them down harder: it lowers the threshold and raises the ratio together, and keeps the level about the same.' },
+      { id: 'squeeze', says: 'Squeeze holds them down harder: it lowers the threshold and raises the ratio together, and turns the level back up most of the way.' },
       { id: 'ratio', says: 'Squeeze sets how hard.' },
       { id: 'threshold', says: 'Lower the Threshold to squeeze more of the sound.' },
       { id: 'mix', says: 'Mix blends the squeezed sound with the untouched one.' },

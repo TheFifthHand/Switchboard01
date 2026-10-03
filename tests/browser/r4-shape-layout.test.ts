@@ -14,7 +14,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { act } from 'react';
-import { selectTrack, setCablesOpen, setPadMode, setUiMode, setView } from '../../src/state/uiStore';
+import { selectTrack, setCablesOpen, setPadMode, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { openApp, setUp, tearDown } from './r4-play-helpers';
 import { clickEl, closeShape, keysOn, openShape } from './r4-shape-helpers';
 import { centre, contrast, drag, settleFrames } from './r4-uikit-input';
@@ -22,6 +22,56 @@ import { centre, contrast, drag, settleFrames } from './r4-uikit-input';
 const tab = (name: string) => [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find((t) => t.textContent?.includes(name)) ?? null;
 const columns = () => ['macros', 'instrument', 'effects'].filter((c) => document.getElementById(`shape-col-${c}`));
 const body = (col: string) => document.querySelector<HTMLElement>(`#shape-col-${col} > section > div:last-child`)!;
+
+/** Pairs of things in one mapping row that overlap (names, keys, fields, knobs and their readouts), as text. */
+function rowOverlaps(): string[] {
+  const out: string[] = [];
+  for (const row of document.querySelectorAll<HTMLElement>('section[aria-label$=" macro"] [role="group"][aria-label*=" moves "]')) {
+    const els = [...row.querySelectorAll<HTMLElement>('button, input, [role="slider"], span, label')].filter((el) => {
+      if (el.closest('.visually-hidden') || el.classList.contains('visually-hidden')) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width < 3 || r.height < 3) return false;
+      // Things to compare: controls, and text that is not inside a control.
+      if (el.matches('button, input, [role="slider"]')) return true;
+      return !el.closest('button, [role="slider"]') && [...el.childNodes].some((n) => n.nodeType === 3 && n.nodeValue!.trim());
+    });
+    for (let i = 0; i < els.length; i++) {
+      for (let j = i + 1; j < els.length; j++) {
+        const a = els[i];
+        const b = els[j];
+        if (a.contains(b) || b.contains(a)) continue;
+        const ra = a.getBoundingClientRect();
+        const rb = b.getBoundingClientRect();
+        const w = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+        const h = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+        if (w > 1 && h > 1) out.push(`${row.getAttribute('aria-label')}: “${(a.getAttribute('aria-label') ?? a.textContent ?? '').trim().slice(0, 30)}” × “${(b.getAttribute('aria-label') ?? b.textContent ?? '').trim().slice(0, 30)}”`);
+      }
+    }
+  }
+  return out;
+}
+
+describe('the Macros column’s mapping rows never overlap', () => {
+  afterEach(closeShape);
+
+  for (const [w, hh] of [
+    [960, 540],
+    [1366, 768],
+    [1600, 900],
+    [1920, 1080],
+  ] as const) {
+    it(`${w} × ${hh}: names, curve keys, range fields and range knobs each have their own room (Drums, Chords, Vocal)`, async () => {
+      await openShape({ mode: 'advanced', w, hh });
+      for (const id of ['t1', 't4', 't8']) {
+        act(() => selectTrack(id));
+        await settleFrames(3);
+        const rows = document.querySelectorAll('section[aria-label$=" macro"] [role="group"][aria-label*=" moves "]');
+        expect(rows.length, `${w} ${id}: mapping rows`).toBeGreaterThan(3);
+        expect(rowOverlaps(), `${w} × ${hh} ${id}`).toEqual([]);
+      }
+    });
+  }
+});
 
 describe('Advanced Shape: tabs on a short window, columns on a tall one', () => {
   afterEach(closeShape);
@@ -171,5 +221,14 @@ describe('Play view: the cables drawer', () => {
     const vp = viewport.getBoundingClientRect();
     expect(master.getBoundingClientRect().right).toBeLessThanOrEqual(vp.right + 1);
     expect([...drawer.querySelectorAll('button')].some((b) => b.getAttribute('aria-label') === 'Scroll the patch left')).toBe(true);
+
+    // "Open in Shape": the same part's cables in Shape, the cable panel taking the whole height.
+    await clickEl(document.getElementById('cables-drawer-open-in-shape'));
+    await settleFrames(4);
+    expect(uiStore.getState().view).toBe('shape');
+    const dock = document.querySelector<HTMLElement>('section[aria-label="Cable panel"][data-open]');
+    expect(dock, 'the cable panel is open in Shape').not.toBeNull();
+    expect(dock!.querySelector('[role="region"]')!.getAttribute('aria-label')).toMatch(/^Cables for Chords/);
+    expect(dock!.getBoundingClientRect().height).toBeGreaterThan(400);
   }, 60_000);
 });

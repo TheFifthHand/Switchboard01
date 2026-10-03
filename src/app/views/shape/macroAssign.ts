@@ -4,7 +4,7 @@
  *
  * Pure (no React, no DOM): unit-tested in tests/unit/r4-shape-logic.test.ts.
  */
-import { formatParam, fromNormalized, toNormalized, type ParamSpec } from '../../../project/params';
+import { clampParam, formatParam, fromNormalized, toNormalized, type ParamSpec } from '../../../project/params';
 import type { MacroTarget } from '../../../project/types';
 
 /** How much of a control's travel a new assignment sweeps (normalised), when there is room. */
@@ -31,14 +31,15 @@ const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
  * value in the lower half of the travel and downwards from the upper half,
  * whichever has room; a value at an end of its travel waits there until the
  * big knob passes its current position (macroFrom). Frequencies and times
- * (exponential controls) sweep evenly in pitch and time ('exp' curve);
- * option controls sweep every option.
+ * (exponential controls) sweep evenly in pitch and time ('exp' curve).
+ * An option control keeps its option until the big knob passes its position
+ * (optionRange).
  */
 export function assignRange(spec: ParamSpec, value: number, macroValue: number): AssignRange {
   const curve: AssignRange['curve'] = spec.curve === 'exp' && spec.min > 0 ? 'exp' : 'lin';
-  if (spec.curve === 'enum' || spec.curve === 'bool') return { min: spec.min, max: spec.max, curve: 'lin' };
-  const n = clamp01(toNormalized(spec, value));
   const m = clamp01(macroValue);
+  if (spec.curve === 'enum' || spec.curve === 'bool') return optionRange(spec, value, m);
+  const n = clamp01(toNormalized(spec, value));
   const room = (a: number, b: number) => Math.min(ASSIGN_SPAN, a, b);
   // Up: n(m') = n - m·d + m'·d.   Down: n(m') = n + m·d - m'·d.
   const up = room(m > 0 ? n / m : Infinity, m < 1 ? (1 - n) / (1 - m) : Infinity);
@@ -61,6 +62,20 @@ export function assignRange(spec: ParamSpec, value: number, macroValue: number):
   const lo = dir === 1 ? n - m * d : n + m * d;
   const hi = dir === 1 ? n + (1 - m) * d : n - (1 - m) * d;
   return { min: fromNormalized(spec, clamp01(lo)), max: fromNormalized(spec, clamp01(hi)), curve };
+}
+
+/**
+ * An option control (a mode, a wave, on or off) keeps its current option
+ * until the big knob passes its current position, then steps towards the
+ * option at the far end of its list as the big knob goes on up. With the big
+ * knob at the top of its travel it is the other way round: the far option at
+ * the bottom, the current one at the top.
+ */
+function optionRange(spec: ParamSpec, value: number, m: number): AssignRange {
+  const here = clampParam(spec, value);
+  const far = here - spec.min >= spec.max - here ? spec.min : spec.max;
+  if (m >= 1) return { min: far, max: here, curve: 'lin' };
+  return m > 0 ? { min: here, max: far, curve: 'lin', macroFrom: m, macroTo: 1 } : { min: here, max: far, curve: 'lin' };
 }
 
 /** A mapping's curve in words: 'gentle' (exponential: even steps in pitch or time) or 'even' (linear). */

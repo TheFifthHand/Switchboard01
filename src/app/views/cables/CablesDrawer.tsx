@@ -7,13 +7,14 @@
  * (drag it, or arrow keys / Home / End on it): its height is kept for the
  * session, and it never grows past what leaves the Loops pads two whole rows
  * (measured: the grid's head row and two rows at their smallest). A patch wider than the drawer scrolls sideways with
- * edge shadows and arrow keys (CablePanel), so Master Out stays reachable.
+ * edge shadows and arrow keys (CablePanel), so Master Out stays reachable. On a short window that leaves the patch
+ * little room: "Open in Shape" shows the same cables in Shape, where the panel can take the whole height.
  */
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
-import { Icon, IconButton } from '../../../ui/components';
+import { Button, Icon, IconButton } from '../../../ui/components';
 import { describePathProblem } from '../../../project/graph';
 import type { Project } from '../../../project/types';
-import { setCablesOpen } from '../../../state/uiStore';
+import { setCablesOpen, setView } from '../../../state/uiStore';
 import { useProject, useUi } from '../../instance';
 import { CablePanelFrame } from './CablePanel';
 import { partCableCount } from './model';
@@ -161,7 +162,22 @@ export function CablesDrawer() {
         <CablePanelFrame
           trackId={trackId}
           height={height - SPLITTER}
-          headerStart={<IconButton icon="chevronDown" size="sm" label="Hide cables" aria-expanded="true" onClick={() => setCablesOpen(false)} tip="Close the cable drawer. Your cables stay as they are." />}
+          headerStart={
+            <>
+              <IconButton icon="chevronDown" size="sm" label="Hide cables" aria-expanded="true" onClick={() => setCablesOpen(false)} tip="Close the cable drawer. Your cables stay as they are." />
+              <Button
+                id="cables-drawer-open-in-shape"
+                size="sm"
+                variant="ghost"
+                icon="sliders"
+                onClick={() => setView('shape')}
+                tip={`Show ${name ? `${name}’s` : 'this part’s'} cables in Shape, where the cable panel can take the whole height.`}
+                detail="The pads stay as they are; Back to Play returns here."
+              >
+                Open in Shape
+              </Button>
+            </>
+          }
         />
       </section>
     );

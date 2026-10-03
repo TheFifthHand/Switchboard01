@@ -69,12 +69,15 @@ export function useKnobExtras(sliderId: string, extras: KnobExtras): void {
       const timer = window.setTimeout(() => {
         if (!press || press.id !== id) return;
         press = null;
-        // The knob may have taken the finger (hold to turn): let it go, so the menu is all this press does.
+        // The knob may have taken the finger (hold to turn): let it go and end its drag (a cancelled pointer, as the
+        // browser sends when something else takes a touch over), so the menu is all this press does, however the
+        // finger moves next.
         try {
           if (el.hasPointerCapture(id)) el.releasePointerCapture(id);
         } catch {
           /* already released */
         }
+        el.dispatchEvent(new PointerEvent('pointercancel', { pointerId: id, pointerType: 'touch', isPrimary: true, bubbles: true }));
         suppressMenuUntil = performance.now() + 1500;
         latest.current.onMenu?.(anchorFromPoint(x, y));
       }, TOUCH_MENU_MS);

@@ -9,6 +9,7 @@ import * as cmd from '../../../state/commands';
 import { session } from '../../instance';
 import { MACRO_SPECS } from '../../macros';
 import { notify } from '../../runtime';
+import { bigKnobReach, offSentence } from './bigKnobReach';
 import { possessive } from './shared';
 
 const joinAnd = (xs: readonly string[]) => (xs.length < 2 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
@@ -43,8 +44,12 @@ export function resetBigKnobs(trackId: Id): void {
     store.endGroup();
   }
   const after = store.getState();
-  const still = MACRO_IDS.filter((m) => cmd.macroReach(after, trackId, m) === 'none').map((m) => MACRO_SPECS[m].label);
-  const stillText = still.length ? ` ${joinAnd(still)} still ${still.length > 1 ? 'move' : 'moves'} nothing: the effect ${still.length > 1 ? 'they move is' : 'it moves is'} not in this part (Add effect puts one back).` : '';
+  const reach = MACRO_IDS.map((m) => ({ label: MACRO_SPECS[m].label, r: bigKnobReach(after, trackId, m) }));
+  const still = reach.filter((x) => x.r.reach === 'none').map((x) => x.label);
+  const waiting = reach.filter((x) => x.r.reach === 'off');
+  const stillText =
+    (still.length ? ` ${joinAnd(still)} still ${still.length > 1 ? 'move' : 'moves'} nothing: the effect ${still.length > 1 ? 'they move is' : 'it moves is'} not in this part (Add effect puts one back).` : '') +
+    waiting.map((x) => ` ${offSentence(x.r.off, x.label)}`).join('');
   if (after === before) notify(`${possessive(t0.name)} big knobs already move what its sound is designed to move.${stillText}`, 'info');
   else notify(`${possessive(t0.name)} big knobs move what its sound is designed to move again.${stillText}`, 'info', 'undo');
 }

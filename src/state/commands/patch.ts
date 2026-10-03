@@ -327,8 +327,17 @@ function targetReaches(patch: Patch, audible: ReadonlySet<Id>, target: MacroTarg
   }
   if (mod.bypass || !audible.has(mod.id)) return false;
   if (mod.type === 'channel' && (target.param === 'sendA' || target.param === 'sendB')) {
-    // A send is heard only when its output is cabled to something heard.
-    return patch.connections.some((c) => c.from.module === mod.id && c.from.port === target.param && audible.has(c.to.module));
+    // A send is heard only when its output is cabled to something heard, and not to a switched-off return: the
+    // engine silences a switched-off module fed only by sends (AudioEngine.bypassedReturns).
+    const fedOnlyBySends = (id: Id) => {
+      const incoming = patch.connections.filter((c) => c.to.module === id && c.to.port === 'in');
+      return incoming.length > 0 && incoming.every((c) => findModule(patch, c.from.module)?.type === 'channel' && (c.from.port === 'sendA' || c.from.port === 'sendB'));
+    };
+    return patch.connections.some((c) => {
+      if (c.from.module !== mod.id || c.from.port !== target.param || !audible.has(c.to.module)) return false;
+      const to = findModule(patch, c.to.module);
+      return !(to?.bypass && fedOnlyBySends(to.id));
+    });
   }
   return true;
 }

@@ -66,13 +66,41 @@
   list-style: none;
 }
 
+/*
+ * A mapping: its name, curve and current value beside the range knobs and the remove key; the
+ * part of the big knob's travel it uses ("over Tone [0 %]–[100 %]") on a line of its own below,
+ * so the fields never run into the knobs at any width.
+ */
 .row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto 28px;
+  grid-template-areas:
+    'info range remove'
+    'travel travel travel';
   align-items: center;
   column-gap: 4px;
+  row-gap: 0;
   min-height: 46px;
-  padding: 1px 0;
+  padding: 2px 0 4px;
+}
+
+.info {
+  grid-area: info;
+}
+
+.range {
+  grid-area: range;
+  /* A knob's value key is a 32 px tall target that reaches below the knob: keep the line under clear of it. */
+  margin-bottom: calc(31px - var(--knob-value-h, 15px));
+}
+
+.row .remove[data-size] {
+  grid-area: remove;
+}
+
+.travelRow {
+  grid-area: travel;
+  min-width: 0;
 }
 
 .row + .row {
@@ -199,26 +227,18 @@
 }
 
 /* Narrow cards: the range knobs move under the target name instead of squeezing it. */
-@container (max-width: 250px) {
+@container (max-width: 300px) {
   .row {
     grid-template-columns: minmax(0, 1fr) 28px;
     grid-template-areas:
       'info remove'
-      'range range';
+      'range range'
+      'travel travel';
     row-gap: 2px;
     padding: 3px 0;
   }
 
-  .info {
-    grid-area: info;
-  }
-
   .range {
-    grid-area: range;
     justify-self: end;
-  }
-
-  .row .remove[data-size] {
-    grid-area: remove;
   }
 }

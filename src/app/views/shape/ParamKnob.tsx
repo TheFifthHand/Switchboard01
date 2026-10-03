@@ -17,13 +17,15 @@
 import { useId, useMemo, useState } from 'react';
 import { Knob, newGestureId, type KnobSize } from '../../../ui/components';
 import type { ParamSpec } from '../../../project/params';
+import { findModule } from '../../../project/graph';
 import type { Id } from '../../../project/types';
 import { shallowEqual } from '../../../state/store';
 import { session, useProject } from '../../instance';
 import type { MenuAnchor } from '../ClipMenu';
 import { AssignMenu } from './AssignMenu';
 import { useKnobExtras } from './knobExtras';
-import { controllerName, controllingTarget, effectiveValue, gateReason, homeNote, isModulated, knobHome, type KnobHome } from './paramState';
+import { controllerName, controllingTarget, effectiveValue, gateReason, homeNote, isModulated, knobHome, moduleName, type KnobHome } from './paramState';
+import { undoWords, usePartWords } from './shared';
 import shared from './shared.module.css';
 
 export interface ParamKnobProps {
@@ -86,9 +88,20 @@ export function ParamKnob(props: ParamKnobProps) {
   const baseTip = tip ?? spec.tip;
   const shownTip = st.gate ? `${st.gate} ${baseTip}` : baseTip;
   const shownDetail = [detail ?? spec.detail, note].filter(Boolean).join(' ') || undefined;
+  const partWords = usePartWords();
   const set = (v: number, gesture: string) => {
-    if (instrumentTrackId) session.setInstrumentParam(instrumentTrackId, param, v, gesture);
-    else session.setModuleParam(moduleId, param, v, gesture);
+    if (instrumentTrackId) {
+      session.setInstrumentParam(instrumentTrackId, param, v, gesture);
+      return;
+    }
+    // Shown outside Shape (Mix's channel drawer): the undo step names the part ("Drums filter cutoff").
+    let display: string | undefined;
+    if (partWords !== null) {
+      const p = session.store.getState();
+      const m = findModule(p.patch, moduleId);
+      if (m && m.type !== 'channel') display = undoWords(partWords, moduleName(p, m), spec.label, !m.trackId);
+    }
+    session.setModuleParam(moduleId, param, v, gesture, display !== undefined ? { display } : {});
   };
   const interactive = !disabled && !st.controlledBy;
 
