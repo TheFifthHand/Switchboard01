@@ -347,26 +347,29 @@ describe('Keyboard strip: held keys, drum parts and recordings', () => {
     }
   });
 
-  it('a drum part gets one key per kit sound and no octave to shift', () => {
+  it('a drum part gets 16 named kit keys, no octave to shift, and the drum-pad key layout (Z–V / A–F / Q–R / 1–4)', () => {
     const rec = recordNotes();
     try {
       act(() => selectTrack('t1'));
       const m = strip();
-      const keys = m.container.querySelectorAll('[role="group"][aria-label^="Keyboard playing"] [data-midi]');
+      const keys = [...m.container.querySelectorAll<HTMLElement>('[role="group"][aria-label^="Keyboard playing"] [data-midi]')];
       expect(keys).toHaveLength(16);
+      // Each key names its sound and shows its letter: Kick on Z, the closed hat on A.
+      expect(keys[0].textContent).toMatch(/Z$/);
+      expect(keys[4].textContent).toMatch(/A$/);
+      // A kit has no octave: no octave keys or reset.
       for (const label of ['Octave down (Z)', 'Octave up (X)', 'Reset octave to C4']) {
-        expect(m.container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.disabled).toBe(true);
+        expect(m.container.querySelector(`button[aria-label="${label}"]`)).toBeNull();
       }
-      // X would shift the octave on a melodic part: nothing changes for a kit.
+      // Z and X play sounds 1 and 2 (they shift the octave only on a melodic part).
       const octave = uiStore.getState().keyboardOctave;
-      key(document.body, 'keydown', { key: 'x', code: 'KeyX' });
-      expect(uiStore.getState().keyboardOctave).toBe(octave);
-      // A = sound 1, K = sound 13; ";" is past the 16 sounds and plays nothing.
-      for (const code of ['KeyA', 'KeyK', 'Semicolon']) {
+      // A = sound 5 (pad 4), 1 = sound 13 (pad 12); K and ";" are not kit keys and play nothing.
+      for (const code of ['KeyZ', 'KeyX', 'KeyA', 'Digit1', 'KeyK', 'Semicolon']) {
         key(document.body, 'keydown', { key: 'x', code });
         key(document.body, 'keyup', { key: 'x', code });
       }
-      expect(rec.played).toEqual(['on t1 0', 'off t1 0', 'on t1 12', 'off t1 12']);
+      expect(uiStore.getState().keyboardOctave).toBe(octave);
+      expect(rec.played).toEqual(['on t1 0', 'off t1 0', 'on t1 1', 'off t1 1', 'on t1 4', 'off t1 4', 'on t1 12', 'off t1 12']);
     } finally {
       rec.restore();
     }
@@ -387,26 +390,35 @@ describe('Keyboard strip: held keys, drum parts and recordings', () => {
 });
 
 describe('Keyboard legends', () => {
-  it('each white key shows one legend at most: the computer key, or the note name on C (and the root) keys', () => {
+  it('every key the computer plays shows its letter (A and K included); C keys and the root are named on the rail above the keys, never in a key', () => {
     const m = mount(h('div', { style: { width: '1340px', height: '100px' } }, h(KeyboardStrip)), { width: 1366 });
-    const whites = [...m.container.querySelectorAll<HTMLElement>('[data-midi]')].filter((k) => !/#/.test(k.dataset.note ?? ''));
-    expect(whites.length).toBe(15);
-    const root = session.store.getState().root;
-    for (const k of whites) {
+    const board = m.container.querySelector<HTMLElement>('[role="group"][aria-label^="Keyboard playing"]')!;
+    const keys = [...board.querySelectorAll<HTMLElement>('[data-midi]')];
+    // Two octaves, or three when the strip has room (this one does).
+    expect([25, 37]).toContain(keys.length);
+    const letter = (midi: number) => board.querySelector(`[data-midi="${midi}"] [class*="keycap"]`)?.textContent;
+    // The default octave starts on C4 (60): A, W, S… up to ' (17 semitones up).
+    expect(letter(60)).toBe('A');
+    expect(letter(62)).toBe('S');
+    expect(letter(72)).toBe('K');
+    expect(letter(77)).toBe("'");
+    // One legend per key at most, and never a note name in it.
+    for (const k of keys) {
       const legend = k.lastElementChild!;
       expect(legend.children.length).toBeLessThanOrEqual(1);
-      const pc = Number(k.dataset.midi) % 12;
-      if (pc === 0) expect(legend.textContent).toBe(k.dataset.note);
+      expect(k.querySelector('[class*="name"]')).toBeNull();
     }
-    // Computer keys still label the other white keys (S = D4 in the default layout).
-    const d4 = whites.find((k) => k.dataset.note === 'D4')!;
-    if (root !== 2) expect(d4.lastElementChild!.textContent).toBe('S');
-    // The legend sits below the scale dot (allowing for the 2 px of leading above the glyphs in its line box).
-    for (const k of whites) {
-      const dot = [...k.children].find((c) => c.tagName === 'SPAN' && c !== k.firstElementChild && c !== k.lastElementChild) as HTMLElement | undefined;
-      const legend = k.lastElementChild!.firstElementChild as HTMLElement | null;
-      if (!dot || !legend) continue;
-      expect(legend.getBoundingClientRect().top).toBeGreaterThanOrEqual(dot.getBoundingClientRect().bottom - 2);
+    // The rail: C4, C5 and the root (G in the House starter), each above its key.
+    const rail = [...board.querySelectorAll<HTMLElement>('[class*="railName"]')];
+    expect(rail.map((r) => r.textContent)).toEqual(expect.arrayContaining(['C4', 'C5', 'G']));
+    const c4 = rail.find((r) => r.textContent === 'C4')!;
+    expect(c4.getBoundingClientRect().bottom).toBeLessThanOrEqual(board.querySelector<HTMLElement>('[data-midi="60"]')!.getBoundingClientRect().top + 0.5);
+    // The letter sits below the scale dot (allowing for the 2 px of leading above the glyphs in its line box).
+    for (const k of keys) {
+      const dot = k.querySelector<HTMLElement>('[class*="dot"]');
+      const cap = k.querySelector<HTMLElement>('[class*="keycap"]');
+      if (!dot || !cap || /#/.test(k.dataset.note ?? '')) continue;
+      expect(cap.getBoundingClientRect().top, k.dataset.note).toBeGreaterThanOrEqual(dot.getBoundingClientRect().bottom - 2);
     }
   });
 });
