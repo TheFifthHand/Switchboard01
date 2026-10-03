@@ -1,8 +1,9 @@
 # TEST REPORT — Omni Song 2.1
 
 _Formerly SWITCHBOARD / 01. Test results and evidence for the 2.1 build (2.0 plus the song
-timeline). Every requirement of the original brief, and the 2.0 and 2.1 additions, is listed with
-its evidence in [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)._
+timeline) and the round-4 upgrade built on it. Every requirement of the original brief, the 2.0 and
+2.1 additions and round 4 is listed with its evidence in
+[`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)._
 
 ## How to reproduce
 
@@ -17,6 +18,28 @@ npm run package                       # build, then release/omni-song-<version>.
 ```
 
 ## Results
+
+### Round 4 (`r4-int`)
+
+| Suite | Files | Tests | Result |
+|-------|-------|-------|--------|
+| Typecheck (`tsc --noEmit`, app + tests) | — | — | _to be filled in from the final run_ |
+| Unit (`tests/unit`, Node) | — | — | _to be filled in from the final run_ |
+| Browser (`tests/browser`, real Chromium) | — | — | _to be filled in from the final run_ |
+| End-to-end (`e2e`, production build) | — | — | _to be filled in from the final run_ |
+
+The round-4 slices were built and tested on a shared machine that was heavily loaded the whole
+time (load averages from about 7 up to 57 on 4 CPUs, several suites running side by side). Full
+runs there include **load-related timing failures**: tests that compare against wall-clock time or
+frame timing (`drumSynth`, `r4-engine-idle`, `validate`, `variation` speed checks; the e2e keyboard
+Tab tours in `a11y`, which exceed 90 s; Jump In and first-sound timings in `journey`, `omni`,
+`notes`, `r4-core-jumpin-frame`, `r4-core-stall`, `r4-keys-firstkey`; `omni-pad-drag`,
+`omni-input-audio`, `export-while-playing`, `wp1-session`). In the slice reports each of these
+either passed when re-run on its own or failed the same way on the base build under the same load.
+They are timing checks of the test machine, not of the app's audio clock; a run on a quiet machine
+is the reference.
+
+### 2.1 handoff
 
 Run in the cloud container (Linux, 4 CPUs, Chromium 141 via Playwright 1.56.1, Node 22) on the
 2.1 handoff commit:
@@ -40,8 +63,8 @@ view (an isolation fix in the test, not an app change).
 | Kind | What it is | Where |
 |------|------------|-------|
 | Automated signal checks | Offline renders through the **real** engine (the same code path as WAV export), measured numerically: onsets, spectra, RMS, peaks, tails, loudness (LUFS), stereo correlation | `tests/browser/realEngine`, `starters`, `presets`, `effects`, `fx-*`, `reverb`, `engine*`, `drumKit`, `synths`, `sampler`, `offline`, `omni-fx-*`, `omni-mastering-*`, `omni-sounds-*` |
-| Logic checks | Sequencer timing, swing, tempo, launch quantization, pause/resume, arrangement, replay, graph validation, undo/redo, undo groups and entry ids, validation, schema v1→v2 migration, persistence, bundles (incl. old `.sb01.zip`), WAV encoding, import limits, loudness maths, MIDI, sample edits, launcher, package | `tests/unit/*.test.ts` |
-| Browser interaction checks | Components and the whole app in real Chromium (pointer, keyboard, layout at 1024–1920 px and 960×540); Playwright driving the production build: fresh profiles, downloads, storage failures, offline, stalls, 3-minute runs, keyboard-only use, axe-core audits, MIDI with a fake MIDIAccess, audio input from a generated stream | `tests/browser/*`, `e2e/*.spec.ts` |
+| Logic checks | Sequencer timing, swing, tempo, launch quantization, pause/resume, arrangement, replay, graph validation, undo/redo, undo groups and entry ids, validation, schema v1→v2→v3 migration, persistence (tab locks, rescue copies, versions), bundles (incl. old `.sb01.zip`), WAV encoding and dither, import limits, loudness maths, MIDI, sample edits, music theory (spelling, chords, progressions, key moves), launcher, package | `tests/unit/*.test.ts` |
+| Browser interaction checks | Components and the whole app in real Chromium (real mouse, keyboard and touch input through CDP; layout at 1024–1920 px and 960×540 at 2×); Playwright driving the production build: fresh profiles, reloads, two tabs, downloads, storage failures, offline, stalls and CPU slowdown, 3-minute runs, keyboard-only use, axe-core audits, MIDI with a fake MIDIAccess, audio input from a generated stream | `tests/browser/*`, `e2e/*.spec.ts` |
 | Independent reviews | Before handoff, five area audits of every brief requirement (45 gaps, all fixed), then a correctness review (5 defects, reproduced, fixed with regression tests) and a hands-on usability/accessibility review of the real app (13 problems, fixed) | `docs/ACCEPTANCE.md`, git history |
 | Launcher smoke test | The 2.1 release zip extracted to a path with spaces, served by `launcher/serve.ps1` (PowerShell 7) as `Start Omni Song.bat` does; loopback binding, traversal refusal, reuse of a running copy, Jump In playing from the package, a song block dragged with the mouse and undone | `evidence/launcher-smoke.txt` |
 | Listening review | **None.** The cloud environment has no speakers. Nothing here claims musical quality or low physical latency from sample values. | — |
@@ -60,7 +83,7 @@ view (an isolation fix in the test, not an app change).
 | 7 | Cable rewire changes the rendered signal; undo restores; invalid/cyclic rejected | ✅ | `realEngine.test.ts` (disconnect silences, undo restores bit-exactly; direct patch changes RMS; cycle + incompatible refused, graph and render unchanged); `tests/unit/graph.test.ts`; `e2e/complete.spec.ts` (unplugging in the UI silences the soloed part, Restore Connection brings it back) |
 | 8 | Effects and macros produce measurable changes in a controlled fixture | ✅ | `realEngine.test.ts` (Tone centroid ×1.5, Space tail ×10, Echo ×5, Motion centroid variance, Drive HF ×1.5, Pump beat ducking); `effects.test.ts` per effect; `engine-modulation.test.ts` (LFO Off stops modulation); `presets.test.ts` (Tone moves every preset's centroid by > ×1.8) |
 | 9 | Recorded notes, scene launches, knob changes replay in performance and WAV | ✅ | `tests/unit/replay.test.ts`, `offline.test.ts`, `realEngine.test.ts` (timed mute); `journey.spec.ts` (take with notes + scene exported); `wp2-notes-recording.test.ts` (undo/redo during a take recorded and replayed; held keys and a latched arpeggio at the take start are in it; Mute All ends a take) |
-| 10 | Exported WAVs: format, duration, finite, non-silent, within ceiling | ✅ | `journey.spec.ts` (48 kHz / 16-bit / stereo, duration = plan ± 10 ms, peak ≤ −1 dBFS); `tests/unit/wav.test.ts` |
+| 10 | Exported WAVs: format, duration, finite, non-silent, within ceiling | ✅ | `journey.spec.ts` (48 kHz / 24-bit, the default since round 4 / stereo, duration = plan ± 10 ms, peak ≤ −1 dBFS); `tests/unit/wav.test.ts`; round 4: exports start at sample 0 (`r4-core-export-align`), true peak ≤ −1 dBTP (`r4-engine-truepeak`) |
 | 11 | Impulse/timing fixture: rendered onset positions over multiple bars | ✅ | `realEngine.test.ts`: 16 rim hits over 4 bars within 0.5 ms of schedule (+ the constant engine latency), jitter < 0.2 ms |
 | 12 | Custom-sample project survives export → fresh-profile import → second render | ✅ | `e2e/persistence.spec.ts` (musical state identical, render RMS within 1 %) |
 | 13 | Autosave errors and unsupported imports show recovery paths | ✅ | `e2e/persistence.spec.ts` (quota error → "Not saved", Try again, Export project file); `tests/browser/library.test.ts` (a starter never silently replaces unsaved edits; recovery export reports success/failure); `tests/unit/audioImport.test.ts` (type, size, length refused before decoding, with actionable messages) |
@@ -83,7 +106,7 @@ view (an isolation fix in the test, not an app change).
 | Seven insert effects (EQ, Compressor, Gate, Auto Pan, Stereo Width, Flanger, Tape) measured on the real engine | ✅ | browser `omni-fx-inserts`, `omni-fx-engine` |
 | Mastering chain; neutral = bit-identical; presets do what they say; −1 dBFS never exceeded (Loudness +15 on hot material) | ✅ | browser `omni-mastering-chain` |
 | EBU R128 loudness (momentary, short-term, integrated, true peak) within 0.1 LU of reference sequences; spectrum | ✅ | unit `omni-fx-loudness`; browser `omni-mastering-chain` |
-| Mix view: faders, meters, Mute / Solo / Pan, mastering presets, loudness target + Match, listening-only A/B | ✅ | browser `omni-mix-view`, `omni-mix-session` (A/B ≥ 4 dB on the real output, project untouched), `omni-fix-mix-layout`; unit `omni-mix-mastering` |
+| Mix view: faders, meters, Mute / Solo / Pan, mastering presets, loudness target + Match, listening-only A/B | ✅ | browser `omni-mix-view`, `omni-mix-session` (A/B on the real output, project untouched; level-matched since round 4, see `r4-mix-compare`), `omni-fix-mix-layout`; unit `omni-mix-mastering` |
 | Simple Shape (big knobs, instrument card, effect cards whose knob always changes the sound, grouped Add effect); Advanced rack with drag reorder | ✅ | browser `omni-shape-simple`, `omni-shape-advanced`, `omni-fix-shape-cards`, `shape` |
 | MIDI keyboards (velocity, sustain, pitch bend, mod wheel, learn, GM drum map; no stuck notes) | ✅ | browser `omni-input-midi` (fake MIDIAccess, real session); unit `omni-fix-midi-*` |
 | Record audio (count-in, bars on the audio clock, latency compensation, one undo step) and recording edits (Normalize, Reverse, Crop, Fades, Gain) | ✅ | browser `omni-input-audio` (beats within one sample), `omni-input-ui`, `omni-fix-audio-take`; unit `omni-input-edits`, `omni-fix-gain-clip` |
@@ -129,13 +152,45 @@ the long frame went from 90–140 ms (first version) to a median of 57–75 ms; 
 from ~150 ms to 72–107 ms. A replan deferred past the paint was tried and measured worse overall,
 so the replan stays in the edit's own task.
 
+## Round 4 test files (by area)
+
+Every round-4 slice added tests named after it (`r4-<slice>-*`); browser tests use real CDP mouse,
+keyboard and touch input at 1366 × 768, 1920 × 1080 and 960 × 540 at 2×. Shared helpers:
+`tests/browser/r4-*-helpers.ts`, `r4-shell-harness.ts`, `r4-shell-chip.ts`, `r4-uikit-input.ts`,
+`tests/unit/r4-persist-fakes.ts`, `e2e/r4-persist-helpers.ts`.
+
+| Area | Unit (`tests/unit`) | Browser (`tests/browser`) | e2e |
+|---|---|---|---|
+| Project data (schema v3, scenes, clips, samples, sound, arrangement, UI store) | `r4-model-schema`, `-scenes`, `-clips`, `-samples`, `-sound`, `-params`, `-arrangement`, `-ui`; `r4-int-display-words` | — | — |
+| Persistence (tab locks, read-only tabs, rescue, versions) | `r4-persist-lock`, `-readonly`, `-rescue`, `-versions` | `r4-persist-library-versions` | `r4-persist-two-tabs`, `-fallback`, `-readonly`, `-reload` |
+| UI kit (meters, toasts, touch, value entry, keyboard, pads, tokens, reduced motion) | `r4-uikit-valueinput` | `r4-uikit-meter`, `-toast`, `-touch`, `-valueentry`, `-numberfield`, `-minikeyboard`, `-pad`, `-controls`, `-tokens`, `-reduced-motion` | — |
+| Engine (latency, true peak, returns, ramps, levels, build, gain reduction, spectrum, dither) | `r4-engine-idle`, `-spectrum`, `-wav-dither`, `-match-gesture` | `r4-engine-latency`, `-truepeak`, `-returns`, `-return-mix`, `-ramps`, `-levels`, `-modfx`, `-build`, `-drumkit`, `-gr`, `-compare`, `-sampler-clip` | — |
+| Core (stalls and skips, clip phase, record window, moves, scenes, exports, imports, sound edits) | `r4-core-stall`, `-clipphase`, `-record-window`, `-moves`, `-scenes` | `r4-core-session`, `-moves`, `-export-align`, `-report`, `-clip-samples`, `-import-clip`, `-record`, `-scenes`, `-sound-edits` | `r4-core-stall`, `r4-core-jumpin-frame` |
+| Notes and music (selection, quantize, drums, key moves, chords, Variation) | `r4-notes-selection`, `-quantize`, `-drums`, `-key`, `-chords`, `-variation`; `scales` | — | — |
+| Play (selection, take lock, scenes, progress, popovers, Variation, keyboard) | — | `r4-play-selection`, `-lock`, `-scenes`, `-progress`, `-popover`, `-menus-axe`, `-variation`, `-a11y`, `-fixes` | — |
+| Keys and pads (drum grid, kit keys, strip, key change, chords) | — | `r4-keys-drumgrid`, `-kitkeys`, `-strip`, `-key-change`, `-chords` | `r4-keys-firstkey` |
+| Steps | `r4-steps-model` | `r4-steps-selection`, `-keys`, `-grid`, `-quantize`, `-bars`, `-follow`, `-touch`, `-playhead`, `-key`, `-layout`, `-fixes` | — |
+| Sound browser and sampler | `r4-sampler-tempo-helper` | `r4-sampler-browse-cancel`, `-browse-safety`, `-import-clip`, `-takes`, `-zoom`, `-motion` | — |
+| Shape | `r4-shape-logic` | `r4-shape-cards`, `-bigknobs`, `-reset`, `-assign`, `-sound-card`, `-layout`, `-switch-perf`, `-copy-effects`, `-gr`, `-gates` | — |
+| Arrange | — | `r4-arrange-card-layer`, `-scale`, `-mute`, `-loop-button`, `-wheel`, `-rows`, `-take-drawer`, `-selection-parts`, `-moves`, `-scenes`, `-take-to-song`, `-touch-ruler`, `-audition`, `-edge-grip`, `-zoom-memory`, `-menu-toast`, `-song` | — |
+| Mix and export | — | `r4-mix-layout`, `-channel-drawer`, `-returns`, `-spectrum`, `-compare`, `-export`, `-match`, `-match-steps`, `-match-guard` | — |
+| Shell (Welcome, Help, keys, save state, widths, hints, drop import, toasts) | `r4-shell-help-data`, `r4-shell-steps` | `r4-shell-welcome`, `-keys`, `-help`, `-savestate`, `-transport-widths`, `-hints-song`, `-hints-cost`, `-hint-home`, `-drop-import` | `r4-shell-two-tabs-banner`, `-return-visit`, `-toast-place` |
+
+Many older tests were updated to the new wording and behaviour (for example `steps`, `arp`,
+`parts`, `clipmenu`, `omni-mix-view`, `omni-mix-session`, `omni-shape-*`, `omni-hints-*`,
+`library`, `starters`, and the e2e `journey`, `firstnote`, `persistence`, `resilience`, `a11y`).
+Screenshots in `docs/screenshots/` and the WAVs in `evidence/wav/` were not refreshed for round 4.
+
 ## Audio measurements (automated, not listening)
 
 ### Timing
-- 4 bars of rim hits at 120 BPM: every onset = scheduled time + a constant **7.65 ms** (367 frames at
-  48 kHz), identical for every hit (spread < 0.2 ms). The constant is the master limiter's 5 ms
-  look-ahead plus the Drive stage's 2× oversampling delay. It is the same live and in exports, so
-  it never changes the timing between sounds; Record Notes compensates for it.
+- 4 bars of rim hits at 120 BPM: every onset = scheduled time + a constant latency, identical for
+  every hit (spread < 0.2 ms). Since round 4 the constant is **383 frames at 48 kHz (about 8.0 ms)**:
+  the master limiter's 5 ms look-ahead, 16 frames for its true-peak interpolators, and 128 frames
+  for the Drive stage's 2× oversampling (it was 367 frames, 7.65 ms, before the true-peak limiter).
+  It is the same live and in exports; exports cut it from the start, so the music begins at
+  sample 0; Record Notes, audio input and the playheads compensate for it
+  (`realEngine`, `r4-engine-latency`).
 - Swing 100 %: off-beat 16ths land exactly one third of a step late; on-beats unchanged.
 
 ### Starter levels (4 bars per scene, 44.1 kHz, as shipped)
@@ -145,14 +200,23 @@ so the replan stays in the edit's own task.
 | House | 124 | G dorian | Intro −30.7 / −13.3 | Groove −19.3 / −5.7 | Lift −18.0 / −1.3 | Break −25.2 / −9.5 |
 | Synthwave | 100 | D minor | Intro −30.3 / −14.3 | Cruise −20.6 / −5.5 | Chorus −19.3 / −3.7 | Breakdown −23.0 / −9.1 |
 | Ambient | 72 | E lydian | Float −26.9 / −8.4 | Pulse −21.6 / −6.2 | Bloom −20.2 / −4.0 | Drift −22.6 / −6.9 |
-| Techno | 128 | F phrygian | Intro −30.1 / −5.9 | Groove −18.7 / −3.5 | Peak −16.9 / −2.3 | Breakdown −20.2 / −5.8 |
-| Breakbeat | 132 | B minor | Intro −27.9 / −8.1 | Groove −19.7 / −3.8 | Drop −17.8 / −2.1 | Break −22.9 / −9.1 |
+| Techno ¹ | 128 | F phrygian | Intro −30.1 / −5.9 | Groove −18.7 / −3.5 | Peak −17.2 / −2.3 | Breakdown −20.3 / −6.0 |
+| Breakbeat ¹ | 132 | B minor | Intro −28.2 / −8.4 | Groove −20.5 / −4.3 | Drop −18.4 / −2.5 | Break −23.3 / −9.3 |
 | Drum and Bass | 174 | C# minor | Intro −28.8 / −10.7 | Roll −20.0 / −4.3 | Drop −18.5 / −3.3 | Float −22.6 / −9.2 |
-| Downtempo | 84 | Eb major | Intro −31.9 / −13.1 | Sway −21.3 / −4.5 | Lift −20.2 / −4.0 | Haze −23.6 / −10.0 |
+| Downtempo ¹ | 84 | E♭ major | Intro −32.0 / −15.3 | Sway −21.9 / −5.1 | Lift −20.7 / −4.5 | Haze −23.6 / −10.0 |
 | Garage | 136 | A minor | Intro −30.3 / −11.4 | Two-Step −20.5 / −1.6 | Lift −18.5 / −1.0 | Break −24.3 / −6.0 |
 
-Values are RMS (steady part, after the first bar) / sample peak, in dBFS. Core grooves sit between
-−18.7 and −21.6 dBFS RMS; the limiter (ceiling −1 dBFS) only touches the loudest peaks of the
+Values are RMS (steady part, after the first bar) / sample peak, in dBFS, as asserted (±0.3 dB) in
+`tests/browser/starters.test.ts`.
+
+¹ Re-measured in round 4. These three starters use the Drive (Techno's acid bass preset,
+Breakbeat's and Downtempo's Drive big knobs), and the Drive is now level-compensated in practice
+(an RMS trim per character plus a slow level match) instead of lifting quiet parts by a few dB.
+Downtempo's Intro peak was measured again after the level match became block-wise: −15.3 dBFS
+(it was −14.7 in the first round-4 measurement; its sparse driven drum hits peak 0.6 dB lower;
+RMS unchanged). The other five starters did not change.
+
+Core grooves sit between −18.7 and −21.9 dBFS RMS; the limiter (ceiling −1 dBFS) only touches the loudest peaks of the
 fullest scenes (< 1 % of samples, asserted for every scene in `tests/browser/starters.test.ts`).
 Intros are deliberately sparse and quieter. The Milestone 5 sound fixes (kit level matching, choke
 groups, one-shot playback) moved no scene by more than 0.06 dB.
@@ -185,7 +249,7 @@ mastering changes nothing). Short, synthesized material only: no user recordings
 ## Known limits
 
 - No listening review (see above).
-- Recorded audio takes are at most 4 bars (clips are 1–4 bars).
+- Recorded audio takes are at most 8 bars (clips are 1–8 bars).
 - MIDI pitch bend is heard live but not recorded into performance takes.
 - A performance started while a latched arpeggio already runs replays that pattern from its first
   step (same notes and rhythm; the first notes can come in a different order).
@@ -195,9 +259,9 @@ mastering changes nothing). Short, synthesized material only: no user recordings
   export of a take plays them through.
 - Song lane touch was tested with real touch events sent to Chromium, not on a physical device
   (rest a finger to pick up; a swipe scrolls).
-- Exporting while playing: playback is scheduled further ahead while the export starts; a very busy
-  computer (over about 2 s of blocking) can still stop playback, and the message then says so.
-- In Advanced at 1366 px a narrow playing block's header can shorten "Playing" to "Play…".
+- Exporting while playing: playback is scheduled further ahead while the export starts. Since round
+  4 a visible tab that still falls behind skips ahead (a few notes are dropped, a quiet notice says
+  so) instead of stopping; only a background tab or a paused audio device stops playback.
 - After a split or join in a block whose clips have lengths that do not divide each other (e.g. 3
   bars), the continued block keeps the loop phases that were sounding (nothing audible changes);
   playing that block again from its start can sound slightly different until the next block.
