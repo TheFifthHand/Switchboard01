@@ -499,11 +499,38 @@ export function spellChord(spec: ChordSpec, key?: { root: number; scale: ScaleId
 export function chordName(root: number, scale: ScaleId, degree: number, opts: { size?: 3 | 4 } = {}): string {
   const chord = diatonicChord(root, scale, degree, opts.size === 4 ? 4 : 3, 3);
   const key = { root, scale };
+  const names = keyNoteNames(root, scale);
+  const rootName = degreeRootName(root, scale, degree, pitchClass(chord[0])) ?? names[pitchClass(chord[0])];
   for (let n = chord.length; n >= 3; n--) {
     const spec = identifyChord(chord.slice(0, n));
-    if (spec && spec.bass === undefined) return spellChord(spec, key);
+    if (spec && spec.bass === undefined) {
+      const spelled = spellChord(spec, key);
+      const keyed = names[pitchClass(spec.root)];
+      return pitchClass(spec.root) === pitchClass(chord[0]) && spelled.startsWith(keyed) ? rootName + spelled.slice(keyed.length) : spelled;
+    }
   }
-  return keyNoteNames(root, scale)[pitchClass(chord[0])];
+  return rootName;
+}
+
+const LETTER_PCS: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const LETTER_ORDER = 'CDEFGAB';
+
+/**
+ * In a seven-note key every degree has its own letter, so a chord symbol reads
+ * the way the scale is written: vii° of F# major is E#°, not F°; ♯iv° of
+ * B Lydian is E#°. (Note names elsewhere keep to one-accidental spellings
+ * without E#/B#, so their octave numbers stay simple.) Null for other scales or
+ * when the degree's letter would need a double accidental.
+ */
+function degreeRootName(root: number, scale: ScaleId, degree: number, pc: number): string | null {
+  if (SCALES[scale].intervals.length !== 7) return null;
+  const tonic = keyNoteNames(root, scale)[pitchClass(root)];
+  const letter = LETTER_ORDER[(LETTER_ORDER.indexOf(tonic[0]) + ((degree % 7) + 7) % 7) % 7];
+  const diff = (pc - LETTER_PCS[letter] + 12) % 12;
+  if (diff === 0) return letter;
+  if (diff === 1) return `${letter}#`;
+  if (diff === 11) return `${letter}♭`;
+  return null;
 }
 
 export interface ChordAtOptions {

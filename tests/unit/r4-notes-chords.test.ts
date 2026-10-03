@@ -258,3 +258,26 @@ describe('write a progression into a clip', () => {
     expect(make()).toEqual(make());
   });
 });
+
+describe('chord symbols take each degree’s own letter in seven-note keys', () => {
+  it('vii° of F# major and ♯iv° of B Lydian read E#°, not F°; flat keys keep their flats', () => {
+    expect(chordName(6, 'major', 6)).toBe('E#°');
+    expect(chordName(6, 'major', 6, { size: 4 })).toBe('E#m7♭5');
+    expect(chordName(11, 'lydian', 3)).toBe('E#°');
+    expect(chordName(3, 'minor', 1)).toBe('E#°');
+    expect([0, 1, 2, 3, 4, 5, 6].map((d) => chordName(10, 'major', d)).join(' ')).toBe('B♭ Cm Dm E♭ F Gm A°');
+    expect([0, 1, 2, 3, 4, 5, 6].map((d) => chordName(7, 'harmonicMinor', d)).join(' ')).toBe('Gm A° B♭+ Cm D E♭ F#°');
+  });
+
+  it('every degree of every seven-note key uses seven different letters (bar a double-sharp leading tone)', () => {
+    const seven = ['major', 'minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'harmonicMinor'] as const;
+    for (const scale of seven) {
+      for (let root = 0; root < 12; root++) {
+        const letters = new Set([0, 1, 2, 3, 4, 5, 6].map((d) => chordName(root, scale, d)[0]));
+        // D# and G# harmonic minor would need C𝄪 / F𝄪: that one chord keeps its plain name (D°, G°).
+        if (letters.size < 7) expect([`${root} ${scale}`]).toContain(['3 harmonicMinor', '8 harmonicMinor'].find((k) => k === `${root} ${scale}`));
+        else expect(letters.size).toBe(7);
+      }
+    }
+  });
+});
