@@ -48,7 +48,8 @@ coming from 1.0 (the Welcome card's one-time note, START HERE, project-file impo
   "…" is in My projects." with **Open it**.
 - "Other starters & projects" opens the Project library; **Just look around** (or Esc) closes the
   card. The card traps Tab. After Jump In, focus goes to the quick guide's Next, else to Play.
-- After a reload that lost a save, the card says the last edits were recovered.
+- When a reload or a closed tab came right after an edit, the card says the last edits were
+  recovered (the rescue copy).
 
 ### Transport (top bar)
 
@@ -512,8 +513,8 @@ Off (a thin edge), Rec and the take lock.
 
 **Loop.** The looped blocks repeat while the song plays (playback state, not saved; Play starts at
 the loop). **Loop** names what it acts on and is pressed only when it names the loop that is on;
-otherwise it offers to move it ("Move loop to Groove (block 2)"). A chip shows the loop ("Loop:
-Lift–Lift") with ✕ to stop it. A drag across the ruler sets a loop snapped to block edges, with a
+otherwise it offers to move it ("Move loop to Groove (block 2)"). A chip shows the loop ("Loop: Groove",
+"Loop: Groove–Lift") with ✕ to stop it. A drag across the ruler sets a loop snapped to block edges, with a
 toast offering **Stop looping**; each end of the band has a grip. The menu's **Loop…** has Loop this
 block / selected blocks and Stop looping. Edits keep the loop (see ARCHITECTURE).
 
