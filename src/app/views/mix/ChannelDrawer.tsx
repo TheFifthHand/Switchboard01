@@ -116,7 +116,7 @@ export function ChannelDrawer(props: { className?: string }) {
             {lock && <Icon name="lock" size={13} />} {why}
           </p>
         )}
-        <EffectsRack trackId={trackId} className={styles.rack} />
+        <EffectsRack trackId={trackId} className={styles.rack} embedded />
       </Panel>
     </div>
   );
