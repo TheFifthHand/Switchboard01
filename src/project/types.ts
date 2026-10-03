@@ -4,11 +4,11 @@
  * Everything in this file is plain JSON-compatible data. No audio nodes, DOM
  * objects, class instances, functions or Maps may appear in a Project.
  * Every entity that the user can address (track, clip, note, scene, module,
- * connection, block, performance, sample) has a stable string id.
+ * connection, region, section, performance, sample) has a stable string id.
  */
 
 export const PROJECT_SCHEMA = 'switchboard01.project' as const;
-export const PROJECT_VERSION = 3 as const;
+export const PROJECT_VERSION = 4 as const;
 
 export type Id = string;
 
@@ -300,61 +300,78 @@ export interface Patch {
 /* Arrangement & performances                                          */
 /* ------------------------------------------------------------------ */
 
-/** Most passes one song block can hold (its length = pass length × repeats). */
-export const MAX_BLOCK_REPEATS = 16;
-/** Longest block label, in characters. */
-export const MAX_BLOCK_LABEL = 40;
+/** Longest song, in bars: every loop and section on the song timeline ends by here. */
+export const MAX_SONG_BARS = 512;
+/** Longest section name, in characters. */
+export const MAX_SECTION_NAME = 40;
 
-/** The song moves a block can carry (schema v3). */
-export const BLOCK_MOVE_KINDS = ['fadeIn', 'fadeOut', 'filterRise', 'echoThrow'] as const;
-export type BlockMoveKind = (typeof BLOCK_MOVE_KINDS)[number];
+/** The song moves a section can carry. */
+export const SONG_MOVE_KINDS = ['fadeIn', 'fadeOut', 'filterRise', 'echoThrow'] as const;
+export type SongMoveKind = (typeof SONG_MOVE_KINDS)[number];
 
 /**
- * A change of sound over one song block, played from the audio clock and
- * rendered identically by exports. A block holds at most one move of each
+ * A change of sound over one song section, played from the audio clock and
+ * rendered identically by exports. A section holds at most one move of each
  * kind. What playback does:
  * - fadeIn: the song's gain (after the master volume, before mastering) rises
- *   from 0 to 1 across the whole block.
- * - fadeOut: the song's gain falls from 1 to 0 across the whole block.
+ *   from 0 to 1 across the whole section.
+ * - fadeOut: the song's gain falls from 1 to 0 across the whole section.
  * - filterRise: the Tone big knob of each part it applies to rises from 0.15
- *   to that part's own Tone value across the block, and is back at the part's
- *   own value when the block ends.
+ *   to that part's own Tone value across the section, and is back at the
+ *   part's own value when the section ends.
  * - echoThrow: the Echo big knob of each part it applies to goes to 0.85 over
- *   the block's last beat and returns to the part's own value one bar later.
+ *   the section's last beat and returns to the part's own value one bar later.
  * `parts` lists the parts filterRise and echoThrow act on; without it they act
  * on every melodic part (bass, chords, lead, pad, texture and sampler roles).
  * Fades act on the whole song and never carry `parts`.
  */
-export interface BlockMove {
+export interface SongMove {
   id: Id;
-  kind: BlockMoveKind;
+  kind: SongMoveKind;
   parts?: Id[];
 }
 
 /**
- * One section of the song: a scene played `repeats` times.
- *
- * `parts` changes what single parts play in this block only, without
- * touching the scene: a track id maps to the scene whose clip that part
- * plays here (layering another scene's part in), or to null (the part is
- * silent in this block). Parts not listed follow the block's scene. A part
- * whose chosen scene has no clip in that part's row is silent.
+ * One loop placed on a part's row of the song (schema v4), like a region in
+ * GarageBand: it plays one of the part's clips from bar `start` for `bars`
+ * bars, the clip repeating to fill it, beginning `offset` bars into the clip
+ * (a region trimmed at its left edge starts later in its clip). Regions on
+ * one part never overlap. Positions are whole bars.
  */
-export interface ArrangementBlock {
+export interface SongRegion {
   id: Id;
-  sceneId: Id;
-  /** 1..MAX_BLOCK_REPEATS */
-  repeats: number;
-  /** Optional name shown instead of the scene name (e.g. "Verse 2"). */
-  label?: string;
-  /** Per-part changes for this block: trackId → sceneId to play, or null for silent. */
-  parts?: Record<Id, Id | null>;
-  /** Song moves over this block (schema v3; at most one per kind). */
-  moves?: BlockMove[];
+  trackId: Id;
+  /** The clip it plays: one of its track's clips (Track.clips[i].id). */
+  clipId: Id;
+  /** First bar on the song timeline (0-based integer). */
+  start: number;
+  /** Length in bars (integer ≥ 1); start + bars ≤ MAX_SONG_BARS. */
+  bars: number;
+  /** Bars into the clip where the region begins: integer, 0 ≤ offset < the clip's bars. */
+  offset: number;
 }
 
+/**
+ * A named stretch of the song timeline (Intro, Verse, Drop …) shown above
+ * the rows. A section is a label with optional song moves: it does not own
+ * regions, and sections never overlap. Moving or copying "a section" moves
+ * or copies the regions that start inside it (see project/arrangement.ts).
+ */
+export interface SongSection {
+  id: Id;
+  name: string;
+  /** First bar (0-based integer). */
+  start: number;
+  /** Length in bars (integer ≥ 1). */
+  bars: number;
+  /** Song moves over this section (at most one per kind). */
+  moves?: SongMove[];
+}
+
+/** The song: what each part plays where (regions), named sections, and the export tail. */
 export interface Arrangement {
-  blocks: ArrangementBlock[];
+  regions: SongRegion[];
+  sections: SongSection[];
   /** Seconds of effect tail appended to exports. */
   tailSeconds: number;
 }
