@@ -34,10 +34,11 @@ runs there include **load-related timing failures**: tests that compare against 
 frame timing (`drumSynth`, `r4-engine-idle`, `validate`, `variation` speed checks; the e2e keyboard
 Tab tours in `a11y`, which exceed 90 s; Jump In and first-sound timings in `journey`, `omni`,
 `notes`, `r4-core-jumpin-frame`, `r4-core-stall`, `r4-keys-firstkey`; `omni-pad-drag`,
-`omni-input-audio`, `export-while-playing`, `wp1-session`). In the slice reports each of these
-either passed when re-run on its own or failed the same way on the base build under the same load.
-They are timing checks of the test machine, not of the app's audio clock; a run on a quiet machine
-is the reference.
+`omni-input-audio`, `export-while-playing`, `wp1-session`). In the slice reports these passed when
+re-run on their own, or failed the same way on the base build under the same load; the one
+exception is the e2e `r4-core-stall` failure in the shell slice's full run (load 40–57), which was
+not compared with a base run (it passed in the core slice and its review). They are timing checks
+of the test machine, not of the app's audio clock; a run on a quiet machine is the reference.
 
 ### 2.1 handoff
 
