@@ -75,7 +75,8 @@ const endBurst = () => act(async () => wait(KNOB_BURST_IDLE_MS + 120));
 
 beforeEach(async () => {
   // The laptop size the layout is designed for (narrower windows reflow, see the last test).
-  await page.viewport(1366, 768);
+  // Tall enough for the three Advanced columns side by side (shorter windows show them as tabs: r4-shape-layout).
+  await page.viewport(1366, 900);
   window.scrollTo(0, 0);
   runtimeStore.setState((s) => ({ ...s, notice: null }));
 });
@@ -200,7 +201,7 @@ describe('Shape view', () => {
     const map = track('t3').macroMap;
     click(button(panel(m.container, 'Macros (big knobs)'), /Reset mappings/));
     expect(track('t3').macroMap).toBe(map);
-    expect(runtimeStore.getState().notice?.text).toMatch(/already match/);
+    expect(runtimeStore.getState().notice?.text).toMatch(/already move what its sound is designed to move/);
   });
 
   it('a pointer drag on a macro range knob changes the mapping live, as one undo step', async () => {
@@ -493,7 +494,7 @@ describe('Shape view', () => {
     });
     expect(trackChain(project().patch, 't3')).toEqual(['t3:inst', 't3:filter', 't3:ch']);
     const rack = panel(m.container, 'Effects');
-    expect(rack.textContent).toContain('1 effect (up to 6)');
+    expect(rack.textContent).toContain('1 effect (up to 8)');
     const outside = rack.querySelector<HTMLElement>('[aria-label="Outside the chain"]')!;
     expect(outside).not.toBeNull();
     const drive = outside.querySelector<HTMLElement>('#rack-card-t3\\:drive')!;

@@ -14,9 +14,10 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties
 import { createPortal } from 'react-dom';
 import { Button, type ButtonSize } from '../../../ui/components';
 import { MODULE_DEFS } from '../../../project/modules';
-import type { Id, ModuleType } from '../../../project/types';
+import { MACRO_IDS, type Id, type ModuleType } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { session } from '../../instance';
+import { MACRO_SPECS } from '../../macros';
 import { notify } from '../../runtime';
 import { effectSummary, menuGroups } from './effectCatalog';
 import styles from './AddEffectMenu.module.css';
@@ -123,9 +124,16 @@ export function AddEffectMenu(props: AddEffectMenuProps) {
 
   const add = (type: ModuleType) => {
     close(true);
+    const before = session.store.getState();
+    const dead = MACRO_IDS.filter((m) => cmd.macroReach(before, trackId, m) === 'none');
     const r = cmd.insertEffect(session.store, trackId, type);
     if (!session.accepted(r) || !r.moduleId) return;
-    notify(`Added ${MODULE_DEFS[type].label}. It comes last in this part’s effects, just before its channel.`, 'info', 'undo');
+    // Taking back the part's own Drive or Filter slot gives the big knobs designed for it their mappings again.
+    const after = session.store.getState();
+    const back = dead.filter((m) => cmd.macroReach(after, trackId, m) === 'audible').map((m) => MACRO_SPECS[m].label);
+    const list = back.length < 2 ? back[0] : `${back.slice(0, -1).join(', ')} and ${back[back.length - 1]}`;
+    const again = back.length ? ` The ${list} big knob${back.length > 1 ? 's move' : ' moves'} it again.` : '';
+    notify(`Added ${MODULE_DEFS[type].label}. It comes last in this part’s effects, just before its channel.${again}`, 'info', 'undo');
     onAdded?.(r.moduleId, type);
   };
 

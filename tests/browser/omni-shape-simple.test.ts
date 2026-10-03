@@ -14,10 +14,10 @@ import { session } from '../../src/app/instance';
 import { INSTRUMENT_LABEL, soundName } from '../../src/app/labels';
 import { runtimeStore } from '../../src/app/runtime';
 import { ShapeView } from '../../src/app/views/shape/ShapeView';
-import { EFFECT_GROUPS, EFFECT_INFO, effectSentence, mainKnobCandidates, mainParamSpec, menuGroups, ungroupedEffects } from '../../src/app/views/shape/effectCatalog';
+import { EFFECT_GROUPS, EFFECT_INFO, cardKnobSpec, effectSentence, mainKnobCandidates, mainParamSpec, menuGroups, ungroupedEffects } from '../../src/app/views/shape/effectCatalog';
 import { createProject } from '../../src/project/factory';
 import { trackChain } from '../../src/project/graph';
-import { INSERTABLE_EFFECTS, MODULE_DEFS } from '../../src/project/modules';
+import { INSERTABLE_EFFECTS, PATCH_LIMITS, MODULE_DEFS } from '../../src/project/modules';
 import { MODULE_PARAMS, specById } from '../../src/project/params';
 import type { ModuleType, Project } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
@@ -120,10 +120,17 @@ describe('Simple Shape: orientation', () => {
     click(toggle);
     expect(uiStore.getState().uiMode).toBe('advanced');
     await actFrame();
-    // Every control is back: mapping editor, instrument panel, rack with shared effects, cable dock.
-    expect(m.container.textContent).toContain('Reset mappings');
-    expect(m.container.querySelector('[aria-label="Shared Reverb return"]')).not.toBeNull();
+    // Every control is back: mapping editor, instrument panel, rack with shared effects, cable dock
+    // (a 768 px window shows the three columns as tabs, the instrument first).
+    expect(m.container.querySelector('#shape-col-instrument')).not.toBeNull();
     expect(m.container.querySelector('[aria-label="Cable panel"]')).not.toBeNull();
+    const tab = (name: string) => [...m.container.querySelectorAll<HTMLElement>('[role="tab"]')].find((t) => t.textContent === name)!;
+    click(tab('Macros'));
+    await actFrame();
+    expect(m.container.textContent).toContain('Reset mappings');
+    click(tab('Effects'));
+    await actFrame();
+    expect(m.container.querySelector('[aria-label="Shared Reverb return"]')).not.toBeNull();
     const back = button(m.container, 'Show fewer settings (Simple)');
     expect(document.activeElement).toBe(back);
     click(back);
@@ -195,13 +202,15 @@ describe('Simple Shape: effects', () => {
     const cards = [...list.querySelectorAll<HTMLElement>('article')];
     expect(cards.map((c) => c.getAttribute('aria-label'))).toEqual(['Drive, effect 1 of 2', 'Filter, effect 2 of 2']);
     for (const c of cards) expect(c.querySelectorAll('[role="slider"]')).toHaveLength(1);
-    // The default Drive amount and Filter cutoff belong to big knobs (macros), so each card's one knob is
-    // the next main setting, which turning really changes; the card says which big knob sets the other.
-    expect(cards[0].textContent).toContain(effectSentence('drive', 'tone'));
-    expect(slider(cards[0], 'Tone').hasAttribute('aria-readonly')).toBe(false);
-    expect(cards[0].textContent).toContain('Drive is set by the Drive knob.');
-    expect(slider(cards[1], 'Resonance').hasAttribute('aria-readonly')).toBe(false);
-    expect(cards[1].textContent).toContain('Cutoff is set by the Tone knob.');
+    // The default Drive amount and Filter cutoff belong to big knobs (macros), so each card carries that
+    // big knob itself (turning it really changes the sound); the card says so. A wide-open filter offers
+    // no Resonance (it would only make the part quieter) and says when it comes in.
+    expect(cards[0].textContent).toContain(effectSentence('drive', 'amount'));
+    expect(slider(cards[0], 'Drive').hasAttribute('aria-readonly')).toBe(false);
+    expect(cards[0].textContent).toContain('Drive is set by the Drive big knob: the knob here turns it.');
+    expect(slider(cards[1], 'Tone').hasAttribute('aria-readonly')).toBe(false);
+    expect(cards[1].textContent).toContain('Cutoff is set by the Tone big knob: the knob here turns it.');
+    expect(cards[1].textContent).toContain('Resonance appears once the filter closes below 12 kHz.');
     expect(m.container.textContent).not.toMatch(/macro/i);
     // The signal flow reads left to right, as plain words (nothing there looks clickable).
     const flow = m.container.querySelector<HTMLElement>('[aria-label="Signal flow"]')!;
@@ -309,12 +318,15 @@ describe('Simple Shape: effects', () => {
     for (const type of INSERTABLE_EFFECTS) {
       const candidates = mainKnobCandidates(type);
       expect(candidates.length, type).toBeGreaterThanOrEqual(2);
-      expect(candidates.map((c) => c.id)).toEqual(EFFECT_INFO[type]!.knobs.map((k) => k.id));
+      // The listed knobs that are stored settings (the Compressor's Squeeze writes several, see squeeze.ts).
+      expect(candidates.map((c) => c.id)).toEqual(EFFECT_INFO[type]!.knobs.map((k) => k.id).filter((id) => id !== 'squeeze'));
       expect(mainParamSpec(type)).toBe(candidates[0]);
       for (const spec of candidates) {
         expect(specById(MODULE_PARAMS[type], spec.id)).toBe(spec);
         expect(effectSentence(type, spec.id), `${type} ${spec.id}`).toContain(spec.label);
       }
+      const shown = cardKnobSpec(type)!;
+      expect(effectSentence(type, shown.id), `${type} card knob`).toContain(shown.label);
     }
   });
 
@@ -330,9 +342,16 @@ describe('Simple Shape: effects', () => {
       batch.forEach((type: ModuleType, i) => {
         const c = card(m.container, ids[i])!;
         expect(c, `${type} card`).not.toBeNull();
-        const spec = mainParamSpec(type)!;
+        const spec = cardKnobSpec(type)!;
         const knob = slider(c, spec.label);
         expect(knob.hasAttribute('aria-readonly'), `${type} main knob is free`).toBe(false);
+        if (type === 'compressor') {
+          // Squeeze: threshold, ratio, makeup and attack together.
+          key(knob, 'keydown', { key: 'End' });
+          expect(mod(ids[i])!.params.threshold, 'Compressor Squeeze').toBe(-36);
+          expect(mod(ids[i])!.params.ratio, 'Compressor Squeeze').toBe(7);
+          return;
+        }
         const before = mod(ids[i])!.params[spec.id];
         const keyName = before >= spec.max ? 'Home' : 'End';
         key(knob, 'keydown', { key: keyName });
@@ -364,10 +383,11 @@ describe('Simple Shape: effects', () => {
   it('says when the part is full, and Add effect is unavailable', () => {
     const m = setup('t4');
     act(() => {
-      for (let i = 0; i < 4; i++) cmd.insertEffect(session.store, 't4', 'phaser');
+      for (let i = 0; i < PATCH_LIMITS.maxEffectsPerTrack - 2; i++) cmd.insertEffect(session.store, 't4', 'phaser');
     });
     expect(button(m.container, 'Add effect').disabled).toBe(true);
-    expect(m.container.textContent).toContain('This part already has 6 effects, the most it can hold. Remove one to add another.');
+    expect(m.container.textContent).toContain(`${PATCH_LIMITS.maxEffectsPerTrack} effects (up to ${PATCH_LIMITS.maxEffectsPerTrack})`);
+    expect(m.container.textContent).toContain(`This part already has ${PATCH_LIMITS.maxEffectsPerTrack} effects, the most it can hold. Remove one to add another.`);
   });
 
   it('while a performance records, routing edits are locked and say so; the knobs keep working', () => {
