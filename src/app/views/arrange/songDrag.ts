@@ -358,9 +358,10 @@ export interface OpenSlot {
  * - a layer target: the middle of its block;
  * - an insertion with its slot open: only the edge zones next to the boundary
  *   and the slot itself. If the pointer goes on the way it came (`moving` is
- *   the slot's `dir`) past the next block's resting edge zone, it was passing
- *   through, not dropping: the slot closes and the resting layout decides (the
- *   middle of that block layers into it).
+ *   the slot's `dir`; either way when it came straight up or down, `dir` 0)
+ *   past the next block's resting edge zone, it was passing through, not
+ *   dropping: the slot closes and the resting layout decides (the middle of
+ *   that block layers into it).
  */
 export function cardTarget(blocks: readonly CardBlock[], x: number, current: CardTarget, slot: OpenSlot | null = null, moving: -1 | 0 | 1 = 0): CardTarget {
   const n = blocks.length;
@@ -372,8 +373,9 @@ export function cardTarget(blocks: readonly CardBlock[], x: number, current: Car
     const before = g > 0 ? cardEdge(blocks[g - 1].width) : Infinity;
     const after = g < n ? cardEdge(blocks[g].width) : Infinity;
     const width = slot ? Math.max(0, slot.width) : 0;
-    const passedRight = !!slot && slot.dir > 0 && moving > 0 && x > left + after;
-    const passedLeft = !!slot && slot.dir < 0 && moving < 0 && x < left - before;
+    // Passing through: on the way it came, or either way when it came straight up or down (dir 0).
+    const passedRight = !!slot && slot.dir >= 0 && moving > 0 && x > left + after;
+    const passedLeft = !!slot && slot.dir <= 0 && moving < 0 && x < left - before;
     if (!passedRight && !passedLeft && x >= left - before && x <= left + Math.max(width, after)) return current;
   } else if (current.kind === 'layer' && current.index >= 0 && current.index < n) {
     const b = blocks[current.index];
@@ -410,8 +412,12 @@ export function restingCardTarget(blocks: readonly CardBlock[], x: number): Card
 export const DWELL_SLOP_PX = 3;
 /** A pointer faster than this (px per ms) between two samples is moving, however short the step. */
 export const DWELL_MAX_SPEED = 0.1;
-/** Horizontal travel (px) that sets which way the pointer is going. */
+/** Horizontal travel (px) that sets which way the pointer is going now. */
 const DIR_STEP_PX = 2;
+/** Net horizontal travel (px) that sets which way the pointer came (the slot's `dir`). */
+export const NET_DIR_PX = 12;
+/** Vertical travel (px) with less than NET_DIR_PX across: it came straight up or down (no way across). */
+const NET_VERTICAL_PX = 36;
 
 /**
  * Whether a dragged scene card has come to rest: the insertion slot opens
@@ -419,14 +425,23 @@ const DIR_STEP_PX = 2;
  * (lane x, client y, time in ms) either keeps the rest going or starts it
  * again: moving more than DWELL_SLOP_PX from where it came to rest, or faster
  * than DWELL_MAX_SPEED between two samples, restarts it. Also tracks which
- * way the pointer is going (`dir`, from the last DIR_STEP_PX of travel).
+ * way the pointer is going (`dir`, from the last DIR_STEP_PX of travel) and
+ * which way it came (`netDir`, from its last NET_DIR_PX across; 0 after
+ * NET_VERTICAL_PX up or down with less across).
  */
 export class Dwell {
   private anchor: { x: number; y: number; t: number } | null = null;
   private last: { x: number; t: number } | null = null;
   private dirX = NaN;
-  /** Which way the pointer goes: 1 right, -1 left, 0 not yet known. */
+  private net: { x: number; y: number } | null = null;
+  /** Which way the pointer goes now (its last DIR_STEP_PX across): 1 right, -1 left, 0 not yet known. */
   dir: -1 | 0 | 1 = 0;
+  /**
+   * Which way it came: its last NET_DIR_PX of travel across (1 right, -1
+   * left), or 0 when it came straight up or down (or has not travelled yet),
+   * so a few pixels of wobble never decide it.
+   */
+  netDir: -1 | 0 | 1 = 0;
 
   /** Take a sample; true when it starts a new rest (the pointer moved). */
   sample(x: number, y: number, t: number): boolean {
@@ -436,6 +451,15 @@ export class Dwell {
     else if (Math.abs(x - this.dirX) >= DIR_STEP_PX) {
       this.dir = x > this.dirX ? 1 : -1;
       this.dirX = x;
+    }
+    const n = this.net;
+    if (!n) this.net = { x, y };
+    else if (Math.abs(x - n.x) >= NET_DIR_PX) {
+      this.netDir = x > n.x ? 1 : -1;
+      this.net = { x, y };
+    } else if (Math.abs(y - n.y) >= NET_VERTICAL_PX) {
+      this.netDir = 0;
+      this.net = { x, y };
     }
     const a = this.anchor;
     const fast = !!last && t > last.t && Math.abs(x - last.x) / (t - last.t) > DWELL_MAX_SPEED;

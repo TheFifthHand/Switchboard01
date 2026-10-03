@@ -92,26 +92,30 @@ function check(scene: string, i: number, ms: number, r: Run, expected: string) {
   expect(r.slotOpen, `${what}: no insertion slot open`).toBe(false);
 }
 
+/** "Layer … into …" drops per speed, over the four cards (each card is its own test, so a slow machine has time). */
+const layered = new Map<number, number>();
+
 describe('a scene card dragged into the middle of a block layers into it (1366 x 768)', () => {
   for (const ms of [500, 800, 1100, 1400]) {
-    it(`every card into blocks 2–5 over ${ms} ms, approaching from the left`, async () => {
-      await openApp(1366, 768);
-      const ids = blockIds();
-      let layerInto = 0;
-      for (const scene of CARDS) {
+    for (const scene of CARDS) {
+      it(`the ${scene} card into blocks 2–5 over ${ms} ms, approaching from the left`, async () => {
+        await openApp(1366, 768);
+        const ids = blockIds();
         for (const i of TARGETS) {
           const expected = expectedTitle(scene, i);
           const r = await dragIntoReliably(scene, i, ms);
           check(scene, i, ms, r, expected);
-          if (/^Layer .+ into .+$/.test(r.text)) layerInto++;
+          if (/^Layer .+ into .+$/.test(r.text)) layered.set(ms, (layered.get(ms) ?? 0) + 1);
         }
-      }
-      // Most pairs read "Layer … into …" (the rest are a block of the same scene, or nothing silent to fill).
-      expect(layerInto).toBeGreaterThanOrEqual(10);
-      // Nothing was changed by the cancelled drags.
-      expect(blockIds()).toEqual(ids);
-    }, 120_000);
+        // Nothing was changed by the cancelled drags.
+        expect(blockIds()).toEqual(ids);
+      }, 180_000);
+    }
   }
+
+  it('most of those 16 pairs at each speed read "Layer … into …" (the rest: a block of the same scene, or nothing silent to fill)', () => {
+    for (const ms of [500, 800, 1100, 1400]) expect(layered.get(ms) ?? 0, `${ms} ms`).toBeGreaterThanOrEqual(10);
+  });
 
   it('the four reported drags read "Layer … into …" in 20 of 20 runs (5 at each speed)', async () => {
     await openApp(1366, 768);
@@ -192,14 +196,14 @@ describe('a scene card dragged into the middle of a block layers into it (1366 x
 });
 
 describe('the same at 1920 x 1080 and at 200 % (960 x 540)', () => {
+  const runs = new Map<number, number>();
   for (const [w, hh] of [
     [1920, 1080],
     [960, 540],
   ] as const) {
-    it(`${w} x ${hh}: every card into blocks 2–5 over 1.1 s layers`, async () => {
-      await openApp(w, hh);
-      let runs = 0;
-      for (const scene of CARDS) {
+    for (const scene of CARDS) {
+      it(`${w} x ${hh}: the ${scene} card into blocks 2–5 over 1.1 s layers`, async () => {
+        await openApp(w, hh);
         for (const i of TARGETS) {
           // At 200 % the page scrolls: the scene cards at the window's bottom, the blocks above them.
           card(scene).scrollIntoView({ block: 'end' });
@@ -210,10 +214,14 @@ describe('the same at 1920 x 1080 and at 200 % (960 x 540)', () => {
           if (t.right > view.right || t.left - 100 < view.left || t.top < 0) continue;
           const r = await dragIntoReliably(scene, i, 1100);
           check(scene, i, 1100, r, expectedTitle(scene, i));
-          runs++;
+          runs.set(w, (runs.get(w) ?? 0) + 1);
         }
-      }
-      expect(runs).toBeGreaterThanOrEqual(8);
-    }, 120_000);
+      }, 180_000);
+    }
   }
+
+  it('at both sizes at least 8 of the 16 pairs were in view to try', () => {
+    expect(runs.get(1920) ?? 0).toBeGreaterThanOrEqual(8);
+    expect(runs.get(960) ?? 0).toBeGreaterThanOrEqual(8);
+  });
 });

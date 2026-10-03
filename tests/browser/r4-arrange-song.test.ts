@@ -23,6 +23,7 @@ import {
   clickAt,
   menuItem,
   mouse,
+  nameAt,
   notice,
   openApp,
   openBlockMenu,
@@ -221,7 +222,7 @@ describe('the song header and what it shows', () => {
     // Tips on (as they are by default), so tooltips have something to show.
     act(() => setTipsEnabled(true));
     const ids = blockIds();
-    await clickAt(centre(blockEl(ids[0]).querySelector<HTMLElement>('[class*="name"]')!));
+    await clickAt(nameAt(ids[0]));
     await mouse('mouseMoved', { x: 2, y: 2 });
     await press('a', 2);
     expect(document.querySelectorAll('[data-block-id][data-selected]').length).toBe(ids.length);
@@ -266,15 +267,19 @@ describe('the song header and what it shows', () => {
     const trash = [...document.querySelectorAll('[role="menu"] [data-icon="trash"]')];
     expect(trash.every((t) => /Remove|Delete/.test(t.closest('[role^="menuitem"]')!.textContent ?? ''))).toBe(true);
     await press('Escape');
-    // design-10: full headers have 32 px ▶ and ⋯.
+    // design-10: ▶ and ⋯ are 32 px on every block from 110 px (under 150 px they show on hover, so the
+    // name and length stay whole at rest).
     for (const id of ids) {
       const el = blockEl(id);
       if (el.getBoundingClientRect().width < FULL_HEADER_WIDTH) continue;
+      await mouse('mouseMoved', nameAt(id));
+      await settle(30);
       for (const b of el.querySelectorAll<HTMLElement>('[data-play], [aria-haspopup="menu"][aria-label*="block actions"]')) {
         expect(Math.round(b.getBoundingClientRect().width)).toBeGreaterThanOrEqual(32);
         expect(Math.round(b.getBoundingClientRect().height)).toBeGreaterThanOrEqual(32);
       }
     }
+    await mouse('mouseMoved', { x: 2, y: 2 });
     // design-14: block lengths in Inter.
     expect(getComputedStyle(blockEl(ids[1]).querySelector<HTMLElement>('[data-testid="block-length"]')!).fontFamily).toMatch(/Inter/);
     // design-04: "Length" looks like "Echo tail".

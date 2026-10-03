@@ -85,7 +85,7 @@ describe('zoom steps and the remembered view', () => {
       level().scrollIntoView({ block: 'nearest' });
       await clickAt(centre(level()));
       await settle(400);
-      expect(level().textContent === 'Fit' || level().textContent === 'Smallest').toBe(true);
+      expect(level().textContent === 'Fit' || level().textContent === 'Min').toBe(true);
       expect(ppb()).toBeLessThanOrEqual(open);
     });
   }
@@ -135,18 +135,19 @@ describe('zoom steps and the remembered view', () => {
     await settle(300);
     // Every change to the lane's elements after its first frame on screen (with no input, a lane that measured once is still).
     const changes: string[] = [];
-    let mo: MutationObserver | null = null;
+    act(() => setView('arrange'));
+    const lane = document.querySelector<HTMLElement>('[data-testid="song-lane"]')!;
+    expect(lane).not.toBeNull();
+    const mo = new MutationObserver((records) => {
+      for (const r of records) changes.push(`${r.type} ${(r.target as Element).className ?? r.target.nodeName} ${r.attributeName ?? ''}`);
+    });
     await act(async () => {
-      setView('arrange');
+      // From its first frame on screen.
       await new Promise((r) => requestAnimationFrame(r));
-      const lane = document.querySelector<HTMLElement>('[data-testid="song-lane"]')!;
-      mo = new MutationObserver((records) => {
-        for (const r of records) changes.push(`${r.type} ${(r.target as Element).className ?? r.target.nodeName} ${r.attributeName ?? ''}`);
-      });
       mo.observe(lane, { subtree: true, attributes: true, childList: true, characterData: true });
       await new Promise((r) => setTimeout(r, 900));
     });
-    mo!.disconnect();
+    mo.disconnect();
     expect(blockIds().length).toBeGreaterThan(0);
     expect(changes, changes.slice(0, 8).join(' | ')).toEqual([]);
   });

@@ -69,6 +69,29 @@ describe('song blocks from a take', () => {
     });
   }
 
+  it('names a last launch too short to make a block: “Lift (5 beats) was too short to make a block and was left out”', async () => {
+    await openApp(1366, 768);
+    // Intro for a pass, Groove for two, then Lift for 5 beats only (under half its 4-bar pass).
+    const id = sceneTake([
+      [0, 4],
+      [1, 8],
+      [2, 1.25],
+    ]);
+    await settle(150);
+    const n = blocks().length;
+    await openTakes();
+    const make = document.querySelector<HTMLElement>('[data-testid="take-list"] [aria-label="Make song blocks from Take 1"]')!;
+    make.scrollIntoView({ block: 'center' });
+    await clickAt(centre(make));
+    await settle(200);
+    // Two blocks (Intro, Groove); Lift is named as left out, with its length.
+    expect(blocks().slice(n).map((b) => b.sceneId)).toEqual([project().scenes[0].id, project().scenes[1].id]);
+    const text = notice()!.text;
+    expect(text).toContain('Made 2 song blocks from “Take 1”');
+    expect(text).toContain('Lift (5 beats) was too short to make a block and was left out');
+    expect(cmd.takeToBlocks(project(), id)).not.toBeNull();
+  });
+
   it('an empty song with takes offers “Make song blocks from” the newest take; the blocks become the song', async () => {
     await openApp(1366, 768);
     sceneTake([

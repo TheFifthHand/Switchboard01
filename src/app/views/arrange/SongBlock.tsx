@@ -29,7 +29,7 @@ import type { BlockMoveKind, Id } from '../../../project/types';
 import { MAX_BLOCK_LABEL } from '../../../project/types';
 import { BLOCK_MOVE_NAMES } from '../../../state/commands/arrangement';
 import { LaneIcon } from './laneIcons';
-import { barsText, blockLabel, cellLabel, cellOn, cellState, cellToggle, layerText, movesText, timesText, type BlockView, type CellView, type LayerPreview } from './songModel';
+import { barsText, blockLabel, cellLabel, compactName, cellOn, cellState, cellToggle, layerText, movesText, timesText, type BlockView, type CellView, type LayerPreview } from './songModel';
 import styles from './SongPanel.module.css';
 
 export interface BlockHandlers {
@@ -235,7 +235,10 @@ export const SongBlock = memo(function SongBlock(props: SongBlockProps) {
           {renaming ? (
             <RenameField block={block} onDone={(label) => h.onRename(id, label)} />
           ) : (
-            <span className={styles.name}>{block.name}</span>
+            // A compact header shows a helper block's step first ("1/4 Lift": data-short).
+            <span className={styles.name} data-short={compactName(block.name) ?? undefined}>
+              <span className={styles.titleFull}>{block.name}</span>
+            </span>
           )}
           {/* One line; an item that does not fit wraps onto a hidden second line, so words are
               dropped whole (pass detail and scene first, then the length), never cut. */}

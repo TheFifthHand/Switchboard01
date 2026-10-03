@@ -6,11 +6,14 @@
  *      4 bars · 4 parts
  *
  * - Drag a card onto the lane: between blocks inserts it, onto a block layers
- *   its clips in (LaneGestures). + adds it at the end of the song.
+ *   its clips in (LaneGestures). + adds it at the end of the song. A drag may
+ *   start anywhere on the card, its keys too (a mouse or pen: once the press
+ *   travels; a finger: once it is held); the click that ends one does nothing.
+ *   The dotted grip at its left edge says it can be picked up.
  * - ▶ auditions the scene. While nothing plays it launches the scene on the
  *   live pads and stops after one pass: the stop is queued for the bar line
- *   where the pass ends (the sequencer times it on the audio clock); a second
- *   press stops at once. While the pads play, ▶ starts the scene on them at
+ *   where the pass ends (the sequencer times it on the audio clock), even if
+ *   the user goes to another view meanwhile; a second press stops at once. While the pads play, ▶ starts the scene on them at
  *   the next bar, as a scene button in Play does. While the song plays (or a
  *   take replays, or playback is paused) it is unavailable and says why.
  * - Right-click (or the context-menu key) on a card, or its ⋯, opens Rename
@@ -94,45 +97,58 @@ async function startAudition(s: SceneSummary): Promise<void> {
   if (!after.playing || after.mode !== 'live') return;
   // Stopped, the scene starts at the top (tick 0): its pass ends `bars` bars later.
   setAudition({ sceneId: s.id, row: s.row, endTick: Math.max(1, s.bars) * TICKS_PER_BAR, stopQueued: false });
+  watchAudition();
 }
 
+let watchTimer = 0;
+
 /**
- * Watches an audition: in its last bar it queues Stop All for the bar line
- * where the pass ends (the sequencer places it on the audio clock), and once
- * the pass is over it stops the transport. Anything else taking over (Stop,
- * the song, a pad launched by hand) ends the audition and leaves playback alone.
+ * Watches the audition wherever the user is (it is not tied to the palette
+ * being on screen: switching views mid-pass still ends it at the pass's end,
+ * and coming back never stops anything else): in its last bar it queues Stop
+ * All for the bar line where the pass ends (the sequencer places it on the
+ * audio clock), and once the pass is over it stops the transport. Anything
+ * else taking over (Stop, the song, a pad launched by hand) ends the
+ * audition and leaves playback alone.
  */
-function useAuditionWatch(a: Audition | null): void {
-  useEffect(() => {
-    if (!a) return;
-    const id = window.setInterval(() => {
-      const cur = audition;
-      if (!cur || cur !== a) return;
-      const rt = runtimeStore.getState();
-      const t = session.transport;
-      if (!t || !rt.playing || rt.mode !== 'live') {
-        setAudition(null);
-        return;
-      }
-      // A part launched by hand to something else: the user has taken over.
-      const takenOver = Object.values(rt.tracks).some((tr) => (tr.playingSlot !== null && tr.playingSlot !== cur.row) || (tr.queued && tr.queued.slot !== null && tr.queued.slot !== cur.row));
-      if (takenOver) {
-        setAudition(null);
-        return;
-      }
-      const tick = t.getPosition().tick;
-      if (!cur.stopQueued && tick >= 0 && tick >= cur.endTick - TICKS_PER_BAR) {
-        cur.stopQueued = true;
-        // Queued for the next bar line after now: the end of the pass.
-        session.stopAllClips();
-      }
-      if (cur.stopQueued && tick >= cur.endTick) {
-        setAudition(null);
-        session.stop();
-      }
-    }, AUDITION_POLL_MS);
-    return () => window.clearInterval(id);
-  }, [a]);
+function watchAudition(): void {
+  if (watchTimer) return;
+  watchTimer = window.setInterval(() => {
+    const cur = audition;
+    const end = () => {
+      window.clearInterval(watchTimer);
+      watchTimer = 0;
+    };
+    if (!cur) {
+      end();
+      return;
+    }
+    const rt = runtimeStore.getState();
+    const t = session.transport;
+    if (!t || !rt.playing || rt.mode !== 'live') {
+      setAudition(null);
+      end();
+      return;
+    }
+    // A part launched by hand to something else: the user has taken over.
+    const takenOver = Object.values(rt.tracks).some((tr) => (tr.playingSlot !== null && tr.playingSlot !== cur.row) || (tr.queued && tr.queued.slot !== null && tr.queued.slot !== cur.row));
+    if (takenOver) {
+      setAudition(null);
+      end();
+      return;
+    }
+    const tick = t.getPosition().tick;
+    if (!cur.stopQueued && tick >= 0 && tick >= cur.endTick - TICKS_PER_BAR) {
+      cur.stopQueued = true;
+      // Queued for the next bar line after now: the end of the pass.
+      session.stopAllClips();
+    }
+    if (cur.stopQueued && tick >= cur.endTick) {
+      setAudition(null);
+      end();
+      session.stop();
+    }
+  }, AUDITION_POLL_MS);
 }
 
 /* ------------------------------------------------------------------ */
@@ -147,6 +163,8 @@ export interface ScenePaletteProps {
   /** Add the scene at the end of the song. */
   onAdd(s: SceneSummary): void;
   editClips(row: number): void;
+  /** True for the click that ends a drag (a card dragged from one of its keys): that click does nothing. */
+  dragClick(): boolean;
 }
 
 function RenameCard(props: { scene: SceneSummary; onDone(): void }) {
@@ -192,9 +210,8 @@ function RenameCard(props: { scene: SceneSummary; onDone(): void }) {
 }
 
 export const ScenePalette = memo(function ScenePalette(props: ScenePaletteProps) {
-  const { scenes, lifted, onPress, onAdd, editClips } = props;
+  const { scenes, lifted, onPress, onAdd, editClips, dragClick } = props;
   const a = useAudition();
-  useAuditionWatch(a);
   const songOn = useRuntime((s) => s.mode === 'song' && (s.playing || s.paused));
   const replaying = useRuntime((s) => s.mode === 'replay' && s.playing);
   const paused = useRuntime((s) => s.paused);
@@ -262,7 +279,9 @@ export const ScenePalette = memo(function ScenePalette(props: ScenePaletteProps)
                   aria-label={hearing ? `Stop hearing ${s.name}` : `Hear ${s.name}`}
                   aria-disabled={why !== null || undefined}
                   data-testid="scene-audition"
+                  data-drag-ok=""
                   onClick={() => {
+                    if (dragClick()) return;
                     if (hearing) stopAudition();
                     else if (!why) void startAudition(s);
                   }}
@@ -280,7 +299,7 @@ export const ScenePalette = memo(function ScenePalette(props: ScenePaletteProps)
                 name={`Add ${s.name}`}
                 tip={`Add this scene at the end of the song (it plays ${timesText(DEFAULT_BLOCK_REPEATS)}). Or drag the card (a finger: hold it first): between blocks inserts it, onto a block fills that block’s silent parts with its clips (hold Shift to replace the parts instead).`}
               >
-                <button type="button" className={styles.cardAdd} aria-label={`Add ${s.name} to the end of the song`} onClick={() => onAdd(s)}>
+                <button type="button" className={styles.cardAdd} aria-label={`Add ${s.name} to the end of the song`} data-drag-ok="" onClick={() => !dragClick() && onAdd(s)}>
                   <Icon name="plus" size={14} />
                 </button>
               </Tooltip>
@@ -288,10 +307,11 @@ export const ScenePalette = memo(function ScenePalette(props: ScenePaletteProps)
                 type="button"
                 className={styles.cardMore}
                 data-card-menu=""
+                data-drag-ok=""
                 aria-haspopup="menu"
                 aria-expanded={menu?.sceneId === s.id}
                 aria-label={`${s.name}: scene actions (rename, edit clips, add at end)`}
-                onClick={(e) => openMenu(s.id, anchorFromElement(e.currentTarget), e.currentTarget)}
+                onClick={(e) => !dragClick() && openMenu(s.id, anchorFromElement(e.currentTarget), e.currentTarget)}
               >
                 <LaneIcon name="more" size={13} />
               </button>

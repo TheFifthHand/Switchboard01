@@ -4,7 +4,7 @@
  * export read, so a cell that says "plays" is a part that sounds.
  */
 import { blockBars, blockParts, sceneRow } from '../../../project/arrangement';
-import { BLOCK_MOVE_KINDS, MAX_BLOCK_REPEATS, type ArrangementBlock, type BlockMoveKind, type Id, type Project } from '../../../project/types';
+import { BLOCK_MOVE_KINDS, MAX_BLOCK_REPEATS, TICKS_PER_BAR, TICKS_PER_BEAT, type ArrangementBlock, type BlockMoveKind, type Id, type Project } from '../../../project/types';
 import { BLOCK_MOVE_NAMES, layerChanges, type LayerMode } from '../../../state/commands/arrangement';
 
 /**
@@ -107,6 +107,16 @@ export function blockView(p: Project, b: ArrangementBlock, index: number): Block
 }
 
 /** "Fade in and Filter rise": the moves of a block in words. */
+/**
+ * A helper block's name with its step first, for a compact header ("Lift ·
+ * build 1/4" → "1/4 Lift"), so neighbours that would all read "Lift · bu…"
+ * stay told apart; null for any other name.
+ */
+export function compactName(name: string): string | null {
+  const m = /^(.+?) · .+? (\d+\/\d+)$/.exec(name);
+  return m ? `${m[2]} ${m[1]}` : null;
+}
+
 export function movesText(moves: readonly BlockMoveKind[]): string {
   const names = moves.map((k) => BLOCK_MOVE_NAMES[k]);
   if (names.length <= 1) return names[0] ?? '';
@@ -299,4 +309,48 @@ export function cellToast(part: string, block: string, choice: Id | null | undef
   if (choice === null) return `${part} off in ${block}`;
   if (choice === undefined) return `${part} back on in ${block}`;
   return `${part} plays ${from ?? 'another scene'} in ${block}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Song blocks from a take: what was left out                          */
+/* ------------------------------------------------------------------ */
+
+/** "5 beats", "1 beat", "2.5 bars": how long a stretch of a take was. */
+export function stretchText(ticks: number): string {
+  const beats = Math.max(1, Math.round(ticks / TICKS_PER_BEAT));
+  if (beats < 8) return beats === 1 ? '1 beat' : `${beats} beats`;
+  const bars = Math.round((ticks / TICKS_PER_BAR) * 10) / 10;
+  return `${bars} bars`;
+}
+
+/**
+ * The scene launches of a take that make no song block (pure): each stretch
+ * between one scene launch and the next (or the take's end) whose scene does
+ * not come next among the blocks `made` (in order) was left out (shorter
+ * than half a pass of its scene). Scenes deleted since are not counted here
+ * (they are named on their own).
+ */
+export function leftOutLaunches(p: Project, takeId: Id, made: readonly { sceneId: Id }[]): { name: string; ticks: number }[] {
+  const perf = p.performances.find((x) => x.id === takeId);
+  if (!perf) return [];
+  const launches = perf.events
+    .filter((e): e is Extract<typeof e, { type: 'scene' }> => e.type === 'scene' && e.atTick >= perf.startTick && e.atTick < perf.endTick)
+    .sort((a, b) => a.atTick - b.atTick);
+  const out: { name: string; ticks: number }[] = [];
+  let j = 0;
+  let last: Id | null = null;
+  launches.forEach((e, i) => {
+    const to = i + 1 < launches.length ? launches[i + 1].atTick : perf.endTick;
+    const scene = perf.snapshot.scenes[e.row];
+    const now = scene ? p.scenes.find((s) => s.id === scene.id) : undefined;
+    if (!now || to <= e.atTick) return;
+    // The same scene again right after itself: one block with the stretch before.
+    if (now.id === last) return;
+    const k = made.findIndex((b, n) => n >= j && b.sceneId === now.id);
+    if (k >= 0) {
+      j = k + 1;
+      last = now.id;
+    } else out.push({ name: now.name, ticks: to - e.atTick });
+  });
+  return out;
 }

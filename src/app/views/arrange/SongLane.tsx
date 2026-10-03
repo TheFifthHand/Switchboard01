@@ -1452,6 +1452,7 @@ export function SongLane({ views, scenes, currentId, nextId = null, songActive, 
     [announce],
   );
   const pressCard = useCallback((e: ReactPointerEvent<HTMLElement>, sceneId: Id) => g.pressCard(e.nativeEvent, sceneId, e.currentTarget), [g]);
+  const dragClick = useCallback(() => g.consumeClick(), [g]);
   const joinBlock = useCallback(
     (id: Id) => {
       announce(act.joinWithNext(id));
@@ -1510,7 +1511,8 @@ export function SongLane({ views, scenes, currentId, nextId = null, songActive, 
   const zoomOut = zoomStep(ppb, -1, ZOOM_BUTTON_STEPS);
   const fitTarget = fitted.pxPerBar;
   const isFit = ppb === fitTarget;
-  const zoomWord = isFit ? (fitted.fits ? 'Fit' : 'Smallest') : `${Math.round((ppb / fitTarget) * 100)}%`;
+  // ("Min": the song is as small as it goes and still longer than the lane; the tooltip and name say so.)
+  const zoomWord = isFit ? (fitted.fits ? 'Fit' : 'Min') : `${Math.round((ppb / fitTarget) * 100)}%`;
   const fitSongNow = () => {
     zoomTo(fitTarget, 0, true);
     if (!fitted.fits) {
@@ -1562,6 +1564,31 @@ export function SongLane({ views, scenes, currentId, nextId = null, songActive, 
           if (e.key !== ' ' && e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Meta') keyAt.current = performance.now();
         }}
       >
+        {/* How the lane is viewed (not the song): zoom, the zoom level (a press fits the song), Follow. First in
+            the Tab order, as it is drawn (in the corner over the part names). */}
+        <div className={styles.laneTools} role="group" aria-label="Song lane view" data-testid="lane-tools">
+          <div className={styles.zoomRow}>
+            <IconButton size="sm" icon="minus" label="Zoom out" tip="Smaller blocks: more of the song in view." disabled={empty || zoomOut === null} onClick={() => zoomOut !== null && zoomTo(zoomOut, zoomAnchor())} />
+            <Tooltip name="Fit song" tip={fitTip} detail={isFit ? undefined : `Now ${zoomWord} of the size that fits.`}>
+              <button type="button" className={styles.zoomLevel} data-testid="zoom-level" data-fit={isFit || undefined} aria-label={isFit ? `Fit song (${fitted.fits ? 'the whole song is in view' : 'as small as it goes'})` : `Fit song (zoom now ${zoomWord})`} disabled={empty || isFit} onClick={fitSongNow}>
+                {empty ? 'Fit' : zoomWord}
+              </button>
+            </Tooltip>
+            <IconButton size="sm" icon="plus" label="Zoom in" tip="Bigger blocks. Ctrl+wheel over the lane zooms in finer steps." disabled={empty || zoomIn === null} onClick={() => zoomIn !== null && zoomTo(zoomIn, zoomAnchor())} />
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            pressed={follow}
+            onClick={() => setFollow(!follow)}
+            aria-label="Follow playhead"
+            className={styles.followButton}
+            tip={follow ? 'While the song plays, the lane scrolls to keep the playhead in view.' : 'The lane stays where you put it while the song plays.'}
+            detail="It waits a few seconds after you scroll or edit. Remembered in this browser."
+          >
+            Follow
+          </Button>
+        </div>
         <PartNames menuTrack={partMenu?.trackId ?? null} onMenu={openPartMenu} />
 
         <div
@@ -1643,30 +1670,6 @@ export function SongLane({ views, scenes, currentId, nextId = null, songActive, 
             {!empty && <div ref={playheadRef} className={styles.playhead} aria-hidden="true" data-on={songActive || undefined} data-testid="playhead" />}
           </div>
         </div>
-        {/* How the lane is viewed (not the song): zoom, the zoom level (a press fits the song), Follow. */}
-        <div className={styles.laneTools} role="group" aria-label="Song lane view" data-testid="lane-tools">
-          <div className={styles.zoomRow}>
-            <IconButton size="sm" icon="minus" label="Zoom out" tip="Smaller blocks: more of the song in view." disabled={empty || zoomOut === null} onClick={() => zoomOut !== null && zoomTo(zoomOut, zoomAnchor())} />
-            <Tooltip name="Fit song" tip={fitTip} detail={isFit ? undefined : `Now ${zoomWord} of the size that fits.`}>
-              <button type="button" className={styles.zoomLevel} data-testid="zoom-level" data-fit={isFit || undefined} aria-label={isFit ? `Fit song (${fitted.fits ? 'the whole song is in view' : 'as small as it goes'})` : `Fit song (zoom now ${zoomWord})`} disabled={empty || isFit} onClick={fitSongNow}>
-                {empty ? 'Fit' : zoomWord}
-              </button>
-            </Tooltip>
-            <IconButton size="sm" icon="plus" label="Zoom in" tip="Bigger blocks. Ctrl+wheel over the lane zooms in finer steps." disabled={empty || zoomIn === null} onClick={() => zoomIn !== null && zoomTo(zoomIn, zoomAnchor())} />
-          </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            pressed={follow}
-            onClick={() => setFollow(!follow)}
-            aria-label="Follow playhead"
-            className={styles.followButton}
-            tip={follow ? 'While the song plays, the lane scrolls to keep the playhead in view.' : 'The lane stays where you put it while the song plays.'}
-            detail="It waits a few seconds after you scroll or edit. Remembered in this browser."
-          >
-            Follow
-          </Button>
-        </div>
         {/* The lifted copy of carried blocks floats over the lane (outside the scroller): while the lane
             scrolls under a still pointer, it does not move at all. */}
         <div className={styles.carry} aria-hidden="true">
@@ -1701,7 +1704,7 @@ export function SongLane({ views, scenes, currentId, nextId = null, songActive, 
 
       <div ref={paletteRef} className={styles.palette}>
         <span className={styles.paletteLabel}>SCENES</span>
-        <ScenePalette scenes={scenes} lifted={card?.sceneId ?? null} onPress={pressCard} onAdd={addAtEnd} editClips={editClips} />
+        <ScenePalette scenes={scenes} lifted={card?.sceneId ?? null} onPress={pressCard} onAdd={addAtEnd} editClips={editClips} dragClick={dragClick} />
         {/* The hint home: the "Try this" chip sits here in Arrange (over the gesture help), never over status or controls. */}
         <div className={styles.hintHome} data-hint-home="" data-testid="lane-hint-home">
           <p id={helpId} className={styles.hint}>
