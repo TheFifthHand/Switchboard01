@@ -34,10 +34,15 @@ export interface RuntimeState {
   paused: boolean;
   mode: PlayMode;
   replayId: Id | null;
-  songBlock: number | null;
-  /** Id of the song block playing now (stable across edits made while the song plays). */
-  songBlockId: Id | null;
-  /** The looped part of the song (Arrange), or null: the song plays through. */
+  /**
+   * The song's cursor: the bar (0-based) where Play starts in the Song view,
+   * GarageBand's playhead while stopped. Clicking the ruler sets it; Stop
+   * after song playback puts it back where that playback started. Where the
+   * song plays (or is paused) now is read from the transport per frame
+   * (songPlayheadBar in songPlayback.ts), never from here.
+   */
+  songCursor: number;
+  /** The looped bars of the song (Song view), or null: the song plays through. */
   songLoop: SongLoop | null;
   /** The song is playing (or paused) inside the loop and will repeat it; false while it plays towards it or on to the end. */
   songLooping: boolean;
@@ -97,8 +102,7 @@ export const runtimeStore = createStore<RuntimeState>({
   paused: false,
   mode: 'live',
   replayId: null,
-  songBlock: null,
-  songBlockId: null,
+  songCursor: 0,
   songLoop: null,
   songLooping: false,
   tracks: {},

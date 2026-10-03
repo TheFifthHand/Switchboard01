@@ -1,28 +1,33 @@
 /**
  * Song moves (pure: no DOM, no Web Audio).
  *
- * What the moves of a song block (ArrangementBlock.moves, schema v3) do over
- * the song timeline, as segments: a target (the song gain, or one big knob of
- * one part) goes from `v0` at `tick0` to `v1` at `tick1`, linearly. The
+ * What the moves of a song section (SongSection.moves, schema v4) do over
+ * the transport timeline, as segments: a target (the song gain, or one big
+ * knob of one part) goes from `v0` at `tick0` to `v1` at `tick1`, linearly.
+ * A section's moves act wherever a pass of the song plays it (see
+ * contracts.ts: a looped section plays its moves on every pass). The
  * sequencer hands them to the engine as ramps (SeqEvent 'songGain' and
  * 'macroRamp') when generation reaches their start, and again from the value
  * they have reached wherever playback starts, resumes or is regenerated in
  * the middle of one (see Sequencer). Live playback and exports use the same
  * events, so an export moves exactly like playback.
  *
- * - fadeIn: the song gain rises from 0 to 1 across the whole block; fadeOut
- *   falls from 1 to 0. A block with both rises over its first half and falls
- *   over its second.
+ * - fadeIn: the song gain rises from 0 to 1 across the whole section;
+ *   fadeOut falls from 1 to 0. A section with both rises over its first half
+ *   and falls over its second.
  * - filterRise: each part's Tone rises from FILTER_RISE_FROM to the part's
- *   own Tone across the block (back at its own value when the block ends).
- * - echoThrow: each part's Echo rises to ECHO_THROW_TO over the block's last
- *   beat, holds there, and returns to the part's own value over the last beat
- *   of the bar that follows (one bar after the block's end it is back).
+ *   own Tone across the section (back at its own value when it ends).
+ * - echoThrow: each part's Echo rises to ECHO_THROW_TO over the section's
+ *   last beat, holds there, and returns to the part's own value over the last
+ *   beat of the bar that follows (one bar after the section's end it is back).
  * - Outside every move a target rests: the song gain at 1, a big knob at the
- *   part's own value. A move of a later block takes over a target from its
- *   own start (an echo throw still returning when the next block's moves begin).
+ *   part's own value. A move of a later section takes over a target from its
+ *   own start (an echo throw still returning when the next section's moves
+ *   begin). A pass that starts inside a section plays its moves from there
+ *   (with the values they have there); one that ends inside a section cuts
+ *   them there.
  */
-import { TICKS_PER_BAR, TICKS_PER_BEAT, type BlockMove, type Id, type MacroId, type Project, type Track, type TrackRole } from '../project/types';
+import { TICKS_PER_BAR, TICKS_PER_BEAT, type Id, type MacroId, type Project, type SongMove, type SongSection, type Track, type TrackRole } from '../project/types';
 
 /** Where Filter rise starts the Tone big knob. */
 export const FILTER_RISE_FROM = 0.15;
@@ -52,7 +57,7 @@ export interface MoveSegment {
 }
 
 /** The parts a filterRise or echoThrow move acts on. */
-export function moveParts(project: Project, move: BlockMove): Track[] {
+export function moveParts(project: Project, move: Pick<SongMove, 'parts'>): Track[] {
   if (move.parts?.length) return project.tracks.filter((t) => move.parts!.includes(t.id));
   return project.tracks.filter((t) => MOVE_PART_ROLES.has(t.role));
 }
@@ -67,19 +72,18 @@ export function restValue(project: Project, key: string): number {
   return typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0;
 }
 
-/** True when any song block carries a move. */
+/** True when any song section carries a move. */
 export function hasMoves(project: Project): boolean {
-  for (const b of project.arrangement.blocks) if (b.moves?.length) return true;
+  for (const s of project.arrangement.sections) if (s.moves?.length) return true;
   return false;
 }
 
 /**
- * The segments of one block placed on the song timeline at [startTick,
- * endTick) (its moves as the project has them now; none when it has none).
+ * The segments of one section's moves placed on the timeline at [startTick,
+ * endTick) (none when it has none).
  */
-export function blockMoveSegments(project: Project, blockId: Id, startTick: number, endTick: number): MoveSegment[] {
-  const block = project.arrangement.blocks.find((b) => b.id === blockId);
-  const moves = block?.moves;
+export function sectionMoveSegments(project: Project, section: Pick<SongSection, 'moves'>, startTick: number, endTick: number): MoveSegment[] {
+  const moves = section.moves;
   if (!moves?.length || !(endTick > startTick)) return [];
   const out: MoveSegment[] = [];
   const S = startTick;
@@ -115,16 +119,45 @@ export function blockMoveSegments(project: Project, blockId: Id, startTick: numb
 }
 
 /**
- * The segments of consecutive song blocks (in timeline order), with a later
- * block's moves taking a target over from their own start: an earlier
- * segment of that target is cut there (its end value then where it was cut).
+ * One section as a pass of the song plays it, on the transport timeline:
+ * the whole section placed at [startTick, endTick) (so its ramps have their
+ * true values), heard from `from` (later than its start when the pass starts
+ * inside it) to `to` (the pass's end when the pass ends inside it; Infinity
+ * when the section ends inside its pass, so an echo throw returns over the
+ * bar after it).
  */
-export function timelineSegments(project: Project, blocks: readonly { blockId: Id; startTick: number; endTick: number }[]): MoveSegment[] {
+export interface SectionSpan {
+  section: Pick<SongSection, 'moves'>;
+  startTick: number;
+  endTick: number;
+  from: number;
+  to: number;
+}
+
+/** A segment cut to [from, to], with its values where it is cut; null when nothing of it is left. */
+function cutSegment(s: MoveSegment, from: number, to: number): MoveSegment | null {
+  const a = Math.max(s.tick0, from);
+  const b = Math.min(s.tick1, to);
+  if (b < a || (b === a && s.tick1 > s.tick0)) return null;
+  if (a === s.tick0 && b === s.tick1) return s;
+  return { ...s, tick0: a, tick1: b, v0: valueIn(s, a), v1: valueIn(s, b) };
+}
+
+/**
+ * The segments of section spans in timeline order, with a later span's moves
+ * taking a target over from their own start: an earlier segment of that
+ * target is cut there (its end value then where it was cut).
+ */
+export function timelineSegments(project: Project, spans: readonly SectionSpan[]): MoveSegment[] {
   const all: MoveSegment[] = [];
-  for (const b of blocks) {
-    const segs = blockMoveSegments(project, b.blockId, b.startTick, b.endTick);
+  for (const span of spans) {
+    const segs: MoveSegment[] = [];
+    for (const s of sectionMoveSegments(project, span.section, span.startTick, span.endTick)) {
+      const c = cutSegment(s, span.from, span.to);
+      if (c) segs.push(c);
+    }
     if (!segs.length) continue;
-    // Where this block's moves take each target over.
+    // Where this span's moves take each target over.
     const takeover = new Map<string, number>();
     for (const s of segs) takeover.set(s.key, Math.min(takeover.get(s.key) ?? Infinity, s.tick0));
     for (let i = all.length - 1; i >= 0; i--) {
