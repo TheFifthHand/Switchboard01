@@ -1,37 +1,58 @@
 /**
  * Lanes shared by the drum and melodic step editors: the numbered step ruler
- * (which also carries the playhead) and the velocity lane.
+ * (which also carries the playhead) and the velocity lane. Both follow a
+ * grid (16 steps a bar for drums; the roll's chosen grid for melodic parts).
  */
 import { memo, useRef, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
+import type { Id } from '../../../project/types';
 import { newGestureId } from '../../../ui/components';
 import { session } from '../../instance';
-import { STEP_INDICES, clampVelocity, stepColumn } from './model';
+import { STEP_GRID, cellColumn, cellIndices, cellLabel, clampVelocity, type GridSpec, type VelocityVoice } from './model';
 import grid from './StepGrid.module.css';
 
-/** Step numbers 1-16, beat starts emphasised. The current step lights amber while the clip plays. */
-export const StepNumbers = memo(function StepNumbers(props: { label?: ReactNode; className?: string }) {
+/** The CSS custom property that sets how many cells a beat has in the shared column template. */
+export function gridStyle(spec: GridSpec): CSSProperties {
+  return { '--per-beat': String(spec.perBeat) } as CSSProperties;
+}
+
+/** Cell numbers (1-16 on the 1/16 grid), beat starts emphasised. The current cell lights amber while the clip plays. */
+export const StepNumbers = memo(function StepNumbers(props: { label?: ReactNode; className?: string; grid?: GridSpec }) {
+  const spec = props.grid ?? STEP_GRID;
   return (
-    <div className={[grid.cols, grid.numbers, props.className].filter(Boolean).join(' ')}>
+    <div className={[grid.cols, grid.numbers, props.className].filter(Boolean).join(' ')} style={gridStyle(spec)} data-cells={spec.cells}>
       {/* The label may hold controls, so only the decorative numbers are hidden from assistive tech. */}
       <div className={grid.numbersLabel}>{props.label}</div>
-      {STEP_INDICES.map((s) => (
-        <div key={s} className={grid.num} style={{ gridColumn: stepColumn(s) }} data-beat={s % 4 === 0 || undefined} data-ph-step={s} aria-hidden="true">
-          {s + 1}
-        </div>
-      ))}
+      {cellIndices(spec.cells).map((s) => {
+        const l = cellLabel(s, spec);
+        return (
+          <div key={s} className={grid.num} style={{ gridColumn: cellColumn(s, spec.perBeat) }} data-beat={l.beat || undefined} data-ph-step={s} aria-hidden="true">
+            {l.text}
+          </div>
+        );
+      })}
     </div>
   );
 });
 
 export interface VelocityLaneProps {
   /** Per step: velocity 0..1 of what starts there (the loudest, for chords), or null when nothing does. */
-  values: readonly (number | null)[];
+  values?: readonly (number | null)[];
   /** Per step: how many notes start there (shown when more than one). */
   counts?: readonly number[];
   /** Set every note starting on `step` to `velocity`; `gesture` groups one drag into one undo step. */
-  onSet(step: number, velocity: number, gesture: string): void;
+  onSet?(step: number, velocity: number, gesture: string): void;
+  /**
+   * Per-note mode (the piano roll): per cell, the notes starting there, drawn
+   * as one bar each (chord voices side by side, selected ones highlighted).
+   */
+  voices?: readonly (readonly VelocityVoice[])[];
+  /** With a selection only the selected notes are edited; without one, every note on the cell. */
+  hasSelection?: boolean;
+  onSetNotes?(ids: Id[], velocity: number, gesture: string): void;
+  /** Column layout (default: 16 steps). */
+  grid?: GridSpec;
   title: string;
-  hint: string;
+  hint: ReactNode;
   className?: string;
 }
 
@@ -41,16 +62,17 @@ export interface VelocityLaneProps {
  * drag is one undo step. Keyboard users change velocity on the focused step
  * (Up/Down or +/-), so this surface is pointer-only.
  */
-export function VelocityLane({ values, counts, onSet, title, hint, className }: VelocityLaneProps) {
+export function VelocityLane({ values, counts, onSet, voices, hasSelection = false, onSetNotes, grid: spec = STEP_GRID, title, hint, className }: VelocityLaneProps) {
   const colRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const valuesRef = useRef(values);
-  valuesRef.current = values;
+  const latest = useRef({ values, voices, hasSelection, onSet, onSetNotes });
+  latest.current = { values, voices, hasSelection, onSet, onSetNotes };
   const drag = useRef<{ pointerId: number; gesture: string } | null>(null);
+  const cells = voices ? voices.length : spec.cells;
 
   const columnAt = (x: number): number => {
     let best = -1;
     let bestD = Infinity;
-    for (let i = 0; i < colRefs.current.length; i++) {
+    for (let i = 0; i < cells; i++) {
       const el = colRefs.current[i];
       if (!el) continue;
       const r = el.getBoundingClientRect();
@@ -67,15 +89,27 @@ export function VelocityLane({ values, counts, onSet, title, hint, className }: 
   const setFrom = (e: PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d) return;
-    const step = columnAt(e.clientX);
-    if (step < 0 || valuesRef.current[step] === null || valuesRef.current[step] === undefined) return;
-    const el = colRefs.current[step];
-    if (!el) return;
+    const col = columnAt(e.clientX);
+    const el = colRefs.current[col];
+    if (col < 0 || !el) return;
     const r = el.getBoundingClientRect();
     const inner = Math.max(1, r.height - 6);
     const v = clampVelocity((r.bottom - 3 - e.clientY) / inner);
-    if (Math.abs((valuesRef.current[step] ?? -1) - v) < 0.005) return;
-    onSet(step, v, d.gesture);
+    const l = latest.current;
+    if (l.voices) {
+      const here = l.voices[col] ?? [];
+      const targets = l.hasSelection ? here.filter((x) => x.selected) : here;
+      if (targets.length === 0 || targets.every((x) => Math.abs(x.velocity - v) < 0.005)) return;
+      l.onSetNotes?.(
+        targets.map((x) => x.id),
+        v,
+        d.gesture,
+      );
+      return;
+    }
+    const cur = l.values?.[col];
+    if (cur === null || cur === undefined || Math.abs(cur - v) < 0.005) return;
+    l.onSet?.(col, v, d.gesture);
   };
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
@@ -103,6 +137,7 @@ export function VelocityLane({ values, counts, onSet, title, hint, className }: 
   return (
     <div
       className={[grid.cols, grid.velocity, className].filter(Boolean).join(' ')}
+      style={gridStyle(spec)}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerEnd}
@@ -110,26 +145,50 @@ export function VelocityLane({ values, counts, onSet, title, hint, className }: 
       onLostPointerCapture={onPointerEnd}
       aria-hidden="true"
       data-testid="velocity-lane"
+      data-cells={cells}
     >
       <div className={grid.velLabel}>
         <span className={grid.velTitle}>{title}</span>
         <span className={grid.velHint}>{hint}</span>
       </div>
-      {STEP_INDICES.map((s) => {
-        const v = values[s];
+      {cellIndices(cells).map((s) => {
+        const ref = (el: HTMLDivElement | null) => {
+          colRefs.current[s] = el;
+        };
+        const style = { gridColumn: cellColumn(s, spec.perBeat) };
+        if (voices) {
+          const here = voices[s] ?? [];
+          const picked = hasSelection ? here.filter((x) => x.selected) : [];
+          const shown = picked.length ? picked : here;
+          const top = shown.reduce((m, x) => Math.max(m, x.velocity), 0);
+          return (
+            <div key={s} ref={ref} className={grid.velCol} style={style} data-empty={here.length ? undefined : true} data-step={s} data-picked={picked.length || undefined}>
+              {here.length > 0 && (
+                <>
+                  <div className={grid.velVoices}>
+                    {here.map((x) => (
+                      <div
+                        key={x.id}
+                        className={grid.velVoice}
+                        data-voice-id={x.id}
+                        data-selected={x.selected || undefined}
+                        data-dim={(hasSelection && !x.selected) || undefined}
+                        style={{ height: `calc((100% - 6px) * ${x.velocity})`, '--vel': String(x.velocity) } as CSSProperties}
+                      />
+                    ))}
+                  </div>
+                  <span className={grid.velValue}>{Math.round(top * 100)}</span>
+                  {here.length > 1 && <span className={grid.velCount}>{picked.length ? `${picked.length}/${here.length}` : `×${here.length}`}</span>}
+                </>
+              )}
+            </div>
+          );
+        }
+        const v = values?.[s];
         const has = v !== null && v !== undefined;
         const count = counts?.[s] ?? 0;
         return (
-          <div
-            key={s}
-            ref={(el) => {
-              colRefs.current[s] = el;
-            }}
-            className={grid.velCol}
-            style={{ gridColumn: stepColumn(s) }}
-            data-empty={has ? undefined : true}
-            data-step={s}
-          >
+          <div key={s} ref={ref} className={grid.velCol} style={style} data-empty={has ? undefined : true} data-step={s}>
             {has && (
               <>
                 <div className={grid.velBar} style={{ height: `calc((100% - 6px) * ${v})`, '--vel': String(v) } as CSSProperties} />

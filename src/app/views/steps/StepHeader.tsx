@@ -1,17 +1,23 @@
 /**
  * Steps editor header: which part and clip are being edited (with inline
- * rename and length), the bar pages, and the page/clip tools (copy, paste,
- * copy to next bar, clear, double, transpose). Every edit is one undo step.
+ * rename and length), the bar strip (an overview of the whole clip over one
+ * key per bar, Follow, the grid) and the bar and clip tools (copy, paste,
+ * copy to next bar, clear, double, transpose, tighten timing, loosen). Every
+ * edit is one undo step.
  */
-import { memo, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
-import { SCENE_ROWS, TICKS_PER_BAR, type ClipBars, type Id, type InstrumentKind } from '../../../project/types';
+import { memo, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react';
+import { CLIP_BAR_CHOICES, MAX_CLIP_BARS, TICKS_PER_BAR, type ClipBars, type Id, type InstrumentKind, type Note } from '../../../project/types';
+import { keyLabel, stepsPerOctave } from '../../../music/scales';
 import * as cmd from '../../../state/commands';
-import { selectSlot, selectTrack, setStepPage } from '../../../state/uiStore';
+import { QUANTIZE_TO_TICKS, type QuantizeTo } from '../../../state/commands/notes';
+import { STEP_GRIDS, selectSlot, selectTrack, setStepGrid, setStepPage, setStepsFollow, type StepGrid } from '../../../state/uiStore';
 import { shallowEqual } from '../../../state/store';
-import { Button, IconButton, Select, Tooltip } from '../../../ui/components';
-import { session, useProject } from '../../instance';
+import { Button, ClipSketch, IconButton, Select, Tooltip } from '../../../ui/components';
+import { session, useProject, useUi } from '../../instance';
 import { notify, useRuntime } from '../../runtime';
 import { barsLabel } from '../../labels';
+import { LENGTH_TIP, MenuHeader, MenuItem, MenuKeyRow, MenuSeparator, Popover, anchorFromElement, type MenuAnchor } from '../ClipMenu';
+import { plural, quantizeMoves } from './model';
 import { barClipboard, useBarClipboard } from './shared';
 import styles from './StepHeader.module.css';
 
@@ -20,6 +26,8 @@ export interface HeaderClip {
   name: string;
   bars: ClipBars;
 }
+
+const NO_NOTES: readonly Note[] = [];
 
 /* ------------------------------------------------------------------ */
 /* Part and clip slot                                                  */
@@ -35,13 +43,15 @@ function PartPicker({ trackId }: { trackId: Id }) {
 }
 
 function SlotPicker({ trackId, slot }: { trackId: Id; slot: number }) {
+  // One key per scene row of the project (1 to 8).
   const slots = useProject(
     (p) => {
       const t = p.tracks.find((x) => x.id === trackId);
-      return Array.from({ length: SCENE_ROWS }, (_, i) => `${p.scenes[i]?.name ?? `Scene ${i + 1}`}\u0001${t?.clips[i]?.name ?? ''}`);
+      return p.scenes.map((sc, i) => `${sc.name || `Scene ${i + 1}`}\u0001${t?.clips[i]?.name ?? ''}`);
     },
     shallowEqual,
   );
+  const count = slots.length;
   const playingSlot = useRuntime((s) => (s.playing ? (s.tracks[trackId]?.playingSlot ?? null) : null));
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const pick = (i: number) => {
@@ -49,11 +59,12 @@ function SlotPicker({ trackId, slot }: { trackId: Id; slot: number }) {
     refs.current[i]?.focus();
   };
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (count === 0) return;
     let next = slot;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (slot + 1) % SCENE_ROWS;
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (slot + SCENE_ROWS - 1) % SCENE_ROWS;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (slot + 1) % count;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (slot + count - 1) % count;
     else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = SCENE_ROWS - 1;
+    else if (e.key === 'End') next = count - 1;
     else return;
     e.preventDefault();
     pick(next);
@@ -160,7 +171,9 @@ function ClipName({ trackId, slot, name, locked }: { trackId: Id; slot: number; 
 }
 
 function LengthPicker({ trackId, slot, bars, locked }: { trackId: Id; slot: number; bars: ClipBars; locked: boolean }) {
-  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  // 1, 2, 3, 4 and 8 bars; a clip Double or Repeat made 5-7 bars long shows its own length too.
+  const choices = [...new Set<ClipBars>([...CLIP_BAR_CHOICES, bars])].sort((x, y) => x - y);
+  const refs = useRef(new Map<number, HTMLButtonElement | null>());
   const set = (b: ClipBars) => {
     if (b === bars || locked) return;
     const before = session.store.getState().tracks.find((t) => t.id === trackId)?.clips[slot]?.notes.length ?? 0;
@@ -170,26 +183,29 @@ function LengthPicker({ trackId, slot, bars, locked }: { trackId: Id; slot: numb
   };
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (locked) return;
-    let next = bars as number;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = Math.min(4, bars + 1);
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = Math.max(1, bars - 1);
+    const i = choices.indexOf(bars);
+    let next = i;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = Math.min(choices.length - 1, i + 1);
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = Math.max(0, i - 1);
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = choices.length - 1;
     else return;
     e.preventDefault();
-    set(next as ClipBars);
-    refs.current[next - 1]?.focus();
+    set(choices[next]);
+    refs.current.get(choices[next])?.focus();
   };
   return (
     <div className={styles.field}>
       <span className={styles.fieldLabel} id={`steps-len-${trackId}`}>
         Length
       </span>
-      <Tooltip tip={locked ? 'Locked while a performance records.' : 'How many bars this clip loops over (1 to 4). Shorter removes notes past the new end; Undo brings them back.'}>
+      <Tooltip tip={locked ? 'Locked while a performance records.' : LENGTH_TIP}>
         <div className={styles.lengths} role="radiogroup" aria-labelledby={`steps-len-${trackId}`} onKeyDown={onKey}>
-          {([1, 2, 3, 4] as const).map((b) => (
+          {choices.map((b) => (
             <button
               key={b}
               ref={(el) => {
-                refs.current[b - 1] = el;
+                refs.current.set(b, el);
               }}
               type="button"
               role="radio"
@@ -213,10 +229,21 @@ function LengthPicker({ trackId, slot, bars, locked }: { trackId: Id; slot: numb
 }
 
 /* ------------------------------------------------------------------ */
-/* Bar pages                                                           */
+/* Bar strip: the whole clip at a glance, one key per bar, Follow, grid */
 /* ------------------------------------------------------------------ */
 
-function PageTabs({ trackId, bars, page }: { trackId: Id; bars: number; page: number }) {
+const GRID_OPTIONS: readonly { value: StepGrid; label: string }[] = [
+  { value: '1/16', label: '1/16' },
+  { value: '1/32', label: '1/32' },
+  { value: '1/8T', label: '1/8T' },
+  { value: '1/16T', label: '1/16T' },
+];
+
+function BarStrip({ trackId, slot, bars, page, kind }: { trackId: Id; slot: number; bars: number; page: number; kind: InstrumentKind }) {
+  const notes = useProject((p) => p.tracks.find((t) => t.id === trackId)?.clips[slot]?.notes ?? NO_NOTES);
+  const follow = useUi((s) => s.stepsFollow);
+  const gridName = useUi((s) => s.stepGrid);
+  const drums = kind === 'drums';
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const go = (p: number) => {
     setStepPage(trackId, p);
@@ -232,29 +259,78 @@ function PageTabs({ trackId, bars, page }: { trackId: Id; bars: number; page: nu
     e.preventDefault();
     go(next);
   };
+  // Keep the shown bar's key in view when the strip scrolls (8 bars on a narrow window).
+  useEffect(() => {
+    refs.current[page]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [page]);
   return (
-    <div className={styles.pages} role="tablist" aria-label="Bar pages" onKeyDown={onKey}>
-      {Array.from({ length: bars }, (_, i) => (
-        <button
-          key={i}
-          ref={(el) => {
-            refs.current[i] = el;
+    <div className={styles.barRow}>
+      <div className={styles.field}>
+        <span className={styles.fieldLabel} id={`steps-bars-${trackId}`}>
+          Bar
+        </span>
+        <div className={styles.strip} data-bars={bars}>
+          <div className={styles.stripInner} style={{ '--bars': String(bars) } as CSSProperties}>
+            {/* The whole clip over the bar keys: each bar's notes sit above its key (pressing there shows that bar). */}
+            <div className={styles.overview} aria-hidden="true">
+              <ClipSketch notes={notes} lengthTicks={bars * TICKS_PER_BAR} kind={drums ? 'drums' : 'notes'} />
+            </div>
+            <div className={styles.pages} role="tablist" aria-labelledby={`steps-bars-${trackId}`} onKeyDown={onKey}>
+              {Array.from({ length: bars }, (_, i) => (
+                <button
+                  key={i}
+                  ref={(el) => {
+                    refs.current[i] = el;
+                  }}
+                  type="button"
+                  role="tab"
+                  id={`steps-page-${i}`}
+                  aria-label={`Bar ${i + 1}`}
+                  aria-selected={i === page}
+                  aria-controls="steps-page-panel"
+                  tabIndex={i === page ? 0 : -1}
+                  className={styles.page}
+                  data-selected={i === page || undefined}
+                  data-ph-page={i}
+                  onClick={() => go(i)}
+                >
+                  <span className={styles.pageNum}>
+                    <span className={styles.pageLamp} aria-hidden="true" />
+                    {i + 1}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+      <Button
+        className={styles.follow}
+        size="sm"
+        pressed={follow}
+        tone="amber"
+        onClick={() => setStepsFollow(!follow)}
+        tip={follow ? 'Following: the shown bar turns with the playhead while this clip plays.' : 'Turn the shown bar with the playhead while this clip plays.'}
+        detail="It waits while you drag or draw."
+      >
+        Follow
+      </Button>
+      {!drums && (
+        <Select
+          label="Grid"
+          layout="inline"
+          size="sm"
+          value={gridName}
+          options={GRID_OPTIONS}
+          onChange={(v) => {
+            if ((STEP_GRIDS as readonly string[]).includes(v)) setStepGrid(v as StepGrid);
           }}
-          type="button"
-          role="tab"
-          id={`steps-page-${i}`}
-          aria-selected={i === page}
-          aria-controls="steps-page-panel"
-          tabIndex={i === page ? 0 : -1}
-          className={styles.page}
-          data-selected={i === page || undefined}
-          data-ph-page={i}
-          onClick={() => go(i)}
-        >
-          <span className={styles.pageLamp} aria-hidden="true" />
-          Bar {i + 1}
-        </button>
-      ))}
+          width={74}
+          className={styles.gridSelect}
+          tip="The cells of the piano roll: 16ths, 32nds, or 8th or 16th triplets. New notes and moves snap to it."
+          detail="Hold Alt while dragging to place notes off the grid."
+        />
+      )}
     </div>
   );
 }
@@ -273,8 +349,8 @@ function pageHasNotesSelector(trackId: Id, slot: number, page: number) {
 }
 
 /**
- * A tool that switched itself off (Clear on a now-empty bar, Double at 4
- * bars, copying onto bar 4) would strand keyboard focus: hand it to the step
+ * A tool that switched itself off (Clear on a now-empty bar, Double at 8
+ * bars, copying onto bar 8) would strand keyboard focus: hand it to the step
  * grid instead.
  */
 function handOffFocus(el: HTMLButtonElement): void {
@@ -286,13 +362,134 @@ function handOffFocus(el: HTMLButtonElement): void {
   });
 }
 
+function currentClip(trackId: Id, slot: number) {
+  return session.store.getState().tracks.find((t) => t.id === trackId)?.clips[slot] ?? null;
+}
+
+/** − Transpose +: a scale step under Musical Assist, a semitone otherwise (Advanced keeps semitone keys too). Shift: an octave. */
+function Transpose({ trackId, slot, clipName }: { trackId: Id; slot: number; clipName: string }) {
+  const inKey = useProject((p) => p.assist && p.scale !== 'chromatic');
+  const key = useProject((p) => (p.scale === 'chromatic' ? 'Chromatic' : keyLabel(p.root, p.scale)));
+  const advanced = useUi((s) => s.uiMode === 'advanced');
+  const move = (unit: 'step' | 'semitone', dir: 1 | -1) => (e: MouseEvent<HTMLButtonElement>) => {
+    const clip = currentClip(trackId, slot);
+    if (!clip) return;
+    if (clip.notes.length === 0) {
+      notify(`${clip.name} has no notes to move yet.`);
+      return;
+    }
+    const octave = e.shiftKey;
+    const p = session.store.getState();
+    const r =
+      unit === 'step'
+        ? cmd.transposeClipInScale(session.store, trackId, slot, dir * (octave ? stepsPerOctave(p.scale) : 1))
+        : cmd.transposeClip(session.store, trackId, slot, dir * (octave ? 12 : 1));
+    if (!session.accepted(r)) return;
+    notify(`${clip.name} moved ${dir > 0 ? 'up' : 'down'} ${octave ? 'an octave' : unit === 'step' ? 'one step' : 'one semitone'}.`, 'info', 'undo');
+  };
+  const stepper = (unit: 'step' | 'semitone', text: string) => {
+    const words = unit === 'step' ? 'a scale step' : 'a semitone';
+    const tip = (dir: string) =>
+      unit === 'step'
+        ? `Move every note of ${clipName} ${dir} one step of ${key}, so it stays in key. Shift-click: an octave.`
+        : `Move every note of ${clipName} ${dir} a semitone. Shift-click: an octave.`;
+    return (
+      <div className={styles.transpose} role="group" aria-label={unit === 'step' ? 'Transpose clip in key' : 'Transpose clip by semitones'} data-unit={unit}>
+        <IconButton icon="minus" size="sm" variant="ghost" label={`Transpose down ${words}`} tip={tip('down')} onClick={move(unit, -1)} />
+        <span className={styles.transposeText} aria-hidden="true">
+          {text}
+        </span>
+        <IconButton icon="plus" size="sm" variant="ghost" label={`Transpose up ${words}`} tip={tip('up')} onClick={move(unit, 1)} />
+      </div>
+    );
+  };
+  return (
+    <>
+      {inKey && stepper('step', 'Transpose')}
+      {(!inKey || advanced) && stepper('semitone', inKey ? 'Semitone' : 'Transpose')}
+    </>
+  );
+}
+
+const QUANTIZE_GRIDS: readonly QuantizeTo[] = ['1/4', '1/8', '1/16', '1/32', '1/8T', '1/16T'];
+const QUANTIZE_OPTIONS = QUANTIZE_GRIDS.map((g) => ({ value: g, label: g, ariaLabel: `Grid ${g}` }));
+const STRENGTH_OPTIONS = [25, 50, 75, 100].map((v) => ({ value: v, label: String(v), ariaLabel: `Strength ${v}%` }));
+
+function TightenMenu({ trackId, slot, anchor, returnFocus, onClose }: { trackId: Id; slot: number; anchor: MenuAnchor; returnFocus: HTMLElement | null; onClose(): void }) {
+  const gridName = useUi((s) => s.stepGrid);
+  const [to, setTo] = useState<QuantizeTo>(gridName);
+  const [strength, setStrength] = useState(100);
+  const clip = useProject((p) => p.tracks.find((t) => t.id === trackId)?.clips[slot] ?? null);
+  if (!clip) return null;
+  const moves = quantizeMoves(clip.notes, QUANTIZE_TO_TICKS[to], strength / 100, clip.bars * TICKS_PER_BAR);
+  const apply = () => {
+    const r = cmd.quantizeClip(session.store, trackId, slot, { grid: to, strength: strength / 100 });
+    onClose();
+    if (!session.accepted(r)) return;
+    notify(`${plural(r.moved, 'note')} moved${strength < 100 ? ` ${strength}% of the way` : ''} to the ${to} grid.`, 'info', 'undo');
+  };
+  return (
+    <Popover anchor={anchor} label="Tighten timing" onClose={onClose} returnFocus={returnFocus}>
+      <MenuHeader eyebrow={clip.name} title="Tighten timing">
+        <div className={styles.menuMeta}>{moves === 0 ? `Every note already starts on the ${to} grid.` : `${plural(moves, 'note')} of ${clip.notes.length} will move towards the ${to} grid. Lengths stay.`}</div>
+      </MenuHeader>
+      <MenuKeyRow label="Grid" row="grid" options={QUANTIZE_OPTIONS} value={to} onSelect={(v) => setTo(v as QuantizeTo)} tip="The grid the note starts are pulled to." />
+      <MenuKeyRow label="Strength" unit="%" row="strength" options={STRENGTH_OPTIONS} value={strength} onSelect={(v) => setStrength(Number(v))} tip="100% puts notes on the grid; 50% halves each note's distance to it." />
+      <MenuSeparator />
+      <MenuItem icon="check" disabled={moves === 0} disabledReason="Nothing to move" onSelect={apply}>
+        {moves === 0 ? 'Tighten' : `Tighten ${plural(moves, 'note')}`}
+      </MenuItem>
+    </Popover>
+  );
+}
+
+const TIMING_TICKS = [0, 2, 4, 8] as const;
+const LEVEL_PCT = [0, 5, 10, 20] as const;
+/** Each press of Loosen rolls new dice (per clip, this session); the result is stored in the notes. */
+const looseSeeds = new Map<Id, number>();
+
+function LoosenMenu({ trackId, slot, anchor, returnFocus, onClose }: { trackId: Id; slot: number; anchor: MenuAnchor; returnFocus: HTMLElement | null; onClose(): void }) {
+  const [timing, setTiming] = useState(4);
+  const [level, setLevel] = useState(10);
+  const bpm = useProject((p) => p.bpm);
+  const clip = useProject((p) => p.tracks.find((t) => t.id === trackId)?.clips[slot] ?? null);
+  if (!clip) return null;
+  const ms = (ticks: number) => Math.round((ticks * 60000) / (Math.max(1, bpm) * 96));
+  const timingOptions = TIMING_TICKS.map((t) => ({ value: t, label: t === 0 ? 'Off' : `±${ms(t)}`, ariaLabel: t === 0 ? 'Timing off' : `Timing up to ${ms(t)} milliseconds either way` }));
+  const levelOptions = LEVEL_PCT.map((v) => ({ value: v, label: v === 0 ? 'Off' : `±${v}`, ariaLabel: v === 0 ? 'Level off' : `Level up to ${v}% either way` }));
+  const nothing = clip.notes.length === 0 || (timing === 0 && level === 0);
+  const apply = () => {
+    const seed = (looseSeeds.get(clip.id) ?? 0) + 1;
+    looseSeeds.set(clip.id, seed);
+    const r = cmd.humanizeClip(session.store, trackId, slot, { timingTicks: timing, velocityPct: level, seed });
+    onClose();
+    if (!session.accepted(r)) return;
+    notify(`Loosened ${plural(r.notes, 'note')}${r.moved ? ` (${r.moved} moved in time)` : ''}.`, 'info', 'undo');
+  };
+  return (
+    <Popover anchor={anchor} label="Loosen (humanize)" onClose={onClose} returnFocus={returnFocus}>
+      <MenuHeader eyebrow={clip.name} title="Loosen (humanize)">
+        <div className={styles.menuMeta}>Small random shifts in timing and level, so programmed notes feel played. Each press rolls again; Undo goes back.</div>
+      </MenuHeader>
+      <MenuKeyRow label="Timing" unit="ms" row="timing" options={timingOptions} value={timing} onSelect={(v) => setTiming(Number(v))} tip="How far a note may start early or late." />
+      <MenuKeyRow label="Level" unit="%" row="level" options={levelOptions} value={level} onSelect={(v) => setLevel(Number(v))} tip="How much softer or louder a note may play." />
+      <MenuSeparator />
+      <MenuItem icon="sparkle" disabled={nothing} disabledReason={clip.notes.length === 0 ? 'No notes yet' : 'Choose an amount'} onSelect={apply}>
+        {`Loosen ${plural(clip.notes.length, 'note')}`}
+      </MenuItem>
+    </Popover>
+  );
+}
+
 function Tools({ trackId, slot, page, clip, kind, trackName }: { trackId: Id; slot: number; page: number; clip: HeaderClip; kind: InstrumentKind; trackName: string }) {
   const drums = kind === 'drums';
   const hasNotes = useProject(pageHasNotesSelector(trackId, slot, page));
+  const clipHasNotes = useProject((p) => (p.tracks.find((t) => t.id === trackId)?.clips[slot]?.notes.length ?? 0) > 0);
   const clipboard = useBarClipboard();
   const clipKind = drums ? 'drums' : 'melodic';
   const canPaste = !!clipboard && clipboard.kind === clipKind;
   const bar = page + 1;
+  const [menu, setMenu] = useState<{ kind: 'tighten' | 'loosen'; anchor: MenuAnchor; el: HTMLElement } | null>(null);
 
   const copy = () => {
     const notes = cmd.copyPage(session.store.getState(), trackId, slot, page);
@@ -316,17 +513,19 @@ function Tools({ trackId, slot, page, clip, kind, trackName }: { trackId: Id; sl
     handOffFocus(e.currentTarget);
   };
   const double = (e: MouseEvent<HTMLButtonElement>) => {
-    const to = Math.min(4, clip.bars * 2);
+    const to = Math.min(MAX_CLIP_BARS, clip.bars * 2);
     if (!session.accepted(cmd.duplicateClipContent(session.store, trackId, slot))) return;
     notify(`${clip.name} doubled to ${barsLabel(to)}.`, 'info', 'undo');
     handOffFocus(e.currentTarget);
   };
-  const transpose = (dir: 1 | -1) => (e: MouseEvent<HTMLButtonElement>) => {
-    session.accepted(cmd.transposeClip(session.store, trackId, slot, dir * (e.shiftKey ? 12 : 1)));
+  const open = (kind: 'tighten' | 'loosen') => (e: MouseEvent<HTMLButtonElement>) => {
+    const el = e.currentTarget;
+    setMenu((m) => (m?.kind === kind ? null : { kind, anchor: anchorFromElement(el), el }));
   };
 
-  const toNextLabel = page >= 3 ? 'To next bar' : `To bar ${bar + 1}`;
-  const transposeTip = (dir: string) => `Move every note of the clip ${dir} a semitone. Shift-click: an octave.`;
+  const lastPage = page >= MAX_CLIP_BARS - 1;
+  const toNextLabel = lastPage ? 'To next bar' : `To bar ${bar + 1}`;
+  const longest = clip.bars >= MAX_CLIP_BARS;
 
   return (
     <div className={styles.tools}>
@@ -360,8 +559,8 @@ function Tools({ trackId, slot, page, clip, kind, trackName }: { trackId: Id; sl
           variant="ghost"
           icon="duplicate"
           onClick={toNext}
-          disabled={page >= 3}
-          tip={page >= 3 ? 'Clips are at most 4 bars.' : `Copy bar ${bar} onto bar ${bar + 1}${page + 1 >= clip.bars ? ' (the clip gets longer)' : ''}.`}
+          disabled={lastPage}
+          tip={lastPage ? `Clips are at most ${MAX_CLIP_BARS} bars.` : `Copy bar ${bar} onto bar ${bar + 1}${page + 1 >= clip.bars ? ' (the clip gets longer)' : ''}.`}
         >
           {toNextLabel}
         </Button>
@@ -378,24 +577,46 @@ function Tools({ trackId, slot, page, clip, kind, trackName }: { trackId: Id; sl
           size="sm"
           variant="ghost"
           onClick={double}
-          disabled={clip.bars >= 4}
-          tip={clip.bars >= 4 ? 'The clip is already 4 bars, the longest a clip can be.' : `Repeat the clip to make it ${barsLabel(Math.min(4, clip.bars * 2))} long.`}
+          disabled={longest}
+          tip={longest ? `The clip is already ${MAX_CLIP_BARS} bars, the longest a clip can be.` : `Repeat the clip to make it ${barsLabel(Math.min(MAX_CLIP_BARS, clip.bars * 2))} long.`}
         >
           <span className={styles.times} aria-hidden="true">
             ×2
           </span>
           Double
         </Button>
-        {!drums && (
-          <div className={styles.transpose} role="group" aria-label="Transpose clip">
-            <IconButton icon="minus" size="sm" variant="ghost" label="Transpose down a semitone" tip={transposeTip('down')} onClick={transpose(-1)} />
-            <span className={styles.transposeText} aria-hidden="true">
-              Transpose
-            </span>
-            <IconButton icon="plus" size="sm" variant="ghost" label="Transpose up a semitone" tip={transposeTip('up')} onClick={transpose(1)} />
-          </div>
-        )}
+        {!drums && <Transpose trackId={trackId} slot={slot} clipName={clip.name} />}
+        <Button
+          className={styles.tool}
+          size="sm"
+          variant="ghost"
+          icon="clock"
+          aria-haspopup="menu"
+          aria-expanded={menu?.kind === 'tighten'}
+          aria-label="Tighten timing…"
+          disabled={!clipHasNotes}
+          onClick={open('tighten')}
+          tip={clipHasNotes ? 'Pull notes towards the grid (quantize), with a strength.' : 'Add some notes first.'}
+        >
+          Tighten…
+        </Button>
+        <Button
+          className={styles.tool}
+          size="sm"
+          variant="ghost"
+          icon="dice"
+          aria-haspopup="menu"
+          aria-expanded={menu?.kind === 'loosen'}
+          aria-label="Loosen (humanize)…"
+          disabled={!clipHasNotes}
+          onClick={open('loosen')}
+          tip={clipHasNotes ? 'Small random shifts in timing and level (humanize), so programmed notes feel played.' : 'Add some notes first.'}
+        >
+          Loosen…
+        </Button>
       </div>
+      {menu?.kind === 'tighten' && <TightenMenu trackId={trackId} slot={slot} anchor={menu.anchor} returnFocus={menu.el} onClose={() => setMenu(null)} />}
+      {menu?.kind === 'loosen' && <LoosenMenu trackId={trackId} slot={slot} anchor={menu.anchor} returnFocus={menu.el} onClose={() => setMenu(null)} />}
     </div>
   );
 }
@@ -426,7 +647,7 @@ function sameHeader(a: StepHeaderProps, b: StepHeaderProps): boolean {
   );
 }
 
-/** Memoised: note edits (a velocity drag, say) re-render the lanes, not the header. */
+/** Memoised: note edits (a velocity drag, say) re-render the lanes and the overview, not the rest of the header. */
 export const StepHeader = memo(function StepHeader(props: StepHeaderProps) {
   const { trackId, slot, page, clip, kind, trackName, locked } = props;
   return (
@@ -440,7 +661,7 @@ export const StepHeader = memo(function StepHeader(props: StepHeaderProps) {
       </div>
       {clip && (
         <div className={styles.row}>
-          <PageTabs trackId={trackId} bars={clip.bars} page={page} />
+          <BarStrip trackId={trackId} slot={slot} bars={clip.bars} page={page} kind={kind} />
           <div className={styles.spacer} />
           {/* During a performance take clips are locked: say so where the editing tools were. */}
           <div className={styles.status} role="status">

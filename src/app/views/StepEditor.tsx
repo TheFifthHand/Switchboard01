@@ -1,20 +1,23 @@
 /**
- * Steps mode: a numbered 16-step editor for the selected part's selected
- * clip, one bar per page (clips are 1-4 bars).
+ * Steps mode: the editor for the selected part's selected clip, one bar per
+ * page (clips are 1-8 bars; the header's bar strip shows the whole clip).
  *
- * - Drum parts: choose a kit sound in the overview, then click its steps on
- *   the large pads; velocity underneath.
- * - Melodic parts (bass, poly, sampler): a pitch lane (small piano roll) with
- *   note length and velocity.
- * - An empty slot offers to create a 1, 2 or 4 bar clip right here.
+ * - Drum parts: a 16-step grid of the kit's sounds, the large pads of the
+ *   chosen sound, velocity underneath.
+ * - Melodic parts (bass, poly, sampler): a piano roll on the chosen grid
+ *   (1/16, 1/32, 1/8 or 1/16 triplets) with a note selection, note length
+ *   and per-note velocity.
+ * - An empty slot offers to create a 1, 2, 4 or 8 bar clip right here.
  * - Until a slot is chosen for the part, the clip it plays is opened.
  *
  * Every edit is an undoable command on the project; the global Undo reverts
- * it. The playhead shows the sounding step while this clip plays.
+ * it. The playhead shows the step that is heard while this clip plays, and
+ * with Follow on the shown bar turns with it.
  */
 import { useEffect, useRef } from 'react';
-import type { ClipBars, Id } from '../../project/types';
+import { TICKS_PER_STEP, type ClipBars, type Id } from '../../project/types';
 import * as cmd from '../../state/commands';
+import { GRID_TICKS } from '../../state/commands/notes';
 import { selectSlot, setStepPage, stepPageFor } from '../../state/uiStore';
 import { shallowEqual, useStore } from '../../state/store';
 import { Button } from '../../ui/components';
@@ -74,6 +77,9 @@ function EmptySlot({ trackId, slot, locked, onOpen }: { trackId: Id; slot: numbe
           </Button>
           <Button icon="plus" onClick={() => create(4)} disabled={locked} tip={locked ? lockTip : 'A four-bar loop: 4 pages of 16 steps.'}>
             4-bar clip
+          </Button>
+          <Button icon="plus" onClick={() => create(8)} disabled={locked} tip={locked ? lockTip : 'An eight-bar phrase: 8 pages of 16 steps.'}>
+            8-bar clip
           </Button>
         </div>
         {others.length > 0 && (
@@ -145,6 +151,8 @@ export function StepEditor() {
   );
   const clip = useProject((p) => p.tracks.find((t) => t.id === trackId)?.clips[slot] ?? null);
   const locked = useStore(session.store.info, (s) => s.lock !== null);
+  const follow = useUi((s) => s.stepsFollow);
+  const gridName = useUi((s) => s.stepGrid);
   const rootRef = useRef<HTMLDivElement>(null);
 
   const bars = clip?.bars ?? 1;
@@ -153,7 +161,9 @@ export function StepEditor() {
     if (clip && storedPage > bars - 1) setStepPage(trackId, bars - 1);
   }, [clip, storedPage, bars, trackId]);
 
-  usePlayhead(rootRef, trackId, slot, bars, page);
+  // Drums light 1/16 steps; the piano roll lights the cells of its grid.
+  const cellTicks = track?.kind === 'drums' ? TICKS_PER_STEP : GRID_TICKS[gridName];
+  usePlayhead(rootRef, trackId, slot, bars, page, { cellTicks, follow });
 
   // Creating a clip (or opening another one) from the empty slot replaces the
   // focused button: move focus into the new editor instead of losing it.

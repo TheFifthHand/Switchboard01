@@ -8,12 +8,12 @@ import '../../src/ui/theme.css';
 import { StepEditor } from '../../src/app/views/StepEditor';
 import { barClipboard } from '../../src/app/views/steps/shared';
 import { session } from '../../src/app/instance';
-import { patchRuntime } from '../../src/app/runtime';
+import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { getKitVoiceNames } from '../../src/audio/instruments/kits';
 import { createProject } from '../../src/project/factory';
 import type { Clip, Note } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
-import { defaultUiState, selectSlot, selectTrack, uiStore } from '../../src/state/uiStore';
+import { defaultUiState, selectSlot, selectTrack, setUiMode, uiStore } from '../../src/state/uiStore';
 import { actFrame, cleanup, fire, frames, key, mount, pointer, pointIn, wait } from './ui-harness';
 
 const KICK = getKitVoiceNames('round-machine')[0];
@@ -182,7 +182,7 @@ describe('drum steps', () => {
     const m = mountEditor();
     const snareRow = m.container.querySelector<HTMLButtonElement>(`[data-voice="${SNARE_VOICE}"]`)!;
     fire(snareRow, new MouseEvent('click', { bubbles: true, detail: 1 }));
-    expect(snareRow.getAttribute('aria-checked')).toBe('true');
+    expect(snareRow.closest('[role="row"]')?.getAttribute('aria-selected') ?? snareRow.getAttribute('aria-selected')).toBe('true');
     expect(noteOn).toHaveBeenLastCalledWith('t1', SNARE_VOICE, 0.8, 'preview');
 
     pointer(byLabel(m.container, `Step 3, ${SNARE}`), 'pointerdown', pointIn(byLabel(m.container, `Step 3, ${SNARE}`)));
@@ -229,7 +229,8 @@ describe('drum steps', () => {
     cmd.toggleStep(session.store, 't1', 0, 16, 0); // bar 2, step 1
     const m = mountEditor();
     const tabs = () => [...m.container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
-    expect(tabs().map((t) => t.textContent?.trim())).toEqual(['Bar 1', 'Bar 2']);
+    expect(tabs().map((t) => t.getAttribute('aria-label'))).toEqual(['Bar 1', 'Bar 2']);
+    expect(tabs().map((t) => t.textContent?.trim())).toEqual(['1', '2']);
     expect(byLabel(m.container, `Step 1, ${KICK}`).getAttribute('aria-pressed')).toBe('false');
 
     fire(tabs()[1], new MouseEvent('click', { bubbles: true }));
@@ -332,17 +333,32 @@ describe('melodic pitch lane', () => {
     expect(noteOn).toHaveBeenCalledTimes(1);
   });
 
-  it('click adds a one-step note (and plays it), click on the note removes it', () => {
+  it('click adds a one-step note (and plays it) and selects it; a click on a note selects it; a double-click removes it with Undo', () => {
     const { roll, cell } = setup();
     pointer(roll, 'pointerdown', cell(4, 48));
     pointer(roll, 'pointerup', cell(4, 48));
     expect(notes('t3')).toEqual([expect.objectContaining({ tick: 96, pitch: 48, duration: 24, velocity: 0.8 })]);
     expect(noteOn).toHaveBeenCalledWith('t3', 48, 0.8, 'preview');
+    const noteEl = () => roll.querySelector<HTMLElement>('[data-note-id]')!;
+    expect(noteEl().hasAttribute('data-selected')).toBe(true);
 
-    const noteEl = roll.querySelector<HTMLElement>('[data-note-id]')!;
-    pointer(noteEl, 'pointerdown', pointIn(noteEl, 0.5, 0.3));
-    pointer(roll, 'pointerup', pointIn(noteEl, 0.5, 0.3));
-    expect(notes('t3')).toHaveLength(0);
+    // A second note: the selection moves to it. A click on the first selects it again and keeps it.
+    press(roll, cell(8, 51));
+    expect(notes('t3')).toHaveLength(2);
+    const first = roll.querySelector<HTMLElement>(`[data-note-id="${notes('t3')[0].id}"]`)!;
+    expect(first.hasAttribute('data-selected')).toBe(false);
+    press(first, pointIn(first, 0.5, 0.3));
+    expect(notes('t3')).toHaveLength(2);
+    expect(roll.querySelector<HTMLElement>(`[data-note-id="${notes('t3')[0].id}"]`)!.hasAttribute('data-selected')).toBe(true);
+
+    // Double-click: removed, with a message that offers Undo.
+    const again = roll.querySelector<HTMLElement>(`[data-note-id="${notes('t3')[0].id}"]`)!;
+    press(again, pointIn(again, 0.5, 0.3));
+    expect(notes('t3')).toHaveLength(1);
+    expect(runtimeStore.getState().notice?.text).toBe('Deleted 1 note.');
+    expect(runtimeStore.getState().notice?.action).toBe('undo');
+    session.undo();
+    expect(notes('t3')).toHaveLength(2);
   });
 
   it('dragging on after adding draws a longer note; the right edge resizes; the body moves', () => {
@@ -397,12 +413,24 @@ describe('melodic pitch lane', () => {
     expect(el.style.gridColumn).toBe('2 / 4'); // steps 1-2 of bar 2
   });
 
-  it('velocity lane sets every note starting on a step', () => {
+  it('velocity lane: with nothing selected it sets every note starting on a step; with a selection only the selected notes', () => {
     const { m, roll, cell } = setup();
     press(roll, cell(3, 48));
     press(roll, cell(3, 51));
     const lane = m.container.querySelector<HTMLElement>('[data-testid="velocity-lane"]')!;
     const col = lane.querySelector<HTMLElement>('[data-step="3"]')!;
+    // The note just added is selected: one bar per voice, the selected one marked.
+    expect(col.querySelectorAll('[data-voice-id]')).toHaveLength(2);
+    expect(col.querySelectorAll('[data-voice-id][data-selected]')).toHaveLength(1);
+    expect(col.textContent).toContain('1/2');
+    pointer(lane, 'pointerdown', pointIn(col, 0.9));
+    pointer(lane, 'pointerup', pointIn(col, 0.9));
+    const byPitch = (p: number) => notes('t3').find((n) => n.pitch === p)!.velocity;
+    expect(byPitch(51)).toBeLessThan(0.3);
+    expect(byPitch(48)).toBe(0.8);
+    // Escape clears the selection: the lane sets both.
+    const cursor = m.container.querySelector<HTMLButtonElement>('button[aria-label^="Note grid"]')!;
+    key(cursor, 'keydown', { key: 'Escape' });
     expect(col.textContent).toContain('×2');
     pointer(lane, 'pointerdown', pointIn(col, 0.75));
     pointer(lane, 'pointerup', pointIn(col, 0.75));
@@ -411,7 +439,7 @@ describe('melodic pitch lane', () => {
     expect(vs[0]).toBe(vs[1]);
   });
 
-  it('keyboard: Enter adds/removes at the cursor, Shift+Right lengthens, + raises velocity', () => {
+  it('keyboard: Enter adds at the cursor (or selects the note there), Shift+Right lengthens, + raises velocity, Delete removes', () => {
     const { m } = setup();
     const cursor = m.container.querySelector<HTMLButtonElement>('button[aria-label^="Note grid"]')!;
     cursor.focus();
@@ -428,8 +456,13 @@ describe('melodic pitch lane', () => {
     key(cursor, 'keydown', { key: 'Enter' });
     expect(notes('t3')).toHaveLength(2);
     expect(notes('t3')[1].pitch).toBeGreaterThan(pitch);
+    // Enter on a note selects it; Delete removes the selection.
     key(cursor, 'keydown', { key: 'Enter' });
+    expect(notes('t3')).toHaveLength(2);
+    expect(cursor.getAttribute('aria-label')).toContain('1 note selected');
+    key(cursor, 'keydown', { key: 'Delete' });
     expect(notes('t3')).toHaveLength(1);
+    expect(notes('t3')[0].pitch).toBe(pitch);
   });
 
   it('keyboard: moving past step 16 opens the next bar and announces its cell', async () => {
@@ -461,13 +494,31 @@ describe('melodic pitch lane', () => {
     expect(noteOff).toHaveBeenCalledWith('t3', 48, 'preview');
   });
 
-  it('transpose moves the clip a semitone (Shift: an octave)', () => {
+  it('transpose: a scale step under Musical Assist (Shift: an octave), with a toast; Advanced adds semitone keys', async () => {
     const { m, roll, cell } = setup();
     press(roll, cell(0, 48));
-    fire(byLabel(m.container, 'Transpose up'), new MouseEvent('click', { bubbles: true }));
-    expect(notes('t3')[0].pitch).toBe(49);
-    fire(byLabel(m.container, 'Transpose down'), new MouseEvent('click', { bubbles: true, shiftKey: true }));
-    expect(notes('t3')[0].pitch).toBe(37);
+    // C minor: C3 up one step is D3.
+    fire(byLabel(m.container, 'Transpose up a scale step'), new MouseEvent('click', { bubbles: true }));
+    expect(notes('t3')[0].pitch).toBe(50);
+    expect(runtimeStore.getState().notice?.text).toMatch(/ moved up one step\.$/);
+    expect(runtimeStore.getState().notice?.action).toBe('undo');
+    fire(byLabel(m.container, 'Transpose down a scale step'), new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    expect(notes('t3')[0].pitch).toBe(38);
+    expect(runtimeStore.getState().notice?.text).toMatch(/ moved down an octave\.$/);
+    // Simple mode has no semitone keys; Advanced keeps them, labelled as semitones.
+    expect(() => byLabel(m.container, 'Transpose up a semitone')).toThrow();
+    setUiMode('advanced');
+    await actFrame();
+    fire(byLabel(m.container, 'Transpose up a semitone'), new MouseEvent('click', { bubbles: true }));
+    expect(notes('t3')[0].pitch).toBe(39);
+    expect(runtimeStore.getState().notice?.text).toMatch(/ moved up one semitone\.$/);
+    // Musical Assist off: semitones only.
+    setUiMode('simple');
+    cmd.setAssist(session.store, false);
+    await actFrame();
+    expect(() => byLabel(m.container, 'Transpose up a scale step')).toThrow();
+    fire(byLabel(m.container, 'Transpose up a semitone'), new MouseEvent('click', { bubbles: true }));
+    expect(notes('t3')[0].pitch).toBe(40);
   });
 });
 
@@ -519,12 +570,17 @@ describe('undo and playhead', () => {
     }
   });
 
-  it('lights the sounding step from the transport position (DOM only, no re-render)', async () => {
+  it('lights the heard step from the transport position (DOM only, no re-render)', async () => {
     makeClip('t1', 2);
     const s = session as unknown as { transport: unknown; sequencer: unknown };
     const saved = { transport: s.transport, sequencer: s.sequencer };
     let tick = 384 + 5 * 24 + 3; // bar 2, step 6
-    s.transport = { getPosition: () => ({ tick, bar: 0, beat: 0, step: 0, playing: true }) };
+    s.transport = {
+      // What is scheduled runs ahead; the light follows what is heard.
+      getPosition: () => ({ tick: tick + 96, bar: 0, beat: 0, step: 0, playing: true }),
+      audibleTick: () => tick,
+      clipPhase: (_id: string, out: { slot: number; startTick: number; lengthTicks: number }) => Object.assign(out, { slot: 0, startTick: 0, lengthTicks: 768 }),
+    };
     s.sequencer = { getTrackState: () => ({ playing: { slot: 0, clipId: 'x', startTick: 0 }, queued: null }) };
     try {
       patchRuntime({ playing: true, tracks: { t1: { playingSlot: 0, queued: null } } });
