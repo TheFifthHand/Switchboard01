@@ -166,6 +166,9 @@ function expectNoOverlap(label: string) {
   for (let i = 0; i < els.length; i++) {
     for (let j = i + 1; j < els.length; j++) {
       if (els[i].contains(els[j]) || els[j].contains(els[i])) continue;
+      // A knob's own value key may reach over its caption (Master keeps it inside the strip); a drag from it still turns the knob.
+      const knob = els[i].closest('[data-typable]');
+      if (knob && knob === els[j].closest('[data-typable]')) continue;
       const a = els[i].getBoundingClientRect();
       const c = els[j].getBoundingClientRect();
       const x = Math.min(a.right, c.right) - Math.max(a.left, c.left);
@@ -173,7 +176,7 @@ function expectNoOverlap(label: string) {
       if (x > 0.5 && y > 0.5) overlaps.push(`${els[i].getAttribute('aria-label') ?? els[i].textContent} / ${els[j].getAttribute('aria-label') ?? els[j].textContent}`);
     }
   }
-  expect(overlaps, `${label}: overlapping controls`).toEqual([]);
+  expect(overlaps.join(' | '), `${label}: overlapping controls`).toBe('');
 }
 
 async function until<T>(fn: () => T | null | undefined | false, what: string, ms = 5000): Promise<T> {
@@ -206,8 +209,9 @@ describe('Offline readiness in the transport', () => {
       expectStripFits(text);
       expectSwitchOnStrip(`1440 px, ${text}`);
     }
-    // From 1440 px Projects is on the strip too.
-    for (const name of [/^Projects \(open:/, 'Export', /^Undo/, /^Redo/]) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
+    // At 1440 px Export, Undo and Redo are on the strip; Projects joins them from 1600 px (below, it is in More and on the save state).
+    for (const name of ['Export', /^Undo/, /^Redo/]) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
+    expect(shown(buttonNamed(/^Projects \(open:/, bar())), 'Projects at 1440').toBe(false);
 
     // At 1366 x 768 the Simple · Advanced switch, the save state, Stop and Export with their words, Undo
     // and Redo and More stay in view; the offline state and Projects make room for them and are in More
@@ -227,7 +231,11 @@ describe('Offline readiness in the transport', () => {
       buttonNamed(/^More:/, bar())!.click();
     });
     const items = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role^="menuitem"]')].map((el) => el.textContent ?? '');
-    for (const word of ['Offline ready', 'Undo', 'Redo', 'Projects…', 'Export WAV…', 'Show every control (Advanced)']) expect(items.some((t) => t.includes(word)), `${word} in ${items.join(' / ')}`).toBe(true);
+    for (const word of ['Undo', 'Redo', 'Projects…', 'Export WAV…', 'Show every control (Advanced)']) expect(items.some((t) => t.includes(word)), `${word} in ${items.join(' / ')}`).toBe(true);
+    // The offline state is the menu's last line: a status, not an item (it cannot be chosen or focused).
+    const menuText = document.querySelector<HTMLElement>('[role="menu"]')?.textContent ?? '';
+    expect(menuText, 'Offline ready in More').toContain('Offline ready');
+    expect(items.some((t) => t.includes('Offline ready')), 'offline state is not a menu item').toBe(false);
     await act(async () => {
       buttonNamed(/^More:/, bar())!.click();
     });
