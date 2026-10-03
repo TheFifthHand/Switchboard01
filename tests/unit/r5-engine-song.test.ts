@@ -107,6 +107,25 @@ describe('regions on the timeline', () => {
     expect(new Rig(withSong(fixture(), [])).playSong().finish().ends()).toEqual([0]);
   });
 
+  it('counts in one bar before the song; nothing plays before it', () => {
+    const p = fixture();
+    const seq = new Sequencer({ getProject: () => p });
+    seq.start(1, { mode: { kind: 'song', fromBar: 0 }, countInBars: 1 });
+    expect(seq.songBarAt(seq.getPosition(1.5).tick)).toBe(0);
+    const events = runTo(seq, 1, 3.5);
+    expect(ofKind(events, 'beat').slice(0, 5).map((b) => [b.tick, b.countIn])).toEqual([
+      [-384, true],
+      [-288, true],
+      [-192, true],
+      [-96, true],
+      [0, false],
+    ]);
+    const first = ofKind(events, 'launch')[0];
+    expect(first.tick).toBe(0);
+    expect(first.time).toBeCloseTo(3, 12);
+    expect(notesOf(events).every((n) => n.tick >= 0)).toBe(true);
+  });
+
   it('note times are exact on the audio clock (swung 16ths included) from bar 2 on, as from bar 1', () => {
     const p = fixture();
     p.swing = 0.5;

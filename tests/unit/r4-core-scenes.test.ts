@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_SCENES, type Performance, type Project } from '../../src/project/types';
 import { uid } from '../../src/project/factory';
-import { Sequencer, songBlocks } from '../../src/time/sequencer';
+import { Sequencer } from '../../src/time/sequencer';
 import { makeSnapshot } from '../../src/time/snapshot';
 import { makeClip, makeProject, notesOf, ofKind, runTo, sec } from './sequencer-fixtures';
 
@@ -33,12 +33,13 @@ describe('8 scenes', () => {
     expect(() => s2.launchScene(2, 0)).toThrow(RangeError);
   });
 
-  it('the song plan places blocks of every row, in order', () => {
+  it('the song plays regions of every row, in order', () => {
     const p = rowsProject(MAX_SCENES);
-    p.arrangement = { tailSeconds: 0, blocks: p.scenes.map((s, i) => ({ id: `b${i}`, sceneId: s.id, repeats: 1 })).reverse() };
-    expect(songBlocks(p).map((b) => [b.row, b.startTick])).toEqual([7, 6, 5, 4, 3, 2, 1, 0].map((row, i) => [row, i * 384]));
+    const t1 = p.tracks.find((t) => t.id === 't1')!;
+    // Rows 8 down to 1, one bar each.
+    p.arrangement = { tailSeconds: 0, sections: [], regions: [7, 6, 5, 4, 3, 2, 1, 0].map((row, i) => ({ id: `r${row}`, trackId: 't1', clipId: t1.clips[row]!.id, start: i, bars: 1, offset: 0 })) };
     const seq = new Sequencer({ getProject: () => p });
-    seq.start(0, { mode: { kind: 'song', fromBlock: 0 } });
+    seq.start(0, { mode: { kind: 'song', fromBar: 0 } });
     const ev = runTo(seq, 0, sec(8 * 384) + 1);
     expect(notesOf(ev, 't1').map((n) => n.pitch)).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
     expect(ofKind(ev, 'end')).toHaveLength(1);
