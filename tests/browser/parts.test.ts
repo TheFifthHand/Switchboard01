@@ -9,6 +9,7 @@
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
+import { songBars } from '../../src/project/arrangement';
 import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { LoopsGrid } from '../../src/app/views/LoopsGrid';
 import { PartPanel } from '../../src/app/views/PartPanel';
@@ -496,14 +497,16 @@ describe('Scene rename', () => {
     expect(item('Add to song')).toBeTruthy();
   });
 
-  it('Add to song appends the scene to the arrangement', () => {
+  it('Add to song puts the scene at the end of the song: a loop for each of its parts, under a section named after it', () => {
     mountGrid();
-    const scene = session.store.getState().scenes[1];
-    const before = session.store.getState().arrangement.blocks.length;
+    const p = session.store.getState();
+    const scene = p.scenes[1];
+    const end = songBars(p);
+    const parts = p.tracks.filter((t) => t.clips[1]).length;
     click(document.querySelector(`button[aria-label="Options for scene ${scene.name}"]`)!);
     click(item('Add to song'));
-    const blocks = session.store.getState().arrangement.blocks;
-    expect(blocks).toHaveLength(before + 1);
-    expect(blocks[blocks.length - 1].sceneId).toBe(scene.id);
+    const after = session.store.getState().arrangement;
+    expect(after.regions.filter((r) => r.start === end)).toHaveLength(parts);
+    expect(after.sections[after.sections.length - 1]).toMatchObject({ name: scene.name, start: end });
   });
 });

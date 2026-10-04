@@ -258,7 +258,7 @@ async function expectOnLookHolds(label: string, el: HTMLElement | null, opts: { 
 }
 
 describe('engaged toggles keep their on-look', () => {
-  it('under the pointer and with keyboard focus, with readable words, in Play, Arrange and Mix', async () => {
+  it('under the pointer and with keyboard focus, with readable words, in Play, Song and Mix', async () => {
     await openApp(1366, 768);
     const p = session.store.getState();
     const drums = p.tracks[0];
@@ -308,21 +308,20 @@ describe('engaged toggles keep their on-look', () => {
     expect(worstContrast(state), 'Metronome switch: "On"').toBeGreaterThanOrEqual(4.5);
     await real(() => userEvent.keyboard('{Escape}'));
 
-    // Arrange: Loop (teal, pressed while a loop is set) and Follow.
+    // Song: Loop (teal, pressed while the song loops) and Follow.
     act(() => setView('arrange'));
     await settle(150);
-    const blocks = session.store.getState().arrangement.blocks;
     act(() => {
-      session.setSongLoop({ fromBlockId: blocks[0].id, toBlockId: blocks[1].id });
+      (session as unknown as { setSongLoop(l: { fromBar: number; toBar: number }): boolean }).setSongLoop({ fromBar: 0, toBar: 8 });
     });
     await settle();
     const loop = document.querySelector<HTMLElement>('[data-testid="loop-toggle"]');
     expect(loop?.getAttribute('aria-pressed')).toBe('true');
     await expectOnLookHolds('Loop', loop);
-    let follow = named('Follow playhead');
+    let follow = named('Follow');
     if (follow?.getAttribute('aria-pressed') !== 'true') {
       await real(() => userEvent.click(follow!));
-      follow = named('Follow playhead');
+      follow = named('Follow');
     }
     expect(follow?.getAttribute('aria-pressed')).toBe('true');
     await expectOnLookHolds('Follow', follow);

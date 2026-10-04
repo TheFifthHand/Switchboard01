@@ -1,55 +1,79 @@
 /**
- * Arrange: turn scenes into a song, and keep live performances.
+ * Song: build the song the way GarageBand's Tracks area does.
  *
- *   [ SONG — scene blocks in play order, repeats, playhead, palette      ]
- *   [ PERFORMANCES — recorded takes: replay, export, make song blocks    ]
+ *   [ Song · 32 bars · 1:02          Loop · − Fit + · Follow · Loops ]
+ *   [ timeline: ruler, sections, a row per part     │ loop browser   ]
+ *   [ Performances (one line until opened)                          ]
  *
- * Everything edits the real project through undoable commands; playback
- * goes through the session (song mode, performance replay), so what the view
- * shows is what the transport plays.
+ * Each part has its own row; drag a loop anywhere along it, drag its right
+ * edge to make it play longer, and everything snaps to the bar lines. The
+ * loop browser holds the project's scenes and each part's loops to drag in.
+ * Play (and Space) here plays the song from the playhead; a click on the bar
+ * numbers moves the playhead. Every edit is one undoable command and plays
+ * at once, even while the song plays.
  *
- * Height is shared out so the song stays comfortable to read and grab: the
- * song's part rows grow with the free height (ROW_MIN_PX to ROW_MAX_PX,
- * songLayout); the Performances panel is one line unless it is open. Until
- * the user opens or folds it (remembered), it opens by itself only where the
- * rows are already as tall as they get with it open (a tall window), so spare
- * height shows the takes (or how to record one) instead of an empty band;
- * what the rows cannot use otherwise goes to the lane below its blocks
- * (fitLaneHeight). Measured in a layout effect when the view mounts (before
- * the first paint) and again only when a size changes (a resize observer),
- * never while a pointer moves.
- *
- * A take's events open in a tall drawer beside the take list; meanwhile the
- * song folds to its header row (the lane keeps its state, hidden).
+ * A take's events open in a tall drawer of the Performances panel; the song
+ * folds to its header row meanwhile (the timeline keeps its state, hidden).
+ * The loop browser opens by itself while the song is empty or short (under
+ * BROWSER_AUTO_BARS bars) until the person shows or hides it (remembered).
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { Id } from '../../../project/types';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { songBars } from '../../../project/arrangement';
+import type { Id, Project } from '../../../project/types';
+import { useStore } from '../../../state/store';
 import { useProject } from '../../instance';
-import { PERF_BAR_PX, PERF_ROOM_PX, ROW_MAX_PX, fitLaneHeight } from './songLayout';
-import { readTakesOpen, writeTakesOpen } from './laneSettings';
+import { readBrowserOpen, readFollow, readTakesOpen, writeBrowserOpen, writeFollow, writeTakesOpen } from './laneSettings';
+import { carriedStore } from './laneStore';
+import { LoopBrowser } from './LoopBrowser';
 import { PerformancesPanel } from './PerformancesPanel';
-import { SongPanel } from './SongPanel';
-import styles from './ArrangeView.module.css';
+import { SongHeader } from './SongHeader';
+import { SongTimeline, type TimelineHandle } from './SongTimeline';
+import styles from './SongView.module.css';
+
+/** Songs shorter than this (bars) show the loop browser until the person hides it. */
+export const BROWSER_AUTO_BARS = 32;
+
+const selectShort = (p: Project) => songBars(p) < BROWSER_AUTO_BARS;
+const selectHasTakes = (p: Project) => p.performances.length > 0;
+
+/** What a loop or scene picked up in the browser looks like while it is away from the rows. */
+function Carried() {
+  const c = useStore(carriedStore, (s) => s);
+  if (!c || c.overRows) return null;
+  return (
+    <div className={styles.carried} style={{ left: c.x + 12, top: c.y + 12, '--h': c.hue ?? 214 } as CSSProperties} aria-hidden="true">
+      {c.text}
+    </div>
+  );
+}
 
 export function ArrangeView() {
-  const viewRef = useRef<HTMLDivElement>(null);
-  // The take whose events are open in the drawer (the song folds meanwhile).
+  const handle = useRef<TimelineHandle>(null);
+  const [handleNow, setHandleNow] = useState<TimelineHandle | null>(null);
+  const [follow, setFollow] = useState(readFollow);
+  const short = useProject(selectShort);
+  const [browserPref, setBrowserPref] = useState<boolean | null>(readBrowserOpen);
+  const browserOpen = browserPref ?? short;
   const [openTake, setOpenTake] = useState<Id | null>(null);
-  // Performances open or folded: the user's choice, else open only on a tall window. A choice made while
-  // there are takes is remembered (this browser); with none it lasts until a take is made (a look at how to
-  // record one is not a reason to keep the song smaller).
-  const hasTakes = useProject((p) => p.performances.length > 0);
-  const [takesPref, setTakesPref] = useState<boolean | null>(readTakesOpen);
-  const [howOpen, setHowOpen] = useState<boolean | null>(null);
-  const [takesAuto, setTakesAuto] = useState(false);
-  const choice = hasTakes ? takesPref : howOpen;
-  const takesOpen = choice ?? takesAuto;
-  const prefRef = useRef(choice);
-  prefRef.current = choice;
-  useEffect(() => {
-    if (!hasTakes) setHowOpen(null);
-  }, [hasTakes]);
-  const onOpenChange = useCallback(
+  // The Performances panel open or folded: the person's choice while there are takes (remembered); with none, a look
+  // at how to record one lasts until the first take comes (or the last one goes).
+  const hasTakes = useProject(selectHasTakes);
+  const [takesPref, setTakesPref] = useState<boolean>(() => readTakesOpen() ?? false);
+  const [howOpen, setHowOpen] = useState(false);
+  useEffect(() => setHowOpen(false), [hasTakes]);
+  const takesOpen = hasTakes ? takesPref : howOpen;
+  const [status, setStatus] = useState('');
+  useEffect(() => setHandleNow(handle.current), []);
+
+  const onFollow = useCallback((on: boolean) => {
+    setFollow(on);
+    writeFollow(on);
+  }, []);
+  const onBrowser = useCallback((open: boolean) => {
+    setBrowserPref(open);
+    writeBrowserOpen(open);
+  }, []);
+  const onTakesOpen = useCallback(
     (open: boolean) => {
       if (!hasTakes) {
         setHowOpen(open);
@@ -61,101 +85,17 @@ export function ArrangeView() {
     [hasTakes],
   );
 
-  const fitRef = useRef<(() => void) | null>(null);
-  useLayoutEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    // Narrow (or zoomed) windows scroll the page: rows keep the size the stylesheet gives them.
-    const narrow = window.matchMedia('(max-width: 1023px)');
-    let last = '';
-    // The room given to the lane below its blocks (px), part of the song panel's height as measured.
-    let extra = 0;
-    const fit = () => {
-      const song = view.querySelector<HTMLElement>('section[aria-labelledby="song-title"]');
-      const perf = view.querySelector<HTMLElement>('[data-testid="performances"]');
-      const names = view.querySelectorAll<HTMLElement>('[data-name-row]');
-      // The song folded (a take's events open): nothing to share out now.
-      if (!song || song.hasAttribute('data-folded')) return;
-      let row = 0;
-      let more = 0;
-      let auto = false;
-      if (perf && names.length && !narrow.matches) {
-        const cs = getComputedStyle(view);
-        const chrome = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.rowGap || '0');
-        const fixed = song.offsetHeight - names.length * names[0].offsetHeight - extra;
-        const free = view.clientHeight - chrome - fixed;
-        // Open by itself only where the rows stay as tall as they get with the panel open.
-        auto = free - PERF_ROOM_PX >= names.length * ROW_MAX_PX;
-        const open = prefRef.current ?? auto;
-        const perfRoom = open ? PERF_ROOM_PX : perf.hasAttribute('data-collapsed') ? perf.offsetHeight : PERF_BAR_PX;
-        const fill = fitLaneHeight(free - perfRoom, names.length);
-        row = fill.row;
-        // With the panel open it takes what the rows leave; folded, the lane does.
-        more = open ? 0 : fill.extra;
-      }
-      setTakesAuto(auto);
-      const value = row ? `${row}px/${more}px` : '';
-      if (value === last) return;
-      last = value;
-      extra = more;
-      if (row) {
-        view.style.setProperty('--lane-row-h', `${row}px`);
-        view.style.setProperty('--lane-extra', `${more}px`);
-      } else {
-        view.style.removeProperty('--lane-row-h');
-        view.style.removeProperty('--lane-extra');
-      }
-    };
-    fit();
-    fitRef.current = fit;
-    // A new row height resizes the panels the observer watches: apply it in the next frame, never inside
-    // the observer's own callback (that would be a resize loop). Sizes this view set itself are skipped.
-    let raf = 0;
-    const seen = new WeakMap<Element, string>();
-    const soon = () => {
-      if (!raf) raf = requestAnimationFrame(() => {
-        raf = 0;
-        fit();
-      });
-    };
-    const ro = new ResizeObserver((entries) => {
-      let changed = false;
-      for (const e of entries) {
-        const key = `${Math.round(e.contentRect.width)}x${Math.round(e.contentRect.height)}`;
-        if (seen.get(e.target) !== key) {
-          // The first report of each element is the size it already had when fit() measured it.
-          if (seen.has(e.target)) changed = true;
-          seen.set(e.target, key);
-        }
-      }
-      if (changed) soon();
-    });
-    ro.observe(view);
-    // The panels change size when the header wraps or the Performances panel opens or folds.
-    for (const el of view.children) ro.observe(el);
-    narrow.addEventListener('change', soon);
-    return () => {
-      fitRef.current = null;
-      ro.disconnect();
-      cancelAnimationFrame(raf);
-      narrow.removeEventListener('change', soon);
-    };
-  }, []);
-
-  // Opening or folding the panel (or a take's events) changes the room: share it out again before the next paint.
-  const firstRef = useRef(true);
-  useLayoutEffect(() => {
-    if (firstRef.current) {
-      firstRef.current = false;
-      return;
-    }
-    fitRef.current?.();
-  }, [takesOpen, openTake, hasTakes]);
-
   return (
-    <div ref={viewRef} className={styles.view} data-take-open={openTake ? '' : undefined}>
-      <SongPanel folded={!!openTake} onUnfold={() => setOpenTake(null)} />
-      <PerformancesPanel open={takesOpen} onOpenChange={onOpenChange} openTake={openTake} onOpenTake={setOpenTake} />
+    <div className={styles.view} data-take-open={openTake ? '' : undefined}>
+      <section className={styles.song} aria-labelledby="song-title" data-folded={openTake ? '' : undefined}>
+        <SongHeader handle={handleNow} follow={follow} onFollow={onFollow} browserOpen={browserOpen} onBrowser={onBrowser} folded={!!openTake} onUnfold={() => setOpenTake(null)} status={status} />
+        <div className={styles.body} hidden={!!openTake}>
+          <SongTimeline follow={follow} handleRef={handle} onStatus={setStatus} />
+          {browserOpen && <LoopBrowser onCarry={(e, item) => handle.current?.carry(e, item)} playheadBar={() => handle.current?.playheadBar() ?? 0} onClose={() => onBrowser(false)} />}
+        </div>
+      </section>
+      <PerformancesPanel open={takesOpen} onOpenChange={onTakesOpen} openTake={openTake} onOpenTake={setOpenTake} />
+      <Carried />
     </div>
   );
 }

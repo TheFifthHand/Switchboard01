@@ -1,356 +1,226 @@
 /**
- * What the song lane shows, derived from the project (pure: no DOM, no
- * React). Built on project/arrangement.ts, the same helpers playback and
- * export read, so a cell that says "plays" is a part that sounds.
+ * What the Song view shows, in words and numbers (pure: no DOM, no React).
+ *
+ * The rows (one per part, in track order, each with its own colour), the
+ * regions' names, notches and spoken labels ("Four Floor, Drums, bars 9 to
+ * 16, plays 4 times"), the badges a drag shows ("Bar 9", "8 bars · plays 4×",
+ * "starts at bar 5"), the song's length ("32 bars · 1:02"), and the loop
+ * browser's scenes and loops. Bars are 0-based in the data and 1-based in
+ * every word a person reads.
  */
-import { blockBars, blockParts, sceneRow } from '../../../project/arrangement';
-import { BLOCK_MOVE_KINDS, MAX_BLOCK_REPEATS, TICKS_PER_BAR, TICKS_PER_BEAT, type ArrangementBlock, type BlockMoveKind, type Id, type Project } from '../../../project/types';
-import { BLOCK_MOVE_NAMES, layerChanges, type LayerMode } from '../../../state/commands/arrangement';
+import { rowBars } from '../../../project/arrangement';
+import type { Id, Project, SongRegion, SongSection, Track } from '../../../project/types';
+import { INSTRUMENT_LABEL, soundName } from '../../labels';
+
+/* ------------------------------------------------------------------ */
+/* Parts                                                               */
+/* ------------------------------------------------------------------ */
 
 /**
- * How one part sounds in one block:
- * - 'scene': plays the block's scene clip;
- * - 'layer': plays another scene's clip (layered in);
- * - 'off': switched off in this block;
- * - 'empty': follows the block's scene, which has no clip for this part (silent).
+ * Hues of the part colours, in track order. They keep clear of amber
+ * (playing), teal (selection) and coral (recording, mute), which keep their
+ * meaning on top of any region; a row's colour always comes with its name.
  */
-export type CellKind = 'scene' | 'layer' | 'off' | 'empty';
+export const PART_HUES = [214, 268, 136, 318, 196, 84, 240, 292] as const;
 
-/**
- * Why a part is not heard anywhere in the song right now, whatever its cells
- * say: muted, or another part is soloed. Its row is dimmed and its cells say so.
- */
-export type Silenced = 'muted' | 'notSoloed' | null;
-
-/** A part's Mute / Solo state in words, as Play and Mix say it (null: plays normally). */
-export function partStatus(t: { mute: boolean; solo: boolean }, anySolo: boolean): 'Muted' | 'Solo' | 'Not soloed' | null {
-  return t.mute ? 'Muted' : anySolo && !t.solo ? 'Not soloed' : t.solo ? 'Solo' : null;
+export function partHue(index: number): number {
+  return PART_HUES[((index % PART_HUES.length) + PART_HUES.length) % PART_HUES.length];
 }
 
-export interface CellView {
-  trackId: Id;
-  partName: string;
-  kind: CellKind;
-  /** Name of the clip that plays, or null when the part is silent. */
-  clipName: string | null;
-  /** Scene the clip comes from when layered in (its name), else null. */
-  fromScene: string | null;
-  /** The block's own scene has a clip for this part. */
-  sceneHasClip: boolean;
-  /** Scene row of the clip that plays here (its scene's, or the layered one), or null when silent. */
-  clipRow: number | null;
-  /** The part is muted, or another part is soloed. */
-  silenced: Silenced;
-}
-
-export interface BlockView {
+export interface RowView {
   id: Id;
   index: number;
-  sceneId: Id;
-  sceneName: string;
-  /** Scene row, or -1 when the scene no longer exists (the song skips the block). */
-  row: number;
-  label: string | null;
-  /** What the block is called: its label, else its scene's name. */
+  /** 1-based, as the part's number reads. */
+  number: number;
   name: string;
-  /** Bars of one pass (the longest clip the block plays); 0 when skipped. */
-  passBars: number;
-  repeats: number;
-  totalBars: number;
-  missing: boolean;
-  cells: CellView[];
-  /** Parts that differ from the block's scene (layered or switched off). */
-  changes: number;
-  /** The song moves over this block, in menu order (Fade in, Fade out, Filter rise, Echo throw). */
-  moves: BlockMoveKind[];
+  /** The instrument's sound ("Deep House Kit"), or its kind when unknown. */
+  sound: string;
+  hue: number;
+  mute: boolean;
+  solo: boolean;
 }
 
-export function blockView(p: Project, b: ArrangementBlock, index: number): BlockView {
-  const row = sceneRow(p, b.sceneId);
-  const scene = row >= 0 ? p.scenes[row] : null;
-  const missing = !scene;
-  const sceneName = scene ? scene.name : 'Missing scene';
-  const parts = missing ? null : blockParts(p, b);
-  const anySolo = p.tracks.some((t) => t.solo);
-  const cells: CellView[] = p.tracks.map((t, i) => {
-    const sceneHasClip = row >= 0 && !!t.clips[row];
-    const silenced: Silenced = t.mute ? 'muted' : anySolo && !t.solo ? 'notSoloed' : null;
-    const base = { trackId: t.id, partName: t.name, sceneHasClip, silenced };
-    const part = parts?.[i];
-    if (!part) return { ...base, kind: 'empty', clipName: null, fromScene: null, clipRow: null };
-    if (part.kind === 'off') return { ...base, kind: 'off', clipName: null, fromScene: null, clipRow: null };
-    if (part.kind === 'layer') {
-      const from = p.scenes[part.row ?? -1]?.name ?? 'another scene';
-      return { ...base, kind: 'layer', clipName: part.clip?.name ?? null, fromScene: from, clipRow: part.clip ? part.row : null };
-    }
-    return { ...base, kind: part.clip ? 'scene' : 'empty', clipName: part.clip?.name ?? null, fromScene: null, clipRow: part.clip ? part.row : null };
-  });
-  const passBars = missing ? 0 : blockBars(p, b);
-  const repeats = Math.min(MAX_BLOCK_REPEATS, Math.max(1, Math.round(b.repeats) || 1));
-  const kinds = new Set((b.moves ?? []).map((m) => m.kind));
-  return {
-    id: b.id,
-    index,
-    sceneId: b.sceneId,
-    sceneName,
-    row,
-    label: b.label ?? null,
-    name: b.label || sceneName,
-    passBars,
-    repeats,
-    totalBars: passBars * repeats,
-    missing,
-    cells,
-    changes: cells.filter((c) => c.kind === 'layer' || c.kind === 'off').length,
-    moves: BLOCK_MOVE_KINDS.filter((k) => kinds.has(k)),
-  };
+export function rowView(p: Project, t: Track, index: number): RowView {
+  const name = t.name || `Part ${index + 1}`;
+  let sound: string;
+  try {
+    sound = soundName(p, t.instrument);
+  } catch {
+    sound = INSTRUMENT_LABEL[t.instrument.kind];
+  }
+  return { id: t.id, index, number: index + 1, name, sound, hue: partHue(index), mute: t.mute, solo: t.solo };
 }
 
-/** "Fade in and Filter rise": the moves of a block in words. */
-/**
- * A helper block's name with its step first, for a compact header ("Lift ·
- * build 1/4" → "1/4 Lift"), so neighbours that would all read "Lift · bu…"
- * stay told apart; null for any other name.
- */
-export function compactName(name: string): string | null {
-  const m = /^(.+?) · .+? (\d+\/\d+)$/.exec(name);
-  return m ? `${m[2]} ${m[1]}` : null;
+export function rowViews(p: Project): RowView[] {
+  return p.tracks.map((t, i) => rowView(p, t, i));
 }
 
-export function movesText(moves: readonly BlockMoveKind[]): string {
-  const names = moves.map((k) => BLOCK_MOVE_NAMES[k]);
-  if (names.length <= 1) return names[0] ?? '';
-  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+/** Two row lists that show the same (the same array is kept while nothing changed). */
+export function sameRows(a: readonly RowView[], b: readonly RowView[]): boolean {
+  return a.length === b.length && a.every((x, i) => x.id === b[i].id && x.name === b[i].name && x.sound === b[i].sound && x.mute === b[i].mute && x.solo === b[i].solo && x.index === b[i].index);
 }
 
-export function laneBlocks(p: Project): BlockView[] {
-  return p.arrangement.blocks.map((b, i) => blockView(p, b, i));
+/** Whether a part is heard, in words: Muted, Solo, Not soloed (another part is soloed), or null. */
+export function partStatus(row: Pick<RowView, 'mute' | 'solo'>, anySolo: boolean): 'Muted' | 'Solo' | 'Not soloed' | null {
+  if (row.mute) return 'Muted';
+  if (row.solo) return 'Solo';
+  return anySolo ? 'Not soloed' : null;
 }
 
-/** Structural identity of a block view (for keeping unchanged views stable between renders). */
-export function viewKey(v: BlockView): string {
-  return JSON.stringify(v);
-}
+/* ------------------------------------------------------------------ */
+/* Numbers in words                                                    */
+/* ------------------------------------------------------------------ */
 
 export function barsText(bars: number): string {
   return bars === 1 ? '1 bar' : `${bars} bars`;
 }
 
-/** How many times a block plays its scene: "once", "3 times". */
-export function timesText(n: number): string {
-  return n === 1 ? 'once' : `${n} times`;
+/** Seconds as the transport shows a song's length: "1:02", "0:09". */
+export function clockText(seconds: number): string {
+  const total = Math.max(0, Math.round(Number.isFinite(seconds) ? seconds : 0));
+  const m = Math.floor(total / 60);
+  return `${m}:${String(total % 60).padStart(2, '0')}`;
 }
 
-/** The edge-drag bubble: "3 times · 12 bars" (Advanced adds how it is made: "(4 × 3)"). */
-export function resizeText(passBars: number, repeats: number, advanced = false): string {
-  return `${timesText(repeats)} · ${barsText(passBars * repeats)}${advanced ? ` (${passBars} × ${repeats})` : ''}`;
+/** The song's length for the header: "32 bars · 1:02". */
+export function lengthText(bars: number, bpm: number): string {
+  const seconds = (bars * 4 * 60) / Math.max(1, bpm);
+  return `${barsText(bars)} · ${clockText(seconds)}`;
 }
 
-/** A block's length in its header while its right edge is dragged: "12 bars" (Advanced: "12 bars 4 × 3"). */
-export function liveLengthText(passBars: number, repeats: number, advanced = false): string {
-  return `${barsText(passBars * repeats)}${advanced ? ` ${passBars} × ${repeats}` : ''}`;
+const FRACTIONS: readonly [number, string, string][] = [
+  [1 / 4, '¼', 'a quarter'],
+  [1 / 3, '⅓', 'a third'],
+  [1 / 2, '½', 'a half'],
+  [2 / 3, '⅔', 'two thirds'],
+  [3 / 4, '¾', 'three quarters'],
+];
+
+function splitTimes(bars: number, clipBars: number): { whole: number; frac: number } {
+  const t = bars / Math.max(1, clipBars);
+  const whole = Math.floor(t + 1e-9);
+  return { whole, frac: t - whole };
 }
 
-/** "16 bars (4 × 4)": the length with how it is made. */
-export function lengthDetail(v: BlockView): string {
-  return `${barsText(v.totalBars)} (${v.passBars} × ${v.repeats})`;
+function fractionOf(frac: number): readonly [number, string, string] | null {
+  return FRACTIONS.find(([v]) => Math.abs(v - frac) < 1e-6) ?? null;
 }
 
-/** Accessible name of a block. */
-export function blockLabel(v: BlockView, count: number, opts: { current?: boolean; next?: boolean; selected?: boolean } = {}): string {
-  if (v.missing) return `Block ${v.index + 1} of ${count}: its scene no longer exists, so the song skips it${opts.selected ? ', selected' : ''}`;
-  const named = v.label ? `${v.label} (scene ${v.sceneName})` : v.name;
-  const changes = v.changes ? `, ${v.changes === 1 ? '1 part changed' : `${v.changes} parts changed`}` : '';
-  const now = opts.current ? ', playing now' : opts.next ? ', plays next' : '';
-  const moves = v.moves.length ? `, moves: ${movesText(v.moves)}` : '';
-  return `Block ${v.index + 1} of ${count}: ${named}, ${barsText(v.passBars)} × ${v.repeats} = ${barsText(v.totalBars)}${changes}${moves}${now}${opts.selected ? ', selected' : ''}`;
+/** How many times a region plays its clip, short: "4×", "2½×", "1⅓×", "1.4×". */
+export function timesShort(bars: number, clipBars: number): string {
+  const { whole, frac } = splitTimes(bars, clipBars);
+  if (frac < 1e-9) return `${whole}×`;
+  const f = fractionOf(frac);
+  if (f) return `${whole || ''}${f[1]}×`;
+  return `${(whole + frac).toFixed(1)}×`;
 }
 
-/** What a cell says, in words (its accessible name and tooltip). */
-export function cellState(c: CellView): string {
-  switch (c.kind) {
-    case 'scene':
-      return `plays “${c.clipName}”`;
-    case 'layer':
-      return `plays “${c.clipName ?? 'nothing'}” from ${c.fromScene}`;
-    case 'off':
-      return 'off';
-    case 'empty':
-      return 'silent, no clip in this scene';
-  }
+/** The same in words for screen readers: "plays once", "plays 4 times", "plays 2 and a half times", "plays a quarter of its loop". */
+export function timesWords(bars: number, clipBars: number): string {
+  const { whole, frac } = splitTimes(bars, clipBars);
+  if (frac < 1e-9) return whole === 1 ? 'plays once' : whole === 2 ? 'plays twice' : `plays ${whole} times`;
+  const f = fractionOf(frac);
+  if (!whole) return f ? `plays ${f[2]} of its loop` : `plays ${frac.toFixed(1)} of its loop`;
+  if (f) return `plays ${whole} and ${f[2]} times`;
+  return `plays ${(whole + frac).toFixed(1)} times`;
 }
 
-/** " (muted)" / " (not soloed)": why a cell that plays is not heard. */
-export function silencedText(c: Pick<CellView, 'silenced'>): string {
-  return c.silenced === 'muted' ? ' (muted)' : c.silenced === 'notSoloed' ? ' (not soloed)' : '';
-}
+/* ------------------------------------------------------------------ */
+/* Regions                                                             */
+/* ------------------------------------------------------------------ */
 
-export function cellLabel(v: BlockView, c: CellView, rec = false): string {
-  return `${c.partName} in ${v.name} (block ${v.index + 1}): ${cellState(c)}${silencedText(c)}${rec ? ', recording notes into this clip' : ''}`;
-}
-
-/** Whether a cell counts as "playing" (aria-pressed). */
-export function cellOn(c: CellView): boolean {
-  return c.kind === 'scene' || c.kind === 'layer';
+/** A region's name for screen readers: "Four Floor, Drums, bars 9 to 16, plays 4 times" (plus where it starts in its loop). */
+export function regionLabel(clipName: string, partName: string, r: Pick<SongRegion, 'start' | 'bars' | 'offset'>, clipBars: number): string {
+  const where = r.bars === 1 ? `bar ${r.start + 1}` : `bars ${r.start + 1} to ${r.start + r.bars}`;
+  const from = r.offset > 0 ? `, starts ${barsText(r.offset)} into its loop` : '';
+  return `${clipName}, ${partName}, ${where}, ${timesWords(r.bars, clipBars)}${from}`;
 }
 
 /**
- * What clicking a cell does: switch a sounding part off (null), switch an
- * off part back to the block's scene (undefined) when that scene has a clip
- * for it; otherwise there is nothing to switch, so the part picker opens.
+ * Where a region's clip starts again, in bars from the region's start (the
+ * thin notches): the first after the part of the clip it begins with, then
+ * every clip length.
  */
-export function cellToggle(c: CellView): { choice: Id | null | undefined } | 'picker' {
-  if (c.kind === 'scene' || c.kind === 'layer') return { choice: null };
-  if (c.kind === 'off' && c.sceneHasClip) return { choice: undefined };
-  return 'picker';
-}
-
-export interface PartChoice {
-  key: string;
-  /** setBlockPart choice: undefined = follow the block's scene, a scene id, or null = off. */
-  choice: Id | null | undefined;
-  label: string;
-  hint?: string;
-  checked: boolean;
-}
-
-/** The part picker for one part of one block: the scene's own clip, every other scene with a clip for it, or Off. */
-export function partChoices(p: Project, b: ArrangementBlock, trackId: Id): PartChoice[] {
-  const track = p.tracks.find((t) => t.id === trackId);
-  if (!track) return [];
-  const row = sceneRow(p, b.sceneId);
-  const scene = row >= 0 ? p.scenes[row] : null;
-  const has = b.parts !== undefined && Object.prototype.hasOwnProperty.call(b.parts, trackId);
-  const cur = has ? b.parts![trackId] : undefined;
-  const curLayer = typeof cur === 'string' && cur !== b.sceneId && sceneRow(p, cur) >= 0 ? cur : undefined;
-  const out: PartChoice[] = [];
-  const own = scene ? track.clips[row] : null;
-  out.push({
-    key: 'scene',
-    choice: undefined,
-    label: `${scene?.name ?? 'Block scene'}: ${own ? own.name : 'no clip (silent)'}`,
-    hint: 'default',
-    checked: cur === undefined || (typeof cur === 'string' && !curLayer),
-  });
-  p.scenes.forEach((s, r) => {
-    if (s.id === b.sceneId) return;
-    const clip = track.clips[r];
-    if (!clip) return;
-    out.push({ key: s.id, choice: s.id, label: `${s.name}: ${clip.name}`, hint: barsText(clip.bars), checked: curLayer === s.id });
-  });
-  out.push({ key: 'off', choice: null, label: 'Off in this block', checked: cur === null });
+export function notches(r: Pick<SongRegion, 'bars' | 'offset'>, clipBars: number): number[] {
+  const len = Math.max(1, clipBars);
+  const out: number[] = [];
+  for (let at = (len - (r.offset % len)) % len || len; at < r.bars; at += len) out.push(at);
   return out;
 }
 
-export interface LayerPreview {
-  sceneName: string;
-  mode: LayerMode;
-  /** The card's scene is the block's own scene: dropping it does nothing. */
-  same: boolean;
-  /** Parts that would change, with the clip they would play. */
-  changes: Map<Id, string>;
-  /** How many parts 'replace' would change (to say what Shift would do). */
-  replaceCount: number;
+/* ------------------------------------------------------------------ */
+/* Drag badges                                                         */
+/* ------------------------------------------------------------------ */
+
+/** While moving: "Bar 9" (where the first moved region starts), "+ Copy · Bar 9" with the copy key held. */
+export function moveBadge(start: number, copy: boolean): string {
+  return copy ? `+ Copy · Bar ${start + 1}` : `Bar ${start + 1}`;
 }
 
-/**
- * What layering scene `sceneId` into block `b` would change (exactly the
- * parts the layerScene command changes in that mode).
- */
-export function layerPreview(p: Project, b: ArrangementBlock, sceneId: Id, mode: LayerMode = 'fill'): LayerPreview {
-  const row = sceneRow(p, sceneId);
-  const changes = new Map<Id, string>();
-  const sceneName = p.scenes[row]?.name ?? 'scene';
-  const same = sceneId === b.sceneId;
-  if (row < 0 || same) return { sceneName, mode, same, changes, replaceCount: 0 };
-  for (const id of layerChanges(p, b, sceneId, mode)) {
-    const clip = p.tracks.find((t) => t.id === id)?.clips[row];
-    if (clip) changes.set(id, clip.name);
-  }
-  const replaceCount = mode === 'replace' ? changes.size : layerChanges(p, b, sceneId, 'replace').length;
-  return { sceneName, mode, same, changes, replaceCount };
+/** While dragging a right edge: "8 bars · plays 4×". */
+export function lengthBadge(bars: number, clipBars: number): string {
+  return `${barsText(bars)} · plays ${timesShort(bars, clipBars)}`;
 }
 
-/**
- * What dropping a scene card on a block says (the block header and the
- * card under the pointer), and whether the drop would change anything.
- */
-export function layerText(preview: LayerPreview, blockName: string): { title: string; hint: string | null; changes: boolean } {
-  const { sceneName: scene, mode, same, changes, replaceCount } = preview;
-  if (same) return { title: `${blockName} already plays ${scene}`, hint: 'Drop between blocks to add another one', changes: false };
-  if (mode === 'replace') {
-    if (changes.size) return { title: `Replace ${blockName}’s parts with ${scene}’s`, hint: `${partsCount(changes.size)} · release Shift to fill only silent parts`, changes: true };
-    return { title: `${scene} adds nothing new to ${blockName}`, hint: null, changes: false };
-  }
-  if (changes.size) return { title: `Layer ${scene} into ${blockName}`, hint: replaceCount > changes.size ? `Fills ${partsCount(changes.size)} · Shift replaces ${partsCount(replaceCount)}` : `Fills ${partsCount(changes.size)}`, changes: true };
-  if (replaceCount) return { title: `Nothing silent to fill in ${blockName}`, hint: `Hold Shift to replace ${partsCount(replaceCount)} with ${scene}’s`, changes: false };
-  return { title: `${scene} adds nothing new to ${blockName}`, hint: null, changes: false };
-}
-
-function partsCount(n: number): string {
-  return n === 1 ? '1 part' : `${n} parts`;
+/** While dragging a left edge: "starts at bar 5". */
+export function startBadge(start: number): string {
+  return `starts at bar ${start + 1}`;
 }
 
 /* ------------------------------------------------------------------ */
-/* Part cells: what a click does, and what it says it did              */
+/* Sections                                                            */
 /* ------------------------------------------------------------------ */
 
-/** The tooltip of a part cell: what a click on it does. */
-export function cellTip(v: Pick<BlockView, 'name'>, c: CellView, sayWhat = false): string {
-  const t = cellToggle(c);
-  if (t === 'picker') return `Click: choose what ${c.partName} plays in ${v.name}`;
-  // A compact block shows no clip names: the tip says what the part plays first.
-  if (sayWhat && t.choice === null) return `${c.partName} ${cellState(c)}. Click: switch it off in this block`;
-  return t.choice === null ? `Click: switch ${c.partName} off in this block` : `Click: switch ${c.partName} back on in this block`;
+/** "Intro, bars 1 to 8" (for the section's button). */
+export function sectionLabel(s: Pick<SongSection, 'name' | 'start' | 'bars'>): string {
+  return `${s.name}, ${s.bars === 1 ? `bar ${s.start + 1}` : `bars ${s.start + 1} to ${s.start + s.bars}`}`;
 }
 
-/** The toast after a cell click ("Drums off in Groove"). */
-export function cellToast(part: string, block: string, choice: Id | null | undefined, from: string | null): string {
-  if (choice === null) return `${part} off in ${block}`;
-  if (choice === undefined) return `${part} back on in ${block}`;
-  return `${part} plays ${from ?? 'another scene'} in ${block}`;
+/** Bars in words for a range: "Bars 9–16", "Bar 9". */
+export function rangeText(fromBar: number, toBar: number): string {
+  return toBar - fromBar <= 1 ? `Bar ${fromBar + 1}` : `Bars ${fromBar + 1}–${toBar}`;
 }
+
 
 /* ------------------------------------------------------------------ */
-/* Song blocks from a take: what was left out                          */
+/* The loop browser                                                    */
 /* ------------------------------------------------------------------ */
 
-/** "5 beats", "1 beat", "2.5 bars": how long a stretch of a take was. */
-export function stretchText(ticks: number): string {
-  const beats = Math.max(1, Math.round(ticks / TICKS_PER_BEAT));
-  if (beats < 8) return beats === 1 ? '1 beat' : `${beats} beats`;
-  const bars = Math.round((ticks / TICKS_PER_BAR) * 10) / 10;
-  return `${bars} bars`;
+export interface SceneCard {
+  id: Id;
+  row: number;
+  name: string;
+  bars: number;
+  /** The parts with a clip in this scene: their colours (dots on the card). */
+  parts: { trackId: Id; hue: number; name: string }[];
 }
 
-/**
- * The scene launches of a take that make no song block (pure): each stretch
- * between one scene launch and the next (or the take's end) whose scene does
- * not come next among the blocks `made` (in order) was left out (shorter
- * than half a pass of its scene). Scenes deleted since are not counted here
- * (they are named on their own).
- */
-export function leftOutLaunches(p: Project, takeId: Id, made: readonly { sceneId: Id }[]): { name: string; ticks: number }[] {
-  const perf = p.performances.find((x) => x.id === takeId);
-  if (!perf) return [];
-  const launches = perf.events
-    .filter((e): e is Extract<typeof e, { type: 'scene' }> => e.type === 'scene' && e.atTick >= perf.startTick && e.atTick < perf.endTick)
-    .sort((a, b) => a.atTick - b.atTick);
-  const out: { name: string; ticks: number }[] = [];
-  let j = 0;
-  let last: Id | null = null;
-  launches.forEach((e, i) => {
-    const to = i + 1 < launches.length ? launches[i + 1].atTick : perf.endTick;
-    const scene = perf.snapshot.scenes[e.row];
-    const now = scene ? p.scenes.find((s) => s.id === scene.id) : undefined;
-    if (!now || to <= e.atTick) return;
-    // The same scene again right after itself: one block with the stretch before.
-    if (now.id === last) return;
-    const k = made.findIndex((b, n) => n >= j && b.sceneId === now.id);
-    if (k >= 0) {
-      j = k + 1;
-      last = now.id;
-    } else out.push({ name: now.name, ticks: to - e.atTick });
+/** One card per scene row that has at least one clip ("Groove · 4 bars · 4 parts"). */
+export function sceneCards(p: Project): SceneCard[] {
+  const out: SceneCard[] = [];
+  p.scenes.forEach((s, row) => {
+    const parts = p.tracks.flatMap((t, i) => (t.clips[row] ? [{ trackId: t.id, hue: partHue(i), name: t.name }] : []));
+    if (parts.length) out.push({ id: s.id, row, name: s.name || `Scene ${row + 1}`, bars: rowBars(p, row), parts });
   });
   return out;
 }
+
+export function sceneCardText(c: Pick<SceneCard, 'name' | 'bars' | 'parts'>): string {
+  return `${c.name} · ${barsText(c.bars)} · ${c.parts.length === 1 ? '1 part' : `${c.parts.length} parts`}`;
+}
+
+export interface LoopChip {
+  trackId: Id;
+  clipId: Id;
+  slot: number;
+  name: string;
+  bars: number;
+}
+
+/** A part's clips, in scene order (for its chips, the picker and "Use another loop"). */
+export function partLoops(p: Pick<Project, 'tracks'>, trackId: Id): LoopChip[] {
+  const t = p.tracks.find((x) => x.id === trackId);
+  if (!t) return [];
+  return t.clips.flatMap((c, slot) => (c ? [{ trackId, clipId: c.id, slot, name: c.name || `Loop ${slot + 1}`, bars: c.bars }] : []));
+}
+

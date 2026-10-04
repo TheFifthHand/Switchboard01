@@ -1,13 +1,13 @@
 /**
  * Performances: recorded takes as a list (newest first) with Replay, Export,
- * Make song blocks, Delete and inline rename, and each take's editable events.
+ * Put in the song, Delete and inline rename, and each take's editable events.
  *
  * - The panel folds to one line, with takes too ("2 takes ▸", the newest take
  *   and its Replay), so the song keeps the room; the choice is remembered.
  *   Until it is chosen, the panel is open only where the window has height to
  *   spare (the Arrange view decides).
  * - A take's events open in a tall side drawer beside the take list, with a
- *   sticky header (Replay, Export, Make song blocks, close); the song folds to
+ *   sticky header (Replay, Export, Put in the song, close); the song folds to
  *   its header row meanwhile. The drawer and the list keep the "Try this"
  *   chip off them (data-hint-avoid).
  * - Replay uses the take's snapshot and events (session.replayPerformance);
@@ -18,8 +18,9 @@
  *   note's press and release go together), change the value of a knob,
  *   macro, tempo, swing or volume change, start the take later or end it
  *   earlier (at a row, or at a typed position).
- * - Make song blocks turns the take's scene and pad launches into blocks after
- *   the song (one Undo); the toast says what was rounded and left out.
+ * - Put in the song turns the take's scene and pad launches into loops after
+ *   the song's end, each on its part's row for as long as it played (one
+ *   Undo); the song selects them.
  * - Long takes render the first rows and grow on "Show more".
  */
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
@@ -582,43 +583,41 @@ function EventList(props: { perf: Performance; replaying: boolean; listId: strin
 /* Rows                                                                */
 /* ------------------------------------------------------------------ */
 
-/** How many song blocks Make song blocks would add from a take (0: it makes none). */
-function useTakeBlockCount(perf: Performance): number {
-  return useProject((p) => (p.performances.some((x) => x.id === perf.id) ? (cmd.takeToBlocks(p, perf.id)?.blocks.length ?? 0) : 0));
+/** The take launches clips or scenes (or starts with some playing): it can become loops in the song. */
+function takeHasLaunches(perf: Performance): boolean {
+  return perf.snapshot.launcher.some((l) => l.playing !== null) || perf.events.some((e) => e.type === 'scene' || (e.type === 'launch' && e.slot !== null));
 }
 
-/** Make song blocks from a take; the lane selects them (it is told by an event, as it may be folded away). */
-function makeSongBlocks(perf: Performance): boolean {
-  const r = act.songFromTake(perf.id);
-  if (!r) return false;
-  window.dispatchEvent(new CustomEvent('omni:song-blocks', { detail: { ids: r.ids } }));
-  return true;
+/** Put a take's launches in the song (after its end); the song selects the new loops. */
+function putInSong(perf: Performance): boolean {
+  const r = act.takeToSong(perf.id, perf.name);
+  return !!r?.changed;
 }
 
-function MakeBlocksButton(props: { perf: Performance; compact?: boolean; onDone?(): void }) {
+function SongFromTakeButton(props: { perf: Performance; compact?: boolean; onDone?(): void }) {
   const { perf, compact, onDone } = props;
-  const n = useTakeBlockCount(perf);
+  const has = takeHasLaunches(perf);
   const locked = useRuntime((s) => s.recording === 'performance');
-  const why = locked ? 'The song is locked while a take records.' : n === 0 ? 'Nothing in this take plays a scene long enough to fill a block.' : null;
+  const why = locked ? 'The song is locked while a take records.' : !has ? 'This take launches no loops or scenes to put in the song.' : null;
   return (
     <Button
       size="sm"
       variant="secondary"
       icon="plus"
       aria-disabled={why !== null || undefined}
-      aria-label={`Make song blocks from ${perf.name}`}
-      data-make-blocks=""
+      aria-label={`Put ${perf.name} in the song`}
+      data-take-to-song=""
       onClick={() => {
         if (why) {
           notify(why, 'warn');
           return;
         }
-        if (makeSongBlocks(perf)) onDone?.();
+        if (putInSong(perf)) onDone?.();
       }}
-      tip={why ?? `Adds ${n === 1 ? '1 block' : `${n} blocks`} after the song: one for each stretch between the take’s scene and pad launches.`}
-      detail="Rounded to whole passes of each scene. Played notes and knob moves stay in the take: blocks hold only scenes and parts."
+      tip={why ?? 'Adds what this take played to the end of the song: each loop you launched, on its part’s row, for as long as it played.'}
+      detail="Rounded to whole bars. Played notes and knob moves stay in the take."
     >
-      {compact ? 'Song blocks' : 'Make song blocks'}
+      {compact ? 'To song' : 'Put in the song'}
     </Button>
   );
 }
@@ -699,7 +698,7 @@ const TakeRow = memo(function TakeRow(props: { perf: Performance; open: boolean;
         <div className={styles.actions}>
           {(!compact || replaying) && <ReplayButton perf={perf} replaying={replaying} />}
           {!compact && <ExportButton perf={perf} />}
-          {!compact && <MakeBlocksButton perf={perf} />}
+          {!compact && <SongFromTakeButton perf={perf} />}
           <Tooltip name="Delete take" tip="Remove this performance from the project. Undo brings it back.">
             <button type="button" className={styles.remove} aria-label={`Delete ${perf.name}`} onClick={del}>
               <Icon name="trash" size={14} />
@@ -717,7 +716,7 @@ const TakeRow = memo(function TakeRow(props: { perf: Performance; open: boolean;
 
 /**
  * A take's events in a tall side drawer: its header stays at the top
- * (Replay, Export, Make song blocks, close) while the events scroll under it.
+ * (Replay, Export, Put in the song, close) while the events scroll under it.
  */
 function TakeDrawer(props: { perf: Performance; replaying: boolean; onClose(): void }) {
   const { perf, replaying, onClose } = props;
@@ -761,7 +760,7 @@ function TakeDrawer(props: { perf: Performance; replaying: boolean; onClose(): v
         <div className={styles.actions}>
           <ReplayButton perf={perf} replaying={replaying} />
           <ExportButton perf={perf} />
-          <MakeBlocksButton perf={perf} onDone={onClose} />
+          <SongFromTakeButton perf={perf} onDone={onClose} />
           <Tooltip name="Close" tip="Close the events and show the song again (Esc).">
             <button ref={closeRef} type="button" className={styles.remove} aria-label={`Close the events of ${perf.name} and show the song`} onClick={onClose}>
               <Icon name="close" size={14} />
@@ -892,7 +891,7 @@ export function PerformancesPanel(props: PerformancesPanelProps = {}) {
               <div className={styles.emptyText}>
                 <strong>No performances yet.</strong>
                 <span>
-                  Press <b>Performance</b> in the transport’s Record group, play pads, keys and knobs, then press it again to keep the take. It shows up here to replay, edit, export or turn into song blocks.
+                  Press <b>Performance</b> in the transport’s Record group, play pads, keys and knobs, then press it again to keep the take. It shows up here to replay, edit, export or put in the song.
                 </span>
               </div>
               <Button size="sm" icon="chevronRight" onClick={() => setView('play')} tip="Go to the pads and keyboard to play something to record.">

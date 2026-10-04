@@ -1,7 +1,9 @@
 /**
  * The "Try this" steps, in two tracks: the basics (one next action at a
- * time, in plain words) and the song, which becomes current when Arrange
- * first opens. Each step keeps its words and the test that it was done
+ * time, in plain words) and the song, which becomes current when the Song
+ * view first opens. The song steps teach the GarageBand way: drag a scene or
+ * a loop in, stretch a loop by its right edge, move one, click the ruler,
+ * press Play, export. Each step keeps its words and the test that it was done
  * together here (CLAUDE.md: when a hinted control changes, update its text
  * and its detection together):
  *
@@ -14,7 +16,8 @@
  *
  * A step that needs another view offers a button that goes there.
  */
-import type { ArrangementBlock, Project, Track } from '../../../project/types';
+import { regionEnd } from '../../../project/arrangement';
+import type { Project, SongRegion, Track } from '../../../project/types';
 import type { HistoryInfo } from '../../../state/projectStore';
 import type { PadMode, View } from '../../../state/uiStore';
 import type { RuntimeState } from '../../runtime';
@@ -36,8 +39,8 @@ export interface HintContext {
   exportAt?: 'strip' | 'menu';
   /** The pads play (live), so Play is Pause for now. Absent: no. */
   padsPlaying?: boolean;
-  /** The song has blocks (an empty song has nothing to play, lengthen or switch off). Absent: yes. */
-  hasBlocks?: boolean;
+  /** The song has loops (an empty song has nothing to play, stretch or move). Absent: yes. */
+  hasRegions?: boolean;
 }
 
 export interface HintGo {
@@ -86,7 +89,7 @@ export interface HintStep {
 }
 
 const PADS: HintGo = { label: 'Show the pads', view: 'play', padMode: 'loops' };
-const ARRANGE: HintGo = { label: 'Open Arrange', view: 'arrange' };
+const SONG: HintGo = { label: 'Open Song', view: 'arrange' };
 const onPads = (c: HintContext) => c.view === 'play' && c.padMode === 'loops';
 
 /** The part a step points at: the first part with that role, else the first of that instrument kind. */
@@ -143,26 +146,26 @@ function changedTracks(c: HintChange): { now: Track; was: Track }[] {
   return out;
 }
 
-/** Song blocks changed in place: the same blocks (by id) before and after, so a split, a join or a new block is something else. */
-function changedBlocks(c: HintChange): { now: ArrangementBlock; was: ArrangementBlock }[] {
-  if (c.source !== 'project') return [];
-  const now = c.project.arrangement.blocks;
-  const before = c.prevProject.arrangement.blocks;
-  if (now === before || now.length !== before.length) return [];
-  const out: { now: ArrangementBlock; was: ArrangementBlock }[] = [];
-  for (const b of now) {
-    const was = before.find((x) => x.id === b.id);
-    if (!was) return [];
-    if (was !== b) out.push({ now: b, was });
-  }
-  return out;
+/** How many loops the song has and how many bars they fill (all parts together). */
+function songTotals(p: Project): { count: number; bars: number } {
+  let bars = 0;
+  for (const r of p.arrangement.regions) bars += r.bars;
+  return { count: p.arrangement.regions.length, bars };
 }
 
-function sameParts(a: ArrangementBlock['parts'], b: ArrangementBlock['parts']): boolean {
-  const pa = a ?? {};
-  const pb = b ?? {};
-  const ka = Object.keys(pa);
-  return ka.length === Object.keys(pb).length && ka.every((k) => k in pb && pa[k] === pb[k]);
+/** Song loops changed in place: the same loop (by id) before and after, on the same part. */
+function changedRegions(c: HintChange): { now: SongRegion; was: SongRegion }[] {
+  if (c.source !== 'project') return [];
+  const now = c.project.arrangement.regions;
+  const before = c.prevProject.arrangement.regions;
+  if (now === before) return [];
+  const was = new Map(before.map((r) => [r.id, r]));
+  const out: { now: SongRegion; was: SongRegion }[] = [];
+  for (const r of now) {
+    const b = was.get(r.id);
+    if (b && b !== r && b.trackId === r.trackId) out.push({ now: r, was: b });
+  }
+  return out;
 }
 
 export const HINT_STEPS: readonly HintStep[] = [
@@ -255,50 +258,83 @@ export const HINT_STEPS: readonly HintStep[] = [
     id: 'record',
     track: 'basics',
     text: (c) => (c.recording ? 'Recording. Play a little, then press Performance again to stop.' : 'Press Performance to record what you play.'),
-    more: (c) => (c.recording ? null : 'Your take appears in Arrange, ready to export.'),
+    more: (c) => (c.recording ? null : 'Your take appears in Song, ready to export.'),
     here: () => true,
     // A performance take recorded and stopped (recording notes does not count).
     detect: (c) => c.source === 'runtime' && c.prevRuntime.recording === 'performance' && c.runtime.recording !== 'performance',
   },
   {
+    id: 'song-add',
+    track: 'song',
+    available: (c) => c.hasClips !== false,
+    text: () => 'Drag a scene or a loop into the song.',
+    more: () => 'From the Loops panel on the right, onto a part’s row.',
+    here: (c) => c.view === 'arrange',
+    go: SONG,
+    // Loops were added: more of them, filling more bars (a split makes more loops but no more bars).
+    detect: (c) => {
+      if (c.source !== 'project' || c.project.arrangement.regions === c.prevProject.arrangement.regions) return false;
+      const now = songTotals(c.project);
+      const was = songTotals(c.prevProject);
+      return now.count > was.count && now.bars > was.bars;
+    },
+  },
+  {
+    id: 'song-stretch',
+    track: 'song',
+    available: (c) => c.hasRegions !== false,
+    text: () => 'Drag a loop’s right edge to make it play longer.',
+    more: () => 'It snaps to the bars, and the loop repeats to fill it.',
+    here: (c) => c.view === 'arrange',
+    go: SONG,
+    // A loop got longer at its end (it starts where it did).
+    detect: (c) => changedRegions(c).some(({ now, was }) => now.start === was.start && regionEnd(now) > regionEnd(was)),
+  },
+  {
+    id: 'song-move',
+    track: 'song',
+    available: (c) => c.hasRegions !== false,
+    text: () => 'Drag a loop to another bar.',
+    more: () => 'Hold Alt (or Ctrl) as you let go to drop a copy.',
+    here: (c) => c.view === 'arrange',
+    go: SONG,
+    // A loop moved along its row: the same length, another start.
+    detect: (c) => changedRegions(c).some(({ now, was }) => now.bars === was.bars && now.start !== was.start),
+  },
+  {
+    id: 'song-ruler',
+    track: 'song',
+    available: (c) => c.hasRegions !== false,
+    text: () => 'Click a bar number on the ruler.',
+    more: () => 'The playhead moves there, and Play starts from it.',
+    here: (c) => c.view === 'arrange',
+    go: SONG,
+    // The song cursor moved by itself: a click on the ruler (stopped), or a jump there while the song plays. Play and
+    // Stop also set the cursor (where playback starts, and back to it), so a change as playback starts or ends is not it.
+    detect: (c) =>
+      c.source === 'runtime' &&
+      c.runtime.songCursor !== c.prevRuntime.songCursor &&
+      c.runtime.playing === c.prevRuntime.playing &&
+      c.runtime.paused === c.prevRuntime.paused &&
+      c.runtime.mode === c.prevRuntime.mode,
+  },
+  {
     id: 'song-play',
     track: 'song',
-    available: (c) => c.hasBlocks !== false,
-    // While the pads play, Play is Pause: the song starts from a block's ▶ (or after Stop).
-    text: (c) => (c.padsPlaying ? 'Press ▶ on a block to hear your song from there.' : 'Press Play to hear your song.'),
-    more: (c) => (c.padsPlaying ? 'Or Stop, then Play (or Space) plays the blocks in order.' : 'In Arrange, Play (or Space) plays the blocks in order.'),
+    available: (c) => c.hasRegions !== false,
+    // While the pads play, Play is Pause: the song starts from "Play the song" (or after a Pause).
+    text: (c) => (c.padsPlaying ? 'Press Play the song, at the top, to hear your song.' : 'Press Play to hear your song.'),
+    more: (c) => (c.padsPlaying ? 'Your pads stop, and the song plays from the playhead.' : 'In Song, Play (or Space) plays from the playhead.'),
     here: (c) => c.view === 'arrange',
-    go: ARRANGE,
-    // The song plays (runtime mode 'song') while the Arrange view is open.
+    go: SONG,
+    // The song plays (runtime mode 'song') while the Song view is open.
     detect: (c) => (c.source === 'runtime' || c.source === 'view') && c.view === 'arrange' && c.runtime.playing && c.runtime.mode === 'song',
-  },
-  {
-    id: 'song-repeats',
-    track: 'song',
-    available: (c) => c.hasBlocks !== false,
-    text: () => 'Drag a block’s right edge to play it more times.',
-    more: () => 'With the keyboard, + and − do the same.',
-    here: (c) => c.view === 'arrange',
-    go: ARRANGE,
-    // A block's repeats changed (the same blocks before and after: a split or a join is something else).
-    detect: (c) => changedBlocks(c).some(({ now, was }) => now.repeats !== was.repeats),
-  },
-  {
-    id: 'song-part',
-    track: 'song',
-    available: (c) => c.hasBlocks !== false,
-    text: () => 'Click a part in a block to switch it off there.',
-    more: () => 'Click it again to bring it back.',
-    here: (c) => c.view === 'arrange',
-    go: ARRANGE,
-    // A block's parts changed (a part switched off or on, or another scene's clip layered in).
-    detect: (c) => changedBlocks(c).some(({ now, was }) => !sameParts(now.parts, was.parts)),
   },
   {
     id: 'song-export',
     track: 'song',
     text: (c) => (c.exportAt === 'menu' ? 'Export your song: ⋯ at the top right, then Export WAV….' : 'Press Export, at the top right, to save your song as a WAV file.'),
-    more: () => 'In Arrange it starts from the song.',
+    more: () => 'In Song it starts from the song.',
     here: () => true,
     // An export finished: a WAV file was made.
     detect: (c) => c.source === 'export',
@@ -315,7 +351,7 @@ export function hintsFinishedText(exportAt: 'strip' | 'menu', song = false): str
 export const HINTS_FINISHED_TEXT = hintsFinishedText('strip');
 
 /** View names, for "Next, in Play: …". */
-export const VIEW_NAMES: Readonly<Record<View, string>> = { play: 'Play', shape: 'Shape', arrange: 'Arrange', mix: 'Mix' };
+export const VIEW_NAMES: Readonly<Record<View, string>> = { play: 'Play', shape: 'Shape', arrange: 'Song', mix: 'Mix' };
 /** Pad tab names (Play's Loops · Drums · Notes · Steps), for "Next, in Loops: …". */
 export const PAD_MODE_NAMES: Readonly<Record<PadMode, string>> = { loops: 'Loops', drums: 'Drums', notes: 'Notes', steps: 'Steps' };
 
@@ -338,7 +374,7 @@ export interface CurrentHint {
  * The first step that is neither done nor impossible in this project, or
  * null when all are done. Once the song track was offered (`song`), its
  * steps come first and the basics follow; but where the song's step cannot
- * be done in the view on screen (it is about Arrange), the first basics step
+ * be done in the view on screen (it is about the Song view), the first basics step
  * that can be done there comes first, so the song track never crowds out
  * the view on screen.
  */

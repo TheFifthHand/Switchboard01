@@ -20,8 +20,9 @@ import type { KeyValueStorage } from '../../src/state/uiStore';
 
 function runtime(): RuntimeState {
   return {
-    audio: 'running', audioMessage: null, playing: true, paused: false, mode: 'live', replayId: null, songBlock: null, songBlockId: null, songLoop: null, songLooping: false,
+    audio: 'running', audioMessage: null, playing: true, paused: false, mode: 'live', replayId: null, songCursor: 0, songLoop: null, songLooping: false,
     tracks: {}, recording: 'off', recordTarget: null, countingIn: false, stalled: null, muteAll: false, preview: false, held: {}, notice: null,
+    recordStartsAtTick: null, recordTargetAudible: true, starterReplaced: null,
   };
 }
 

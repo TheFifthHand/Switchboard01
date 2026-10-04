@@ -2,8 +2,9 @@
  * "Try this" hints: for the first project, a small chip suggests one next
  * action at a time (tap a pad, Mute, drag a clip, Tone, Change instrument,
  * mastering, record) and moves on when the person does it, detected from the
- * real state (steps.ts, tracker.ts). Once Arrange opens, the song track comes
- * first (play the song, a block's length, a part in a block, export).
+ * real state (steps.ts, tracker.ts). Once the Song view opens, the song track
+ * comes first (drag a loop in, stretch it, move it, click the ruler, play the
+ * song, export).
  *
  * - Never blocks anything: it is not a dialog, takes no focus, and sits in a
  *   free spot of the workspace (placement.ts), never over the transport, the
@@ -41,8 +42,8 @@ import styles from './Hints.module.css';
  * wrapping in its column when narrower), compact (without the second
  * sentence), stacked (buttons beside the label, the suggestion below), and
  * last a narrow column (label, suggestion and buttons one under another) for
- * a crowded view whose only free room is a narrow strip (Arrange at
- * 1366 x 768: beside the song's last block).
+ * a crowded view whose only free room is a narrow strip (Song at
+ * 1366 x 768: beside the song's last loop).
  */
 interface Layout {
   maxW: number;
@@ -53,7 +54,7 @@ interface Layout {
   minimal?: boolean;
   /**
    * A step done in another view, in the narrowest one-line spot: "Next, in
-   * Arrange:" and its button, the step's words for screen readers only (they
+   * Song:" and its button, the step's words for screen readers only (they
    * show once that view is open).
    */
   terse?: boolean;
@@ -112,7 +113,7 @@ function exportOnStrip(): boolean {
 /** A modal dialog is open: the chip is behind it, so it neither places nor checks. */
 const modalOpen = () => document.body.hasAttribute('data-modal-open') || !!document.querySelector('[aria-modal="true"]');
 
-/** The open view as a store of its own (the song steps are about Arrange). */
+/** The open view as a store of its own (the song steps are about the Song view). */
 const viewStore: ReadableStore<View> = {
   getState: () => uiStore.getState().view,
   subscribe: (l) =>
@@ -159,7 +160,7 @@ export function Hints({ active, shownView }: HintsProps) {
     return watchHints({ project: session.store, history: session.store.info, runtime: runtimeStore, view: viewStore, exports: session.exportsFinished }, (id) => markHintDone(id));
   }, [running]);
 
-  // Arrange opened while the hints run: the song track becomes current (once; again after "Show hints again").
+  // The Song view opened while the hints run: the song track becomes current (once; again after "Show hints again").
   useEffect(() => {
     if (running && view === 'arrange' && !hints.song) startSongHints();
   }, [running, view, hints.song]);
@@ -177,7 +178,7 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
   const parts = useProject(
     (p) => {
       const drums = drumsPart(p);
-      return { bassName: bassPart(p)?.name ?? null, drumsName: drums?.name ?? null, drumsMuted: drums?.mute ?? false, hasClips: projectHasClips(p), bassHasClips: bassHasClips(p), hasBlocks: p.arrangement.blocks.length > 0 };
+      return { bassName: bassPart(p)?.name ?? null, drumsName: drums?.name ?? null, drumsMuted: drums?.mute ?? false, hasClips: projectHasClips(p), bassHasClips: bassHasClips(p), hasRegions: p.arrangement.regions.length > 0 };
     },
     shallowEqual,
   );

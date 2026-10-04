@@ -9,10 +9,14 @@
  *   each hit a short tick.
  * - Louder notes are darker. Colour is `currentColor`, so the pad decides it.
  *
- * Memoised: it draws again only when `notes` (by identity), `lengthTicks` or `kind` change. It
- * is decorative (aria-hidden); the pad's name and length say what it is.
+ * - Repeated (song regions): with `span`, the picture covers `span` ticks of the clip played
+ *   again and again, beginning `offset` ticks into it. The clip is drawn once, as an SVG
+ *   pattern the browser tiles, so a long region costs no more than a short one.
+ *
+ * Memoised: it draws again only when `notes` (by identity), `lengthTicks`, `kind`, `span` or
+ * `offset` change. It is decorative (aria-hidden); the pad's name and length say what it is.
  */
-import { memo, useMemo } from 'react';
+import { memo, useId, useMemo } from 'react';
 import styles from './ClipSketch.module.css';
 
 export interface SketchNote {
@@ -32,6 +36,10 @@ export interface ClipSketchProps {
   lengthTicks: number;
   kind: 'notes' | 'drums';
   className?: string;
+  /** Draw the clip repeated over this many ticks (a song region), instead of once. */
+  span?: number;
+  /** With `span`: ticks into the clip where the picture begins (0 ≤ offset < lengthTicks). */
+  offset?: number;
 }
 
 /** Drawing space: x in ticks, y in rows of ROW units. */
@@ -82,9 +90,38 @@ function layout(notes: readonly SketchNote[], lengthTicks: number, kind: 'notes'
   return { marks, rows };
 }
 
-function ClipSketchView({ notes, lengthTicks, kind, className }: ClipSketchProps) {
+function ClipSketchView({ notes, lengthTicks, kind, className, span, offset = 0 }: ClipSketchProps) {
   const { marks, rows } = useMemo(() => layout(notes, lengthTicks, kind), [notes, lengthTicks, kind]);
   const len = lengthTicks > 0 ? lengthTicks : 1;
+  // A plain id (React's has characters a url(#…) reference would need escaped).
+  const patternId = `sketch-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  if (span !== undefined) {
+    const width = span > 0 ? span : len;
+    return (
+      <svg
+        className={[styles.sketch, className].filter(Boolean).join(' ')}
+        viewBox={`0 0 ${width} ${rows * ROW}`}
+        preserveAspectRatio="none"
+        aria-hidden="true"
+        focusable="false"
+        data-kind={kind}
+        data-notes={marks.length}
+      >
+        {marks.length > 0 && (
+          <>
+            <defs>
+              <pattern id={patternId} patternUnits="userSpaceOnUse" x={-(((offset % len) + len) % len)} y={0} width={len} height={rows * ROW}>
+                {marks.map((m, i) => (
+                  <rect key={i} x={m.x} y={m.y + GAP / 2} width={m.w} height={ROW - GAP} fill="currentColor" fillOpacity={m.o} />
+                ))}
+              </pattern>
+            </defs>
+            <rect x={0} y={0} width={width} height={rows * ROW} fill={`url(#${patternId})`} />
+          </>
+        )}
+      </svg>
+    );
+  }
   return (
     <svg
       className={[styles.sketch, className].filter(Boolean).join(' ')}

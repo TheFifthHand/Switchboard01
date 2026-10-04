@@ -226,21 +226,22 @@ describe('menus in the app', () => {
     });
   }
 
-  it("the song lane's block menu opens beside its '⋯' at 1366 x 768; a second click closes it; a double-click chooses nothing", async () => {
+  it("a song loop's menu opens beside its '⋯' at 1366 x 768; a second click closes it; a double-click chooses nothing", async () => {
     await openApp(1366, 768);
     act(() => setView('arrange'));
     await act(async () => {
       await wait(200);
     });
-    const block = document.querySelector<HTMLElement>('[data-block-id]')!;
-    const dots = block.querySelector<HTMLElement>('button[aria-haspopup="menu"]')!;
+    // A loop wide enough to show its ⋯ while the pointer is over it.
+    const loop = [...document.querySelectorAll<HTMLElement>('[data-region-id]')].find((el) => el.getBoundingClientRect().width >= 80)!;
     const before = JSON.stringify(session.store.getState().arrangement);
     const notice = runtimeStore.getState().notice;
-    // A narrow block shows its ▶ and ⋯ while the pointer is over it.
-    await real(() => userEvent.hover(block));
+    await real(() => userEvent.hover(loop));
+    const dots = document.querySelector<HTMLElement>('[data-hover-more]')!;
+    expect(dots, 'the ⋯ shows on hover').not.toBeNull();
     await real(() => userEvent.click(dots));
     const m = menu();
-    expect(m, 'the block menu').not.toBeNull();
+    expect(m, 'the loop menu').not.toBeNull();
     const r = rect(m!);
     expect(overlaps(r, rect(dots)), 'the menu covers its ⋯').toBe(false);
     expect(r.top).toBeGreaterThanOrEqual(0);
@@ -251,7 +252,9 @@ describe('menus in the app', () => {
     await real(() => userEvent.click(dots));
     expect(menu(), 'a second click closes it').toBeNull();
     // A double-click on the ⋯: open, then closed again; nothing in the song changed.
-    await real(() => userEvent.dblClick(dots));
+    await real(() => userEvent.hover(loop));
+    const dots2 = document.querySelector<HTMLElement>('[data-hover-more]')!;
+    await real(() => userEvent.dblClick(dots2));
     await wait(100);
     expect(JSON.stringify(session.store.getState().arrangement)).toBe(before);
     expect(runtimeStore.getState().notice, 'no action ran').toBe(notice);
