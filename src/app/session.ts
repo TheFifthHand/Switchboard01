@@ -1134,15 +1134,17 @@ export class Session {
   /**
    * Space / the transport's Play: Pause while playing; otherwise continue a
    * pause (whatever was playing: the pads, the song or a replay), else start.
-   * `song` (the Song view): a start plays the song (see playSong); with an
-   * empty song, the pads.
+   * `song` (the Song view) plays the song: a paused song (or replay)
+   * continues; stopped, or with the pads paused, the song plays from its
+   * cursor (see playSong; the paused pads stop). With an empty song, the pads.
    */
   async togglePlay(opts: { song?: boolean } = {}): Promise<void> {
     if (this.playing) {
       this.pause();
       return;
     }
-    if (opts.song && !this.transport?.paused && songBars(this.store.getState()) > 0) await this.playSong();
+    const held = this.transport?.paused ? (this.sequencer?.mode.kind ?? 'live') : null;
+    if (opts.song && songKeyStartsSong(songBars(this.store.getState()), held)) await this.playSong();
     else await this.play();
   }
 
@@ -2672,6 +2674,17 @@ export function songPlayFrom(length: number, cursor: number, loop: SongLoop | nu
   if (asked === null && loop && !inSongLoop(loop, from)) from = loop.fromBar;
   if (from >= length && !(loop && from < loop.toBar)) from = 0;
   return from;
+}
+
+/**
+ * Whether Play (or Space) in the Song view, with nothing playing, starts the
+ * song from its cursor: yes when the song has loops (`songLength` bars) and
+ * nothing holds at a pause, or only the pads do (they stop). A paused song or
+ * replay continues instead (`paused`: what holds at the pause, else null);
+ * with an empty song the pads play.
+ */
+export function songKeyStartsSong(songLength: number, paused: PlayMode | null): boolean {
+  return songLength > 0 && (paused === null || paused === 'live');
 }
 
 /** A bar of the song timeline: whole, from 0, inside the song's range; null for no number. */

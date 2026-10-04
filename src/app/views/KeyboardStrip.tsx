@@ -477,7 +477,15 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
         ? `Musical Assist is on: the keyboard shows only the notes of ${keyName}, each key its own note. ${trackName} plays its recording at the pitch of the key you press (Assist never re-pitches a recording). Turn Assist off for the full piano.`
         : `Musical Assist is on: the keyboard shows only the notes of ${keyName}, so every key plays a different note in the key. Turn Assist off for the full piano.`;
   // One short line that fits the column whole (the tip says more).
-  const assistNote = isDrums ? `${trackName}: keys play the kit sounds.` : scaleBoard ? `Only ${keyName} notes are shown.` : 'All 12 notes, like a piano.';
+  const assistNote = isDrums ? 'Each key plays one kit sound.' : scaleBoard ? `Only ${keyName} notes are shown.` : 'All 12 notes, like a piano.';
+  // The part the keys play (the selected part), above the octave keys in every view.
+  const partLine = (
+    <Tooltip tip={`The keyboard plays ${trackName}, the selected part.`} detail="To play another part, select it: its column in Play, its row in Song or its channel in Mix.">
+      <p className={styles.part} data-keys-part="">
+        Keys play <strong>{trackName}</strong>
+      </p>
+    </Tooltip>
+  );
   // The lowest key, spelled by the key; the octave reset puts it back on the root at or below C4.
   const lowest = notes ? noteName(notes[0], { root, scale }) : noteName(baseNote);
   const resetTo = scaleBoard ? noteName(rootAtOrBelow(root, 60), { root, scale }) : 'C4';
@@ -522,6 +530,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
       {foldKey}
       {isDrums ? (
         <div className={styles.octave} data-kit="">
+          {partLine}
           <div className={styles.octLabel}>
             <span className={`${styles.octValue} mono`}>KIT</span>
             <span className={styles.octCaption}>16 sounds</span>
@@ -529,6 +538,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
         </div>
       ) : (
         <div className={styles.octave}>
+          {partLine}
           <IconButton icon="octaveDown" label="Octave down (Z)" size="sm" onClick={() => shiftKeyboardOctave(-1)} disabled={octave <= OCTAVE_RANGE.min} />
           <div className={styles.octLabel}>
             <span className={`${styles.octValue} mono`}>{lowest}</span>

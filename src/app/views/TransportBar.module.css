@@ -111,11 +111,14 @@
   gap: 6px;
 }
 
-/* Play and Pause keep one width, so the strip never shifts when it flips. */
+/*
+ * Play, Pause and Continue keep one width (the widest, "Continue"), so the
+ * strip never shifts when it flips: Stop stays under the pointer after a pause.
+ */
 .play[data-size] {
   --h: 40px;
-  --px: 12px;
-  min-width: 84px;
+  --px: 9px;
+  min-width: 108px;
   font-size: var(--fs-lg);
 }
 /* In Arrange, Play plays the song: "song" under "Play" says so, in the key's own width. */
