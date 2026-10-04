@@ -104,7 +104,8 @@ describe('zoom', () => {
 
 describe('ruler', () => {
   it('numbers bars at a readable spacing, every bar line where they are far enough apart', () => {
-    expect(labelStep(40)).toBe(1);
+    expect(labelStep(48)).toBe(1);
+    expect(labelStep(40)).toBe(2);
     expect(labelStep(16)).toBe(4);
     expect(labelStep(4)).toBe(16);
     expect(gridStep(4)).toBe(2);

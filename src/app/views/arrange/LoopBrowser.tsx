@@ -26,7 +26,7 @@ import { shallowEqual } from '../../../state/store';
 import { session, useProject } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import type { Carry } from './laneController';
-import { addLoop, addScene, fillFromScenes } from './songActions';
+import { addLoop, addScene } from './songActions';
 import { barsText, partHue, partLoops, sceneCardText, sceneCards, type SceneCard } from './songModel';
 import styles from './SongView.module.css';
 
@@ -173,12 +173,10 @@ export interface LoopBrowserProps {
   onCarry(e: ReactPointerEvent<HTMLElement>, item: Carry): void;
   /** Where Enter adds a card or chip: the playhead / song start point. */
   playheadBar(): number;
-  /** The song has no loops yet (offers Make a song from my scenes). */
-  empty: boolean;
   onClose(): void;
 }
 
-export const LoopBrowser = memo(function LoopBrowser({ onCarry, playheadBar, empty, onClose }: LoopBrowserProps) {
+export const LoopBrowser = memo(function LoopBrowser({ onCarry, playheadBar, onClose }: LoopBrowserProps) {
   const cards = useProject(sceneCards, sameCards);
   const parts = useProject(selectParts, sameParts);
   const a = useAudition();
@@ -205,12 +203,6 @@ export const LoopBrowser = memo(function LoopBrowser({ onCarry, playheadBar, emp
         </Tooltip>
       </div>
       <div className={styles.browserBody}>
-        {empty && cards.length > 0 && (
-          <button type="button" className={styles.makeSong} onClick={() => fillFromScenes()} data-testid="make-song">
-            <Icon name="sparkle" size={14} />
-            Make a song from my scenes
-          </button>
-        )}
         <h4 className={styles.browserGroup}>Scenes</h4>
         {cards.length === 0 && <p className={styles.browserNote}>No scenes with loops yet: make some on the pads in Play.</p>}
         <ul className={styles.cards}>

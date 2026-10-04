@@ -34,7 +34,6 @@ import styles from './SongView.module.css';
 export const BROWSER_AUTO_BARS = 32;
 
 const selectShort = (p: Project) => songBars(p) < BROWSER_AUTO_BARS;
-const selectEmpty = (p: Project) => p.arrangement.regions.length === 0;
 
 /** What a loop or scene picked up in the browser looks like while it is away from the rows. */
 function Carried() {
@@ -52,7 +51,6 @@ export function ArrangeView() {
   const [handleNow, setHandleNow] = useState<TimelineHandle | null>(null);
   const [follow, setFollow] = useState(readFollow);
   const short = useProject(selectShort);
-  const empty = useProject(selectEmpty);
   const [browserPref, setBrowserPref] = useState<boolean | null>(readBrowserOpen);
   const browserOpen = browserPref ?? short;
   const [openTake, setOpenTake] = useState<Id | null>(null);
@@ -79,7 +77,7 @@ export function ArrangeView() {
         <SongHeader handle={handleNow} follow={follow} onFollow={onFollow} browserOpen={browserOpen} onBrowser={onBrowser} folded={!!openTake} onUnfold={() => setOpenTake(null)} status={status} />
         <div className={styles.body} hidden={!!openTake}>
           <SongTimeline follow={follow} handleRef={handle} onStatus={setStatus} />
-          {browserOpen && <LoopBrowser empty={empty} onCarry={(e, item) => handle.current?.carry(e, item)} playheadBar={() => handle.current?.playheadBar() ?? 0} onClose={() => onBrowser(false)} />}
+          {browserOpen && <LoopBrowser onCarry={(e, item) => handle.current?.carry(e, item)} playheadBar={() => handle.current?.playheadBar() ?? 0} onClose={() => onBrowser(false)} />}
         </div>
       </section>
       <PerformancesPanel open={takesOpen} onOpenChange={onTakesOpen} openTake={openTake} onOpenTake={setOpenTake} />

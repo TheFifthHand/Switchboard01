@@ -4,7 +4,7 @@
  * - a Play → Mix switch shows Mix as fast with the hints on as with them
  *   hidden (within 1.3×): the chip finds its new spot after the new view has
  *   painted, in idle time, never in the click's own work;
- * - during a drag of a song block's right edge the chip does not move (no
+ * - during a drag of a song loop's right edge the chip does not move (no
  *   placing or checking while a pointer is pressed); it may move after the
  *   release.
  */
@@ -17,7 +17,7 @@ import { button, click, closeShell, openShell, settle, transport, until } from '
 afterEach(closeShell);
 
 const chip = () => document.querySelector<HTMLElement>('aside[data-hint]');
-const tab = (name: string) => [...transport().querySelectorAll<HTMLElement>('[role="tab"]')].find((t) => t.textContent === name)!;
+const tab = (name: string) => [...transport().querySelectorAll<HTMLElement>('[role="tab"]')].find((t) => t.textContent === name);
 const heading = () => document.querySelector('main h1')?.textContent ?? '';
 
 /**
@@ -26,7 +26,7 @@ const heading = () => document.querySelector('main h1')?.textContent ?? '';
  * page (its h1 names it), i.e. the frame that paints it.
  */
 async function timeSwitch(name: string): Promise<number> {
-  const el = tab(name);
+  const el = tab(name)!;
   const r = el.getBoundingClientRect();
   const p = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   let clickAt = 0;
@@ -105,13 +105,13 @@ describe('the cost of the hints', () => {
     expect(ratio).toBeLessThanOrEqual(1.3);
   });
 
-  it('during a drag of a block’s right edge the chip does not move', async () => {
+  it('during a drag of a loop’s right edge the chip does not move', async () => {
     await openShell();
     await click(button('Just look around')!);
-    await click(tab('Arrange'));
-    const c = await until(() => (chip()?.dataset.hint === 'song-play' && chip()?.hasAttribute('data-ready') ? chip() : null), 'the chip in Arrange');
+    await click((tab('Song') ?? tab('Arrange'))!);
+    const c = await until(() => (chip()?.dataset.hint?.startsWith('song-') && chip()?.hasAttribute('data-ready') ? chip() : null), 'the chip in Song');
     await settle(700);
-    const edge = await until(() => document.querySelector<HTMLElement>('[data-edge]'), 'a block edge');
+    const edge = await until(() => document.querySelector<HTMLElement>('[data-region-id] [data-edge="end"]'), 'a loop’s edge');
     const r = edge.getBoundingClientRect();
     const start = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     // Where placement put it (its own left / top; the entrance animation may still be easing its box into place).

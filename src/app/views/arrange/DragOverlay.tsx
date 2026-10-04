@@ -17,6 +17,7 @@ import type { Project, SongRegion } from '../../../project/types';
 import { session } from '../../instance';
 import { RegionFace } from './RegionView';
 import { useDragView } from './laneStore';
+import { partHue } from './songModel';
 import styles from './SongView.module.css';
 
 function face(p: Project, r: SongRegion) {
@@ -50,12 +51,12 @@ export function DragOverlay({ tracks }: { tracks: readonly string[] }) {
       {pv?.shown
         .filter((r) => !movedIds.has(r.id))
         .map((r) => (
-          <div key={r.id} className={styles.ghostRow} style={{ '--row': rowOf(r.trackId) } as CSSProperties}>
+          <div key={r.id} className={styles.ghostRow} style={{ '--row': rowOf(r.trackId), '--h': partHue(rowOf(r.trackId)) } as CSSProperties}>
             <RegionFace region={r} {...face(p, r)} className={styles.carved} />
           </div>
         ))}
       {pv?.moved.map((r) => (
-        <div key={`m-${r.id}`} className={styles.ghostRow} style={{ '--row': rowOf(r.trackId) } as CSSProperties}>
+        <div key={`m-${r.id}`} className={styles.ghostRow} style={{ '--row': rowOf(r.trackId), '--h': partHue(rowOf(r.trackId)) } as CSSProperties}>
           <RegionFace region={r} {...face(p, r)} lifted slide={view.kind === 'move' || view.kind === 'section' ? slide : undefined} />
         </div>
       ))}

@@ -70,8 +70,19 @@ export interface MenuHost {
 /* Region menu                                                         */
 /* ------------------------------------------------------------------ */
 
-export function RegionMenu(props: { region: SongRegion; /** The selection it acts on (the region's, when it is selected). */ targets: readonly Id[]; clickedBar: number | null; anchor: MenuAnchor; returnFocus: HTMLElement | null; host: MenuHost; onClose(): void }) {
-  const { region, targets, clickedBar, anchor, returnFocus, host, onClose } = props;
+export function RegionMenu(props: {
+  region: SongRegion;
+  /** The selection it acts on (the region's, when it is selected). */
+  targets: readonly Id[];
+  clickedBar: number | null;
+  anchor: MenuAnchor;
+  returnFocus: HTMLElement | null;
+  /** The key that opened it (its own click closes it again). */
+  ignore?: Element | null;
+  host: MenuHost;
+  onClose(): void;
+}) {
+  const { region, targets, clickedBar, anchor, returnFocus, ignore, host, onClose } = props;
   const [view, setView] = useState<'main' | 'swap'>('main');
   const locked = useEditLocked();
   const loops = useProject((p) => partLoops(p, region.trackId));
@@ -93,7 +104,7 @@ export function RegionMenu(props: { region: SongRegion; /** The selection it act
   };
   if (view === 'swap') {
     return (
-      <Popover anchor={anchor} label={`Use another loop for ${clipName}`} onClose={onClose} returnFocus={returnFocus}>
+      <Popover anchor={anchor} label={`Use another loop for ${clipName}`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
         <MenuHeader eyebrow={partName} title="Use another loop" />
         <MenuItem icon="chevronLeft" onSelect={() => setView('main')}>
           Back
@@ -108,7 +119,7 @@ export function RegionMenu(props: { region: SongRegion; /** The selection it act
     );
   }
   return (
-    <Popover anchor={anchor} label={`Actions for ${what}`} onClose={onClose} returnFocus={returnFocus}>
+    <Popover anchor={anchor} label={`Actions for ${what}`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
       <MenuHeader eyebrow={many ? 'Selected loops' : partName} title={many ? what : `${clipName} · ${rangeText(region.start, regionEnd(region))}`} />
       <MenuItem icon="play" onSelect={run(() => host.playFrom(region.start))}>
         Play from here

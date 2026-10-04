@@ -985,27 +985,6 @@
   font-size: var(--fs-xs);
   color: var(--ink-3);
 }
-.makeSong {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  min-height: 34px;
-  margin: 4px 0 2px;
-  padding: 4px 10px;
-  border: 1px solid var(--teal-key);
-  border-radius: var(--r-sm);
-  background: var(--teal-key);
-  color: #fff;
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
-  cursor: pointer;
-}
-.makeSong:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
 .cards {
   display: flex;
   flex-direction: column;

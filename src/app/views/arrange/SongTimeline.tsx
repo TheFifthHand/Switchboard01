@@ -31,7 +31,7 @@ import type { Id, Project } from '../../../project/types';
 import { selectSlot, selectTrack, setPadMode, setView } from '../../../state/uiStore';
 import { useStore } from '../../../state/store';
 import { session, useProject } from '../../instance';
-import { anchorFromContextEvent, anchorFromElement, isEchoOfKeyboardMenu, noteKeyboardMenu, useToastsIfAny, type MenuAnchor } from '../ClipMenu';
+import { MoreIcon, anchorFromContextEvent, anchorFromElement, isEchoOfKeyboardMenu, noteKeyboardMenu, useToastsIfAny, type MenuAnchor } from '../ClipMenu';
 import { isMac } from '../hints/shortcuts';
 import { DragOverlay } from './DragOverlay';
 import { LaneController, type Carry, type LaneHost } from './laneController';
@@ -68,7 +68,7 @@ export interface TimelineHandle {
 }
 
 type Menu =
-  | { kind: 'region'; id: Id; anchor: MenuAnchor; returnFocus: HTMLElement | null; bar: number | null }
+  | { kind: 'region'; id: Id; anchor: MenuAnchor; returnFocus: HTMLElement | null; bar: number | null; viaMore?: boolean }
   | { kind: 'section'; id: Id; anchor: MenuAnchor; returnFocus: HTMLElement | null }
   | { kind: 'picker'; trackId: Id; bar: number; anchor: MenuAnchor; returnFocus: HTMLElement | null };
 
@@ -91,6 +91,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   const lineRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
   const plusRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLButtonElement>(null);
   const rows = useProject(rowViews, sameRows);
   const tracks = useMemo(() => rows.map((r) => r.id), [rows]);
   const anySolo = rows.some((r) => r.solo);
@@ -131,7 +132,8 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
       const cur = ppbStore.getState();
       if (!sc || next === cur) return;
       const px = pointerX ?? Math.max(0, (sc.clientWidth - live.current.headW) / 2);
-      pendingScroll.current = zoomScroll(sc.scrollLeft, px, cur, next);
+      // Several steps before the view has drawn the first (a fast wheel): go on from where the last one left it.
+      pendingScroll.current = zoomScroll(pendingScroll.current ?? sc.scrollLeft, px, cur, next);
       ppbStore.setState(next);
       writeZoom(session.store.getState().id, next);
     },
@@ -413,7 +415,8 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   };
 
   const onDoubleClick = (e: ReactMouseEvent<HTMLDivElement>) => {
-    const t = e.target as Element;
+    // A press's events go to the scroller (it captures the pointer): what was double-clicked is what is under the pointer.
+    const t = document.elementFromPoint(e.clientX, e.clientY) ?? (e.target as Element);
     const region = t.closest<HTMLElement>('[data-region-id]');
     if (region) {
       editNotes(region.dataset.regionId!);
@@ -645,7 +648,17 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
             <div ref={plusRef} className={styles.plus} aria-hidden="true">
               +
             </div>
-            <HoverMore onOpen={(id, el) => setMenu({ kind: 'region', id, anchor: anchorFromElement(el), returnFocus: scrollerRef.current?.querySelector<HTMLElement>(`[data-region-id="${id}"]`) ?? null, bar: null })} />
+            <HoverMore
+              buttonRef={moreRef}
+              menuFor={menu?.kind === 'region' && menu.viaMore ? menu.id : null}
+              onToggle={(id, el) =>
+                setMenu((m) =>
+                  m?.kind === 'region' && m.id === id && m.viaMore
+                    ? null
+                    : { kind: 'region', id, anchor: anchorFromElement(el), returnFocus: scrollerRef.current?.querySelector<HTMLElement>(`[data-region-id="${id}"]`) ?? null, bar: null, viaMore: true },
+                )
+              }
+            />
           </div>
           <div ref={lineRef} className={styles.playhead} data-on={songOn || undefined} aria-hidden="true" />
         </div>
@@ -660,7 +673,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
           )}
         </div>
       )}
-      {menu?.kind === 'region' && menuRegion && <RegionMenu region={menuRegion} targets={menuTargets} clickedBar={menu.bar} anchor={menu.anchor} returnFocus={menu.returnFocus} host={menuHost} onClose={() => setMenu(null)} />}
+      {menu?.kind === 'region' && menuRegion && <RegionMenu region={menuRegion} targets={menuTargets} clickedBar={menu.bar} anchor={menu.anchor} returnFocus={menu.returnFocus} ignore={menu.viaMore ? moreRef.current : null} host={menuHost} onClose={() => setMenu(null)} />}
       {menu?.kind === 'section' && menuSection && <SectionMenu section={menuSection} anchor={menu.anchor} returnFocus={menu.returnFocus} host={menuHost} onClose={() => setMenu(null)} />}
       {menu?.kind === 'picker' && <LoopPicker trackId={menu.trackId} bar={menu.bar} anchor={menu.anchor} returnFocus={menu.returnFocus} onClose={() => setMenu(null)} />}
     </div>
@@ -691,25 +704,33 @@ function SectionsLayer(props: Omit<SectionStripProps, 'dragged' | 'newSection'>)
   );
 }
 
-/** The ⋯ on the region under the pointer (wide enough regions only): its actions. */
-function HoverMore({ onOpen }: { onOpen(id: Id, el: HTMLElement): void }) {
-  const id = useStore(hoverStore, (s) => s);
+/**
+ * The ⋯ on the region under the pointer (wide enough regions only): its
+ * actions. It stays on the region whose menu it opened while that menu is
+ * open; a second click closes the menu.
+ */
+function HoverMore({ menuFor, onToggle, buttonRef }: { menuFor: Id | null; onToggle(id: Id, el: HTMLElement): void; buttonRef: Ref<HTMLButtonElement> }) {
+  const hovered = useStore(hoverStore, (s) => s);
+  const id = menuFor ?? hovered;
   const region = useProject((p) => (id ? (p.arrangement.regions.find((r) => r.id === id) ?? null) : null));
   const rowIndex = useProject((p) => (region ? p.tracks.findIndex((t) => t.id === region.trackId) : -1));
   const ppb = usePxPerBar();
   if (!region || rowIndex < 0 || region.bars * ppb < 56) return null;
   return (
     <button
+      ref={buttonRef}
       type="button"
       className={styles.hoverMore}
       data-hover-more=""
       tabIndex={-1}
-      aria-label="Loop actions"
+      aria-label={`Actions for this loop`}
+      aria-haspopup="menu"
+      aria-expanded={menuFor === region.id}
       style={{ '--row': rowIndex, '--e': regionEnd(region) } as CSSProperties}
       onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => onOpen(region.id, e.currentTarget)}
+      onClick={(e) => onToggle(region.id, e.currentTarget)}
     >
-      ⋯
+      <MoreIcon size={13} />
     </button>
   );
 }

@@ -114,6 +114,13 @@ interface Active {
   /** The last preview (committed at the drop). */
   last: { delta: number; copy: boolean; range?: BarRange; drop?: { bar: number; ok: boolean } } | null;
   captured: Element | null;
+  /**
+   * The view may scroll by itself near its edges: at once for gestures that
+   * start on the timeline; for a loop carried in from the browser only once
+   * it has been well inside the timeline (crossing the edge on the way in
+   * must not scroll the song away).
+   */
+  armed: boolean;
 }
 
 /** Distance from the timeline's left or right edge (px) where a drag starts scrolling the view. */
@@ -225,6 +232,7 @@ export class LaneController {
       key: '',
       last: null,
       captured: null,
+      armed: g.kind !== 'carry',
     };
     try {
       captureOn.setPointerCapture(e.pointerId);
@@ -287,6 +295,7 @@ export class LaneController {
       this.host.scroller()?.setAttribute('data-drag', a.g.kind === 'region' ? a.g.edge : a.g.kind);
     }
     e.preventDefault();
+    if (!a.armed && e.clientX > a.box.left + AUTOSCROLL_EDGE_PX * 2 && e.clientX < a.box.right - AUTOSCROLL_EDGE_PX * 2 && this.overRows(e.clientX, e.clientY)) a.armed = true;
     this.update();
     this.autoScroll();
   }
@@ -429,7 +438,7 @@ export class LaneController {
       const cur = this.a;
       const sc = this.host.scroller();
       if (!cur || !cur.started || !sc) return;
-      if (cur.g.kind === 'carry' && !this.overRows(cur.cx, Math.min(cur.box.bottom - 1, Math.max(cur.box.top + 1, cur.cy)))) return;
+      if (cur.g.kind === 'carry' && (!cur.armed || !this.overRows(cur.cx, Math.min(cur.box.bottom - 1, Math.max(cur.box.top + 1, cur.cy))))) return;
       const { left, right } = cur.box;
       let v = 0;
       if (cur.cx < left + AUTOSCROLL_EDGE_PX) v = -Math.min(1, (left + AUTOSCROLL_EDGE_PX - cur.cx) / AUTOSCROLL_EDGE_PX);

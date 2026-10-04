@@ -32,8 +32,8 @@ export const RULER_H = 30;
 export const SECTIONS_H = 26;
 /** Part rows are never shorter than this… */
 export const ROW_MIN_PX = 40;
-/** …nor taller than this. */
-export const ROW_MAX_PX = 64;
+/** …nor taller than this (a tall window: about 1080 px and up). */
+export const ROW_MAX_PX = 84;
 /** Width of the sticky part headers at the left of the rows. */
 export const HEADER_W = 168;
 /** A narrower header for windows under 1280 px. */
@@ -146,7 +146,7 @@ export function zoomScroll(scrollLeft: number, pointerX: number, from: number, t
 const STEPS = [1, 2, 4, 8, 16, 32, 64] as const;
 
 /** Bars between numbers on the ruler: numbers at least `minPx` apart. */
-export function labelStep(pxPerBar: number, minPx = 36): number {
+export function labelStep(pxPerBar: number, minPx = 44): number {
   return STEPS.find((s) => s * pxPerBar >= minPx) ?? 64;
 }
 

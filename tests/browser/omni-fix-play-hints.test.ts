@@ -5,7 +5,7 @@
  *   lands on "Hide hints"; keyboard presses always work;
  * - it never covers a heading (the Shape view's "Shaping: 2 Percussion — Hand
  *   Percussion", even when a longer part name appears under it) or a status
- *   line (Arrange's "Playback follows" explanation), at 1366 x 768,
+ *   line (the Song header's words), at 1366 x 768,
  *   1920 x 1080 and 960 x 540;
  * - in a narrow spot its buttons wrap instead of running over its counter;
  * - the closing line says where Export really is at this width.
@@ -270,9 +270,8 @@ describe('the chip never covers a heading or a status line', () => {
         expect(heading, 'the Shape heading').toBeTruthy();
         expect(coveredKeyText(), `${w} ${mode} shape: covers`).toEqual([]);
         expect(coveredControls(), `${w} ${mode} shape: covers`).toEqual([]);
-        // Arrange while the pads play: "Now playing: your pads" and its longer explanation (worded either way the Arrange
-        // view puts it: the pads decide what plays, or the pads play now and Play the song switches).
-        for (const step of ['pad', 'record', 'song-repeats'] as HintId[]) {
+        // The Song view while the pads play: its header says "Your pads are playing" with Play the song.
+        for (const step of ['pad', 'record', 'song-stretch'] as HintId[]) {
           act(() => {
             patchRuntime({ playing: true, mode: 'live' });
             setView('arrange');
@@ -280,8 +279,8 @@ describe('the chip never covers a heading or a status line', () => {
           showStep(step);
           await settle();
           await chipPlaced();
-          expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toMatch(/Loops pads decide what plays\.|Your pads play now\./);
-          // The Song header's words too ("Export tail", "Length"): the chip finds room elsewhere.
+          expect(document.querySelector('[data-testid="pads-playing"]')!.textContent).toContain('Your pads are playing');
+          // The Song header's words too (the length, the keys): the chip finds room elsewhere.
           expect(coveredKeyText({ headers: true }), `${w} ${mode} arrange ${step}: covers`).toEqual([]);
           expect(coveredControls(), `${w} ${mode} arrange ${step}: covers`).toEqual([]);
           expectNoOverlapInside(`${w} ${mode} arrange ${step}`);
