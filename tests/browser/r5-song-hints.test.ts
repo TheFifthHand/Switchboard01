@@ -45,18 +45,19 @@ it('the song steps are done by the real gestures, one after another', async () =
   const bass = project().tracks[2];
   const chipEl = document.querySelector<HTMLElement>(`[data-chip="${bass.clips.find((x) => x)!.id}"]`)!;
   chipEl.scrollIntoView({ block: 'nearest' });
-  await dragTo(centre(chipEl), { x: barX(76) + 4, y: rowY(bass.id) });
+  // The Bass row is empty over bars 1–8 in the House song.
+  await dragTo(centre(chipEl), { x: barX(0) + 4, y: rowY(bass.id) });
   await waitFor(() => hint() === 'song-stretch', 'the stretch step');
 
   // 2. Its right edge, two bars longer.
-  const added = regions().find((r) => r.trackId === bass.id && r.start === 76)!;
+  const added = regions().find((r) => r.trackId === bass.id && r.start === 0)!;
   const grip = edge(added.id, 'end');
   await dragTo(grip, { x: grip.x + 2 * 16, y: grip.y });
   await waitFor(() => hint() === 'song-move', 'the move step');
 
-  // 3. Moved four bars on.
+  // 3. Moved two bars on.
   const from = on(added.id, 0.4);
-  await dragTo(from, { x: from.x + 4 * 16, y: from.y });
+  await dragTo(from, { x: from.x + 2 * 16, y: from.y });
   await waitFor(() => hint() === 'song-ruler', 'the ruler step');
 
   // 4. A bar number.
