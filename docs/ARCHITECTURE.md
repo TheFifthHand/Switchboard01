@@ -420,6 +420,15 @@ is the timing notes in `src/time/contracts.ts` and the header of `src/time/seque
   resolved when applied, so scene reorders and clip moves need no song bookkeeping. Song changes
   sort before a pad launch at the same tick (the pad wins): a pad tapped during the song wins until
   the song next changes that part.
+- **Note chase.** Where playback enters a clip in the middle of its music (Play or a seek from any
+  bar, each loop pass or the jump into the loop, Resume, a "Loop (bars X–Y)" export), a note of a
+  melodic part (synth or bass; never a drum kit or a sampler, whose recording would start over) that
+  began before that point and still sounds there is played from it with what is left of its length,
+  at its velocity, as if playback had played through ('note' event `chased`). Notes with less than a
+  16th left are not chased (an attack and release that short would click). An edit that switches a
+  part mid-note, or a pad launch, does not chase: the new music starts with its next note. A note
+  already scheduled that an edit no longer cuts sounds again from that bar line as a chased note (a
+  scheduled voice cannot be lengthened). The full rule is in `src/time/contracts.ts`.
 - **Live edits** (`Session.followSongEdits`): when a project change touches what the song plays
   (`songPlayChanged(p, prev)`, compared structurally: a region's part, clip, place, length or
   offset, a clip's slot or length, or the song's length; renames and sounds do not count), the

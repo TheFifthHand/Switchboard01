@@ -555,7 +555,7 @@ phase, split in two, or go), and a drag shows that result before the drop. Old s
   part's state in words (**Muted**, **Solo**, **Not soloed**); 32 px **Mute** and **Solo** keys, the
   same commands as in Play and Mix. A muted or not-soloed row fades what its loops show (the names
   stay).
-- **Loop browser** at the right, collapsible (**Loops** in the header, or its ✕). It opens by itself
+- **Loop browser** at the right, collapsible (**Add loops** in the header, or its ✕). It opens by itself
   while the song is shorter than 32 bars, until the person shows or hides it (remembered).
 - **Performances** under the song, one line until opened (remembered); a take's events open in a
   tall drawer and the song folds to its header (**Show the song** brings it back).
