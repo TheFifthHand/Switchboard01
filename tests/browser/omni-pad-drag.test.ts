@@ -29,7 +29,7 @@ import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { LoopsGrid } from '../../src/app/views/LoopsGrid';
 import { getStarter } from '../../src/content/starters';
 import type { Clip, Id } from '../../src/project/types';
-import { addBlock } from '../../src/state/commands';
+import { addSceneToSong } from '../../src/state/commands';
 import { selectSlot, selectTrack, setPadMode, setUiMode, setView } from '../../src/state/uiStore';
 import { cleanup, mount, wait, type Mounted } from './ui-harness';
 
@@ -395,8 +395,9 @@ describe('carrying a clip pad', () => {
 
 describe('scene rows', () => {
   it('a carried row lifts, the other rows slide apart to open its slot, and the drop reorders (one undo step) and settles', async () => {
-    act(() => void addBlock(session.store, project().scenes[0].id));
-    const blocks = project().arrangement.blocks;
+    act(() => void addSceneToSong(session.store, 0, 0));
+    const regions = project().arrangement.regions;
+    expect(regions.length).toBeGreaterThan(0);
     grid();
     const scenes = project().scenes.map((s) => s.id);
     const row0 = project().tracks.map((t) => t.clips[0]?.id ?? null);
@@ -426,7 +427,7 @@ describe('scene rows', () => {
     await release(to);
     expect(project().scenes.map((s) => s.id)).toEqual([scenes[1], scenes[2], scenes[0], scenes[3]]);
     expect(project().tracks.map((t) => t.clips[2]?.id ?? null)).toEqual(row0);
-    expect(project().arrangement.blocks).toBe(blocks);
+    expect(project().arrangement.regions).toBe(regions);
     expect(undoCount()).toBe(before + 1);
     expect(session.store.undoLabel()).toBe('Move scene');
     expect(rowLift()).toBeNull();
