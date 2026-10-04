@@ -144,6 +144,8 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   const live = useRef({ ppb, rowH, headW, tracks, follow, busy: false, userScrollAt: -Infinity, viewW, bars, songPlaying });
   live.current = { ...live.current, ppb, rowH, headW, tracks, follow, viewW, bars, songPlaying };
   const rowsRef = useRef<HTMLDivElement>(null);
+  /** A press is putting keyboard focus on the loop it pressed (that focus selects nothing by itself). */
+  const pressFocus = useRef(false);
 
   /* ---------------------------------------------------------------- */
   /* Zoom                                                             */
@@ -219,16 +221,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
     rangeStore.setState(runtimeStore.getState().songLoop ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, size.width, headW]);
-  // Where the view was scrolled to, for coming back.
-  useEffect(() => {
-    const sc = scrollerRef.current;
-    return () => {
-      if (sc) {
-        kept.left = sc.scrollLeft;
-        kept.top = sc.scrollTop;
-      }
-    };
-  }, []);
+
 
   /* ---------------------------------------------------------------- */
   /* Selection follows the song                                       */
@@ -478,6 +471,9 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
     if (!sc) return;
     let zoomAcc = 0;
     const onScroll = () => {
+      // Where the view is scrolled to, for coming back from another view.
+      kept.left = sc.scrollLeft;
+      kept.top = sc.scrollTop;
       if (ignoreScroll.current) {
         ignoreScroll.current = false;
         return;
@@ -529,8 +525,12 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
       // Keyboard focus in the lane: on the pressed region, else on the rows as a whole (never left on a button
       // pressed earlier, never on the scroller); the keys then act on whatever the press selected.
       const region = t.closest<HTMLElement>('[data-region-id]');
-      if (region) region.focus({ preventScroll: true });
-      else if (!t.closest('[data-section-id]')) {
+      if (region) {
+        // The press decides the selection (a Ctrl click may be about to take it out): not the focus that follows.
+        pressFocus.current = true;
+        region.focus({ preventScroll: true });
+        pressFocus.current = false;
+      } else if (!t.closest('[data-section-id]')) {
         e.preventDefault();
         focusRows();
       }
@@ -775,7 +775,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   // A loop reached with Tab is the one the keys act on (as a click would make it).
   const onRowsFocus = (e: ReactFocusEvent<HTMLDivElement>) => {
     const el = (e.target as Element).closest<HTMLElement>('[data-region-id]');
-    if (!el || !el.matches(':focus-visible')) return;
+    if (!el || pressFocus.current || !el.matches(':focus-visible')) return;
     const id = el.dataset.regionId!;
     const sel = selectionStore.getState();
     if (!sel.ids.includes(id)) setSelection({ ids: [id], focus: id });

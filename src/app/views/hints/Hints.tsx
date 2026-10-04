@@ -296,13 +296,14 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     const choices = LAYOUTS.map((l, i) => ({ l, i })).filter(({ l }) => (go ? l.compact : !l.terse));
     let best: (Spot & { maxW: number; i: number }) | null = null;
     // The view's home first: the chip sits on it (over the home's own words), as wide as it needs, when that covers
-    // nothing else, and only in a layout as low as the home's row (a second line would hang over what is below it).
+    // nothing else; a one-line home (a header row) takes a layout as low as its row only (a second line would hang
+    // over what is below it).
     const home = homeBox(el, vw, vh, area);
     if (home) {
       for (const { l, i } of choices) {
         const maxW = Math.min(l.maxW, area.right - area.left);
         const size = sizeOf(el, i, maxW, vw);
-        if (size.h > home.box.bottom - home.box.top + HOME_SLACK_PX) continue;
+        if (home.oneLine && size.h > home.box.bottom - home.box.top + HOME_SLACK_PX) continue;
         const wanted = home.align === 'end' ? home.box.right - size.w : home.align === 'center' ? (home.box.left + home.box.right - size.w) / 2 : home.box.left;
         const x = Math.round(Math.max(area.left, Math.min(wanted, area.right - size.w)));
         // Centred on the home's line, never above the work area.
@@ -562,16 +563,17 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
  * The current view's hint home ([data-hint-home] in the workspace, on
  * screen): where the chip goes first, over the home's own words (a panel's
  * subtitle, an empty strip), lined up with its start, centre or end
- * (data-hint-home="start" | "center" | "end"). Null when the view has none.
+ * (data-hint-home="start" | "center" | "end"); `oneLine` when it is a row
+ * the chip must keep to (data-hint-one-line). Null when the view has none.
  */
-function homeBox(chip: Element, vw: number, vh: number, area: Box): { box: Box; align: 'start' | 'center' | 'end' } | null {
+function homeBox(chip: Element, vw: number, vh: number, area: Box): { box: Box; align: 'start' | 'center' | 'end'; oneLine: boolean } | null {
   for (const el of document.querySelectorAll<HTMLElement>('main [data-hint-home]')) {
     if (chip.contains(el) || el.closest('[inert]')) continue;
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.bottom <= area.top || r.top >= vh || r.right <= 0 || r.left >= vw) continue;
     const v = el.dataset.hintHome;
     const box: Box = { left: Math.max(area.left, r.left), top: Math.max(area.top, r.top), right: Math.min(area.right, r.right), bottom: Math.min(area.bottom, r.bottom) };
-    return { box, align: v === 'end' || v === 'center' ? v : 'start' };
+    return { box, align: v === 'end' || v === 'center' ? v : 'start', oneLine: el.hasAttribute('data-hint-one-line') };
   }
   return null;
 }

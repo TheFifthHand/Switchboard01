@@ -184,7 +184,11 @@ export function RegionMenu(props: {
         </MenuItem>
       )}
       {!many && !hasSection && (
-        <MenuItem icon="scene" disabled={locked} disabledReason={reason} onSelect={run(() => act.addSectionAt(region.start, region.bars))}>
+        <MenuItem icon="scene" disabled={locked} disabledReason={reason} onSelect={run(() => {
+            // The new section opens for its name at once.
+            const r = act.addSectionAt(region.start, region.bars);
+            if (r.changed && r.sectionId) host.renameSection(r.sectionId);
+          })}>
           Name these bars as a section
         </MenuItem>
       )}

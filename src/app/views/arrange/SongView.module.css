@@ -499,7 +499,8 @@
 }
 .partHead[data-current] {
   box-shadow: inset 4px 0 0 var(--teal);
-  background: linear-gradient(90deg, var(--teal-wash), var(--surface-hi) 60%);
+  /* Opaque: the loops scroll under the header. */
+  background: linear-gradient(90deg, var(--teal-wash), transparent 60%), var(--surface-hi);
 }
 .partNameLine {
   display: flex;

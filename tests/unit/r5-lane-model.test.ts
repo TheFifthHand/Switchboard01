@@ -82,6 +82,11 @@ describe('badges and lengths', () => {
     expect(lengthBadge(8, 2)).toBe('8 bars · plays 4×');
     expect(lengthBadge(5, 2)).toBe('5 bars · plays 2½×');
     expect(startBadge(4)).toBe('starts at bar 5');
+    // Several at once say how many.
+    expect(moveBadge(8, false, 4)).toBe('4 loops · Bar 9');
+    expect(moveBadge(8, true, 2)).toBe('+ Copy · 2 loops · Bar 9');
+    expect(lengthBadge(8, 2, 4)).toBe('4 loops · 8 bars · plays 4×');
+    expect(startBadge(4, 3)).toBe('3 loops · start at bar 5');
   });
 
   it('the song length in bars and minutes', () => {

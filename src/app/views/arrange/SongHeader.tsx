@@ -110,8 +110,8 @@ export function SongHeader({ handle, follow, onFollow, browserOpen, onBrowser, f
           )}
         </span>
       )}
-      {/* The "Try this" chip's home in the Song view: the header's free middle, clear of the music and the keys. */}
-      <span className={styles.headSpacer} data-hint-home="center" />
+      {/* The "Try this" chip's home in the Song view: the header's free middle, clear of the music and the keys, in one line. */}
+      <span className={styles.headSpacer} data-hint-home="center" data-hint-one-line="" />
       <Button
         size="sm"
         variant="secondary"
