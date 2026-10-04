@@ -5,23 +5,40 @@
  * Popover: a portalled surface positioned next to its trigger (or at the
  * pointer for a right-click), kept inside the viewport, closed by Escape, an
  * outside press or a window resize, and giving focus back to where it came
- * from. As role="menu" it moves focus with the arrow keys (Left/Right move
- * within a row of keys such as the clip length), Home/End jump, Tab closes.
- * As role="dialog" (a settings panel) it is not modal: keys other than
- * Escape pass through, so the computer keyboard still plays notes.
+ * from. Below the trigger (or above it) when it fits there, else beside it,
+ * so it never covers the key that opened it. A press on that key (the open
+ * popup's trigger, or the `ignore` element) is not an outside press: the
+ * key's own click closes it again. A menu closed by an outside press takes
+ * that press: nothing under the pointer starts (a pad, Stop, a knob) and its
+ * click is swallowed (once; keys are never affected), except on another
+ * menu's trigger, which opens its own menu at once. While any popover is
+ * open, body carries data-popover-open (counted, so nested or overlapping
+ * popovers keep it until the last one closes): the toasts (at the top, under
+ * the transport) stack below the menu. For a moment after it opens, a click that
+ * comes without the pointer moving (the second half of a double-click on the
+ * trigger) does nothing. Rows light up under the pointer only once it moves
+ * over the menu (keyboard focus always shows); then the row under the
+ * pointer takes the focus, so one row is lit at a time. As role="menu" it
+ * moves focus with the arrow keys (Left/Right move within a row of keys such
+ * as the clip length), Home/End jump, Tab closes; Ctrl/⌘+Z, Ctrl+Shift+Z and
+ * Ctrl+Y close it and reach the app's Undo / Redo. As role="dialog" (a
+ * settings panel) it is not modal: keys other than Escape pass through, so
+ * the computer keyboard still plays notes.
  *
- * Clip actions (rename, length, duplicate, copy/paste, clear, delete, new
- * clip) are all undoable project commands; destructive ones show a toast with
- * Undo. The same actions back the pad keyboard shortcuts (Delete, Ctrl+C,
- * Ctrl+V, F2) handled by the grid.
+ * Clip actions (rename, length, double, repeat, duplicate, copy/paste,
+ * clear, delete, new clip) are all undoable project commands; destructive
+ * ones show a toast with Undo, a new clip's toast offers Edit steps. The same
+ * actions back the pad keyboard shortcuts (Delete, Ctrl+C, Ctrl+V, F2)
+ * handled by the grid. While a performance take records, the editing rows
+ * are unavailable and say why (Copy and Edit steps stay).
  */
-import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Button, Icon, type IconName } from '../../ui/components';
-import { SCENE_ROWS, type ClipBars, type Id } from '../../project/types';
+import { Button, Icon, Tooltip, useToasts, type IconName, type ToastApi } from '../../ui/components';
+import { CLIP_BAR_CHOICES, MAX_CLIP_BARS, type ClipBars, type Id } from '../../project/types';
 import * as cmd from '../../state/commands';
 import { selectSlot, selectTrack, setClipboard, setPadMode, uiStore } from '../../state/uiStore';
-import { shallowEqual } from '../../state/store';
+import { shallowEqual, useStore } from '../../state/store';
 import { session, useProject, useUi } from '../instance';
 import { notify } from '../runtime';
 import { barsLabel } from '../labels';
@@ -98,11 +115,138 @@ export interface PopoverProps {
 
 const EDGE = 8;
 const GAP = 4;
+/**
+ * After opening, pointer clicks that come without the pointer moving are
+ * ignored for this long: the second click of a double-click on the trigger
+ * must never choose a menu item.
+ */
+export const MENU_CLICK_GUARD_MS = 300;
+/** Pointer travel (px) after opening that makes a click deliberate. */
+const MOVED_PX = 3;
+
+/** Where the pointer was last seen (its press or move), so a menu knows where it opened from. */
+let lastPointer: { x: number; y: number } | null = null;
+if (typeof document !== 'undefined') {
+  const note = (e: PointerEvent) => {
+    lastPointer = { x: e.clientX, y: e.clientY };
+  };
+  document.addEventListener('pointerdown', note, { capture: true, passive: true });
+  document.addEventListener('pointermove', note, { capture: true, passive: true });
+}
+
+/** Undo / Redo keys (Ctrl/⌘+Z, Ctrl/⌘+Shift+Z, Ctrl/⌘+Y). */
+export function isHistoryKey(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean }): boolean {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
+  const k = e.key.toLowerCase();
+  return k === 'z' || k === 'y';
+}
+
+/**
+ * Where a popover of size w x h goes next to `anchor` inside a vw x vh
+ * window: below (or above, as preferred) when it fits there whole; else
+ * beside the anchor (right, or left for end-aligned menus, whichever fits),
+ * top-aligned with it, so it never covers its trigger; failing that (a window
+ * too small for both), clamped into view.
+ */
+export function placePopover(
+  anchor: MenuAnchor,
+  size: { w: number; h: number },
+  view: { vw: number; vh: number },
+  opts: { placement?: 'below' | 'above'; align?: 'start' | 'end' } = {},
+): { left: number; top: number; side: 'below' | 'above' | 'right' | 'left' | 'over' } {
+  const { w, h } = size;
+  const { vw, vh } = view;
+  const placement = opts.placement ?? 'below';
+  const align = opts.align ?? 'start';
+  const below = anchor.top + anchor.height + GAP;
+  const above = anchor.top - GAP - h;
+  const fitsBelow = below + h <= vh - EDGE;
+  const fitsAbove = above >= EDGE;
+  const clampX = (x: number) => clamp(x, EDGE, Math.max(EDGE, vw - EDGE - w));
+  const clampY = (y: number) => clamp(y, EDGE, Math.max(EDGE, vh - EDGE - h));
+  const vertical = (side: 'below' | 'above') => ({ left: clampX(align === 'end' ? anchor.left + anchor.width - w : anchor.left), top: side === 'below' ? below : above, side });
+  if (placement === 'above' ? fitsAbove : fitsBelow) return vertical(placement);
+  if (placement === 'above' ? fitsBelow : fitsAbove) return vertical(placement === 'above' ? 'below' : 'above');
+  // Neither: beside the trigger, top-aligned with it.
+  const right = anchor.left + anchor.width + GAP;
+  const left = anchor.left - GAP - w;
+  const fitsRight = right + w <= vw - EDGE;
+  const fitsLeft = left >= EDGE;
+  const top = clampY(anchor.top);
+  if (align === 'end' ? fitsLeft : fitsRight) return { left: align === 'end' ? left : right, top, side: align === 'end' ? 'left' : 'right' };
+  if (align === 'end' ? fitsRight : fitsLeft) return { left: align === 'end' ? right : left, top, side: align === 'end' ? 'right' : 'left' };
+  // No room anywhere: inside the window, where it was meant to go.
+  return { left: clampX(align === 'end' ? anchor.left + anchor.width - w : anchor.left), top: clampY(placement === 'above' ? above : below), side: 'over' };
+}
 
 const ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]';
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
+}
+
+/** How many popovers are open now: body[data-popover-open] stays while any is. */
+let openPopovers = 0;
+function popoverOpened(): () => void {
+  openPopovers += 1;
+  document.body.dataset.popoverOpen = '';
+  let closed = false;
+  return () => {
+    if (closed) return;
+    closed = true;
+    openPopovers = Math.max(0, openPopovers - 1);
+    if (openPopovers === 0) delete document.body.dataset.popoverOpen;
+  };
+}
+
+/** A click that follows a swallowed press is swallowed this long after the pointer comes up (a touch's click comes a little later). */
+const SWALLOW_AFTER_UP_MS = 400;
+/** And never later than this after the press (a press whose release never comes). */
+const SWALLOW_MAX_MS = 3000;
+
+/**
+ * An outside press that closes a menu does nothing else: nothing below sees
+ * the press (a pad would start on its release, a knob would grab), and the
+ * click it makes is swallowed once, in the capture phase, before anything
+ * can act on it. Only pointer clicks: a key's click (detail 0) always counts.
+ * Right and middle presses pass (a right-click elsewhere opens its own menu).
+ */
+function consumePress(e: PointerEvent): void {
+  if (e.button !== 0 || !e.isPrimary) return;
+  e.stopPropagation();
+  const id = e.pointerId;
+  let afterUp = 0;
+  const done = () => {
+    window.clearTimeout(afterUp);
+    window.clearTimeout(cap);
+    window.removeEventListener('click', onClick, true);
+    window.removeEventListener('pointerup', onUp, true);
+    window.removeEventListener('pointercancel', onCancel, true);
+    window.removeEventListener('pointerdown', onNextDown, true);
+  };
+  const onClick = (ev: globalThis.MouseEvent) => {
+    if (ev.detail === 0) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    done();
+  };
+  const onUp = (ev: PointerEvent) => {
+    if (ev.pointerId !== id) return;
+    window.clearTimeout(afterUp);
+    afterUp = window.setTimeout(done, SWALLOW_AFTER_UP_MS);
+  };
+  const onCancel = (ev: PointerEvent) => {
+    if (ev.pointerId === id) done();
+  };
+  // A new press starts something new: the old one's click is not coming.
+  const onNextDown = (ev: PointerEvent) => {
+    if (ev !== e) done();
+  };
+  const cap = window.setTimeout(done, SWALLOW_MAX_MS);
+  window.addEventListener('click', onClick, true);
+  window.addEventListener('pointerup', onUp, true);
+  window.addEventListener('pointercancel', onCancel, true);
+  window.addEventListener('pointerdown', onNextDown, true);
 }
 
 export function Popover({ anchor, label, role = 'menu', placement = 'below', align = 'start', onClose, returnFocus, ignore, className, id, children }: PopoverProps) {
@@ -116,31 +260,51 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
   const restoreTo = useRef<HTMLElement | null>(null);
   /** Set while unmounting, so giving focus back does not count as "focus left the popover". */
   const unmounting = useRef(false);
+  const roleRef = useRef(role);
+  roleRef.current = role;
+
+  // Toasts step aside (to the top) while any popover is open.
+  useLayoutEffect(() => popoverOpened(), []);
 
   // Position next to the anchor, inside the viewport; follow size changes (e.g. switching to a rename field).
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const place = () => {
-      const w = el.offsetWidth;
-      const h = el.offsetHeight;
-      const vw = document.documentElement.clientWidth;
-      const vh = document.documentElement.clientHeight;
-      const below = anchor.top + anchor.height + GAP;
-      const above = anchor.top - GAP - h;
-      let top: number;
-      if (placement === 'above') top = above >= EDGE ? above : below;
-      else top = below + h <= vh - EDGE ? below : above >= EDGE ? above : below;
-      top = clamp(top, EDGE, Math.max(EDGE, vh - EDGE - h));
-      let left = align === 'end' ? anchor.left + anchor.width - w : anchor.left;
-      left = clamp(left, EDGE, Math.max(EDGE, vw - EDGE - w));
-      setPos((p) => (p && p.left === Math.round(left) && p.top === Math.round(top) ? p : { left: Math.round(left), top: Math.round(top) }));
+      const p = placePopover(anchor, { w: el.offsetWidth, h: el.offsetHeight }, { vw: document.documentElement.clientWidth, vh: document.documentElement.clientHeight }, { placement, align });
+      const left = Math.round(p.left);
+      const top = Math.round(p.top);
+      el.dataset.side = p.side;
+      setPos((q) => (q && q.left === left && q.top === top ? q : { left, top }));
     };
     place();
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(place) : null;
     ro?.observe(el);
     return () => ro?.disconnect();
   }, [anchor.left, anchor.top, anchor.width, anchor.height, placement, align]);
+
+  // A click right after opening, with the pointer where it was (a double-click on the trigger), chooses nothing.
+  const opened = useRef<{ at: number; x: number | null; y: number | null; moved: boolean }>({ at: 0, x: null, y: null, moved: false });
+  useLayoutEffect(() => {
+    opened.current = { at: performance.now(), x: lastPointer?.x ?? null, y: lastPointer?.y ?? null, moved: false };
+    const onMove = (e: PointerEvent) => {
+      const o = opened.current;
+      if (o.moved) return;
+      if (o.x === null || o.y === null) {
+        o.x = e.clientX;
+        o.y = e.clientY;
+      } else if (Math.hypot(e.clientX - o.x, e.clientY - o.y) >= MOVED_PX) o.moved = true;
+    };
+    document.addEventListener('pointermove', onMove, true);
+    return () => document.removeEventListener('pointermove', onMove, true);
+  }, []);
+  const guardClick = (e: MouseEvent<HTMLDivElement>) => {
+    const o = opened.current;
+    // Keyboard presses (detail 0) always count; so does a click after the pointer moved or the moment passed.
+    if (e.detail === 0 || o.moved || performance.now() - o.at >= MENU_CLICK_GUARD_MS) return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
 
   // Focus in on open (unless a child already took it), and back out on close.
   useLayoutEffect(() => {
@@ -165,12 +329,17 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Outside presses and window changes close it.
+  // Outside presses and window changes close it. A press on the open popup's own trigger is not outside:
+  // the trigger's click closes it (pressing it again toggles), instead of closing here and reopening there.
+  // A menu closed this way takes the press (see consumePress); a non-modal panel lets it through.
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node | null;
       if (!t || ref.current?.contains(t) || (ignore && ignore.contains(t))) return;
+      if (t instanceof Element && t.closest('[aria-haspopup][aria-expanded="true"]')) return;
       focusInside.current = false;
+      // A press on another menu's trigger is not swallowed: this menu closes and that one opens, on the first click.
+      if (roleRef.current === 'menu' && !(t instanceof Element && t.closest('[aria-haspopup]'))) consumePress(e);
       onCloseRef.current();
     };
     const onResize = () => onCloseRef.current();
@@ -194,6 +363,17 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
     // A panel (arpeggiator, recording options, rename) is not modal: other keys keep
     // working, so computer-key notes, Space and Ctrl+Z still reach the instrument.
     if (role !== 'menu') return;
+    // Undo / Redo work with a menu open: the menu (about what is there now) closes and the key goes on to the app.
+    if (isHistoryKey(e)) {
+      onCloseRef.current();
+      return;
+    }
+    // Ctrl/⌘+A in a menu selects nothing (and never the page's text).
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (e.key === 'Tab') {
       e.preventDefault();
       e.stopPropagation();
@@ -269,6 +449,18 @@ export function Popover({ anchor, label, role = 'menu', placement = 'below', ali
       className={[styles.popover, className].filter(Boolean).join(' ')}
       style={pos ? { left: pos.left, top: pos.top } : { left: -9999, top: 0, opacity: 0 }}
       onKeyDown={onKeyDown}
+      onClickCapture={guardClick}
+      onPointerMove={(e) => {
+        // Rows light up under the pointer only once it moves over the menu (not under a pointer resting where the menu opened).
+        const el = ref.current;
+        if (!el) return;
+        if (!('pointer' in el.dataset)) el.dataset.pointer = '';
+        // In a menu the row under a moving pointer also takes the focus, so one row is lit, never two
+        // (the keyboard then goes on from there).
+        if (role !== 'menu' || e.pointerType === 'touch') return;
+        const item = e.target instanceof Element ? e.target.closest<HTMLElement>(ITEM_SELECTOR) : null;
+        if (item && el.contains(item) && document.activeElement !== item) item.focus({ preventScroll: true });
+      }}
       onFocus={() => {
         focusInside.current = true;
       }}
@@ -305,7 +497,11 @@ export function MenuSeparator() {
 export interface MenuItemProps {
   icon?: IconName;
   children: ReactNode;
-  /** Right-aligned hint: a shortcut or the current value. */
+  /**
+   * Right-aligned hint: a shortcut or the current value. With `keyShortcut`
+   * it is the shortcut, drawn as key caps ("Ctrl+V" → [Ctrl] [V]); otherwise
+   * words in the UI font.
+   */
   hint?: string;
   onSelect(): void;
   disabled?: boolean;
@@ -317,9 +513,25 @@ export interface MenuItemProps {
   keyShortcut?: string;
 }
 
+/** A shortcut drawn as key caps: "Ctrl+Shift+Z" → [Ctrl] [Shift] [Z]; "⌘C" stays one cap. (aria-keyshortcuts says it to screen readers.) */
+export function KeyCaps({ keys, className }: { keys: string; className?: string }) {
+  const parts = keys.length > 1 ? keys.split('+').filter(Boolean) : [keys];
+  return (
+    <span className={[styles.caps, className].filter(Boolean).join(' ')} aria-hidden="true">
+      {parts.map((k, i) => (
+        <kbd key={i} className={styles.cap}>
+          {k}
+        </kbd>
+      ))}
+    </span>
+  );
+}
+
 /** A menu row. Disabled rows stay focusable (so they can be discovered) but do nothing. */
 export function MenuItem({ icon, children, hint, onSelect, disabled, disabledReason, tone, role = 'menuitem', checked, keyShortcut }: MenuItemProps) {
-  const shownHint = disabled && disabledReason ? disabledReason : hint;
+  const reason = disabled && disabledReason ? disabledReason : null;
+  const shownHint = reason ?? hint;
+  const caps = !reason && !!keyShortcut && !!hint;
   return (
     <button
       type="button"
@@ -338,12 +550,12 @@ export function MenuItem({ icon, children, hint, onSelect, disabled, disabledRea
         {icon && <Icon name={icon} size={14} />}
       </span>
       <span className={styles.itemText}>{children}</span>
-      {shownHint && <span className={styles.itemHint}>{shownHint}</span>}
+      {caps ? <KeyCaps keys={hint!} className={styles.itemKeys} /> : shownHint && <span className={styles.itemHint}>{shownHint}</span>}
     </button>
   );
 }
 
-/** A row of small keys inside a menu (e.g. clip length 1-4); Left/Right move along it. */
+/** A row of small keys inside a menu (e.g. clip length 1-8); Left/Right move along it. */
 export function MenuKeyRow<T extends string | number>(props: {
   label: string;
   unit?: string;
@@ -352,41 +564,58 @@ export function MenuKeyRow<T extends string | number>(props: {
   value?: T | null;
   onSelect(value: T): void;
   disabled?: boolean;
+  /** Why the keys do nothing now (their description). */
+  disabledReason?: string;
+  /** What the keys do, in a sentence (the row's description, also shown as a tooltip on its label). */
+  tip?: string;
 }) {
-  const { label, unit, row, options, value, onSelect, disabled } = props;
+  const { label, unit, row, options, value, onSelect, disabled, disabledReason, tip } = props;
   const labelId = useId();
+  const tipId = useId();
+  const described = (disabled && disabledReason) || tip;
+  // The tooltip wraps the whole row (the group): in a menu only items, groups and separators may carry ARIA, so its
+  // description goes on the group, never on a wrapper of the keys. Each key carries the row's sentence itself (also
+  // with Tips off).
   return (
-    <div className={styles.keyRow} role="group" aria-labelledby={labelId}>
-      <span id={labelId} className={styles.keyRowLabel}>
-        {label}
-      </span>
-      <span className={styles.keys}>
-        {options.map((o) => (
-          <button
-            key={String(o.value)}
-            type="button"
-            role="menuitemradio"
-            tabIndex={-1}
-            data-row={row}
-            aria-checked={value === o.value}
-            aria-label={o.ariaLabel}
-            aria-disabled={disabled || undefined}
-            className={styles.key}
-            data-on={value === o.value || undefined}
-            onClick={() => {
-              if (!disabled) onSelect(o.value);
-            }}
-          >
-            {o.label}
-          </button>
-        ))}
-      </span>
-      {unit && (
-        <span className={styles.keyRowUnit} aria-hidden="true">
-          {unit}
+    <Tooltip tip={described || undefined} disabled={!described}>
+      <div className={styles.keyRow} role="group" aria-labelledby={labelId}>
+        <span id={labelId} className={styles.keyRowLabel}>
+          {label}
         </span>
-      )}
-    </div>
+        {described && (
+          <span id={tipId} hidden>
+            {described}
+          </span>
+        )}
+        <span className={styles.keys}>
+          {options.map((o) => (
+            <button
+              key={String(o.value)}
+              type="button"
+              role="menuitemradio"
+              tabIndex={-1}
+              data-row={row}
+              aria-checked={value === o.value}
+              aria-label={o.ariaLabel}
+              aria-disabled={disabled || undefined}
+              aria-describedby={described ? tipId : undefined}
+              className={styles.key}
+              data-on={value === o.value || undefined}
+              onClick={() => {
+                if (!disabled) onSelect(o.value);
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </span>
+        {unit && (
+          <span className={styles.keyRowUnit} aria-hidden="true">
+            {unit}
+          </span>
+        )}
+      </div>
+    </Tooltip>
   );
 }
 
@@ -472,6 +701,34 @@ export const MOD_KEY = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.tes
 export const MOD_ARIA = MOD_KEY === '⌘' ? 'Meta' : 'Control';
 
 /* ------------------------------------------------------------------ */
+/* The take lock                                                        */
+/* ------------------------------------------------------------------ */
+
+/** Said where an edit would be: clips, scenes and parts are locked while a performance take records. */
+export const LOCKED_TEXT = 'Locked while a performance records';
+/** The short reason a menu row shows (and reads out) while locked. */
+export const LOCKED_REASON = 'Locked while recording';
+/** The one-line notice for a key that would edit while locked. */
+const LOCKED_NOTICE = 'Locked while a performance records. Stop the take to change clips and scenes.';
+
+/** The project refuses edits now (a performance take records): views show it instead of offering what would be refused. */
+export function isEditLocked(): boolean {
+  return session.store.info.getState().lock !== null;
+}
+export function useEditLocked(): boolean {
+  return useStore(session.store.info, (s) => s.lock !== null);
+}
+
+/** The app's toasts; null where no ToastProvider is mounted (a view rendered on its own). */
+export function useToastsIfAny(): ToastApi | null {
+  try {
+    return useToasts();
+  } catch {
+    return null;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Clip actions (menu items and pad shortcuts)                          */
 /* ------------------------------------------------------------------ */
 
@@ -481,31 +738,51 @@ function trackAndClip(trackId: Id, slot: number) {
   return { p, track, clip: track?.clips[slot] ?? null, scene: p.scenes[slot]?.name ?? `Row ${slot + 1}` };
 }
 
-/** Next empty slot after `slot` on the same part (wrapping), or null. */
+/** Next empty slot after `slot` on the same part (wrapping over its rows, one per scene), or null. */
 export function nextEmptySlot(clips: readonly unknown[], slot: number): number | null {
-  for (let k = 1; k < SCENE_ROWS; k++) {
-    const s = (slot + k) % SCENE_ROWS;
+  const rows = clips.length;
+  for (let k = 1; k < rows; k++) {
+    const s = (slot + k) % rows;
     if (!clips[s]) return s;
   }
   return null;
 }
 
+/** Refused at once (one line) while a take records, instead of the store's long refusal. */
+function lockedNow(): boolean {
+  if (!isEditLocked()) return false;
+  notify(LOCKED_NOTICE, 'warn');
+  return true;
+}
+
+/** Where the selected pad's "Edit steps" key is (the pad action bar under the grid). */
+export const EDIT_STEPS_SELECTOR = '[data-pad-actions] [data-edit-steps]';
+
 export const clipActions = {
-  create(trackId: Id, slot: number, bars: ClipBars): boolean {
+  /**
+   * A new empty clip. With the app's toasts, the toast offers "Edit steps"
+   * (the view rendered alone falls back to the notice with Undo).
+   */
+  create(trackId: Id, slot: number, bars: ClipBars, toasts?: ToastApi | null): boolean {
+    if (lockedNow()) return false;
     const r = cmd.createClip(session.store, trackId, slot, bars);
     if (!session.accepted(r)) return false;
     selectTrack(trackId);
     selectSlot(trackId, slot);
     const { track, clip } = trackAndClip(trackId, slot);
-    notify(`New ${barsLabel(bars)} clip "${clip?.name ?? ''}" on ${track?.name ?? 'this part'}. Add notes in Steps or with Record Notes.`, 'info', 'undo');
+    const text = `New ${bars}-bar clip "${clip?.name ?? ''}" on ${track?.name ?? 'this part'}. Add notes in Steps or with Record Notes.`;
+    if (toasts) toasts.show({ id: 'notice', tone: 'info', message: text, action: { label: 'Edit steps', onAction: () => clipActions.editSteps(trackId, slot) } });
+    else notify(text, 'info', 'undo');
     return true;
   },
 
   rename(trackId: Id, slot: number, name: string): boolean {
+    if (lockedNow()) return false;
     return session.accepted(cmd.renameClip(session.store, trackId, slot, name));
   },
 
   setBars(trackId: Id, slot: number, bars: ClipBars): boolean {
+    if (lockedNow()) return false;
     const before = trackAndClip(trackId, slot).clip?.notes.length ?? 0;
     if (!session.accepted(cmd.setClipBars(session.store, trackId, slot, bars))) return false;
     const after = trackAndClip(trackId, slot).clip?.notes.length ?? 0;
@@ -513,7 +790,29 @@ export const clipActions = {
     return true;
   },
 
+  /** Double the clip by repeating it (1 → 2, 2 → 4, 4 → 8 bars; longer ones fill up to 8). */
+  double(trackId: Id, slot: number): boolean {
+    if (lockedNow()) return false;
+    const { clip } = trackAndClip(trackId, slot);
+    if (!clip) return false;
+    if (!session.accepted(cmd.duplicateClipContent(session.store, trackId, slot))) return false;
+    const now = trackAndClip(trackId, slot).clip;
+    notify(`Doubled "${clip.name}" to ${barsLabel(now?.bars ?? clip.bars)}: it plays its pattern twice.`, 'info', 'undo');
+    return true;
+  },
+
+  /** Repeat the clip's bars until it is `bars` long (a 3-bar clip made 8 bars plays 1 2 3 1 2 3 1 2). */
+  repeatTo(trackId: Id, slot: number, bars: ClipBars): boolean {
+    if (lockedNow()) return false;
+    const { clip } = trackAndClip(trackId, slot);
+    if (!clip) return false;
+    if (!session.accepted(cmd.repeatClipToBars(session.store, trackId, slot, bars))) return false;
+    notify(`"${clip.name}" now repeats to fill ${barsLabel(bars)}.`, 'info', 'undo');
+    return true;
+  },
+
   duplicate(trackId: Id, slot: number): boolean {
+    if (lockedNow()) return false;
     const { track, clip } = trackAndClip(trackId, slot);
     if (!track || !clip) return false;
     const to = nextEmptySlot(track.clips, slot);
@@ -544,6 +843,7 @@ export const clipActions = {
       notify(`Copy a clip first (${MOD_KEY}C on a pad, or Copy in its menu).`, 'warn');
       return false;
     }
+    if (lockedNow()) return false;
     const { track, clip: replaced, scene } = trackAndClip(trackId, slot);
     const r = cmd.pasteClip(session.store, trackId, slot, clipboard);
     if (!session.accepted(r)) return false;
@@ -557,6 +857,7 @@ export const clipActions = {
   clear(trackId: Id, slot: number): boolean {
     const { clip } = trackAndClip(trackId, slot);
     if (!clip || clip.notes.length === 0) return false;
+    if (lockedNow()) return false;
     if (!session.accepted(cmd.clearClip(session.store, trackId, slot))) return false;
     notify(`Cleared the notes of "${clip.name}". The empty clip stays in its slot.`, 'info', 'undo');
     return true;
@@ -565,6 +866,7 @@ export const clipActions = {
   remove(trackId: Id, slot: number): boolean {
     const { track, clip } = trackAndClip(trackId, slot);
     if (!clip) return false;
+    if (lockedNow()) return false;
     if (!session.accepted(cmd.deleteClip(session.store, trackId, slot))) return false;
     notify(`Deleted "${clip.name}" from ${track?.name ?? 'this part'}.`, 'info', 'undo');
     return true;
@@ -581,8 +883,11 @@ export const clipActions = {
 /* Clip menu                                                           */
 /* ------------------------------------------------------------------ */
 
-const LENGTH_OPTIONS = ([1, 2, 3, 4] as const).map((b) => ({ value: b as ClipBars, label: String(b), ariaLabel: `Length ${barsLabel(b)}` }));
-const NEW_OPTIONS = ([1, 2, 4] as const).map((b) => ({ value: b as ClipBars, label: barsLabel(b), ariaLabel: `New clip, ${barsLabel(b)}` }));
+const LENGTH_OPTIONS = CLIP_BAR_CHOICES.map((b) => ({ value: b, label: String(b), ariaLabel: `Length ${barsLabel(b)}` }));
+const NEW_OPTIONS = CLIP_BAR_CHOICES.map((b) => ({ value: b, label: String(b), ariaLabel: `New clip, ${barsLabel(b)}` }));
+/** Length's tooltip: what changing it does to the notes. */
+export const LENGTH_TIP = 'How many bars the clip loops over. Longer: the new bars start empty (Double or Repeat to 8 bars fill them with the pattern). Shorter: notes past the new end are removed; Undo brings them back.';
+const LONGEST: ClipBars = MAX_CLIP_BARS as ClipBars;
 
 export interface ClipMenuProps {
   trackId: Id;
@@ -602,20 +907,23 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
     (p) => {
       const t = p.tracks.find((x) => x.id === trackId);
       const clip = t?.clips[slot] ?? null;
+      const to = t && clip ? nextEmptySlot(t.clips, slot) : null;
       return {
         trackName: t?.name ?? '',
         scene: p.scenes[slot]?.name ?? `Row ${slot + 1}`,
         clipName: clip?.name ?? null,
         bars: clip?.bars ?? null,
         notes: clip?.notes.length ?? 0,
-        duplicateTo: t && clip ? nextEmptySlot(t.clips, slot) : null,
-        duplicateScene: t && clip ? (p.scenes[nextEmptySlot(t.clips, slot) ?? -1]?.name ?? null) : null,
+        duplicateTo: to,
+        duplicateScene: to === null ? null : (p.scenes[to]?.name ?? null),
       };
     },
     shallowEqual,
   );
   const clipboardName = useUi((s) => s.clipboard?.name ?? null);
-  const [renaming, setRenaming] = useState(!!startInRename && info.clipName !== null);
+  const locked = useEditLocked();
+  const toasts = useToastsIfAny();
+  const [renaming, setRenaming] = useState(!!startInRename && info.clipName !== null && !locked);
 
   const act = (fn: () => unknown) => {
     fn();
@@ -644,15 +952,31 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
   if (info.clipName === null) {
     return (
       <Popover anchor={anchor} label={`Empty slot: ${info.trackName}, ${info.scene}`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
-        <MenuHeader eyebrow={`${info.trackName} · ${info.scene}`} title="Empty slot" />
-        <MenuKeyRow label="New clip" row="new" options={NEW_OPTIONS} onSelect={(b) => act(() => clipActions.create(trackId, slot, b))} />
+        <MenuHeader eyebrow={`${info.trackName} · ${info.scene}`} title="Empty slot">
+          {locked && <div className={styles.meta}>{LOCKED_TEXT}.</div>}
+        </MenuHeader>
+        <MenuKeyRow
+          label="New clip"
+          unit="bars"
+          row="new"
+          options={NEW_OPTIONS}
+          disabled={locked}
+          disabledReason={LOCKED_TEXT}
+          tip="An empty clip of that many bars, ready for notes: Edit steps opens it."
+          onSelect={(b) => {
+            const made = clipActions.create(trackId, slot, b, toasts);
+            onClose();
+            // The next step is to fill it: focus goes to the pad actions' Edit steps (after the menu gives focus back).
+            if (made) requestAnimationFrame(() => document.querySelector<HTMLElement>(EDIT_STEPS_SELECTOR)?.focus());
+          }}
+        />
         <MenuSeparator />
         <MenuItem
           icon="paste"
           hint={`${MOD_KEY}V`}
           keyShortcut={`${MOD_ARIA}+V`}
-          disabled={!clipboardName}
-          disabledReason="Copy a clip first"
+          disabled={!clipboardName || locked}
+          disabledReason={locked ? LOCKED_REASON : 'Copy a clip first'}
           onSelect={() => act(() => clipActions.paste(trackId, slot))}
         >
           {clipboardName ? `Paste “${clipboardName}”` : 'Paste'}
@@ -661,25 +985,55 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
     );
   }
 
+  const bars = info.bars ?? 1;
   return (
     <Popover anchor={anchor} label={`Clip ${info.clipName}: ${info.trackName}, ${info.scene}`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
       <MenuHeader eyebrow={`${info.trackName} · ${info.scene}`} title={info.clipName}>
         <div className={styles.meta}>
-          {barsLabel(info.bars ?? 1)} · {info.notes === 0 ? 'no notes yet' : `${info.notes} note${info.notes === 1 ? '' : 's'}`}
+          {barsLabel(bars)} · {info.notes === 0 ? 'no notes yet' : `${info.notes} note${info.notes === 1 ? '' : 's'}`}
+          {locked ? ` · ${LOCKED_TEXT}` : ''}
         </div>
       </MenuHeader>
       <MenuItem icon="chevronRight" hint="Steps view" onSelect={() => act(() => clipActions.editSteps(trackId, slot))}>
         Edit steps
       </MenuItem>
-      <MenuItem hint="F2" keyShortcut="F2" onSelect={() => setRenaming(true)}>
+      <MenuItem icon="pencil" hint="F2" keyShortcut="F2" disabled={locked} disabledReason={LOCKED_REASON} onSelect={() => setRenaming(true)}>
         Rename…
       </MenuItem>
-      <MenuKeyRow label="Length" unit="bars" row="length" options={LENGTH_OPTIONS} value={info.bars} onSelect={(b) => act(() => clipActions.setBars(trackId, slot, b))} />
+      <MenuKeyRow
+        label="Length"
+        unit="bars"
+        row="length"
+        options={LENGTH_OPTIONS}
+        value={info.bars}
+        disabled={locked}
+        disabledReason={LOCKED_TEXT}
+        tip={LENGTH_TIP}
+        onSelect={(b) => act(() => clipActions.setBars(trackId, slot, b))}
+      />
+      <MenuItem
+        disabled={bars >= LONGEST || locked}
+        disabledReason={locked ? LOCKED_REASON : `Already ${LONGEST} bars`}
+        hint={`to ${barsLabel(Math.min(LONGEST, bars * 2))}`}
+        onSelect={() => act(() => clipActions.double(trackId, slot))}
+      >
+        Double (repeat)
+      </MenuItem>
+      <MenuItem
+        disabled={bars >= LONGEST || locked}
+        disabledReason={locked ? LOCKED_REASON : `Already ${LONGEST} bars`}
+        hint="plays the pattern again"
+        onSelect={() => act(() => clipActions.repeatTo(trackId, slot, LONGEST))}
+      >
+        Repeat to {LONGEST} bars
+      </MenuItem>
       <MenuSeparator />
       {onMove && (
         <MenuItem
           icon="drag"
           hint="or drag the pad"
+          disabled={locked}
+          disabledReason={LOCKED_REASON}
           onSelect={() => {
             onClose();
             onMove();
@@ -690,8 +1044,8 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
       )}
       <MenuItem
         icon="duplicate"
-        disabled={info.duplicateTo === null}
-        disabledReason="No empty slot"
+        disabled={info.duplicateTo === null || locked}
+        disabledReason={locked ? LOCKED_REASON : 'No empty slot'}
         hint={info.duplicateScene ? `to ${info.duplicateScene}` : undefined}
         onSelect={() => act(() => clipActions.duplicate(trackId, slot))}
       >
@@ -704,17 +1058,17 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
         icon="paste"
         hint={`${MOD_KEY}V`}
         keyShortcut={`${MOD_ARIA}+V`}
-        disabled={!clipboardName}
-        disabledReason="Copy a clip first"
+        disabled={!clipboardName || locked}
+        disabledReason={locked ? LOCKED_REASON : 'Copy a clip first'}
         onSelect={() => act(() => clipActions.paste(trackId, slot))}
       >
         {clipboardName ? `Paste “${clipboardName}” here` : 'Paste here'}
       </MenuItem>
       <MenuSeparator />
-      <MenuItem icon="close" disabled={info.notes === 0} disabledReason="Already empty" onSelect={() => act(() => clipActions.clear(trackId, slot))}>
+      <MenuItem icon="close" disabled={info.notes === 0 || locked} disabledReason={locked ? LOCKED_REASON : 'Already empty'} onSelect={() => act(() => clipActions.clear(trackId, slot))}>
         Clear notes
       </MenuItem>
-      <MenuItem icon="trash" tone="danger" hint="Del" keyShortcut="Delete" onSelect={() => act(() => clipActions.remove(trackId, slot))}>
+      <MenuItem icon="trash" tone="danger" hint="Del" keyShortcut="Delete" disabled={locked} disabledReason={LOCKED_REASON} onSelect={() => act(() => clipActions.remove(trackId, slot))}>
         Delete clip
       </MenuItem>
     </Popover>

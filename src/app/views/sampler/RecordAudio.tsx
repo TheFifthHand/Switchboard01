@@ -1,9 +1,10 @@
 /**
  * Record audio onto a sampler part: from a microphone or an instrument, in
- * time with the music. An optional one-bar count-in, then 1, 2 or 4 bars
- * from a downbeat; the take becomes the part's recording with a clip that
- * plays it from the downbeat (one undo step). Input choice, level,
- * monitoring and the recording offset are in MIDI & audio.
+ * time with the music. An optional one-bar count-in, then 1, 2, 4 or 8 bars
+ * from a downbeat; the take goes into its own clip on the part, which plays
+ * it from the downbeat, and the part's other clips keep their recordings
+ * (one undo step; capability-01). Input choice, level, monitoring and the
+ * recording offset are in MIDI & audio.
  */
 import { useId, useRef, useState } from 'react';
 import { Button, Icon, SegmentedControl, Switch, useRafLoop } from '../../../ui/components';
@@ -15,7 +16,11 @@ import { useRuntime } from '../../runtime';
 import { DevicesDialog, audioInput, useAudioInput } from '../devices';
 import styles from './RecordEdit.module.css';
 
-const BAR_OPTIONS = RECORD_BAR_CHOICES.map((b) => ({ value: String(b) as '1' | '2' | '4', label: String(b), tip: `Record ${b} bar${b === 1 ? '' : 's'}.` }));
+type BarsValue = `${RecordBars}`;
+const BAR_OPTIONS = RECORD_BAR_CHOICES.map((b) => ({ value: String(b) as BarsValue, label: String(b), tip: `Record ${b} bar${b === 1 ? '' : 's'}.` }));
+
+/** What Record audio does with the take (its tooltip). */
+export const TAKE_CLIP_TEXT = 'The take goes into its own clip on this part; other clips keep their recordings.';
 
 /** "Count-in: 3 beats" / "Recording: bar 2 of 4" and a bar that fills, from the transport position (display only). */
 function TakeProgress(props: { take: TakeInfo }) {
@@ -119,17 +124,17 @@ export function RecordAudio(props: { trackId: Id }) {
             disabled={!!blocked || !!unavailable}
             aria-describedby={hintId}
             onClick={() => void audioInput.record(trackId)}
-            tip={`Record ${st.bars} bar${st.bars === 1 ? '' : 's'} from the microphone or instrument${st.countIn ? ' after a one-bar count-in' : ''}, in time with the music. It becomes this part’s recording, with a clip that plays it from the downbeat.`}
-            detail="Playback starts if it is stopped; while it plays, the take starts at the next bar. Undo removes the whole result."
+            tip={`Record ${st.bars} bar${st.bars === 1 ? '' : 's'} from the microphone or instrument${st.countIn ? ' after a one-bar count-in' : ''}, in time with the music. ${TAKE_CLIP_TEXT}`}
+            detail="It goes on the selected pad when that is empty, else on the first empty one (with every pad taken it replaces the selected clip). Playback starts if it is stopped; while it plays, the take starts at the next bar. Undo removes the whole result."
           >
             Record audio
           </Button>
         )}
-        <SegmentedControl<'1' | '2' | '4'>
+        <SegmentedControl<BarsValue>
           label="Bars to record"
           size="sm"
           options={BAR_OPTIONS}
-          value={String(st.bars) as '1' | '2' | '4'}
+          value={String(st.bars) as BarsValue}
           disabled={mine}
           onChange={(v) => audioInput.setBars(Number(v) as RecordBars)}
         />

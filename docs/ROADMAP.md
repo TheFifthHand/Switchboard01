@@ -16,22 +16,37 @@ The rules that hold today keep holding: Omni Song runs on your own device, needs
 nothing anywhere and ships its sounds with the app. Any later feature that needs more (a local AI
 model, a camera, a headset) is optional, stays on your machine and is off until you turn it on.
 
-## What exists now (2.0)
+## What exists now (2.3)
 
-- **Make music without theory:** Jump In plays a starter groove; eight parts by four rows of loops,
-  Play / Pause / Stop, labelled Mute and Solo, drag-and-drop clips, Musical Assist keeps notes in key,
-  Variation makes new takes on a pattern.
+- **Make music without theory:** Jump In plays a starter groove; eight parts by one to eight scenes of
+  loops (clips up to 8 bars), Play / Pause / Stop (Pause also beside the pads), pads that say what a
+  click does (▶ Play / ■ Stop) and never restart by accident, part keys and scene buttons in words,
+  labelled Mute and Solo, drag-and-drop clips, Musical Assist with an in-key keyboard (only the key's
+  notes, every key its own note), Variation (Subtle, Bold, Back to original), chord pads named in the
+  key and Write a progression, and changing key can move the whole song.
+- **Edit notes and drums:** a piano roll with selection, moves across bars, finer grids, Tighten timing
+  and Loosen; a clickable, paintable drum grid with Fill and Shift; one computer key per kit sound.
 - **Sounds:** 15 drum kits and more than 60 synth sounds, all original synthesis, in a sound browser
-  with categories and Preview; six big knobs per part (Tone, Space, Echo, Motion, Drive, Pump).
+  with Cancel back to what you had; recordings and imports become their own clips; six big knobs per
+  part (Tone, Space, Echo, Motion, Drive, Pump), any knob can be given to a big knob.
 - **Simple and Advanced:** the essentials by default; every control (effects, cables, arpeggiator,
   key and scale) one switch away.
-- **Mix and master:** a channel strip per part, mastering presets, loudness targets with live
-  readings and Match target, a spectrum display and A/B.
-- **Record and keep:** performance recording and replay, note recording, an arrangement view, WAV
-  export rendered by the same engine, project files you can move between browsers, offline use.
-- **Help:** a three-step quick guide and "Try this" hints that follow what you do.
-- **New in 2.0:** MIDI keyboards and controllers (with MIDI learn), and recording your voice or an
-  instrument in time with the music, with simple edits of the take.
+- **Songs, like GarageBand:** a row per part; loops dragged in from a loop browser (scenes or one
+  part's loops), moved, copied, stretched and trimmed, everything snapping to bars with the result
+  shown while dragging; a ruler with the playhead and a loop range; named sections that move with
+  their music and carry fades, filter rises and echo throws; Build up, Strip down and Breakdown;
+  takes put in the song; old songs open as they were.
+- **Mix and master:** channel strips with aligned meters, Reverb and Echo returns, a channel drawer for
+  effects, mastering presets, loudness targets with a Match that keeps correcting, level-matched A/B,
+  a −1 dBTP true-peak ceiling.
+- **Record and keep:** performance and note recording, audio takes up to 8 bars, WAV export (24-bit by
+  default, with or without mastering, with a loudness report) that starts exactly on the beat,
+  project files you can move between browsers, version history and a rescue copy, a two-tab guard,
+  offline use, and a new version that opens by itself unless you are using the page.
+- **Help:** a three-step quick guide, "Try this" hints for loops and songs, and a Help sheet (?) with
+  every shortcut.
+- **MIDI and audio input:** MIDI keyboards and controllers (with MIDI learn), and recording your voice
+  or an instrument in time with the music.
 
 ## Plans
 
@@ -78,6 +93,27 @@ project files, so a song made on a laptop opens in the headset and back.
 *Plan, and the long-term direction.* Bring the pieces together: generated material from your own
 model, shaped by your movement, in a space you can stand in — music as something you move through.
 What this becomes will be decided by trying the earlier steps first.
+
+### 5. Smaller things deferred from rounds 4 and 5
+
+*Plan.* Round 4 (the whole-app upgrade after 2.1) left these out on purpose, to be picked up later:
+
+- **Stem export:** one WAV per part from the Export dialog.
+- **Drum rolls** in the step grid.
+- **Preview on each sound card** in the sound browser (today Preview plays the part's current
+  sound).
+- **Sampler:** slicing a recording, an ADSR envelope and more filter types.
+- **Shape:** a per-voice drum strip, a voice-source picker, and saving your own sound presets.
+- **Links to views** (hash routing), so a view can be bookmarked or reopened by address.
+
+Round 5 (2.3, the Song view) left these for later:
+
+- **Add an intro / Add an ending, and inserting or removing bars, from the Song view.** The song
+  commands exist and are tested; 2.3 has no control for them yet.
+- **A "Back to Song" key in Steps** while you came from the Song view (today a toast offers it for
+  20 seconds).
+- **Your own keyboard layout's letters** on the in-key keyboard's I, [ and ] keys (they show the US
+  letters).
 
 ## How plans become features
 

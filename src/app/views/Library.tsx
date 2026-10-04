@@ -6,10 +6,17 @@
  *   one without playing it — the user presses Play or taps a pad. When the
  *   open project cannot be kept (storage down, or its latest edits failed to
  *   save), the dialog asks first and offers to export it.
- * - My projects: every project stored in this browser, the open one marked,
- *   with Open, Rename, Duplicate and Delete (to Recently deleted, where it can
- *   be restored or deleted forever). The open project cannot be deleted while
- *   it is open; the dialog offers to open another one first.
+ * - My projects: every project stored in this browser, the open one marked
+ *   (tempo, scenes, song length, origin, last edit), with Open, Rename,
+ *   Duplicate, Versions… and Delete (to Recently deleted, where it can be
+ *   restored or deleted forever). The open project cannot be deleted while
+ *   it is open; the dialog offers to open another one first. A line says how
+ *   much browser storage is used.
+ * - Versions… opens the project's version history in its row: when each
+ *   version was kept, its name or why it was kept, a one-line summary
+ *   ("6 sections · 2:19"), Restore as a copy and Delete; Save version… keeps
+ *   the project as it is now, optionally named (named versions are kept
+ *   until deleted).
  * - Import / export of the portable project file (.omnisong.zip; files from
  *   SWITCHBOARD / 01, .sb01.zip, still import) and a short explanation of
  *   browser storage versus project files.
@@ -24,9 +31,11 @@ import { Button, Dialog, Icon, Notice, SegmentedControl } from '../../ui/compone
 import { BLANK_STARTER, STARTERS, getStarter, type StarterDef } from '../../content/starters';
 import * as library from '../../persistence/library';
 import type { ProjectSummary, TrashSummary } from '../../persistence/library';
-import { StorageError } from '../../persistence/db';
+import { StorageError, storageEstimate } from '../../persistence/db';
+import { formatClock } from '../../persistence/summary';
 import { BUNDLE_ACCEPT, BUNDLE_EXTENSION, LEGACY_BUNDLE_EXTENSIONS } from '../../persistence/bundle';
 import { renameProject as renameProjectCmd } from '../../state/commands';
+import { uiStore } from '../../state/uiStore';
 import { session, useAutosave, useProject } from '../instance';
 import { notify, runtimeStore, useRuntime } from '../runtime';
 import { downloadBlob } from '../download';
@@ -56,16 +65,25 @@ const NAME_MAX = 80;
 /** Elements where Space does their own job (press, toggle, type). */
 const SPACE_CONTROLS = 'button, input, select, textarea, a[href], [role="tab"], [role="radio"], [role="switch"], [role="checkbox"], [role="slider"], [contenteditable="true"]';
 /** A freshly loaded project has no clips running: a pad or scene tap starts playback with it. */
-const HEAR_IT = 'Tap a pad or a scene to hear it.';
+/** How to hear what just loaded, in the words of the view the person is in (the Song view plays the song). */
+export function hearIt(): string {
+  return uiStore.getState().view === 'arrange' ? 'Press Play to hear the song.' : 'Tap a pad or a scene to hear it.';
+}
+/** A blank project has no clips: there is nothing to hear yet, and a pad makes the first clip. */
+const BLANK_HINT = 'Tap a pad to make a clip, then press Edit steps.';
 
 type Message = { tone: 'error' | 'success' | 'info'; text: string; action?: { label: string; onAction(): void } };
+
+type VersionSummary = library.VersionSummary;
 
 /** Inline state of one row: a rename field or a confirmation. */
 type RowMode =
   | { kind: 'rename'; id: string }
   | { kind: 'delete'; id: string }
   | { kind: 'delete-open'; id: string }
-  | { kind: 'purge'; id: string };
+  | { kind: 'purge'; id: string }
+  /** Opening this project would drop edits of the open one that this tab may not save. */
+  | { kind: 'open-confirm'; id: string };
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -83,6 +101,10 @@ export function storageMessage(e: unknown, action: string): string {
         return `${action} failed: another Omni Song tab is using the storage. Close the other tabs and try again.`;
       case 'not-found':
         return `${e.message} The list has been refreshed.`;
+      case 'conflict':
+        return `${action} failed: this project was changed in another tab meanwhile. The list has been refreshed; try again.`;
+      case 'open-elsewhere':
+        return e.message;
       default:
         return e.message;
     }
@@ -117,15 +139,35 @@ const lastNoticeId = () => runtimeStore.getState().notice?.id ?? 0;
  * migrated or partly damaged project) is kept in the same message instead of
  * being replaced, and then nothing is claimed about what was saved.
  */
-function announceLoaded(text: string, noticeBefore: number, extra = ''): void {
+function announceLoaded(text: string, noticeBefore: number, extra = '', hint = hearIt()): void {
   const n = runtimeStore.getState().notice;
   if (n && n.id !== noticeBefore && n.tone !== 'info') notify(`${text} ${n.text}`, n.tone);
-  else notify(`${text}${extra ? ` ${extra}` : ''} ${HEAR_IT}`);
+  else notify(`${text}${extra ? ` ${extra}` : ''} ${hint}`);
+}
+
+/** "640 KB", "12.4 MB", "1.6 GB". */
+export function formatBytes(bytes: number): string {
+  const b = Math.max(0, bytes);
+  if (b < 1024 * 1024) return `${Math.max(1, Math.round(b / 1024))} KB`;
+  if (b < 1024 * 1024 * 1024) {
+    const mb = b / (1024 * 1024);
+    return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+  }
+  const gb = b / (1024 * 1024 * 1024);
+  return `${gb < 10 ? gb.toFixed(1) : Math.round(gb)} GB`;
+}
+
+/** "Browser storage used: 12.4 MB of about 2.1 GB available." */
+export function usageLine(est: { usage: number; quota: number }): string {
+  return `Browser storage used: ${formatBytes(est.usage)} of about ${formatBytes(est.quota)} available.`;
 }
 
 function cleanName(name: string): string {
   return name.replace(/\s+/g, ' ').trim().slice(0, NAME_MAX);
 }
+
+/** The version-history name field allows the same length as project names. */
+const VERSION_NAME_MAX = NAME_MAX;
 
 /* ------------------------------------------------------------------ */
 /* Dialog                                                              */
@@ -148,8 +190,16 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
   const [busy, setBusy] = useState<string | null>(null);
   const [row, setRow] = useState<RowMode | null>(null);
   const [confirmStart, setConfirmStart] = useState<StarterDef | null>(null);
+  /** The project whose version history is open (one at a time), and a counter that makes it re-read its list. */
+  const [versionsFor, setVersionsFor] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  const [usage, setUsage] = useState<{ usage: number; quota: number } | null>(null);
   // The open project's latest edits could not be stored (e.g. storage full).
-  const saveFailing = useAutosave().status === 'error';
+  const autosave = useAutosave();
+  const saveFailing = autosave.status === 'error';
+  /** This tab does not save the open project (another tab has it, or changed it): its edits cannot be kept here. */
+  const readOnly = autosave.readonly ?? null;
+  const unsavable = readOnly !== null && autosave.dirty;
   const preview = useRuntime((s) => s.preview);
   const alive = useRef(true);
   const busyRef = useRef(false);
@@ -166,11 +216,13 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
 
   const refresh = useCallback(async () => {
     try {
-      const [p, t] = await Promise.all([library.listProjects(), library.listTrash()]);
+      const [p, t, est] = await Promise.all([library.listProjects(), library.listTrash(), storageEstimate()]);
       if (!alive.current) return;
       setProjects(p);
       setTrash(t);
+      setUsage(est);
       setListError(null);
+      setRevision((r) => r + 1);
     } catch (e) {
       if (!alive.current) return;
       setListError(storageMessage(e, 'Reading your projects'));
@@ -256,7 +308,7 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
       await session.newFromStarter(def.id, { discardCurrent });
       // The project is on screen now, even if the dialog was closed meanwhile.
       const name = session.store.getState().name;
-      announceLoaded(`Started ${quote(name)}.`, before, keptPrevious ? `${quote(previous)} is still in My projects.` : '');
+      announceLoaded(`Started ${quote(name)}.`, before, keptPrevious ? `${quote(previous)} is still in My projects.` : '', def === BLANK_STARTER ? BLANK_HINT : hearIt());
       onLoaded('starter');
     });
 
@@ -289,14 +341,33 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
         else notify(res.message, 'error');
         return;
       }
-      notify(`${res.message} ${HEAR_IT}`);
+      notify(`${res.message} ${hearIt()}`);
       onLoaded('import');
     });
   };
 
   /* ---------- project rows ---------- */
 
-  const openProject = (p: ProjectSummary) =>
+  /** Open a project, first asking when the open project's edits cannot be saved by this tab (they would be dropped). */
+  const askOpen = (p: ProjectSummary) => {
+    if (unsavable) {
+      setMessage(null);
+      setRow({ kind: 'open-confirm', id: p.id });
+    } else void openProject(p);
+  };
+
+  /** Keep the edits on screen as a new project, then open `p`. */
+  const keepCopyThenOpen = (p: ProjectSummary) =>
+    run(`open:${p.id}`, `Opening ${quote(p.name)}`, async () => {
+      const copy = await library.saveCopy(session.store.getState());
+      await session.openProject(p.id);
+      if (!alive.current) return;
+      setRow(null);
+      notify(`Opened ${quote(session.store.getState().name)}. Your changes are kept in My projects as ${quote(copy.name)}.`);
+      onLoaded('open');
+    });
+
+  const openProject = (p: Pick<ProjectSummary, 'id' | 'name'>) =>
     run(`open:${p.id}`, `Opening ${quote(p.name)}`, async () => {
       const before = lastNoticeId();
       await session.openProject(p.id);
@@ -304,8 +375,58 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
       onLoaded('open');
     });
 
+  /* ---------- versions ---------- */
+
+  const toggleVersions = (p: ProjectSummary) => {
+    setMessage(null);
+    setRow(null);
+    setVersionsFor((cur) => (cur === p.id ? null : p.id));
+  };
+
+  const saveVersion = (p: ProjectSummary, rawName: string): Promise<boolean> => {
+    const name = cleanName(rawName).slice(0, VERSION_NAME_MAX);
+    let ok = false;
+    return run(`version-save:${p.id}`, 'Saving a version', async () => {
+      if (p.id === session.store.getState().id) {
+        // The open project as it is on screen now (written first, so the list shows it as it is).
+        await session.autosaver?.flush();
+        await library.saveVersion(session.store.getState(), { name, reason: 'manual' });
+      } else await library.saveStoredVersion(p.id, { name, reason: 'manual' });
+      ok = true;
+      if (!alive.current) return;
+      setMessage({
+        tone: 'success',
+        text: name ? `Saved the version ${quote(name)} of ${quote(p.name)}. Named versions are kept until you delete them.` : `Saved a version of ${quote(p.name)}.`,
+      });
+    }).then(() => ok);
+  };
+
+  const restoreVersion = (v: VersionSummary) =>
+    run(`version-restore:${v.id}`, 'Restoring the version', async () => {
+      const copy = await library.restoreVersionAsCopy(v.id);
+      if (!alive.current) return;
+      setMessage({
+        tone: 'success',
+        text: `Restored as a new project: ${quote(copy.name)}. The original is unchanged.`,
+        action: { label: 'Open it', onAction: () => void openProject({ id: copy.id, name: copy.name }) },
+      });
+    });
+
+  const deleteVersion = (p: ProjectSummary, v: VersionSummary) =>
+    run(`version-delete:${v.id}`, 'Deleting the version', async () => {
+      await library.deleteVersion(v.id);
+      if (!alive.current) return;
+      focusAfter.current = `lib-version-save-${p.id}`;
+      setMessage({ tone: 'success', text: `Deleted the version from ${library.versionWhen(v.createdAt)}.` });
+    });
+
   /** Open another project so the (formerly) open one can be deleted, then ask to delete it. */
-  const openOtherThenDelete = (other: ProjectSummary, target: ProjectSummary) =>
+  const openOtherThenDelete = (other: ProjectSummary, target: ProjectSummary) => {
+    if (unsavable) return askOpen(other);
+    return openOtherAndAskDelete(other, target);
+  };
+
+  const openOtherAndAskDelete = (other: ProjectSummary, target: ProjectSummary) =>
     run(`open:${other.id}`, `Opening ${quote(other.name)}`, async () => {
       await session.openProject(other.id);
       if (!alive.current) return;
@@ -317,6 +438,17 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
     const name = cleanName(raw);
     let ok = false;
     return run(`rename:${p.id}`, 'Renaming the project', async () => {
+      if (p.id === session.store.getState().id && readOnly) {
+        // This tab does not save it: a rename here would only live in this tab, or write over the other tab's work.
+        setMessage({
+          tone: 'error',
+          text:
+            readOnly === 'other-tab'
+              ? `${quote(p.name)} is open in another tab, so it can't be renamed here. Rename it in that tab.`
+              : `${quote(p.name)} was changed in another tab, so it can't be renamed here until you open it again.`,
+        });
+        return;
+      }
       if (p.id === session.store.getState().id) {
         // The open project: rename through the store so the editor, undo and autosave agree.
         const r = renameProjectCmd(session.store, name);
@@ -339,7 +471,8 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
     run(`duplicate:${p.id}`, 'Duplicating the project', async () => {
       // The stored copy of the open project must include its latest edits.
       await session.autosaver?.flush();
-      const copy = await library.duplicateProject(p.id);
+      // A tab that does not save the open project copies what it shows (its stored copy is another tab's).
+      const copy = p.id === session.store.getState().id && readOnly ? await library.saveCopy(session.store.getState()) : await library.duplicateProject(p.id);
       if (alive.current) setMessage({ tone: 'success', text: `Made a copy: ${quote(copy.name)}.` });
     });
 
@@ -390,12 +523,17 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
     if (row) {
       e.preventDefault();
       e.stopPropagation();
-      const back = row.kind === 'rename' ? `lib-rename-${row.id}` : row.kind === 'purge' ? `lib-purge-${row.id}` : `lib-delete-${row.id}`;
+      const back = row.kind === 'rename' ? `lib-rename-${row.id}` : row.kind === 'purge' ? `lib-purge-${row.id}` : row.kind === 'open-confirm' ? `lib-open-${row.id}` : `lib-delete-${row.id}`;
       cancelRow(back);
     } else if (confirmStart) {
       e.preventDefault();
       e.stopPropagation();
       setConfirmStart(null);
+    } else if (versionsFor && tab === 'projects') {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelRow(`lib-versions-${versionsFor}`);
+      setVersionsFor(null);
     }
   };
 
@@ -529,7 +667,10 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
                         mode={row && row.id === p.id ? row.kind : null}
                         busy={busy}
                         nextToOpen={others[0] ?? null}
-                        onOpen={() => void openProject(p)}
+                        onOpen={() => askOpen(p)}
+                        currentName={currentName}
+                        onOpenConfirm={() => void openProject(p)}
+                        onKeepCopyThenOpen={() => void keepCopyThenOpen(p)}
                         onRenameStart={() => {
                           setMessage(null);
                           setRow({ kind: 'rename', id: p.id });
@@ -544,6 +685,12 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
                           setTab('starters');
                         }}
                         onCancel={(back) => cancelRow(back)}
+                        versionsOpen={versionsFor === p.id}
+                        revision={revision}
+                        onVersionsToggle={() => toggleVersions(p)}
+                        onSaveVersion={(name) => saveVersion(p, name)}
+                        onRestoreVersion={(v) => void restoreVersion(v)}
+                        onDeleteVersion={(v) => void deleteVersion(p, v)}
                       />
                     );
                   })}
@@ -577,6 +724,11 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
                   </ul>
                 )}
               </section>
+              {usage && (
+                <p className={styles.usage} data-testid="library-storage-use">
+                  {usageLine(usage)}
+                </p>
+              )}
             </>
           )}
           {/* Short windows (e.g. 200 % zoom): the note moves here so the footer stays one row. */}
@@ -620,7 +772,7 @@ function StartersPanel(props: {
   else if (storageDown) intro = `Starting a project replaces ${quote(currentName)} on screen, and it cannot be kept in this browser right now.`;
   else if (saveFailing) intro = `Starting a project replaces ${quote(currentName)} on screen, and its latest changes could not be saved in this browser.`;
   else if (stored) intro = `Pick a starting point. Your current project ${quote(currentName)} stays in My projects.`;
-  else intro = `Pick a starting point. It loads without playing: ${HEAR_IT.toLowerCase()}`;
+  else intro = `Pick a starting point. It loads without playing: ${hearIt().toLowerCase()}`;
 
   const cards: StarterDef[] = [...STARTERS, BLANK_STARTER];
   return (
@@ -696,9 +848,15 @@ function StartersPanel(props: {
 /* Rows                                                                */
 /* ------------------------------------------------------------------ */
 
+/** "4 scenes, song 2:19" (or "4 scenes, no song yet"). */
+export function songMeta(p: Pick<ProjectSummary, 'sceneCount' | 'blockCount' | 'songSeconds'>): string {
+  const scenes = `${p.sceneCount} ${p.sceneCount === 1 ? 'scene' : 'scenes'}`;
+  return `${scenes}, ${p.blockCount > 0 ? `song ${formatClock(p.songSeconds)}` : 'no song yet'}`;
+}
+
 function projectMeta(p: ProjectSummary, now: number): string {
   const origin = p.starterId ? getStarter(p.starterId) : undefined;
-  const parts = [`${Math.round(p.bpm)} BPM`];
+  const parts = [`${Math.round(p.bpm)} BPM`, songMeta(p)];
   if (origin) parts.push(origin === BLANK_STARTER ? 'from Blank' : `from ${origin.name}`);
   parts.push(`edited ${timeAgo(p.updatedAt, now)}`);
   return parts.join(' · ');
@@ -721,14 +879,25 @@ function ProjectRow(props: {
   onOpenOther(other: ProjectSummary): void;
   onGoToStarters(): void;
   onCancel(returnFocusTo?: string): void;
+  /** Name of the project open now (for the open confirmation). */
+  currentName: string;
+  onOpenConfirm(): void;
+  onKeepCopyThenOpen(): void;
+  versionsOpen: boolean;
+  /** Changes after every library action: the version list is read again. */
+  revision: number;
+  onVersionsToggle(): void;
+  onSaveVersion(name: string): Promise<boolean>;
+  onRestoreVersion(v: VersionSummary): void;
+  onDeleteVersion(v: VersionSummary): void;
 }) {
-  const { project: p, displayName, isOpen, now, mode, busy, nextToOpen } = props;
+  const { project: p, displayName, isOpen, now, mode, busy, nextToOpen, versionsOpen } = props;
   const id = p.id;
   const disabled = busy !== null;
   const nameId = `lib-name-${id}`;
   const keepRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (mode === 'delete' || mode === 'delete-open') keepRef.current?.focus();
+    if (mode === 'delete' || mode === 'delete-open' || mode === 'open-confirm') keepRef.current?.focus();
   }, [mode]);
 
   return (
@@ -755,7 +924,17 @@ function ProjectRow(props: {
         {mode !== 'rename' && (
           <div className={styles.rowActions}>
             {!isOpen && (
-              <Button size="sm" variant="secondary" icon="folder" onClick={props.onOpen} disabled={disabled} aria-label={`Open ${displayName}`} aria-busy={busy === `open:${id}` || undefined}>
+              <Button
+                id={`lib-open-${id}`}
+                size="sm"
+                variant="secondary"
+                icon="folder"
+                onClick={props.onOpen}
+                disabled={disabled}
+                aria-label={`Open ${displayName}`}
+                aria-busy={busy === `open:${id}` || undefined}
+                aria-expanded={mode === 'open-confirm' ? true : undefined}
+              >
                 {busy === `open:${id}` ? 'Opening…' : 'Open'}
               </Button>
             )}
@@ -765,12 +944,59 @@ function ProjectRow(props: {
             <Button id={`lib-duplicate-${id}`} size="sm" variant="ghost" icon="duplicate" onClick={props.onDuplicate} disabled={disabled} aria-label={`Duplicate ${displayName}`} aria-busy={busy === `duplicate:${id}` || undefined}>
               {busy === `duplicate:${id}` ? 'Copying…' : 'Duplicate'}
             </Button>
+            <Button
+              id={`lib-versions-${id}`}
+              size="sm"
+              variant="ghost"
+              icon="clock"
+              onClick={props.onVersionsToggle}
+              disabled={disabled}
+              aria-label={`Versions of ${displayName}`}
+              aria-expanded={versionsOpen}
+              aria-controls={versionsOpen ? `lib-versions-panel-${id}` : undefined}
+              tip="Earlier states of this project, kept while you edit. Restore one as a copy, or save the project as it is now."
+            >
+              Versions…
+            </Button>
             <Button id={`lib-delete-${id}`} size="sm" variant="ghost" icon="trash" className={styles.deleteButton} onClick={props.onDeleteAsk} disabled={disabled} aria-label={`Delete ${displayName}`} aria-expanded={mode === 'delete' || mode === 'delete-open'}>
               Delete
             </Button>
           </div>
         )}
       </div>
+
+      {versionsOpen && (
+        <VersionsPanel
+          project={p}
+          displayName={displayName}
+          isOpen={isOpen}
+          now={now}
+          busy={busy}
+          revision={props.revision}
+          onSave={props.onSaveVersion}
+          onRestore={props.onRestoreVersion}
+          onDelete={props.onDeleteVersion}
+        />
+      )}
+
+      {mode === 'open-confirm' && (
+        <div className={styles.confirm} role="group" aria-label={`Open ${displayName}?`}>
+          <p className={styles.confirmText}>
+            Open {quote(displayName)}? The changes made here to {quote(props.currentName)} are not saved, because it is open in another tab (or was changed there). Keep them as a copy if you want them.
+          </p>
+          <div className={styles.confirmActions}>
+            <Button ref={keepRef} size="sm" variant="ghost" onClick={() => props.onCancel(`lib-open-${id}`)}>
+              Cancel
+            </Button>
+            <Button size="sm" icon="duplicate" onClick={props.onKeepCopyThenOpen} disabled={disabled}>
+              Keep them as a copy and open
+            </Button>
+            <Button size="sm" variant="danger" onClick={props.onOpenConfirm} disabled={disabled} aria-busy={busy === `open:${id}` || undefined}>
+              Open without them
+            </Button>
+          </div>
+        </div>
+      )}
 
       {mode === 'delete' && (
         <div className={styles.confirm} role="group" aria-label={`Delete ${displayName}?`}>
@@ -811,6 +1037,253 @@ function ProjectRow(props: {
         </div>
       )}
     </li>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Versions                                                            */
+/* ------------------------------------------------------------------ */
+
+function VersionsPanel(props: {
+  project: ProjectSummary;
+  displayName: string;
+  isOpen: boolean;
+  now: number;
+  busy: string | null;
+  revision: number;
+  onSave(name: string): Promise<boolean>;
+  onRestore(v: VersionSummary): void;
+  onDelete(v: VersionSummary): void;
+}) {
+  const { project: p, displayName, isOpen, now, busy, revision } = props;
+  const [versions, setVersions] = useState<VersionSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [naming, setNaming] = useState(false);
+  const [confirm, setConfirm] = useState<string | null>(null);
+  const keepRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const disabled = busy !== null;
+  const saveId = `lib-version-save-${p.id}`;
+
+  useEffect(() => {
+    let live = true;
+    library.listVersions(p.id).then(
+      (list) => {
+        if (!live) return;
+        setVersions(list);
+        setError(null);
+      },
+      (e: unknown) => {
+        if (!live) return;
+        setVersions((v) => v ?? []);
+        setError(storageMessage(e, 'Reading the versions'));
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [p.id, revision]);
+
+  useEffect(() => {
+    if (confirm) keepRef.current?.focus();
+  }, [confirm]);
+
+  const focusLater = (id: string) => requestAnimationFrame(() => document.getElementById(id)?.focus());
+
+  return (
+    <section id={`lib-versions-panel-${p.id}`} className={styles.versions} aria-labelledby={titleId}>
+      <div className={styles.versionsHead}>
+        <h4 id={titleId} className={styles.versionsTitle}>
+          Versions of {quote(displayName)}
+        </h4>
+        {!naming && (
+          <Button
+            id={saveId}
+            size="sm"
+            variant="secondary"
+            icon="save"
+            className={styles.saveVersion}
+            onClick={() => setNaming(true)}
+            disabled={disabled}
+            tip={isOpen ? 'Keep the project as it is on screen now. Give it a name to keep it until you delete it.' : 'Keep the project as it is stored now. Give it a name to keep it until you delete it.'}
+          >
+            Save version…
+          </Button>
+        )}
+      </div>
+      {naming && (
+        <VersionNameForm
+          busy={busy === `version-save:${p.id}`}
+          onSubmit={async (name) => {
+            const ok = await props.onSave(name);
+            if (ok) {
+              setNaming(false);
+              focusLater(saveId);
+            }
+            return ok;
+          }}
+          onCancel={() => {
+            setNaming(false);
+            focusLater(saveId);
+          }}
+        />
+      )}
+      {error && (
+        <p className={styles.versionsError} role="alert">
+          {error}
+        </p>
+      )}
+      {versions === null ? (
+        <p className={styles.emptySmall}>Loading versions…</p>
+      ) : versions.length === 0 ? (
+        <p className={styles.emptySmall}>No versions yet. While you edit, one is kept automatically about every ten minutes; Save version… keeps the project as it is now.</p>
+      ) : (
+        <ul className={styles.versionList} aria-label={`Versions of ${displayName}`}>
+          {versions.map((v) => {
+            const label = library.versionLabel(v);
+            const when = library.versionWhen(v.createdAt, now);
+            const deleteId = `lib-version-delete-${v.id}`;
+            return (
+              <li key={v.id} className={styles.version} data-named={v.name ? true : undefined}>
+                <div className={styles.versionMain}>
+                  <div className={styles.versionText}>
+                    <span className={`${styles.versionWhen} mono`}>{when}</span>
+                    <span className={styles.versionLabel} title={label}>
+                      {label}
+                    </span>
+                    <span className={styles.versionSummary}>{v.summary}</span>
+                  </div>
+                  <div className={styles.versionActions}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon="duplicate"
+                      onClick={() => props.onRestore(v)}
+                      disabled={disabled}
+                      aria-label={`Restore the version from ${when} as a copy`}
+                      aria-busy={busy === `version-restore:${v.id}` || undefined}
+                      tip="Adds this version to My projects as a new project. The project and its other versions stay as they are."
+                    >
+                      {busy === `version-restore:${v.id}` ? 'Restoring…' : 'Restore as a copy'}
+                    </Button>
+                    <Button
+                      id={deleteId}
+                      size="sm"
+                      variant="ghost"
+                      icon="trash"
+                      className={styles.deleteButton}
+                      onClick={() => setConfirm(v.id)}
+                      disabled={disabled}
+                      aria-label={`Delete the version from ${when}`}
+                      aria-expanded={confirm === v.id}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+                {confirm === v.id && (
+                  <div
+                    className={styles.confirm}
+                    role="group"
+                    aria-label={`Delete the version from ${when}?`}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Escape') return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setConfirm(null);
+                      focusLater(deleteId);
+                    }}
+                  >
+                    <p className={styles.confirmText}>
+                      Delete the version from {when} ({label})? This cannot be undone.
+                    </p>
+                    <div className={styles.confirmActions}>
+                      <Button
+                        ref={keepRef}
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setConfirm(null);
+                          focusLater(deleteId);
+                        }}
+                      >
+                        Keep it
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        icon="trash"
+                        onClick={() => {
+                          setConfirm(null);
+                          props.onDelete(v);
+                        }}
+                        disabled={disabled}
+                        aria-busy={busy === `version-delete:${v.id}` || undefined}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className={styles.versionsNote}>Named versions are kept until you delete them. The others thin out over time: all from the last hour, then one an hour for a day, then one a day, at most 30.</p>
+    </section>
+  );
+}
+
+function VersionNameForm(props: { busy: boolean; onSubmit(name: string): Promise<boolean>; onCancel(): void }) {
+  const { busy, onSubmit, onCancel } = props;
+  const [value, setValue] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  const inputId = useId();
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    void onSubmit(cleanName(value).slice(0, VERSION_NAME_MAX)).then((ok) => {
+      if (!ok) inputRef.current?.focus();
+    });
+  };
+
+  return (
+    <form className={styles.rename} onSubmit={submit} aria-label="Save a version">
+      <label htmlFor={inputId} className={styles.versionNameLabel}>
+        Name (optional)
+      </label>
+      <input
+        ref={inputRef}
+        id={inputId}
+        className={styles.renameInput}
+        value={value}
+        maxLength={VERSION_NAME_MAX}
+        placeholder="e.g. Before mixing"
+        spellCheck={false}
+        autoComplete="off"
+        onChange={(e) => setValue(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            onCancel();
+          }
+        }}
+      />
+      <div className={styles.renameActions}>
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button size="sm" variant="primary" type="submit" icon="check" disabled={busy}>
+          {busy ? 'Saving…' : 'Save version'}
+        </Button>
+      </div>
+    </form>
   );
 }
 

@@ -16,7 +16,7 @@ import { session } from '../../src/app/instance';
 import { patchRuntime } from '../../src/app/runtime';
 import { getStarter } from '../../src/content/starters';
 import { deleteDb } from '../../src/persistence/db';
-import { setGuideDone } from '../../src/state/uiStore';
+import { setGuideDone, setPadMode, setView } from '../../src/state/uiStore';
 import { cleanup, fire, mount, nextFrame } from './ui-harness';
 
 /** Trusted input goes through the browser outside React's act(). */
@@ -54,6 +54,9 @@ beforeEach(async () => {
   await deleteDb();
   await page.viewport(1920, 1080);
   setGuideDone(true);
+  // The view is remembered in localStorage, which test files share: start on the Loops pads.
+  setView('play');
+  setPadMode('loops');
   session.store.replace(getStarter('house')!.build());
   patchRuntime({ muteAll: false, stalled: null, playing: false, paused: false, mode: 'live', replayId: null, recording: 'off', recordTarget: null, notice: null });
   calls = [];

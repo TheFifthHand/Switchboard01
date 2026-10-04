@@ -288,18 +288,27 @@ describe('Sampler editor: playback and tempo controls', () => {
     fire(root, new Event('change', { bubbles: true }));
     expect(samplerParams('t8').rootNote).toBe(67);
 
-    // Bars helper: the 2.5 s glass chord at Original BPM 120 is 1.25 bars.
+    // Bars helper (shape-06): the 2.5 s glass chord at 120 BPM is a whole loop of 1 bar (96 BPM), not the
+    // quarter-bar count its Original BPM gives.
     const barsField = [...m.container.querySelectorAll<HTMLInputElement>('input[role="spinbutton"]')].find((i) => i.labels?.[0]?.textContent === 'Region length in bars')!;
     expect(barsField).toBeTruthy();
-    expect(barsField.value).toBe('1.25');
-    // 0.25 bars in 2.5 s would be 24 BPM: refused with a way out.
+    expect(barsField.value).toBe('1');
+    expect(button(m.container, 'Set 96 BPM').disabled).toBe(false);
+    // Arrow keys step through whole loop lengths: 1 → 0.5 → 0.25 bars. 0.25 bars in 2.5 s would be 24 BPM:
+    // refused with a way out.
+    key(barsField, 'keydown', { key: 'ArrowDown' });
+    expect(barsField.value).toBe('0.5');
     key(barsField, 'keydown', { key: 'ArrowDown' });
     expect(barsField.value).toBe('0.25');
     expect(button(m.container, 'Set BPM').disabled).toBe(true);
     expect(m.container.textContent).toContain('Original BPM must be 40–220');
-    // 2.25 bars → 2.25 × 240 / 2.5 = 216 BPM.
+    // Up through 0.5 and 1 to 2 bars → 2 × 240 / 2.5 = 192 BPM.
     key(barsField, 'keydown', { key: 'ArrowUp' });
     key(barsField, 'keydown', { key: 'ArrowUp' });
+    key(barsField, 'keydown', { key: 'ArrowUp' });
+    expect(barsField.value).toBe('2');
+    // Shift+arrow still moves a beat: 2.25 bars → 216 BPM.
+    key(barsField, 'keydown', { key: 'ArrowUp', shiftKey: true });
     expect(barsField.value).toBe('2.25');
     const set = button(m.container, 'Set 216 BPM');
     expect(set.disabled).toBe(false);
@@ -478,7 +487,7 @@ describe('Sampler import', () => {
     expect(statusText(m.container)).not.toContain(DECODE_FAILED_MESSAGE);
   });
 
-  it('a small generated WAV dropped on the zone is decoded, stored in IndexedDB and assigned; the part becomes a sampler', async () => {
+  it('a small generated WAV dropped on the zone is decoded, stored in IndexedDB and put in a new clip; the part becomes a sampler', async () => {
     const m = setup('t4');
     expect(track('t4').instrument.kind).toBe('poly');
     const file = new File([toneWav(0.5, 44100)], 'Test Tone.wav', { type: 'audio/wav' });
@@ -495,7 +504,9 @@ describe('Sampler import', () => {
     expect(meta.duration).toBeCloseTo(0.5, 2);
     expect(meta.channels).toBe(1);
     expect(meta.peaks?.length).toBeGreaterThan(0);
+    // The part had nothing else to play, so the recording is its own too; the new clip plays it itself.
     expect(track('t4').instrument).toMatchObject({ kind: 'sampler', sampleId: meta.id });
+    expect(track('t4').clips[0]?.sample).toEqual({ id: meta.id, start: 0, end: 1, rootNote: 60 });
     const stored = await db.getSample(meta.id);
     expect(stored?.blob.size).toBe(file.size);
 
@@ -505,7 +516,9 @@ describe('Sampler import', () => {
     expect(document.activeElement?.id).toBe('sampler-recording-t4');
     // The file's own rate (44.1 kHz), not the rate the browser decoded it at.
     await until(() => m.container.textContent?.includes('0.50 s · 44.1 kHz · Mono · WAV') ?? false, 'the recording details');
-    await until(() => statusText(m.container).includes('Imported "Test Tone" (0.5 s).'), 'the result message');
+    await until(() => statusText(m.container).includes('Imported “Test Tone” as a new clip on Chords · Intro. It plays at its recorded pitch.'), 'the result message');
+    // The editor edits the new clip's own recording, and says so.
+    expect(m.container.textContent).toContain('Test Tone — plays in Chords · Intro');
     const picker = m.container.querySelector<HTMLSelectElement>('#sampler-recording-t4')!;
     expect(picker.value).toBe(meta.id);
     expect([...picker.options].some((o) => o.value === meta.id && o.textContent === 'Test Tone (0.50 s)')).toBe(true);

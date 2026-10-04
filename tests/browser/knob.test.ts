@@ -388,7 +388,7 @@ describe('Knob tips name the gestures', () => {
     const text = described(slider);
     expect(text).toContain('Drag up or down, or use the arrow keys; hold Shift for fine steps.');
     expect(text).toContain(`Double-click resets it to ${home}.`);
-    expect(text).toContain('For an exact value, click the knob and type a number.');
+    expect(text).toContain('For an exact value, click the value under it, or click the knob and type a number.');
 
     // A mouse user: click the knob, then type.
     const p = pointIn(slider);

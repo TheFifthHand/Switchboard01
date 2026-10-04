@@ -21,9 +21,12 @@ Key decisions:
   OfflineAudioContext, so WAV export uses identical synthesis, routing, timing and automation.
 - Drum kits and built-in samples are synthesized by pure-TypeScript DSP (seeded, deterministic),
   rendered into AudioBuffers on the device. No binary sound assets.
-- Scene = clip row; always 8 tracks × 4 slots.
-- Look-ahead scheduler fed by a Worker ticker; stall → coherent stop + Resume.
-- Look-ahead limiter AudioWorklet + bounded safety clipper at −1 dBFS.
+- Scene = clip row; always 8 tracks, one clip slot per scene (4 scenes until round 4; 1–8 since).
+- Look-ahead scheduler fed by a Worker ticker. Until round 4 a stall stopped playback coherently
+  (Resume); since round 4 a busy visible tab skips ahead in time and only a hidden tab or a
+  suspended audio device stops (the banner's Play resumes).
+- Look-ahead limiter AudioWorklet + bounded safety clipper at −1 dBFS (true-peak detection,
+  −1 dBTP, since round 4).
 
 ## Milestones
 
@@ -50,25 +53,160 @@ name Omni Song. Interface rules: `docs/OMNI_UX.md`. Later ideas: `docs/ROADMAP.m
 | Reviews | done | correctness review (5 defects: gain clipping, MIDI undo flooding, take lost to a recording lock, loudness not restarted, early stop dropping audio) and hands-on usability/accessibility review (13 problems), all fixed with regression tests |
 | Handoff | done | full test run, screenshots and WAVs recaptured, launcher smoke test of the 2.0 zip, TEST_REPORT and ACCEPTANCE updated |
 
+## Song timeline (after 2.0, on a pull request into `main`)
+
+Asked for: "the movement of song bits so sleek and smooth and so easy to edit and extend and
+combine … perfect and reliable … clicking together." `main` holds the shipped 2.0; this work is
+reviewed as a pull request from the development branch. (This lane of blocks shipped in 2.1–2.2; 2.3
+replaced it with the Song view, see below.)
+
+| Step | State | Notes |
+|------|-------|-------|
+| Spine | done | block labels and per-part changes (layer another scene's part, or switch a part off, in one block), 16 passes per block, group commands (move, duplicate, paste, remove, split, join, layer, rename), validation |
+| Playback | done | per-part changes play; edits apply live while the song plays or is paused, re-planned from the block playing now; play from a bar; readout follows the song timeline |
+| Song lane | done | edge-to-edge blocks with a row per part; drag with live slot opening and a settle; Ctrl/Alt copy; edge drag for passes; split/join; multi-select; clipboard; scene cards layer or insert; keyboard path for everything; Follow, zoom, Fit song |
+| Pads | done | Loops pads and scene rows lift, preview the result, and settle like the lane (shared `src/ui/motion.ts`) |
+| Reviews | done | hands-on UX review with frame timing (touch drags, re-fit on drop, follow snap-back, slow-PC stutter, layer semantics … fixed) and adversarial correctness review (5 defects reproduced and fixed with regression tests; a seeded fuzz of random live edits guards the rest) |
+| Round 2 | done | loop a section (Loop button, ruler band, block menu; seamless repeats; edits keep working inside it); Build up / Strip down / Breakdown; touch press-and-hold to pick up, swipe to scroll; a drop does about a third less work; gestures that end where they started leave no undo step |
+| Round 3 | done | a first-time-user review and a correctness review: one Play per screen (in Arrange the transport Play, Space, Stop and Export act on the song); export the looped section; playing on through an export; helpers on the playing block play what the lane shows; loops survive undo/redo; Fit song never zooms in, compact headers for long songs; taller part rows; calmer "Off" cells; menus never cover their button; tooltips wait for the pointer; toggles keep their "on" look under the pointer; Undo/Redo always on the top bar; plain words ("times", "Echo tail") |
+
+## Omni Song 2.2: the whole-app upgrade (round 4)
+
+An audit of every view found performance, design, Play, Mix, Shape, shell and capability problems
+(finding ids such as PLAY-01, MIX-01, shape-01, perf-01). They were built in 14 slices, each with
+its own tests, most followed by an independent review and a fix round, and merged into `r4-int`.
+This round ships as **version 2.2.0**. Interface rules: `docs/OMNI_UX.md`; contracts:
+`docs/ARCHITECTURE.md`; checks: `docs/ACCEPTANCE.md`.
+
+| Slice | Final commit | What it delivered | Key measurements (from the slice and review reports) |
+|------|------|------|------|
+| model-spine | `d1e26a4` | Schema v3 (1–8 scenes, clips up to 8 bars, per-clip recordings, song moves, designed big-knob positions; v2→v3 changes nothing, older builds refuse v3); undo steps in the user's words (`display`); a group that ends where it began leaves no step; 8 effects per part; scene, clip, sample, sound and arrangement commands | — |
+| persist | `abd5fc1` | IndexedDB v2 (`versions` + `versionData`); one tab per project (Web Locks, BroadcastChannel fallback) with read-only and conflict states; rescue copies on reload or close; versions (auto, before bulk edits, named, restore as a copy, thinning); library writes refused for a project open elsewhere | — |
+| uikit | `02e779b` | Canvas meters on one shared loop that sleeps; `meterWake`; toast placement contract; the touch rule (250 ms, 8 px, 44 px); xl knobs and clickable value keys; MiniKeyboard rail, fit and kit keys; pad sketches and loop progress; type and colour tokens | Mix at 4× CPU slowdown: paint 413 → 83 ms/s; Play 280 → 20 ms/s. Review: 0 animation frames idle in Play; main thread busy 8–9 % (was 15–16) in Play, 22–24 % (was 32–42) in Mix |
+| engine | `46fa7fb` + `ae2be9a` | True-peak limiter (−1 dBTP); known output latency; song gain and macro ramps, Stop ends song automation; level-matched Drive and equal-power Chorus / Phaser / Flanger; returns with no dry path; level-matched A/B; idle drum preparation; spectrum by band integration; 16-bit TPDF dither; Compressor / Gate gain reduction; sample preload with a loader | House engine build 408 → 125 ms live, 474 → 52 ms export; true peak ≤ −1.00 dBTP; latency 383 frames at 48 kHz; Drive level within ±0.5 dB; 8 idle Drives build in 865 ms (base 3228); worst modulation effect −0.97 dB (Phaser on Pad); idle drum steps ≤ 3.7 ms; ramp sidebands −75.9 dB; pink-noise spread 1.66 dB (base 5.46); Techno, Breakbeat and Downtempo starter levels re-baselined |
+| core | `fcd74a1` | 0.3 s look-ahead and brace; skip instead of stop in a visible tab; Jump In paints before the engine is built; shared meter reads; audible position, clip phase and queued tick; Record Notes early window; aligned exports, export without mastering and the loudness report; per-clip recordings and the sample loader; imports as clips; song moves played and exported; 1–8 scenes; versions before bulk edits; re-voicing after sound edits | 4× CPU slowdown with real tab clicks: 927 notes, 0 later than 20 ms, 0 stops (`r4-int` before: 11 late, worst 105 ms, 1 stop); review at 6×: 0 late, 0 stops. Jump In longest frame 152–250 ms (base 349–492). Exports aligned to frame 0–1; report within 0.001 |
+| notes | `4723d85` | Note selection commands (move, delete, velocity, transpose, duplicate, copy / paste; moves never delete by accident); quantize and humanize; paint, fill and shift drum steps; move the song to a key; chords and 8 progressions; spelling by key; Variation from the original within ±30 % | Variation: a test presses every starter clip at every strength (over 3000 presses) within ±30 %; an uncommitted probe found 0 of 12,096 presses out of bounds |
+| play | `4a90b35` | One selected clip; take lock in the grid; 1–8 rows and the scene menu; clip lengths 1–8 with Double and Repeat to 8 bars; pad sketches and loop progress; Variation split key; Keep pattern; roving keyboard; Solo keeps its meter; menus that consume an outside press | Review M1: loop bars cost 7× the base main-thread time per frame; fixed with stepped Web Animations: ≈ 1.09–1.29× base, 55–60 fps. Tab reaches the part panel in 11 stops |
+| mix-export | `81fd875` | Fresh loudness readings (P1, MIX-01); iterating Match with guards; level-matched A/B; meters on the fader scale with peak hold; Reverb and Echo return strips; Channel drawer; Export Output, report and 24-bit default; "Silent" faders; mastering beside the mixer from 1280 px; readouts on the sleeping loop | A/B trim 6.1 dB against 6.08 measured; report within 0.03 LUFS; 0 animation frames once stopped |
+| pads-keys | `6a1c447` | Clickable, paintable drum grid with a sound menu; one key, one kit sound; key letters and a name rail; wider keys and a third octave; `--keyboard-h`; folding per view; the key-change question; chord pads and Write a progression; Root marking | Keyboard 1320 px wide at 1920 × 1080 |
+| steps | `2f66fb8` | Note selection, drag across bars, keys and clipboard; 1/16, 1/32 and triplet grids; Tighten timing and Loosen; per-note velocity; transpose in key; bar strip with overview; Follow; touch; heard-step playhead; key chip | Header back to two rows at 1366 × 768 (80 px, 18.6 rows of notes; 16.1 at 1280) |
+| sound-sampler | `a5994fc` | Sound browser Cancel and one undo step; imports checked first and made into clips (asking on drum or synth parts); per-clip recordings in the editor; tempo helper; waveform zoom, overview and snap; Record audio up to 8 bars; reduced motion | — |
+| shape | `21c99b8` | Simple cards whose knob always changes the sound (P1, shape-01); big knobs that reach nothing say so, Reset big knobs (P1, shape-02); "Drive is off" for a big knob waiting on a switched-off effect; resets to the sound's own values; Assign to big knob (options and end-of-travel values hold until the big knob passes); Sound row and a Drum mix of the groups a part plays; one-row big knobs on short windows; Advanced tabs and cables overlay; Squeeze (full: −28 dB, 5:1, make-up ≤ 8 dB) and gain-reduction bars; copy / paste effects; dimmed knobs with reasons; knob drags end on a part switch; "Showing <part>…"; Open in Shape in the Play cables drawer; the rack embedded in Mix's drawer with part-named undo steps | Part switch medians: 1366 × 768 Simple 308 ms / Advanced 128 ms; 1920 × 1080 Simple 200 ms / Advanced 112 ms. Full Squeeze keeps every starter part at or under −4.4 dBFS peak. Advanced columns catching up with a note instead of dimming: median switch 56 ms (104 ms dimmed) |
+| shell | `c0f6c89` | Two-tab banners; returning Welcome; leave warning (not for Record Notes); Tempo / Swing keys; transport widths (Projects from 1600 px, Undo / Redo words from 1800 px, Advanced loses bar.beat only at 1366–1439 px); save-state icons that open My projects; title and headings; one failure toast per run; Help and the ? key; song hints; a hint chip that never covers a control, ignores toasts, waits off screen when there is no room and slides in without a fade; drop-to-import; Ctrl+S; record count-in; Space on the guide's Play step; start toasts after the guide; `--transport-h` as the visible bottom of strip and banners; `session.exportsFinished` | Two-row strip at most 81 px (15 %) at 960 × 540 at 2×. Play / Pause in Mix re-renders 28 components (was 174). Final serial e2e run at load about 2: 51 of 51 |
+| arrange | `a4d17a6` | A card dropped mid-block layers instead of inserting (P1); scene cards drag from anywhere, with a grip, and lift on a touch hold; slot direction from net travel; true scale with "1/4 Lift" compact headers and a "Min" zoom level; ▶ Play the song; a names column (108 px, one Tab stop, widening on hover) with Mute / Solo there and in the part menu; Loop button and chip; plain wheel scrolls; taller rows; take drawer; part switches across a selection; song moves; scenes palette with audition that runs to its pass end anywhere; Make song blocks (naming launches left out); Shape the song; Rec cells; edge grip; zoom memory | Review: 485 of 488 drops correct (3 wrong on stalled runs; base: 17 of 36 wrong). Arrange browser tests, serial: 221 of 221 |
+
+Integration changes on `r4-int` (outside any slice): Jump In keeps the library's project result;
+typed entry reads `ParamSpec.negate`; return Mix tooltips; views name undo steps in their own
+words; toasts at the top centre under the transport, moving to the nearest spot clear of controls
+(narrower if need be); the Channel drawer shows the rack embedded; chord symbols take each degree's own letter in seven-note keys; no browser Back/Forward swipe from
+a drag; xl knobs keep a 32 px value key; starter cards spell keys like the app (E♭ major).
+Integration perf check (1366 × 768, Play, playing, load about 4): main-thread task time 91–123 ms/s
+on `r4-int` against 135–175 ms/s for the shipped 2.1 build, 60 fps in both.
+
+**Deferred** (by the briefs): stem export, drum rolls, per-card preview in the sound browser,
+sampler slicing, ADSR and filter types, the per-voice drum strip, a voice-source picker, user
+presets, hash routing. **Not done**: the progression dialog plays single chords, not the whole
+progression on the audio clock (no session API for a timed phrase); the chord inversion is kept for
+the session only; a clip's own recording is auditioned through the engine directly (the session's
+preview cannot pass a recording yet).
+
+**Test runs.** Slice runs were on a shared, heavily loaded machine (load averages 7 to 57 on 4
+CPUs). Timing tests (`drumSynth`, `r4-engine-idle`, `validate`, `variation`, the e2e keyboard tours
+and Jump In timings) failed under load in several runs, and on the base under the same load. On a
+quiet machine (load about 2) the shell slice's final serial e2e run passed 51 of 51. The final
+full-suite numbers are in `TEST_REPORT.md`.
+
+## Omni Song 2.3: songs like GarageBand (round 5)
+
+Asked for after 2.2, by a music maker who compares Omni Song with GarageBand: songs that snap
+together and are easy to move and lengthen, a keyboard where every key can be pressed, part buttons
+that do not just restart the parts, a Pause, and "Nothing feels obvious or intuitive at all." Built in
+six slices on `r5-int` (from the 2.2 release, `3464535`); this round ships as **version 2.3.0**.
+Contract for the song: schema v4 (regions per part on an absolute timeline, sections). Interface
+rules: `docs/OMNI_UX.md`; contracts: `docs/ARCHITECTURE.md`; checks: `docs/ACCEPTANCE.md`.
+
+| Slice | Final commit | What it delivered | Key measurements (from the slice reports) |
+|------|------|------|------|
+| spine | `73fda99` (on the integrator's types and pure rules, `802e210`) | Schema v4: the song is loops (regions) on a row per part on one timeline of whole bars, plus named sections carrying the song moves; `src/project/arrangement.ts` holds the rules (placed wins: what a loop lands on is cut short, started later in phase, split or removed). Migration v3→v4 (each block a section, what each part played a loop, joined where it plays on in phase; deterministic). Validation of loops and sections in plain words (4000 loops, 256 sections, 512 bars). Song commands rewritten, each one undo step in the user's words ("Move Four Floor"). The song follows clip edits in the same undo step (`keepSongWithClips`). Starters built by the migration's rule; library and version lines speak of sections | Song fuzz: 3000 random steps (6 seeds × 500) on House, the song valid after every step, undo / redo exact. Every 2.2 starter song (and an edited one) migrates to the same clip at the same bar and phase, bar by bar |
+| engine | `c2f6f7f` | Song mode plays the loops on an absolute timeline through passes; a loop range in bars that repeats seamlessly; edits while playing or paused act from the edit point, in phase, and never move the playhead; song moves from sections; session API (`playSong`, `seekSong`, `setSongCursor`, `setSongLoop`, `togglePlay({song})`), Stop puts the cursor back where playback started; `src/app/songPlayback.ts`; Record Notes into the loop under the playhead; Song and Loop export sources; the tab reads "Song"; relaunching a playing clip keeps it in phase | 4000-loop song: `process()` 0.04 ms median; `songPlayChanged` 0.003 ms; replan with regeneration 1.7 ms median, 3.4 ms p95. Live-edit fuzz: 60 seeds, and 60 with loops |
+| lane | `be57649` | The Song view like GarageBand's Tracks area: one header row (length, Loop, − Fit +, Follow, Loops), the ruler (playhead, loop range), the Sections strip with its menu (moves, Build up / Strip down / Breakdown), a row per part with Mute and Solo, loops drawn with their notes; move, copy, stretch and trim snapping to bars with the drop's result shown while dragging; marquee, keys and menus; the loop browser (scenes, loops by part, audition); one button for an empty song; "Put in the song" for takes; Song hints and Help keys | 150 loops on screen at 1366 × 768, 2 s drags: p50 16.7 ms, p95 16.7–16.8 ms, max 16.8 ms, 0 frames over 20 ms; 0 DOM mutations to other loops |
+| keys | `ed65caf` | With Musical Assist on, a scale keyboard: only the key's notes as one row of even keys, every key its own note, spelled by the key, roots by octave and a teal underline, A–' and Q–] computer keys; on the piano the black keys are centred (60 % wide, 55 % tall); keys are buttons named by their note; a held key is released when the layout changes | At 1366 px: Simple 20 keys of 45.2 px, Advanced 16 of 44.8 px; 34.2 px of every white key below the black keys |
+| pads | `abe33e3` | Pads say what a click does (▶ Play / ■ Stop) on hover and focus; "Stops at bar N"; the part key in words (Play / Stop / Cancel / Skip); ❚❚ Pause / ▶ Continue above Stop all; scene buttons Play row / Stop row / Continue row; the playing pad is never started again by a click | The part key's words show in every column or none from 1024 to 1920 px (icon only around 1180 px) |
+| update | `3927e85` | A new version opens by itself in every page not in use (`public/sw-takeover.js`, `src/app/pwa.ts`); a page in use is never reloaded and offers Update; a refresh opens a waiting version; the launchers name another version running at the usual address, wait for it, then start this one there; the Welcome card names the version | Takeover e2e: 6 of 6, twice, including the real 2.2.0 release |
+
+Integration changes on `r5-int` (outside any slice): the v4 types and the pure timeline rules with
+their tests went in first (`802e210`); the song playback store moved to `src/app/songPlayback.ts`
+(`fc5857d`); the Loops pads count a queued change's bar on the song's timeline (`5db6374`); pads
+tests follow loops, not blocks (`0d7f5ef`); relaunching the playing clip shows no queued change
+(`9a11870`); the resilience e2e follows the song's bar after a stall, the update e2e takes an
+absolute `E2E_DIST`, the versions test keeps its versions minutes apart, and summaries say sections
+(`9229b1d`); version 2.3.0 with What's new and START HERE (`1089b52`).
+
+**Reviews and fix rounds.** Two independent reviews ran on the merged build (`09d8b1f`):
+- A GarageBand user's review with real mouse and keyboard (1 blocker, 6 major, 13 minor, polish).
+  Fixed in the lane fix round (`a1a5e30`) and a shell fix round (`facfcbb`): deleting every loop
+  leaves an empty song (Ctrl+A selects loops and sections; the song now ends with its last loop,
+  `songBars` vs `timelineBars`, `3cc3e69`); Song shortcuts act on the selection after any click;
+  Delete stops after one press; the hint chip stays readable; Ctrl+drag copies exactly what it drags;
+  no pick-up or drop hitches (168 loops: longest frame 16.7 ms, was up to 200 ms); bigger hit areas;
+  sticky names; zoom around the playhead; Stop brings the cursor into view; paused reads as paused;
+  **Shape the song…** (Add an intro / Add an ending) is back; "Loops" became **Add loops**; a click on
+  a part's header or loop makes it the part the keys play, and the keyboard strip names it ("Keys
+  play Bass"); in Song, Play/Space plays the song even when paused pads were waiting; scene buttons
+  say Play row / Stop row on hover; the Drums and Notes tabs go straight to a part's pads.
+- A playback-correctness review (160 random songs, about 19,000 live edits, 600 loop/tempo/swing
+  runs, 40 exports, 379,075 migrated notes, all matching). Fixed in the engine fix round (`b5ba28d`):
+  **note chase** (a held synth or bass note sounds from wherever playback enters: Play, a seek, each
+  loop pass, Resume, a loop-range export; never drums or samplers; not under a 16th), exact loop
+  seams in whole ticks, a song shortened under a sounding note releases it at the new end on the
+  audio clock, notes freed from a removed seam sound again from that bar line, exact-instant pause
+  and loop boundaries, pad state read at the playhead. Spine fix round (`5a72a08`): truthful repair
+  words; a refused song edit names no loops.
+
+**Not done, or worth knowing:**
+- No control inserts or removes bars on their own (`insertBars`, `removeBars` exist and are tested;
+  sections' Duplicate and Delete-with-music use them).
+- "Back to Song" after a double-click into a loop's notes is a 20 s toast, not a key in the Steps
+  header.
+- Ctrl+T also splits, but browsers keep it for a new tab, so Help lists Ctrl+E.
+- On non-US keyboard layouts the scale keyboard's I, [ and ] keys show their US legends.
+- Paused clip pads keep the amber "queued" look (they say "Paused" in words).
+- A seek while the song plays restarts the transport at that bar (the usual 50 ms start offset);
+  runtime `songLooping` can be up to a beat late after a jump.
+- Toasts that arrive while the Song header is full sit over part of it until they time out.
+- Touch was tried with CDP touch events, not on a real tablet; the Windows launcher's version check
+  ran under PowerShell 7 on Linux only.
+
+**Test runs.** The slices ran on a shared, loaded machine (load averages 15 to 32 on 4 CPUs);
+timing tests (`drumSynth`, `variation`, `r4-notes-variation`, `validate`, live-pad timing in
+`wp1-session`, `wp2-notes-recording`, `export-while-playing`) failed under load in some runs and
+passed alone. Final test runs: see TEST_REPORT.md.
+
 ## State at handoff
 
-- Release package: `release/omni-song-2.0.0.zip` (production build in `app/`, `Start Omni
-  Song.bat`, `START HERE.txt`, `launcher/`, `ASSETS.md`, and the repository source in `source/`).
-  Rebuild with `npm run package`. The 1.0 zip was removed from the branch (it stays in git history).
+- Release package: `npm run package` builds `release/omni-song-<version>.zip` (2.3.0: production
+  build in `app/`, `Start Omni Song.bat`, `START HERE.txt`, `launcher/`, `ASSETS.md`, and the
+  repository source in `source/`). `release/omni-song-2.2.0.zip` is in the repository (the update
+  e2e opens it as the real older version); older zips stay in git history (2.0 is on `main`).
 - Evidence: `TEST_REPORT.md` (results and measurements), `docs/ACCEPTANCE.md` (every requirement of
   the brief with its evidence), `docs/screenshots/`, `evidence/wav/`, `evidence/launcher-smoke.txt`.
-- Guides: `docs/GUIDE.md` (first loop; record, mix, master and export; MIDI keyboard; recording
-  your voice or guitar).
-- No failing checks: typecheck clean; unit 909, browser 925, e2e 25 tests pass.
+- Guides: `docs/GUIDE.md` (first loop; chords and keys; notes and drum steps; shaping sounds;
+  building a song in the Song view; record, mix, master and export; keeping work safe; MIDI
+  keyboard; recording your voice or guitar).
+- At the 2.1 handoff: typecheck clean; unit 1106, browser 1085, e2e 25 tests pass. The latest
+  results (2.3) are in `TEST_REPORT.md`.
 - Remaining work is local only: listening, physical latency, a real MIDI keyboard and microphone,
   the Windows launcher on Windows, Chrome/Edge on Windows, real background-tab throttling (see
   TEST_REPORT.md).
 
 ## Next action
 
-None required. For local verification: extract `release/omni-song-2.0.0.zip` on Windows,
-double-click `Start Omni Song.bat`, press Jump In, then follow `docs/GUIDE.md`. Possible next
-steps are in `docs/ROADMAP.md` (local music-generator bridge, webcam movement control, WebXR).
+Run the full suites on a quiet machine and build the 2.3 release zip (`npm run package`). For
+local verification: extract `release/omni-song-2.3.0.zip` on Windows, double-click `Start Omni
+Song.bat` (with a 2.2 window still open, it should name it and wait), press Jump In, then follow
+"Build a song" in `docs/GUIDE.md` with a mouse or trackpad. Possible next steps are in
+`docs/ROADMAP.md` (local music-generator bridge, webcam movement control, WebXR, and the items
+rounds 4 and 5 deferred).
 
 ## Known limitations / environment notes
 

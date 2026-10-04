@@ -5,7 +5,7 @@
  *   lands on "Hide hints"; keyboard presses always work;
  * - it never covers a heading (the Shape view's "Shaping: 2 Percussion — Hand
  *   Percussion", even when a longer part name appears under it) or a status
- *   line (Arrange's "Playback follows" explanation), at 1366 x 768,
+ *   line (the Song header's words), at 1366 x 768,
  *   1920 x 1080 and 960 x 540;
  * - in a narrow spot its buttons wrap instead of running over its counter;
  * - the closing line says where Export really is at this width.
@@ -19,9 +19,10 @@ import { session } from '../../src/app/instance';
 import { patchRuntime } from '../../src/app/runtime';
 import type { BootInfo } from '../../src/app/session';
 import { HINT_CLICK_GUARD_MS } from '../../src/app/views/hints/Hints';
-import { HINTS_STORAGE_KEY, HINT_IDS, INITIAL_HINTS, hintsStore, markHintDone, showHintsAgain, type HintId } from '../../src/app/views/hints/hintsState';
+import { HINTS_STORAGE_KEY, HINT_IDS, INITIAL_HINTS, hideHints, hintsStore, markHintDone, showHintsAgain, type HintId } from '../../src/app/views/hints/hintsState';
 import { deleteDb } from '../../src/persistence/db';
 import { selectTrack, setGuideDone, setPadMode, setTipsEnabled, setUiMode, setView, type UiMode } from '../../src/state/uiStore';
+import { chipPlaced } from './r4-shell-chip';
 import { cleanup, mount, wait } from './ui-harness';
 
 const realJumpIn = session.jumpIn;
@@ -118,6 +119,7 @@ async function openAt(w: number, hh: number, step: HintId | 'finished') {
   await settle();
 }
 
+/** The hints at `step`: the steps before it done; for a step of the basics, the song steps too (Arrange would put them first). */
 function showStep(step: HintId | 'finished') {
   act(() => {
     showHintsAgain();
@@ -125,6 +127,7 @@ function showStep(step: HintId | 'finished') {
       if (s === step) break;
       markHintDone(s);
     }
+    if (step !== 'finished' && !step.startsWith('song-')) for (const s of HINT_IDS) if (s.startsWith('song-')) markHintDone(s);
   });
 }
 
@@ -132,12 +135,15 @@ function overlaps(a: DOMRect, b: DOMRect): boolean {
   return a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
 }
 
-/** Headings and status lines (their words, line by line) the chip covers. */
-function coveredKeyText(): string[] {
+/** Headings and status lines (their words, line by line) the chip covers; with `headers`, also a panel header's words (the Song header's labels). */
+function coveredKeyText(opts: { headers?: boolean } = {}): string[] {
   const c = chip()!.getBoundingClientRect();
   const out: string[] = [];
-  for (const el of document.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"], [role="status"], [role="alert"]')) {
+  for (const el of document.querySelectorAll(`h1, h2, h3, h4, h5, h6, [role="heading"], [role="status"], [role="alert"]${opts.headers ? ', main header' : ''}`)) {
     if (chip()!.contains(el) || el.closest('header[aria-label="Transport"]')) continue;
+    // Visually hidden text (the view's h1 for screen readers, status messages) is not on screen.
+    const own = el.getBoundingClientRect();
+    if (own.width <= 2 || own.height <= 2) continue;
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       if (!n.nodeValue?.trim()) continue;
@@ -182,7 +188,8 @@ function expectNoOverlapInside(label: string) {
     expect(r.left, `${label}: inside`).toBeGreaterThanOrEqual(box.left - 0.5);
     expect(r.right, `${label}: inside`).toBeLessThanOrEqual(box.right + 0.5);
     expect(r.bottom, `${label}: inside`).toBeLessThanOrEqual(box.bottom + 0.5);
-    expect(Math.min(r.width, r.height), `${label}: 32 px target`).toBeGreaterThanOrEqual(32);
+    // (Layout units are 1/64 px: a 32 px key can measure 31.99999.)
+    expect(Math.min(r.width, r.height), `${label}: 32 px target`).toBeGreaterThanOrEqual(31.99);
   }
   // The suggestion's words do not run under the buttons either.
   const text = c.querySelector('p')!.getBoundingClientRect();
@@ -199,12 +206,15 @@ describe('the chip ignores a click meant for what was there before', () => {
       button('Skip guide')!.click();
     });
     expect(chip()).not.toBeNull();
+    // It finds its spot once the frame after it has painted; until a moment after that, clicks on it are ignored.
     // The second click of a double-click lands on Hide hints, or on Next hint: ignored.
     mouseClick(button('Hide hints', chip()!)!, 2);
     mouseClick(button('Next hint', chip()!)!, 2);
     expect(chip()?.dataset.hint).toBe('pad');
     expect(hintsStore.getState().hidden).toBe(false);
-    // A moment later a click counts.
+    // A moment after it appeared on screen, a click counts.
+    for (let i = 0; i < 50 && !chip()!.hasAttribute('data-ready'); i++) await settle(20);
+    expect(chip()!.hasAttribute('data-ready'), 'the chip is on screen').toBe(true);
     await settle(HINT_CLICK_GUARD_MS + 60);
     mouseClick(button('Next hint', chip()!)!);
     await act(async () => {
@@ -255,20 +265,29 @@ describe('the chip never covers a heading or a status line', () => {
         await settle();
         act(() => selectTrack('t2'));
         await settle(900);
+        await chipPlaced();
         const heading = [...document.querySelectorAll('h2')].find((el) => el.textContent?.includes('Hand Percussion'));
         expect(heading, 'the Shape heading').toBeTruthy();
         expect(coveredKeyText(), `${w} ${mode} shape: covers`).toEqual([]);
         expect(coveredControls(), `${w} ${mode} shape: covers`).toEqual([]);
-        // Arrange while the pads play: "Playback follows: Live pads" and its longer explanation.
-        for (const step of ['pad', 'record'] as HintId[]) {
+        // The Song view while the pads play: its header says "Your pads are playing" with Play the song.
+        for (const step of ['pad', 'record', 'song-stretch'] as HintId[]) {
           act(() => {
             patchRuntime({ playing: true, mode: 'live' });
             setView('arrange');
           });
           showStep(step);
           await settle();
-          expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toContain('The Loops pads decide what plays.');
-          expect(coveredKeyText(), `${w} ${mode} arrange ${step}: covers`).toEqual([]);
+          await chipPlaced();
+          expect(document.querySelector('[data-testid="pads-playing"]')!.textContent).toContain('Your pads are playing');
+          // Its home is the Song header's free middle. Where that has no room (960 x 540 with the two-row transport, the
+          // song filling the rows) it waits off screen, unseen, rather than cover anything (the rulebook's rule).
+          if (!chip()!.hasAttribute('data-ready')) {
+            expect(getComputedStyle(chip()!).visibility, `${w} ${mode} arrange ${step}: waits unseen`).toBe('hidden');
+            continue;
+          }
+          // The Song header's words too (the length, the keys): the chip finds room elsewhere.
+          expect(coveredKeyText({ headers: true }), `${w} ${mode} arrange ${step}: covers`).toEqual([]);
           expect(coveredControls(), `${w} ${mode} arrange ${step}: covers`).toEqual([]);
           expectNoOverlapInside(`${w} ${mode} arrange ${step}`);
         }
@@ -282,6 +301,7 @@ describe('the chip never covers a heading or a status line', () => {
           act(() => setView(view));
           showStep(step);
           await settle();
+          await chipPlaced();
           expect(coveredKeyText(), `${w} ${mode} ${view} ${step}: covers`).toEqual([]);
           expect(coveredControls(), `${w} ${mode} ${view} ${step}: covers`).toEqual([]);
           expectNoOverlapInside(`${w} ${mode} ${view} ${step}`);
@@ -323,6 +343,7 @@ describe('the closing line says where Export is', () => {
     // Narrower: Export is in the ⋯ menu, and the line says so.
     await page.viewport(1100, 768);
     await settle(900);
+    await chipPlaced();
     expect(exportKey()!.getBoundingClientRect().width).toBe(0);
     expect(chip()!.textContent).toContain('Export, in the ⋯ menu at the top right, saves your music as a WAV file.');
     await act(async () => {
@@ -332,14 +353,39 @@ describe('the closing line says where Export is', () => {
     await act(async () => {
       button(/^More:/)!.click();
     });
-    // Advanced at 1366 px keeps Export in the menu too.
+    // Advanced keeps Export on the strip from 1366 px too (Swing takes the bar.beat readout's room instead).
     await page.viewport(1366, 768);
     act(() => setUiMode('advanced'));
     await settle(900);
-    expect(exportKey()!.getBoundingClientRect().width).toBe(0);
-    expect(chip()!.textContent).toContain('in the ⋯ menu');
+    await chipPlaced();
+    expect(exportKey()!.getBoundingClientRect().width).toBeGreaterThan(1);
+    expect(chip()!.textContent).toContain('Export, at the top right');
     act(() => setUiMode('simple'));
     await settle(900);
+    await chipPlaced();
     expect(chip()!.textContent).toContain('Export, at the top right');
   });
+});
+
+describe('the page is exactly the window, hints showing', () => {
+  for (const [w, hh] of [
+    [1920, 1080],
+    [1366, 768],
+  ] as const) {
+    it(`at ${w} x ${hh}: no page scroll in any view, hints showing or hidden (the hints' status line takes no room)`, async () => {
+      await openAt(w, hh, 'pad');
+      expect(document.querySelector('[data-hints-status]'), 'the hints are showing').not.toBeNull();
+      for (const hidden of [false, true]) {
+        if (hidden) act(() => hideHints());
+        for (const view of ['play', 'shape', 'arrange', 'mix'] as const) {
+          act(() => setView(view));
+          await settle(200);
+          const doc = document.scrollingElement!;
+          const label = `${view}${hidden ? ', hints hidden' : ''}`;
+          expect(doc.scrollHeight, `${label}: page taller than the window`).toBeLessThanOrEqual(window.innerHeight);
+          expect(doc.scrollWidth, `${label}: page wider than the window`).toBeLessThanOrEqual(window.innerWidth);
+        }
+      }
+    });
+  }
 });

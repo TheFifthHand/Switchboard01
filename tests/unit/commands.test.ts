@@ -7,9 +7,9 @@ import { mulberry32 } from '../../src/project/rng';
 import { validateProject } from '../../src/project/validate';
 import type { Patch, Performance, PortRef, Project } from '../../src/project/types';
 import { ProjectStore } from '../../src/state/projectStore';
-import { addBlock, moveBlock, removeBlock, setBlockRepeats, setTailSeconds } from '../../src/state/commands/arrangement';
-import { clipDropProblem, copyClip, copyClipTo, createClip, duplicateClipContent, duplicateClipToSlot, moveClip, pasteClip, setClipBars } from '../../src/state/commands/clips';
-import { moveScene } from '../../src/state/commands/scenes';
+import { addClipToSong, addRegions, addSceneToSong, addSection, moveRegions, removeRegions, resizeRegions, setTailSeconds, toggleSectionMove } from '../../src/state/commands/arrangement';
+import { clipDropProblem, copyClip, copyClipTo, createClip, duplicateClipContent, duplicateClipToSlot, moveClip, pasteClip, repeatClipToBars, setClipBars } from '../../src/state/commands/clips';
+import { duplicateScene, insertScene, moveScene } from '../../src/state/commands/scenes';
 import {
   addNote,
   addRecordedNotes,
@@ -109,7 +109,7 @@ describe('patch commands with undo/redo', () => {
 
   it('respects the per-part effect limit and refuses custom routing', () => {
     const store = fresh();
-    const types = ['chorus', 'phaser', 'crusher', 'delay'] as const;
+    const types = ['chorus', 'phaser', 'crusher', 'delay', 'flanger', 'tape'] as const;
     for (const t of types) expect(insertEffect(store, 't4', t).changed).toBe(true);
     expect(trackChain(store.getState().patch, 't4')!.length - 2).toBe(PATCH_LIMITS.maxEffectsPerTrack);
     expect(insertEffect(store, 't4', 'reverb')).toMatchObject({ changed: false, reason: 'limit' });
@@ -355,9 +355,13 @@ describe('clip commands', () => {
     expect(doubled.bars).toBe(2);
     expect(doubled.notes.map((n) => n.tick)).toEqual([0, 200, 384, 584]);
     setClipBars(store, 't3', 0, 3);
-    duplicateClipContent(store, 't3', 0); // 3 -> 4: bar 1 repeats into bar 4
-    expect(store.getState().tracks[2].clips[0]!.notes.map((n) => n.tick)).toEqual([0, 200, 384, 584, 1152, 1352]);
+    duplicateClipContent(store, 't3', 0); // 3 -> 6: bars 1-3 repeat into bars 4-6
+    expect(store.getState().tracks[2].clips[0]!.notes.map((n) => n.tick)).toEqual([0, 200, 384, 584, 1152, 1352, 1536, 1736]);
+    duplicateClipContent(store, 't3', 0); // 6 -> 8: bars 1-2 repeat into bars 7-8
+    expect(store.getState().tracks[2].clips[0]!.bars).toBe(8);
+    expect(store.getState().tracks[2].clips[0]!.notes.map((n) => n.tick).slice(-4)).toEqual([2304, 2504, 2688, 2888]);
     expect(duplicateClipContent(store, 't3', 0)).toMatchObject({ changed: false, reason: 'limit' });
+    store.undo();
     store.undo();
     store.undo();
     store.undo();
@@ -482,24 +486,24 @@ describe('moving and copying clips between pads', () => {
 });
 
 describe('scene rows', () => {
-  it('moving a scene moves every part’s clip in the row with it; song blocks keep their scenes (one undo step)', () => {
+  it('moving a scene moves every part’s clip in the row with it; the song keeps playing the same clips (one undo step)', () => {
     const store = fresh();
     createClip(store, 't1', 0, 1, 'Beat 1');
     createClip(store, 't3', 0, 1, 'Bass 1');
     createClip(store, 't3', 2, 1, 'Bass 3');
     createClip(store, 't5', 3, 1, 'Lead 4');
-    addBlock(store, store.getState().scenes[0].id, 0);
+    addSceneToSong(store, 0, 0, { bars: 4 });
     store.clearHistory();
     const before = store.getState();
     const sceneIds = before.scenes.map((s) => s.id);
-    const blocks = before.arrangement.blocks;
+    const blocks = before.arrangement;
     expect(moveScene(store, 0, 2).changed).toBe(true);
     const p = store.getState();
     expect(p.scenes.map((s) => s.id)).toEqual([sceneIds[1], sceneIds[2], sceneIds[0], sceneIds[3]]);
     expect(p.tracks[0].clips.map((c) => c?.name ?? null)).toEqual([null, null, 'Beat 1', null]);
     expect(p.tracks[2].clips.map((c) => c?.name ?? null)).toEqual([null, 'Bass 3', 'Bass 1', null]);
     expect(p.tracks[4].clips.map((c) => c?.name ?? null)).toEqual([null, null, null, 'Lead 4']);
-    expect(p.arrangement.blocks).toBe(blocks);
+    expect(p.arrangement).toBe(blocks);
     expect(validateProject(structuredClone(p)).ok).toBe(true);
     expect(store.undoLabel()).toBe('Move scene');
     expect(moveScene(store, 3, 0).changed).toBe(true);
@@ -513,25 +517,24 @@ describe('scene rows', () => {
   });
 });
 
-describe('arrangement commands', () => {
-  it('adds, moves, repeats and removes blocks with undo', () => {
+describe('song commands', () => {
+  it('adds, moves, lengthens and removes loops with undo', () => {
     const store = fresh();
+    const beat = createClip(store, 't1', 0, 2, 'Beat').clipId!;
     const original = store.getState().arrangement;
-    const scenes = store.getState().scenes;
-    const add = addBlock(store, scenes[2].id, 1);
-    expect(store.getState().arrangement.blocks[1]).toMatchObject({ id: add.blockId, sceneId: scenes[2].id, repeats: 2 });
-    moveBlock(store, 0, 4);
-    expect(store.getState().arrangement.blocks[4].sceneId).toBe(scenes[0].id);
-    setBlockRepeats(store, add.blockId!, 99);
-    expect(store.getState().arrangement.blocks.find((b) => b.id === add.blockId)!.repeats).toBe(8);
-    setBlockRepeats(store, add.blockId!, 0);
-    expect(store.getState().arrangement.blocks.find((b) => b.id === add.blockId)!.repeats).toBe(1);
+    const add = addClipToSong(store, 't1', beat, 4);
+    const id = add.ids![0];
+    expect(store.getState().arrangement.regions).toEqual([{ id, trackId: 't1', clipId: beat, start: 4, bars: 2, offset: 0 }]);
+    moveRegions(store, [id], -10);
+    expect(store.getState().arrangement.regions[0].start).toBe(0);
+    resizeRegions(store, [id], 'end', 6);
+    expect(store.getState().arrangement.regions[0].bars).toBe(8);
     setTailSeconds(store, 25);
     expect(store.getState().arrangement.tailSeconds).toBe(10);
-    removeBlock(store, add.blockId!);
-    expect(store.getState().arrangement.blocks).toHaveLength(4);
-    expect(addBlock(store, 'missing')).toMatchObject({ changed: false, reason: 'not-found' });
-    for (let i = 0; i < 6; i++) store.undo();
+    removeRegions(store, [id]);
+    expect(store.getState().arrangement.regions).toHaveLength(0);
+    expect(addClipToSong(store, 't1', 'missing', 0)).toMatchObject({ changed: false, reason: 'not-found' });
+    for (let i = 0; i < 5; i++) store.undo();
     expect(store.getState().arrangement).toEqual(original);
   });
 });
@@ -676,20 +679,28 @@ describe('undo and redo over random edits', () => {
         const ops: [string, () => unknown][] = [
           ['step', () => toggleStep(store, t, int(4), int(64), int(16))],
           ['note', () => addNote(store, t, int(4), { tick: int(400), pitch: int(16), velocity: rnd(), duration: 24 })],
-          ['bars', () => setClipBars(store, t, int(4), pick([1, 2, 3, 4] as const))],
+          ['bars', () => setClipBars(store, t, int(4), pick([1, 2, 3, 4, 8] as const))],
           ['double', () => duplicateClipContent(store, t, int(4))],
+          ['repeat', () => repeatClipToBars(store, t, int(4), pick([2, 4, 6, 8] as const))],
+          // Rows are only added here, so the four slots the note commands use always exist.
+          ['addScene', () => insertScene(store, int(5))],
+          ['dupScene', () => duplicateScene(store, int(4))],
+          ['loops', () => addRegions(store, p.tracks.flatMap((x) => x.clips.filter((c) => c !== null).map((c) => ({ trackId: x.id, clipId: c!.id, start: int(16), bars: 1 + int(8), offset: int(8) }))).slice(0, 1 + int(3)))],
+          ['moveLoops', () => moveRegions(store, p.arrangement.regions.filter(() => rnd() < 0.5).map((r) => r.id), int(9) - 4, { copy: rnd() < 0.3 })],
+          ['section', () => addSection(store, int(12), 1 + int(8))],
+          ['move', () => p.arrangement.sections.length && toggleSectionMove(store, pick(p.arrangement.sections).id, pick(['fadeIn', 'fadeOut', 'filterRise', 'echoThrow'] as const))],
           ['record', () => addRecordedNotes(store, t, int(4), [{ tick: rnd() * 2000 - 100, pitch: int(16), velocity: rnd(), duration: 30 }], { quantize: pick(['off', '1/16'] as const), mode: pick(['overdub', 'replace'] as const) })],
           ['connect', () => connect(store, ref(pick(mods), 'out'), ref(pick(mods), pick(['in', 'cutoff', 'pan'])), rnd())],
           ['disconnect', () => disconnect(store, pick(cables))],
-          ['insert', () => insertEffect(store, t, pick(['chorus', 'phaser', 'crusher', 'delay'] as const), int(4))],
+          ['insert', () => insertEffect(store, t, pick(['chorus', 'phaser', 'crusher', 'delay', 'filter', 'drive'] as const), int(4))],
           ['remove', () => removeEffect(store, pick(mods))],
           ['moveFx', () => moveEffect(store, pick(mods), int(4))],
           ['restore', () => restoreTrackPatch(store, t)],
           ['lfo', () => addLfo(store, t)],
           ['param', () => setModuleParam(store, pick(mods), pick(['cutoff', 'level', 'amount', 'depth']), rnd() * 2000, pick(['drag', undefined]))],
           ['macro', () => setMacro(store, t, pick(['tone', 'motion'] as const), rnd(), pick(['knob', undefined]))],
-          ['block', () => addBlock(store, pick(p.scenes).id, int(5))],
-          ['moveBlock', () => moveBlock(store, int(4), int(6))],
+          ['scene', () => addSceneToSong(store, int(p.scenes.length), int(12))],
+          ['lengthen', () => p.arrangement.regions.length && resizeRegions(store, [pick(p.arrangement.regions).id], pick(['start', 'end'] as const), int(7) - 3, pick(['drag', undefined]))],
           ['sound', () => changeInstrumentSound(store, t, pick(['drums', 'poly'] as const), pick(['tight-circuit', 'poly-halo-pad']))],
           ['transpose', () => transposeClip(store, t, int(4), int(30) - 15)],
           ['page', () => duplicatePage(store, t, int(4), int(4))],

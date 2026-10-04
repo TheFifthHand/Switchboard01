@@ -51,7 +51,7 @@ function replayNotes(s: Session, perf: Performance, seconds: number): NoteEvent[
 
 beforeEach(() => {
   uiStore.setState({ ...defaultUiState() });
-  patchRuntime({ muteAll: false, stalled: null, playing: false, mode: 'live', replayId: null, songBlock: null, recording: 'off', recordTarget: null, countingIn: false, held: {}, notice: null, tracks: {} });
+  patchRuntime({ muteAll: false, stalled: null, playing: false, mode: 'live', replayId: null, songCursor: 0, recording: 'off', recordTarget: null, countingIn: false, held: {}, notice: null, tracks: {} });
 });
 
 afterEach(() => {

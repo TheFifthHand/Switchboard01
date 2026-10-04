@@ -1,8 +1,8 @@
-/** Per-part edits: name, mute/solo/lock, sound, instrument params, drum voices, arp, macros. */
+/** Per-part edits: name, mute/solo/lock, sound, instrument params, drum voices, arp, macros; a part's sound saved and restored. */
 import { builtinSampleInfo, kitInfo, presetInfo } from '../../content/catalog';
-import { PRESETS, applyKitToProject, applyPresetToProject, applySamplerToProject, presetMacroMap } from '../../content/presets';
-import { defaultMacroMap } from '../../project/factory';
-import { DRUM_VOICE_PARAM_SPECS, INSTRUMENT_PARAMS, clampParam, specById } from '../../project/params';
+import { PRESETS, applyKitToProject, applyPresetToProject, applySamplerToProject, presetMacroMap, type TrackSlot } from '../../content/presets';
+import { defaultMacroMap, defaultMacros } from '../../project/factory';
+import { DRUM_VOICE_PARAM_SPECS, INSTRUMENT_PARAMS, MODULE_PARAMS, clampParam, specById } from '../../project/params';
 import { specsForModule } from '../../project/resolve';
 import {
   DRUM_VOICES,
@@ -10,16 +10,20 @@ import {
   type ArpSettings,
   type DrumVoiceSettings,
   type Id,
+  type Instrument,
   type InstrumentKind,
   type MacroId,
   type MacroMap,
   type MacroTarget,
+  type MacroValues,
+  type ModuleType,
+  type ParamValues,
   type Project,
   type Track,
 } from '../../project/types';
 import { ARP_DIVISIONS, ARP_MODES, VALIDATION_LIMITS } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
-import { NOT_FOUND, clamp, cleanName, deepEqual, draftTrack, findTrack, isFiniteNumber, refuse, run, type CommandResult } from './common';
+import { NOT_FOUND, clamp, cleanName, deepEqual, draftTrack, findTrack, isFiniteNumber, partName, refuse, run, type CommandResult } from './common';
 
 export function renameTrack(store: ProjectStore, trackId: Id, name: string): CommandResult {
   if (!findTrack(store.getState(), trackId)) return NOT_FOUND('part');
@@ -30,18 +34,23 @@ export function renameTrack(store: ProjectStore, trackId: Id, name: string): Com
   });
 }
 
+/** Mute or unmute a part; the undo step names it ("Mute Lead"). */
 export function setMute(store: ProjectStore, trackId: Id, mute: boolean): CommandResult {
-  if (!findTrack(store.getState(), trackId)) return NOT_FOUND('part');
+  const p = store.getState();
+  if (!findTrack(p, trackId)) return NOT_FOUND('part');
+  // The label stays "track:Mute part": a performance take allows (and records) exactly that edit.
   return run(store, mute ? 'track:Mute part' : 'track:Unmute part', (d) => {
     draftTrack(d, trackId).mute = !!mute;
-  });
+  }, undefined, { display: `${mute ? 'Mute' : 'Unmute'} ${partName(p, trackId)}` });
 }
 
+/** Solo or unsolo a part; the undo step names it ("Solo Lead"). */
 export function setSolo(store: ProjectStore, trackId: Id, solo: boolean): CommandResult {
-  if (!findTrack(store.getState(), trackId)) return NOT_FOUND('part');
+  const p = store.getState();
+  if (!findTrack(p, trackId)) return NOT_FOUND('part');
   return run(store, solo ? 'track:Solo part' : 'track:Unsolo part', (d) => {
     draftTrack(d, trackId).solo = !!solo;
-  });
+  }, undefined, { display: `${solo ? 'Solo' : 'Unsolo'} ${partName(p, trackId)}` });
 }
 
 /** Locked parts are never changed by Variation. */
@@ -138,13 +147,14 @@ export function setArp(store: ProjectStore, trackId: Id, partial: Partial<ArpSet
   }, gesture);
 }
 
-export function setMacro(store: ProjectStore, trackId: Id, macro: MacroId, value: number, gesture?: string): CommandResult {
+/** Set a big knob (0..1). `opts.display` names the undo step in the calling view's words ("Drums reverb"). */
+export function setMacro(store: ProjectStore, trackId: Id, macro: MacroId, value: number, gesture?: string, opts: { display?: string } = {}): CommandResult {
   if (!findTrack(store.getState(), trackId)) return NOT_FOUND('part');
   if (!MACRO_IDS.includes(macro) || !isFiniteNumber(value)) return refuse('invalid', 'Unknown macro.');
   const v = clamp(value, 0, 1);
   return run(store, `track:Change ${macro[0].toUpperCase()}${macro.slice(1)}`, (d) => {
     draftTrack(d, trackId).macros[macro] = v;
-  }, gesture);
+  }, gesture, opts.display !== undefined ? { display: opts.display } : {});
 }
 
 /** Validate a complete macro target against the project; returns an error message or the cleaned target. */
@@ -206,6 +216,120 @@ export function soundMacroMap(track: Track): MacroMap {
   const preset = inst.kind === 'bass' || inst.kind === 'poly' ? PRESETS[inst.presetId] : undefined;
   // Same construction applyPresetToProject uses, so "reset" matches what choosing the sound gives.
   return preset ? presetMacroMap(track.id, preset) : defaultMacroMap(track.id);
+}
+
+/* ------------------------------------------------------------------ */
+/* Designed values: where double-click returns a knob                  */
+/* ------------------------------------------------------------------ */
+
+/** Where a big knob returns to: the position the part's sound or starter was designed with, else the default. */
+export function macroHomeFor(track: Pick<Track, 'macroHome'>, macro: MacroId): number {
+  const v = track.macroHome?.[macro];
+  return typeof v === 'number' && Number.isFinite(v) ? clamp(v, 0, 1) : defaultMacros()[macro];
+}
+
+/**
+ * Where a sound knob returns to: the value the part's sound was designed with.
+ * `slot` 'inst' (default): an instrument control: a synth preset's own value,
+ * a drum kit's matched Level; 'drive', 'filter', 'lfo': the preset's setting
+ * of that module. Anything a sound does not set returns to the registry
+ * default. Undefined for a control the part's instrument or module does not
+ * have.
+ */
+export function paramHomeFor(track: Pick<Track, 'instrument'>, param: string, slot: TrackSlot = 'inst'): number | undefined {
+  const inst = track.instrument;
+  if (slot !== 'inst') {
+    const type = slot === 'ch' ? 'channel' : slot;
+    const spec = specById(MODULE_PARAMS[type], param);
+    if (!spec) return undefined;
+    const designed = slot === 'ch' || (inst.kind !== 'bass' && inst.kind !== 'poly') ? undefined : PRESETS[inst.presetId]?.modules?.[slot]?.[param];
+    return designed === undefined ? spec.default : clampParam(spec, designed);
+  }
+  const spec = specById(INSTRUMENT_PARAMS[inst.kind], param);
+  if (!spec) return undefined;
+  let designed: number | undefined;
+  if (inst.kind === 'bass' || inst.kind === 'poly') designed = PRESETS[inst.presetId]?.params[param];
+  else if (inst.kind === 'drums' && param === 'level') designed = kitInfo(inst.kitId)?.level;
+  return designed === undefined ? spec.default : clampParam(spec, designed);
+}
+
+/* ------------------------------------------------------------------ */
+/* A part's sound, saved and restored                                  */
+/* ------------------------------------------------------------------ */
+
+/** A part's sound: its instrument, big knobs (positions, mappings, designed positions) and its modules' settings. */
+export interface TrackSound {
+  trackId: Id;
+  instrument: Instrument;
+  macros: MacroValues;
+  macroMap: MacroMap;
+  macroHome?: Partial<Record<MacroId, number>>;
+  /** The part's modules (effects, LFOs, channel) by id: type, settings, on/off. */
+  modules: { id: Id; type: ModuleType; params: ParamValues; bypass: boolean }[];
+}
+
+/**
+ * A detached copy of a part's sound (pure): what the sound browser keeps when
+ * it opens, so Cancel can bring the part back exactly as it was. Null when
+ * there is no such part.
+ */
+export function snapshotTrackSound(p: Project, trackId: Id): TrackSound | null {
+  const t = findTrack(p, trackId);
+  if (!t) return null;
+  const snap: TrackSound = {
+    trackId,
+    instrument: structuredClone(t.instrument),
+    macros: { ...t.macros },
+    macroMap: structuredClone(t.macroMap),
+    modules: p.patch.modules.filter((m) => m.trackId === trackId && m.type !== 'instrument').map((m) => ({ id: m.id, type: m.type, params: { ...m.params }, bypass: m.bypass })),
+  };
+  if (t.macroHome) snap.macroHome = { ...t.macroHome };
+  return snap;
+}
+
+/**
+ * Put a part's sound back as `snap` captured it, in one undo step: the
+ * instrument, the big knobs (positions, mappings to modules that still
+ * exist, designed positions) and the settings and on/off of its modules that
+ * still exist. The routing is not changed: a module removed since stays
+ * removed (`missing` counts them). Nothing to do when the part already
+ * sounds like that.
+ */
+export function restoreTrackSound(store: ProjectStore, trackId: Id, snap: TrackSound): CommandResult & { missing?: number } {
+  const p = store.getState();
+  const t = findTrack(p, trackId);
+  if (!t) return NOT_FOUND('part');
+  if (!snap || snap.trackId !== trackId || !snap.instrument || !INSTRUMENT_PARAMS[snap.instrument.kind]) return refuse('invalid', 'That saved sound belongs to another part.');
+  const ids = new Set(p.patch.modules.map((m) => m.id));
+  const macroMap = {} as MacroMap;
+  for (const m of MACRO_IDS) macroMap[m] = (snap.macroMap[m] ?? []).filter((x) => ids.has(x.module)).map((x) => ({ ...x }));
+  const modules = snap.modules.filter((m) => p.patch.modules.some((x) => x.id === m.id && x.type === m.type && x.trackId === trackId));
+  const missing = snap.modules.length - modules.length;
+  const unchanged =
+    deepEqual(t.instrument, snap.instrument) &&
+    deepEqual(t.macros, snap.macros) &&
+    deepEqual(t.macroMap, macroMap) &&
+    deepEqual(t.macroHome ?? null, snap.macroHome ?? null) &&
+    modules.every((m) => {
+      const x = p.patch.modules.find((y) => y.id === m.id)!;
+      return x.bypass === m.bypass && deepEqual(x.params, m.params);
+    });
+  if (unchanged) return { changed: false, missing };
+  const r = run(store, 'track:Restore sound', (d) => {
+    const x = draftTrack(d, trackId);
+    x.instrument = structuredClone(snap.instrument);
+    x.macros = { ...snap.macros };
+    x.macroMap = macroMap;
+    if (snap.macroHome) x.macroHome = { ...snap.macroHome };
+    else delete x.macroHome;
+    for (const m of modules) {
+      const mod = d.patch.modules.find((y) => y.id === m.id);
+      if (!mod) continue;
+      mod.params = { ...m.params };
+      mod.bypass = m.bypass;
+    }
+  });
+  return { ...r, missing };
 }
 
 /** Restore the macro mapping of the part's current sound, keeping only targets whose module exists. */

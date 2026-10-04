@@ -7,13 +7,16 @@
  * meters are driven by an explicitly labelled "Demo signal" knob, never by a
  * fake animation.
  */
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { DRUM_SLOTS } from '../../content/catalog';
 import { scaleMask } from '../../music/scales';
 import { BPM_SPEC, CHANNEL_PARAMS, DELAY_PARAMS, MASTER_VOLUME_SPEC, POLY_PARAMS, SWING_SPEC, BASS_PARAMS, FILTER_PARAMS, specById, type ParamSpec } from '../../project/params';
 import {
   Button,
+  ClipSketch,
   Dialog,
+  Fader,
+  faderPosition,
   Icon,
   ICON_NAMES,
   IconButton,
@@ -34,7 +37,8 @@ import {
   noteName,
   type PadState,
 } from '../components';
-import { drumKeyHint, noteKeyLabels, useComputerKeyboard, useKeyCapLabels } from '../hooks/useComputerKeyboard';
+import { drumKeyHint, noteKeyLabels, useComputerKeyboard, useKeyCapLabels, DRUM_KEYS } from '../hooks/useComputerKeyboard';
+import type { SketchNote } from '../components';
 import styles from './Gallery.module.css';
 
 /* ------------------------------------------------------------------ */
@@ -98,7 +102,7 @@ type PadMode = (typeof PAD_MODES)[number]['value'];
 const VIEWS = [
   { value: 'play', label: 'Play', tip: 'Pads, sound controls and keyboard.' },
   { value: 'shape', label: 'Shape', tip: 'Macros, effects and cables.' },
-  { value: 'arrange', label: 'Arrange', tip: 'Put scenes in order to make a song.' },
+  { value: 'arrange', label: 'Song', tip: 'Put loops on each part’s row to build a song.' },
 ] as const;
 type View = (typeof VIEWS)[number]['value'];
 
@@ -129,6 +133,36 @@ const SCALE_OPTIONS = [
 ];
 
 const TRACK_GAIN = [1, 0.62, 0.8, 0.55, 0.44, 0.36, 0.25, 0.12];
+
+const DEMO_POSITION: ParamSpec = {
+  id: 'demoPos',
+  label: 'Demo position',
+  min: 0,
+  max: 1,
+  default: 0.35,
+  unit: '%',
+  curve: 'lin',
+  tip: 'Sets the loop-progress bars on this page so they can be reviewed. In the app the audio clock drives them.',
+};
+
+/** Demo clips for the sketches (visual only). */
+const BAR = 384;
+const HAT_LOOP: SketchNote[] = [
+  ...Array.from({ length: 4 }, (_, i) => ({ tick: i * 96, pitch: 0, duration: 24, velocity: 1 })),
+  ...Array.from({ length: 2 }, (_, i) => ({ tick: 96 + i * 192, pitch: 1, duration: 24, velocity: 0.9 })),
+  ...Array.from({ length: 16 }, (_, i) => ({ tick: i * 24, pitch: 4, duration: 12, velocity: i % 2 ? 0.5 : 0.85 })),
+  { tick: 360, pitch: 5, duration: 24, velocity: 0.7 },
+];
+const CHORD_HOLD: SketchNote[] = [
+  ...[57, 60, 64].map((p) => ({ tick: 0, pitch: p, duration: 2 * BAR - 24, velocity: 0.7 })),
+  ...[55, 59, 62].map((p) => ({ tick: 2 * BAR, pitch: p, duration: 2 * BAR - 24, velocity: 0.7 })),
+];
+const BASS_WALK: SketchNote[] = [45, 45, 48, 50, 52, 50, 48, 43].map((p, i) => ({ tick: i * 48, pitch: p, duration: 40, velocity: i % 2 ? 0.6 : 0.95 }));
+
+const LEVEL_SPEC = specById(CHANNEL_PARAMS, 'level');
+const MINUS = '\u2212';
+const levelText = (v: number) => (LEVEL_SPEC && v <= LEVEL_SPEC.min ? `Silent (${MINUS}${Math.abs(v).toFixed(1)} dB)` : `${v > 0 ? '+' : v < 0 ? MINUS : ''}${Math.abs(v).toFixed(1)} dB`);
+const levelShort = (v: number) => (LEVEL_SPEC && v <= LEVEL_SPEC.min ? 'Silent' : levelText(v));
 
 /* ------------------------------------------------------------------ */
 
@@ -216,6 +250,15 @@ function GalleryPage({ tips, setTips }: { tips: boolean; setTips(v: boolean): vo
     onNoteOff: (i) => (keyMode === 'drums' ? padOff(i) : noteOff(baseNote + i)),
     onOctave: (d) => setBaseNote((b) => Math.min(84, Math.max(24, b + d * 12))),
   });
+
+  // Round-4 states: big knobs, loop progress, faders, typed entry.
+  const [bigKnobs, setBigKnobs] = useState([0.55, 0.3]);
+  const [position, setPosition] = useState(DEMO_POSITION.default);
+  const [levels, setLevels] = useState([-7, -60]);
+  const [tempo, setTempo] = useState(124);
+  const progressStyle = { '--loop-progress': position } as CSSProperties;
+  const faderScale = useMemo(() => (LEVEL_SPEC ? (db: number) => faderPosition(LEVEL_SPEC, db) : undefined), []);
+  const kitLetters = useMemo(() => Object.fromEntries(DRUM_KEYS.map((k) => [60 + k.index, keyCaps?.get(k.code) ?? k.label])), [keyCaps]);
 
   // Controls panel state.
   const [assist, setAssist] = useState(true);
@@ -451,6 +494,69 @@ function GalleryPage({ tips, setTips }: { tips: boolean; setTips(v: boolean): vo
             ))}
           </div>
         </Panel>
+
+        {/* ---------- Big screens, progress and sketches ---------- */}
+        <div className={styles.row}>
+          <Panel title="Big screens" subtitle={<span className={styles.demoTag}>Loop progress follows the Demo position knob</span>} className={styles.flexPanel}>
+            <div className={styles.bigRow}>
+              <div className={styles.bigKnobs}>
+                {MACROS.slice(0, 2).map((m, i) => (
+                  <Knob key={m.id} spec={m} size="xl" value={bigKnobs[i]} onChange={(v) => setBigKnobs((all) => all.map((x, j) => (j === i ? v : x)))} />
+                ))}
+              </div>
+              <div className={styles.bigPads} style={progressStyle}>
+                <Pad state="playing" label="Steady Hats" sublabel="1 bar" labelSize="lg" onPress={() => {}} sketch={<ClipSketch notes={HAT_LOOP} lengthTicks={BAR} kind="drums" />} />
+                <Pad state="queued" label="Held Chords" sublabel="4 bars" labelSize="lg" onPress={() => {}} sketch={<ClipSketch notes={CHORD_HOLD} lengthTicks={4 * BAR} kind="notes" />} />
+                <Pad state="ready" label="Walking Bass Line Long Name" sublabel="1 bar" labelSize="lg" onPress={() => {}} sketch={<ClipSketch notes={BASS_WALK} lengthTicks={BAR} kind="notes" />} />
+                <Pad state="recording" label="Hook" sublabel="2 bars" labelSize="lg" onPress={() => {}} />
+              </div>
+              <Knob spec={DEMO_POSITION} value={position} onChange={(v) => setPosition(v)} accent="teal" />
+            </div>
+          </Panel>
+          <Panel title="Levels and typed entry" className={styles.flexPanel}>
+            <div className={styles.levelRow}>
+              {LEVEL_SPEC &&
+                levels.map((v, i) => (
+                  <div key={i} className={styles.faderCol}>
+                    <Fader spec={LEVEL_SPEC} value={v} label={i ? 'Pad level' : 'Bass level'} format={levelText} formatShort={levelShort} onChange={(x) => setLevels((all) => all.map((y, j) => (j === i ? x : y)))} />
+                    <span className={styles.meterWell}>
+                      <Meter read={trackReaders[i + 2]} label={`Demo strip meter ${i + 1}`} orientation="vertical" thickness={6} segments={24} scale={faderScale} peakHold />
+                    </span>
+                  </div>
+                ))}
+              {LEVEL_SPEC && (
+                <div className={styles.faderCol}>
+                  <Fader spec={LEVEL_SPEC} value={-4} label="Lead level" controlledBy="Space" onChange={() => {}} />
+                </div>
+              )}
+              <div className={styles.stack}>
+                <NumberField label="Tempo (Enter gives the keys back)" value={tempo} min={BPM_SPEC.min} max={BPM_SPEC.max} step={1} fineStep={0.1} dragStep={1} blurOnCommit unit="BPM" onChange={(v) => setTempo(v)} />
+                <NumberField label="Echo tail" value={tail} min={0} max={10} step={0.5} fineStep={0.1} unit="s" chars={3} onChange={(v) => setTail(v)} />
+                <Knob spec={spec(BASS_PARAMS, 'cutoff')} value={knobs.cutoff} onChange={setKnob('cutoff')} controlledBy="Tone" macroRange={[400, 6000]} />
+              </div>
+            </div>
+          </Panel>
+        </div>
+
+        {/* ---------- Keyboard: names above, fit, kit ---------- */}
+        <div className={styles.row}>
+          <Panel title="Keyboard, letters on every key" className={styles.flexPanel}>
+            <MiniKeyboard baseNote={baseNote} onNoteOn={noteOn} onNoteOff={noteOff} activeNotes={held} scaleMask={mask} rootPc={7} height={96} noteNames="above" fit keyLabels={noteKeyLabels(baseNote, keyCaps)} />
+          </Panel>
+          <Panel title="Kit keys" subtitle="Round Machine" className={styles.drumPanel}>
+            <MiniKeyboard
+              variant="kit"
+              baseNote={60}
+              onNoteOn={(m) => padOn(m - 60)}
+              onNoteOff={(m) => padOff(m - 60)}
+              activeNotes={new Set([...heldPads].map((i) => 60 + i))}
+              kitNames={DRUM_SLOTS.map((d) => d.name)}
+              keyLabels={kitLetters}
+              height={148}
+              fit
+            />
+          </Panel>
+        </div>
 
         {/* ---------- Controls ---------- */}
         <div className={styles.row}>

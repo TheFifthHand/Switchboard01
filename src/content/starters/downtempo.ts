@@ -1,5 +1,5 @@
 /**
- * Downtempo — 84 BPM, Eb major, swung. A lazy, dusty beat with electric-piano
+ * Downtempo — 84 BPM, E♭ major, swung. A lazy, dusty beat with electric-piano
  * chords (Ebmaj9, Cm9, Abmaj9, Bb13sus) over a warm bass. The Lift climbs
  * Fm9, Abmaj9, Bb9, Cm9. No bass line in any row plays D or G, the two notes
  * a semitone under Eb and Ab, so every bass clip sits under every chord clip

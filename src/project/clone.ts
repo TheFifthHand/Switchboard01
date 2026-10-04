@@ -32,10 +32,11 @@ export function reIdNotes(notes: readonly Note[]): Note[] {
   return notes.map((n) => ({ id: uid('n'), tick: n.tick, pitch: n.pitch, velocity: n.velocity, duration: n.duration }));
 }
 
-/** Detached copy of a clip with a new clip id and new note ids (for paste / duplicate). */
+/** Detached copy of a clip with a new clip id and new note ids (for paste / duplicate); its own recording reference is kept. */
 export function cloneClipWithNewIds(clip: Clip): Clip {
   const out: Clip = { id: uid('clip'), name: clip.name, bars: clip.bars, notes: reIdNotes(clip.notes) };
   if (clip.variation) out.variation = { seed: clip.variation.seed, generation: clip.variation.generation };
+  if (clip.sample) out.sample = { id: clip.sample.id, start: clip.sample.start, end: clip.sample.end, rootNote: clip.sample.rootNote };
   return out;
 }
 

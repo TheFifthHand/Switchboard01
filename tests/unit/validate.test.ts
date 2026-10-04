@@ -7,7 +7,7 @@ import { neutralMasteringParams } from '../../src/project/params';
 import { PROJECT_SCHEMA, PROJECT_VERSION, type Performance, type Project } from '../../src/project/types';
 import { VALIDATION_LIMITS, sanitizeClip, validatePerformance, validateProject } from '../../src/project/validate';
 
-/** A project exercising most of the schema: clips, variation info, samples, a take. */
+/** A project exercising most of the schema: clips, variation info, a song of loops and sections, samples, a take. */
 function richProject(): Project {
   const p = createProject({ name: 'Rich', now: 1000 });
   p.tracks[0].clips[0] = createClip('Beat', 1, [
@@ -15,6 +15,15 @@ function richProject(): Project {
     { tick: 96, pitch: 2, velocity: 0.7, duration: 24 },
   ]);
   p.tracks[2].clips[1] = { ...createClip('Line', 2, [{ tick: 10.5, pitch: 36, velocity: 0.5, duration: 40 }]), variation: { seed: 7, generation: 2 } };
+  p.arrangement.regions = [
+    { id: 'rg_1', trackId: 't1', clipId: p.tracks[0].clips[0]!.id, start: 0, bars: 8, offset: 0 },
+    { id: 'rg_2', trackId: 't3', clipId: p.tracks[2].clips[1]!.id, start: 2, bars: 3, offset: 1 },
+    { id: 'rg_3', trackId: 't1', clipId: p.tracks[0].clips[0]!.id, start: 10, bars: 2, offset: 0 },
+  ];
+  p.arrangement.sections = [
+    { id: 'sec_1', name: 'Intro', start: 0, bars: 4, moves: [{ id: 'mv_1', kind: 'fadeIn' }] },
+    { id: 'sec_2', name: 'Drop', start: 4, bars: 8, moves: [{ id: 'mv_2', kind: 'filterRise', parts: ['t3'] }] },
+  ];
   p.samples.push({ id: 'smp_abc', name: 'Loop', mime: 'audio/wav', byteLength: 1234, duration: 1.5, sampleRate: 44100, channels: 2, peaks: [-0.5, 0.5, -0.25, 0.25] });
   const sampler = p.tracks[7].instrument;
   if (sampler.kind === 'sampler') sampler.sampleId = 'smp_abc';
@@ -96,11 +105,19 @@ describe('validateProject rejects garbage without throwing', () => {
     ['tracks not an array', { ...valid(), tracks: 'eight' }],
     ['seven tracks', { ...valid(), tracks: (valid().tracks as unknown[]).slice(0, 7) }],
     ['nine tracks', { ...valid(), tracks: [...(valid().tracks as unknown[]), (valid().tracks as unknown[])[0]] }],
-    ['five scenes', { ...valid(), scenes: [...(valid().scenes as unknown[]), { id: 'x', name: 'x' }] }],
+    ['five scenes but four clip slots per part', { ...valid(), scenes: [...(valid().scenes as unknown[]), { id: 'x', name: 'x' }] }],
+    ['no scenes', (() => { const v = valid(); v.scenes = []; for (const t of v.tracks as { clips: unknown[] }[]) t.clips = []; return v; })()],
+    ['nine scenes', (() => {
+      const v = valid();
+      v.scenes = Array.from({ length: 9 }, (_, i) => ({ id: `s${i}`, name: `S${i}` }));
+      for (const t of v.tracks as { clips: unknown[] }[]) t.clips = Array.from({ length: 9 }, () => null);
+      return v;
+    })()],
     ['no patch', { ...valid(), patch: null }],
     ['no master', (() => { const v = valid(); (v.patch as { modules: { id: string }[] }).modules = (v.patch as { modules: { id: string }[] }).modules.filter((m) => m.id !== 'master'); return v; })()],
     ['three clip slots', (() => { const v = valid(); (v.tracks as { clips: unknown[] }[])[0].clips = [null, null, null]; return v; })()],
-    ['clip with 5 bars', (() => { const v = valid(); (v.tracks as { clips: unknown[] }[])[0].clips[0] = { id: 'c', name: 'x', bars: 5, notes: [] }; return v; })()],
+    ['clip with 9 bars', (() => { const v = valid(); (v.tracks as { clips: unknown[] }[])[0].clips[0] = { id: 'c', name: 'x', bars: 9, notes: [] }; return v; })()],
+    ['clip with 2.5 bars', (() => { const v = valid(); (v.tracks as { clips: unknown[] }[])[0].clips[0] = { id: 'c', name: 'x', bars: 2.5, notes: [] }; return v; })()],
     ['unknown instrument', (() => { const v = valid(); (v.tracks as { instrument: unknown }[])[1].instrument = { kind: 'theremin', params: {} }; return v; })()],
     ['duplicate track ids', (() => { const v = valid(); (v.tracks as { id: string }[])[1].id = 't1'; return v; })()],
     ['too many notes', (() => {
@@ -167,7 +184,7 @@ describe('validateProject repairs recoverable problems', () => {
     expect(r.warnings.join('\n')).toMatch(/feed the sound back/);
   });
 
-  it('cleans notes, macro targets, arrangement blocks and sampler references', () => {
+  it('cleans notes, macro targets, song loops and sampler references', () => {
     const p = json(createProject({ now: 0 }));
     p.tracks[4].clips[0] = {
       id: 'c1',
@@ -191,8 +208,8 @@ describe('validateProject repairs recoverable problems', () => {
     };
     p.tracks[1].macroMap.tone.push({ module: 'nowhere', param: 'cutoff', min: 0, max: 1, curve: 'lin' });
     p.tracks[1].macroMap.space.push({ module: 't2:ch', param: 'sendA', min: -5, max: 7, curve: 'exp' });
-    p.arrangement.blocks.push({ id: 'blk_x', sceneId: 'missing', repeats: 2 });
-    p.arrangement.blocks[0].repeats = 40;
+    p.arrangement.regions.push({ id: 'rg_x', trackId: 't1', clipId: 'missing', start: 0, bars: 2, offset: 0 });
+    p.arrangement.regions.push({ id: 'rg_y', trackId: 't5', clipId: 'c1', start: 4, bars: 600, offset: 3 });
     const sampler = p.tracks[7].instrument;
     if (sampler.kind === 'sampler') sampler.sampleId = 'smp_missing';
     const r = validateProject(json(p));
@@ -206,8 +223,8 @@ describe('validateProject repairs recoverable problems', () => {
     expect(r.project.tracks[1].macroMap.tone).toHaveLength(2);
     const space = r.project.tracks[1].macroMap.space;
     expect(space[space.length - 1]).toEqual({ module: 't2:ch', param: 'sendA', min: 0, max: 1, curve: 'lin' });
-    expect(r.project.arrangement.blocks.some((b) => b.sceneId === 'missing')).toBe(false);
-    expect(r.project.arrangement.blocks[0].repeats).toBe(8);
+    // The loop of a missing clip goes; one past the song's end is cut there, its offset inside its 1-bar clip.
+    expect(r.project.arrangement.regions).toEqual([{ id: 'rg_y', trackId: 't5', clipId: 'c1', start: 4, bars: 508, offset: 0 }]);
     expect(r.project.tracks[7].instrument).toMatchObject({ kind: 'sampler', sampleId: null });
     expect(r.warnings.length).toBeGreaterThan(5);
   });

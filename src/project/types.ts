@@ -4,11 +4,11 @@
  * Everything in this file is plain JSON-compatible data. No audio nodes, DOM
  * objects, class instances, functions or Maps may appear in a Project.
  * Every entity that the user can address (track, clip, note, scene, module,
- * connection, block, performance, sample) has a stable string id.
+ * connection, region, section, performance, sample) has a stable string id.
  */
 
 export const PROJECT_SCHEMA = 'switchboard01.project' as const;
-export const PROJECT_VERSION = 2 as const;
+export const PROJECT_VERSION = 4 as const;
 
 export type Id = string;
 
@@ -29,11 +29,30 @@ export const TICKS_PER_BAR = PPQ * BEATS_PER_BAR; // 384
 export const MIN_BPM = 40;
 export const MAX_BPM = 220;
 export const MAX_TRACKS = 8;
-/** Clip rows == scenes. */
-export const SCENE_ROWS = 4;
+/** Fewest and most scenes (clip rows) a project can have (schema v3). Every part has one clip slot per scene. */
+export const MIN_SCENES = 1;
+export const MAX_SCENES = 8;
+/** Scenes a new project starts with. */
+export const DEFAULT_SCENE_ROWS = 4;
+/**
+ * @deprecated The scene count is per project now: use `sceneCount(project)`
+ * (or `project.scenes.length`), MAX_SCENES for bounds, DEFAULT_SCENE_ROWS for
+ * new projects. Kept so older view code compiles until it reads the count.
+ */
+export const SCENE_ROWS = DEFAULT_SCENE_ROWS;
 export const DRUM_VOICES = 16;
 
-export type ClipBars = 1 | 2 | 3 | 4;
+/** Clip length in bars (schema v3: up to 8). */
+export type ClipBars = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+/** Longest clip, in bars. */
+export const MAX_CLIP_BARS = 8;
+/** The lengths offered when a clip is made or its length is picked. */
+export const CLIP_BAR_CHOICES: readonly ClipBars[] = [1, 2, 3, 4, 8];
+
+/** How many scenes (clip rows) a project has. */
+export function sceneCount(p: { readonly scenes: readonly unknown[] }): number {
+  return p.scenes.length;
+}
 
 /* ------------------------------------------------------------------ */
 /* Notes & clips                                                       */
@@ -58,12 +77,31 @@ export interface VariationInfo {
   generation: number;
 }
 
+/**
+ * The recording a sampler clip plays itself (schema v3), instead of its
+ * part's recording: a take or an import placed in its own clip. `start` and
+ * `end` are fractions of the file (0 <= start < end <= 1); `rootNote` is the
+ * key that plays it at its own pitch. Only sampler parts use it; on other
+ * parts it is kept (switching back to a sampler plays it again) but ignored.
+ * The part's other sampler settings (mode, pitch, tempo sync, fades, level)
+ * still apply.
+ */
+export interface ClipSample {
+  /** Project.samples[].id, or a built-in sample id beginning with "builtin:". */
+  id: Id;
+  start: number;
+  end: number;
+  rootNote: number;
+}
+
 export interface Clip {
   id: Id;
   name: string;
   bars: ClipBars;
   notes: Note[];
   variation?: VariationInfo;
+  /** Sampler parts: the clip's own recording (see ClipSample). Absent: it plays the part's recording. */
+  sample?: ClipSample;
 }
 
 /* ------------------------------------------------------------------ */
@@ -174,7 +212,7 @@ export interface Track {
   name: string;
   role: TrackRole;
   instrument: Instrument;
-  /** Exactly SCENE_ROWS entries; null = empty slot. Row index == scene index. */
+  /** One entry per scene (project.scenes.length); null = empty slot. Row index == scene index. */
   clips: (Clip | null)[];
   mute: boolean;
   solo: boolean;
@@ -183,6 +221,13 @@ export interface Track {
   arp: ArpSettings;
   macros: MacroValues;
   macroMap: MacroMap;
+  /**
+   * The macro positions the part's sound or starter was designed with (schema
+   * v3): where double-click or Delete on a big knob returns it. Written when a
+   * synth preset is chosen and by the starter builder; a macro not listed
+   * returns to its default (see macroHomeFor).
+   */
+  macroHome?: Partial<Record<MacroId, number>>;
 }
 
 /**
@@ -255,15 +300,78 @@ export interface Patch {
 /* Arrangement & performances                                          */
 /* ------------------------------------------------------------------ */
 
-export interface ArrangementBlock {
+/** Longest song, in bars: every loop and section on the song timeline ends by here. */
+export const MAX_SONG_BARS = 512;
+/** Longest section name, in characters. */
+export const MAX_SECTION_NAME = 40;
+
+/** The song moves a section can carry. */
+export const SONG_MOVE_KINDS = ['fadeIn', 'fadeOut', 'filterRise', 'echoThrow'] as const;
+export type SongMoveKind = (typeof SONG_MOVE_KINDS)[number];
+
+/**
+ * A change of sound over one song section, played from the audio clock and
+ * rendered identically by exports. A section holds at most one move of each
+ * kind. What playback does:
+ * - fadeIn: the song's gain (after the master volume, before mastering) rises
+ *   from 0 to 1 across the whole section.
+ * - fadeOut: the song's gain falls from 1 to 0 across the whole section.
+ * - filterRise: the Tone big knob of each part it applies to rises from 0.15
+ *   to that part's own Tone value across the section, and is back at the
+ *   part's own value when the section ends.
+ * - echoThrow: the Echo big knob of each part it applies to goes to 0.85 over
+ *   the section's last beat and returns to the part's own value one bar later.
+ * `parts` lists the parts filterRise and echoThrow act on; without it they act
+ * on every melodic part (bass, chords, lead, pad, texture and sampler roles).
+ * Fades act on the whole song and never carry `parts`.
+ */
+export interface SongMove {
   id: Id;
-  sceneId: Id;
-  /** 1..8 */
-  repeats: number;
+  kind: SongMoveKind;
+  parts?: Id[];
 }
 
+/**
+ * One loop placed on a part's row of the song (schema v4), like a region in
+ * GarageBand: it plays one of the part's clips from bar `start` for `bars`
+ * bars, the clip repeating to fill it, beginning `offset` bars into the clip
+ * (a region trimmed at its left edge starts later in its clip). Regions on
+ * one part never overlap. Positions are whole bars.
+ */
+export interface SongRegion {
+  id: Id;
+  trackId: Id;
+  /** The clip it plays: one of its track's clips (Track.clips[i].id). */
+  clipId: Id;
+  /** First bar on the song timeline (0-based integer). */
+  start: number;
+  /** Length in bars (integer ≥ 1); start + bars ≤ MAX_SONG_BARS. */
+  bars: number;
+  /** Bars into the clip where the region begins: integer, 0 ≤ offset < the clip's bars. */
+  offset: number;
+}
+
+/**
+ * A named stretch of the song timeline (Intro, Verse, Drop …) shown above
+ * the rows. A section is a label with optional song moves: it does not own
+ * regions, and sections never overlap. Moving or copying "a section" moves
+ * or copies the regions that start inside it (see project/arrangement.ts).
+ */
+export interface SongSection {
+  id: Id;
+  name: string;
+  /** First bar (0-based integer). */
+  start: number;
+  /** Length in bars (integer ≥ 1). */
+  bars: number;
+  /** Song moves over this section (at most one per kind). */
+  moves?: SongMove[];
+}
+
+/** The song: what each part plays where (regions), named sections, and the export tail. */
 export interface Arrangement {
-  blocks: ArrangementBlock[];
+  regions: SongRegion[];
+  sections: SongSection[];
   /** Seconds of effect tail appended to exports. */
   tailSeconds: number;
 }

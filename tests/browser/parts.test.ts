@@ -9,6 +9,7 @@
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
+import { songBars } from '../../src/project/arrangement';
 import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { LoopsGrid } from '../../src/app/views/LoopsGrid';
 import { PartPanel } from '../../src/app/views/PartPanel';
@@ -124,13 +125,13 @@ describe('Part menu', () => {
     expect(document.activeElement).toBe(main);
   });
 
-  it('right-click on a header opens the menu; Lock toggles the part lock', () => {
+  it('right-click on a header opens the menu; Keep pattern toggles the part lock (Variation leaves it alone)', () => {
     mountGrid();
     const header = document.querySelector<HTMLButtonElement>('button[aria-label^="Select Chords"]')!.parentElement!;
     const r = header.getBoundingClientRect();
     fire(header, new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: r.left + 20, clientY: r.top + 10 }));
     expect(menu()!.getAttribute('aria-label')).toBe('Part Chords');
-    const lock = item('Lock against Variation');
+    const lock = item('Keep pattern (no Variation)');
     expect(lock.getAttribute('aria-checked')).toBe('false');
     click(lock);
     expect(track('t4').locked).toBe(true);
@@ -144,7 +145,7 @@ describe('Part menu', () => {
     expect(menu()).toBeNull();
     const d = dialog()!;
     expect(d.getAttribute('aria-labelledby')).toBeTruthy();
-    expect(d.textContent).toContain('Sound for Chords');
+    expect(d.textContent).toContain('Change instrument: Chords');
     const before = track('t4').instrument;
     expect(before.kind).toBe('poly');
     // Current sound is marked and focused.
@@ -308,7 +309,7 @@ describe('Part panel sound selector', () => {
     expect(btn.getAttribute('aria-label')).toContain('Bass synth');
     expect(btn.textContent).toBe('Change instrument');
     click(btn);
-    expect(dialog()!.textContent).toContain('Sound for Bass');
+    expect(dialog()!.textContent).toContain('Change instrument: Bass');
     // The Bass category is preselected for a bass part.
     expect(dialog()!.querySelector('[role="tab"][aria-selected="true"]')!.textContent).toContain('Bass');
     click([...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Done')!);
@@ -359,7 +360,7 @@ describe('Part panel macros and Variation', () => {
     expect(notes(1)).toBe(bounce);
     const text = runtimeStore.getState().notice!.text;
     expect(text).toMatch(/^Variation on Bass · Rolling: /);
-    expect(text).toContain('Bounce is playing: launch Rolling to hear it.');
+    expect(text).toContain('Bounce is playing: tap the Rolling pad to hear it.');
     act(() => session.undo());
     expect(notes(2)).toBe(rolling);
 
@@ -387,15 +388,18 @@ describe('Part panel macros and Variation', () => {
     expect(runtimeStore.getState().notice).toMatchObject({ tone: 'warn', text: 'Slot 1 of Bass is empty. Select a clip with notes: Variation changes a pattern.' });
   });
 
-  it('with nothing selected yet, Variation changes the playing clip', () => {
+  it('a part selected with no clip chosen yet gets its playing clip: the ring, Variation and Steps all act on it', () => {
     act(() => {
-      selectTrack('t3');
+      selectTrack('t1');
       uiStore.setState((s) => {
         const { t3: _drop, ...rest } = s.selectedSlot;
         return { ...s, selectedSlot: rest };
       });
       patchRuntime({ playing: true, tracks: { ...runtimeStore.getState().tracks, t3: { playingSlot: 2, queued: null } } });
+      // Selecting the part chooses its slot (selection.ts): the clip it plays.
+      selectTrack('t3');
     });
+    expect(uiStore.getState().selectedSlot.t3).toBe(2);
     mountPanel();
     const rolling = notes(2);
     click(variation());
@@ -474,7 +478,7 @@ describe('Scene rename', () => {
     typeInto(input, 'Rise');
     click(dialog()!.querySelector('button[type="submit"]')!);
     expect(session.store.getState().scenes[2].name).toBe('Rise');
-    expect(document.querySelector('button[aria-label^="Launch scene Rise"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label^="Play row Rise"]')).not.toBeNull();
     act(() => session.undo());
     expect(session.store.getState().scenes[2].name).toBe(scene.name);
   });
@@ -482,7 +486,7 @@ describe('Scene rename', () => {
   it('F2 on a scene button opens the rename field; Shift+F10 opens the scene menu', () => {
     mountGrid();
     const scene = session.store.getState().scenes[0];
-    const btn = document.querySelector<HTMLButtonElement>(`button[aria-label^="Launch scene ${scene.name}"]`)!;
+    const btn = document.querySelector<HTMLButtonElement>(`button[aria-label^="Play row ${scene.name}"]`)!;
     act(() => btn.focus());
     key(btn, 'keydown', { key: 'F2' });
     expect(dialog()!.querySelector('input')!.value).toBe(scene.name);
@@ -493,14 +497,16 @@ describe('Scene rename', () => {
     expect(item('Add to song')).toBeTruthy();
   });
 
-  it('Add to song appends the scene to the arrangement', () => {
+  it('Add to song puts the scene at the end of the song: a loop for each of its parts, under a section named after it', () => {
     mountGrid();
-    const scene = session.store.getState().scenes[1];
-    const before = session.store.getState().arrangement.blocks.length;
+    const p = session.store.getState();
+    const scene = p.scenes[1];
+    const end = songBars(p);
+    const parts = p.tracks.filter((t) => t.clips[1]).length;
     click(document.querySelector(`button[aria-label="Options for scene ${scene.name}"]`)!);
     click(item('Add to song'));
-    const blocks = session.store.getState().arrangement.blocks;
-    expect(blocks).toHaveLength(before + 1);
-    expect(blocks[blocks.length - 1].sceneId).toBe(scene.id);
+    const after = session.store.getState().arrangement;
+    expect(after.regions.filter((r) => r.start === end)).toHaveLength(parts);
+    expect(after.sections[after.sections.length - 1]).toMatchObject({ name: scene.name, start: end });
   });
 });

@@ -14,7 +14,7 @@
 .label {
   color: var(--ink-2);
   font-size: var(--fs-sm);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
 }
 
 /* A recessed readout window. */
@@ -74,7 +74,7 @@
   color: var(--ink);
   font-family: var(--font-mono);
   font-size: var(--fs-lg);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
   font-variant-numeric: tabular-nums;
   text-align: right;
   outline: none;
@@ -100,13 +100,13 @@
   color: var(--ink-3);
 }
 
+/* Units as written: "bars", "s", "ms", "dB", "BPM". */
 .unit {
   padding-top: 2px;
   color: var(--ink-3);
   font-size: var(--fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.02em;
 }
 
 .wrap[data-disabled] .field {

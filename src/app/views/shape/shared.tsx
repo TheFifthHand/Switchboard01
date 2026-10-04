@@ -4,15 +4,16 @@
  * Connection, the recording lock notice, and the switch to Advanced with the
  * toast that says so.
  */
-import { useCallback } from 'react';
+import { createContext, useCallback, useContext } from 'react';
 import { Notice, useToasts, type ToastApi } from '../../../ui/components';
 import { MASTER_ID, moduleId as mid } from '../../../project/factory';
 import { connectionKind, findModule, trackChain } from '../../../project/graph';
 import { MODULE_DEFS, PATCH_LIMITS } from '../../../project/modules';
-import type { Id, Patch } from '../../../project/types';
+import type { Id, MacroId, Patch } from '../../../project/types';
 import { useStore } from '../../../state/store';
 import { setUiMode } from '../../../state/uiStore';
 import { session, useProject } from '../../instance';
+import { MACRO_SPECS } from '../../macros';
 import { notify } from '../../runtime';
 import { samePlan, type RepairPlan } from '../cables/model';
 import { repairCableName, restoreConnection as restoreFor, restorePlanFor } from '../cables/restore';
@@ -59,10 +60,30 @@ export function useAdvancedSwitch(): { toAdvanced(): void; dismiss(): void } {
   return { toAdvanced, dismiss };
 }
 
-/** "2 effects (up to 6)": how many effects the part has, and how many it can hold. */
+/** The possessive of a part's name: "Chords’", "Lead’s". */
+export const possessive = (name: string) => (/s$/i.test(name) ? `${name}’` : `${name}’s`);
+
+/** "2 effects (up to 8)": how many effects the part has, and how many it can hold. */
 export function effectCount(n: number): string {
   const most = PATCH_LIMITS.maxEffectsPerTrack;
   return n === 0 ? `None yet (up to ${most})` : `${n} effect${n === 1 ? '' : 's'} (up to ${most})`;
+}
+
+/**
+ * What removing an effect did, for its toast: "Removed Filter. The Motion
+ * big knob now moves nothing." names the part's big knobs that moved
+ * something heard before and nothing now (removeEffect's affectedMacros).
+ */
+export function removedEffectNotice(name: string, silent: boolean, affected: readonly MacroId[]): string {
+  if (affected.length) return `Removed ${name}. ${bigKnobsMoveNothing(affected)}`;
+  return silent ? `Removed ${name}.` : `Removed ${name}. The sound now flows straight past it.`;
+}
+
+/** "The Motion big knob now moves nothing." / "The Tone and Motion big knobs now move nothing." */
+export function bigKnobsMoveNothing(affected: readonly MacroId[]): string {
+  const names = affected.map((m) => MACRO_SPECS[m].label);
+  const list = names.length < 2 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `The ${list} big knob${names.length > 1 ? 's now move' : ' now moves'} nothing.`;
 }
 
 /** Focus an element once the DOM has caught up (a moved or new card), or a fallback. */
@@ -118,6 +139,24 @@ export function useEditLock(): string | null {
 }
 
 /** Says why effects cannot be added, moved, switched or removed right now; knobs keep working. */
+/**
+ * The part's name, when the Shape controls are shown somewhere that is not about one part (the
+ * effects rack in Mix's channel drawer): their undo steps then name the part in words ("Drums
+ * filter cutoff"). Null in Shape itself, where the undo step names come from the commands.
+ */
+export const PartWordsContext = createContext<string | null>(null);
+
+export function usePartWords(): string | null {
+  return useContext(PartWordsContext);
+}
+
+/** "Drums filter cutoff" for a part's module, "Reverb size" for a shared return (null: no words of our own). */
+export function undoWords(part: string | null, mod: string, label: string, shared: boolean): string | undefined {
+  if (part === null) return undefined;
+  const what = `${mod.replace(/ \(shared\)$/, '')} ${label.toLowerCase()}`;
+  return shared ? what : `${part} ${what.charAt(0).toLowerCase()}${what.slice(1)}`;
+}
+
 export function LockNotice(props: { lock: string | null }) {
   if (!props.lock) return null;
   return (

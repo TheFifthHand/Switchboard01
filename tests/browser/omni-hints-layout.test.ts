@@ -2,8 +2,10 @@
  * Where the "Try this" chip sits, in the running app with its real styles
  * and fonts: at 1366 x 768 and 960 x 540 (200 % zoom on a 1920 x 1080
  * screen), Simple and Advanced, in every view and pad mode, it never covers
- * the transport, the pads or the keyboard, and covers no control at all; it
- * stays inside the window. When a control appears under it, it moves.
+ * the transport, the pads or the keyboard, and covers no control at all
+ * (where a view has no room for it, such as the Song view at 960 x 540 in
+ * Advanced, it waits unseen); it stays inside the window. When a control
+ * appears under it, it moves.
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -13,10 +15,11 @@ import { App } from '../../src/app/App';
 import { session } from '../../src/app/instance';
 import { patchRuntime } from '../../src/app/runtime';
 import type { BootInfo } from '../../src/app/session';
-import { HINTS_STORAGE_KEY, INITIAL_HINTS, hintsStore, markHintDone, showHintsAgain, type HintId } from '../../src/app/views/hints/hintsState';
+import { HINTS_STORAGE_KEY, HINT_IDS, INITIAL_HINTS, hintsStore, markHintDone, showHintsAgain, type HintId } from '../../src/app/views/hints/hintsState';
 import { findSpot } from '../../src/app/views/hints/placement';
 import { deleteDb } from '../../src/persistence/db';
 import { selectTrack, setGuideDone, setPadMode, setTipsEnabled, setUiMode, setView, type PadMode, type UiMode, type View } from '../../src/state/uiStore';
+import { chipPlaced } from './r4-shell-chip';
 import { cleanup, mount, wait } from './ui-harness';
 
 let boot: BootInfo;
@@ -86,8 +89,9 @@ function overlaps(a: DOMRect, b: DOMRect): boolean {
   return a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
 }
 
-/** What the chip covers, in words, for the failure message. */
+/** What the chip covers, in words, for the failure message (nothing while it waits unseen for room, as a crowded view may have it). */
 function covered(): string[] {
+  if (!chip().hasAttribute('data-ready')) return [];
   const c = chip().getBoundingClientRect();
   const out: string[] = [];
   const region = (sel: string, name: string) => {
@@ -114,19 +118,21 @@ function expectInWindow(label: string) {
   expect(c.bottom, `${label}: bottom edge`).toBeLessThanOrEqual(window.innerHeight);
 }
 
-/** The step each view is mostly about (its text length changes the chip's size). */
-const STEP_FOR: Record<View, HintId> = { play: 'pad', shape: 'tone', mix: 'master', arrange: 'record' };
-const ORDER: HintId[] = ['pad', 'mute', 'drag', 'tone', 'instrument', 'master', 'record'];
+/** The steps each view is mostly about (their text length changes the chip's size). Arrange: the song track, and a basics step. */
+const STEPS_FOR: Record<View, HintId[]> = { play: ['pad', 'mute', 'master'], shape: ['tone'], mix: ['master'], arrange: ['song-play', 'record'] };
 
+/** The hints at `id`: the steps before it done; for a step of the basics, the song steps too (Arrange would put them first). */
 async function showStep(id: HintId) {
   act(() => {
     showHintsAgain();
-    for (const s of ORDER) {
+    for (const s of HINT_IDS) {
       if (s === id) break;
       markHintDone(s);
     }
+    if (!id.startsWith('song-')) for (const s of HINT_IDS) if (s.startsWith('song-')) markHintDone(s);
   });
   await settle();
+  await chipPlaced();
 }
 
 describe('where the hint chip sits', () => {
@@ -152,7 +158,7 @@ describe('where the hint chip sits', () => {
             setView(view);
             setPadMode(pad);
           });
-          for (const id of view === 'play' ? (['pad', 'mute', 'master'] as HintId[]) : [STEP_FOR[view]]) {
+          for (const id of STEPS_FOR[view]) {
             await showStep(id);
             const label = `${w}x${hh} ${mode} ${view}/${pad} "${chip().dataset.hint}"`;
             expect(chip().dataset.hint, label).toBe(id);
@@ -174,6 +180,7 @@ describe('where the hint chip sits', () => {
     document.body.appendChild(intruder);
     try {
       await settle(900);
+      await chipPlaced();
       const after = chip().getBoundingClientRect();
       expect(overlaps(after, intruder.getBoundingClientRect())).toBe(false);
       expect(covered()).toEqual([]);

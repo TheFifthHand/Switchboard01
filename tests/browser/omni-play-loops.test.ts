@@ -19,7 +19,7 @@ import { Session, type BootInfo } from '../../src/app/session';
 import { LoopsGrid } from '../../src/app/views/LoopsGrid';
 import { getStarter } from '../../src/content/starters';
 import type { Clip, Id } from '../../src/project/types';
-import { addBlock } from '../../src/state/commands';
+import { addSceneToSong } from '../../src/state/commands';
 import { selectSlot, selectTrack, setGuideDone, setPadMode, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { cleanup, fire, key, mount, pointer, pointIn, wait } from './ui-harness';
 
@@ -115,9 +115,13 @@ describe('Column headers', () => {
     const header = mute.closest<HTMLElement>('[data-dim]')!;
     expect(header.textContent).toContain('Muted');
     expect(cell('t3', 0).hasAttribute('data-dim')).toBe(true);
-    await act(async () => {
-      await wait(250);
-    });
+    // The dim fades in (a short transition; on a busy machine frames can come late, so allow up to 2 s).
+    const end = performance.now() + 2000;
+    while (Number(getComputedStyle(cell('t3', 0)).opacity) >= 0.7 && performance.now() < end) {
+      await act(async () => {
+        await wait(50);
+      });
+    }
     expect(Number(getComputedStyle(cell('t3', 0)).opacity)).toBeLessThan(0.7);
     click(mute);
     expect(project().tracks[2].mute).toBe(false);
@@ -375,8 +379,9 @@ describe('Keyboard move and the pad action bar', () => {
 
 describe('Scene rows', () => {
   it('dragging a scene button onto another row moves the row with every part’s clip; a click still launches; Alt+arrows move it too', async () => {
-    act(() => void addBlock(session.store, project().scenes[0].id));
-    const blocks = project().arrangement.blocks;
+    act(() => void addSceneToSong(session.store, 0, 0));
+    const regions = project().arrangement.regions;
+    expect(regions.length).toBeGreaterThan(0);
     grid();
     const scenes = project().scenes.map((s) => s.id);
     const row0 = project().tracks.map((t) => t.clips[0]?.id ?? null);
@@ -395,7 +400,7 @@ describe('Scene rows', () => {
     expect(presses).toEqual(['scene 2']);
     expect(project().scenes.map((s) => s.id)).toEqual([scenes[1], scenes[2], scenes[0], scenes[3]]);
     expect(project().tracks.map((t) => t.clips[2]?.id ?? null)).toEqual(row0);
-    expect(project().arrangement.blocks).toBe(blocks);
+    expect(project().arrangement.regions).toBe(regions);
     expect(session.store.undoLabel()).toBe('Move scene');
     act(() => btn(2).focus());
     key(btn(2), 'keydown', { key: 'ArrowUp', altKey: true });

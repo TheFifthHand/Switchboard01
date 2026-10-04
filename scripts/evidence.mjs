@@ -70,6 +70,19 @@ async function tab(page, name) {
     await shot(page, `04-play-${mode.toLowerCase()}-1366`);
   }
   await tab(page, 'Loops');
+  // A clip pad mid-drag: lifted, over the next pad of its part, which previews the swap (Esc cancels).
+  {
+    const from = await page.locator('#pad-t3-1').boundingBox();
+    const to = await page.locator('#pad-t3-2').boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2 + 6, { steps: 16 });
+    await page.waitForTimeout(300);
+    await shot(page, '24-play-pad-drag-1366');
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+  }
   // The Mix view (Simple): a channel strip per part, the master and mastering; then a mastering preset.
   await tab(page, 'Mix');
   await shot(page, '17-mix-1366');
@@ -82,8 +95,30 @@ async function tab(page, name) {
   // From here on Advanced (remembered): every setting, the cable dock and the Play view's cables drawer.
   await showEverySetting(page);
   await shot(page, '05-shape-cables-1366');
-  await tab(page, 'Arrange');
-  await shot(page, '06-arrange-1366');
+  await tab(page, 'Song');
+  await shot(page, '06-song-1366');
+  // The song playing (the pads were playing: the header offers Play the song), then a loop lifted
+  // mid-drag along its row: it moves in whole bars with a "Bar N" badge, and what it would cover is
+  // shown trimmed before the drop; Esc cancels.
+  const playSong = page.getByRole('button', { name: /Play the song/ });
+  if (await playSong.isVisible().catch(() => false)) await playSong.click();
+  else await page.keyboard.press('Space');
+  await page.waitForTimeout(2500);
+  await shot(page, '22-song-playing-1366');
+  {
+    const regions = page.locator('[data-region-id]');
+    const r = await regions.nth(3).boundingBox();
+    await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(r.x + r.width / 2 + 10, r.y + r.height / 2, { steps: 4 });
+    await page.mouse.move(r.x + r.width / 2 + 90, r.y + r.height / 2, { steps: 24 });
+    await page.waitForTimeout(400);
+    await shot(page, '23-song-drag-1366');
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+  }
+  await page.keyboard.press('Shift+Space');
+  await page.waitForTimeout(300);
   await tab(page, 'Play');
   // The cable panel, opened from the Play view's drawer.
   await page.getByRole('region', { name: 'Cables drawer' }).getByRole('button', { expanded: false }).click();

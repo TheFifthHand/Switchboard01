@@ -162,18 +162,22 @@ describe('"Try this" hints', () => {
     if (inst.kind !== 'bass' && inst.kind !== 'poly') throw new Error(`fixture: ${selected.name} plays ${inst.kind}`);
     const other = SYNTH_PRESETS.find((x) => x.kind === inst.kind && x.id !== inst.presetId)!;
     act(() => void session.accepted(changeInstrumentSound(session.store, selected.id, inst.kind, other.id)));
-    await settle();
+    await settle(0);
 
     // 6. Mastering: the hint offers to open Mix, then a preset chip does it.
+    // "Done" (from the instrument step) shows for a moment only, even though the text changes meanwhile:
+    // read at once, and again right after Open Mix changed the text (no waiting in between, so its
+    // moment is not over yet even when the Mix view's first render takes a while on a busy machine).
     expect(chip()!.dataset.hint).toBe('master');
+    expect(chip()!.dataset.done).toBe('true');
     expect(chip()!.textContent).toContain('Open Mix and try a mastering preset.');
     await click(button('Open Mix', chip()!));
+    expect(chip()!.textContent).toContain('Pick a mastering preset, like Warm or Punchy.');
+    expect(chip()!.dataset.done).toBe('true');
     await settle();
     expect(uiStore.getState().view).toBe('mix');
     expect(chip()!.textContent).toContain('Pick a mastering preset, like Warm or Punchy.');
     expect(button('Open Mix', chip()!)).toBeNull();
-    // "Done" (from the instrument step) shows for a moment only, even though the text changed meanwhile.
-    expect(chip()!.dataset.done).toBe('true');
     await settle(1900);
     expect(chip()!.dataset.done).toBeUndefined();
     expect(chip()!.textContent).toContain('Try this');

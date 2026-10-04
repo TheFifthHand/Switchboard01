@@ -1,5 +1,6 @@
 /**
- * Routing edits shared by the effects rack and the cable panel.
+ * Routing edits shared by the effects rack and the cable panel, what a big
+ * knob reaches, and copying a part's effects to another part.
  *
  * Every routing edit is labelled "patch:..." so the edit lock refuses it
  * during a performance take. Module parameter changes are labelled
@@ -10,7 +11,7 @@
  * a rejected connect/move leaves the patch exactly as it was.
  */
 import { PRESETS, type TrackSlot } from '../../content/presets';
-import { conn, createModule, defaultPatch, defaultSharedConnections, defaultSharedModules, defaultTrackPatch, moduleId } from '../../project/factory';
+import { MASTER_ID, conn, createModule, defaultPatch, defaultSharedConnections, defaultSharedModules, defaultTrackPatch, moduleId } from '../../project/factory';
 import {
   CONNECTION_MESSAGES,
   applyChain,
@@ -24,18 +25,19 @@ import {
   validateConnection,
   type ConnectionCheck,
 } from '../../project/graph';
-import { MODULE_DEFS, PATCH_LIMITS } from '../../project/modules';
+import { MODULE_DEFS, PATCH_LIMITS, portDef } from '../../project/modules';
 import { INSTRUMENT_PARAMS, MODULE_PARAMS, clampParam, specById } from '../../project/params';
-import { MACRO_IDS, type Connection, type Id, type MacroTarget, type ModuleType, type ParamValues, type Patch, type PatchModule, type PortRef, type Project, type Track } from '../../project/types';
+import { resolveModuleParams } from '../../project/resolve';
+import { MACRO_IDS, type Connection, type Id, type MacroId, type MacroTarget, type ModuleType, type ParamValues, type Patch, type PatchModule, type PortRef, type Project, type Track } from '../../project/types';
 import { VALIDATION_LIMITS } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
-import { NOT_FOUND, clamp, deepEqual, draftTrack, findTrack, isFiniteNumber, refuse, run, type CommandResult } from './common';
+import { NOT_FOUND, clamp, deepEqual, draftTrack, findTrack, isFiniteNumber, partName, refuse, run, type CommandResult } from './common';
 import { soundMacroMap } from './tracks';
 
 export type PatchResult = ConnectionCheck & { connectionId?: Id };
 
 /** Extra LFOs per part (besides the default one). */
-export const MAX_EXTRA_LFOS = 3;
+export const MAX_EXTRA_LFOS = PATCH_LIMITS.maxExtraLfosPerTrack;
 
 /**
  * Starting params for effects inserted into a chain. Delay and reverb default
@@ -138,9 +140,10 @@ export function setConnectionAmount(store: ProjectStore, connectionId: Id, amoun
 
 /**
  * Set a module parameter (clamped through the registry). Instrument modules
- * ("<t>:inst") set the part's instrument parameters.
+ * ("<t>:inst") set the part's instrument parameters. `opts.display` gives the
+ * undo step the words the calling view uses for the control ("Reverb return level").
  */
-export function setModuleParam(store: ProjectStore, moduleIdStr: Id, param: string, value: number, gesture?: string): CommandResult {
+export function setModuleParam(store: ProjectStore, moduleIdStr: Id, param: string, value: number, gesture?: string, opts: { display?: string } = {}): CommandResult {
   const p = store.getState();
   const mod = findModule(p.patch, moduleIdStr);
   if (!mod) return NOT_FOUND('module');
@@ -152,19 +155,24 @@ export function setModuleParam(store: ProjectStore, moduleIdStr: Id, param: stri
     const v = clampParam(spec, value);
     return run(store, `module:Change ${spec.label}`, (d) => {
       draftTrack(d, track.id).instrument.params[param] = v;
-    }, gesture);
+    }, gesture, opts.display !== undefined ? { display: opts.display } : {});
   }
   const spec = specById(MODULE_PARAMS[mod.type], param);
   if (!spec) return refuse('invalid', 'This module has no such control.');
   const v = clampParam(spec, value);
+  // A part's channel (the Mix view's fader, pan and sends): the undo step names the part ("Bass level").
+  const display = opts.display ?? (mod.type === 'channel' && mod.trackId ? `${partName(p, mod.trackId)} ${spec.label.toLowerCase()}` : undefined);
   return run(store, `module:Change ${MODULE_DEFS[mod.type].label} ${spec.label}`, (d) => {
     const m = d.patch.modules.find((x) => x.id === moduleIdStr);
     if (m) m.params[param] = v;
-  }, gesture);
+  }, gesture, display !== undefined ? { display } : {});
 }
 
-/** Bypass an effect or LFO (sound passes through unprocessed / no movement). */
-export function setBypass(store: ProjectStore, moduleIdStr: Id, bypass: boolean): CommandResult {
+/**
+ * Bypass an effect or LFO (sound passes through unprocessed / no movement).
+ * `opts.display` names the undo step in the calling view's words ("Mute Reverb return").
+ */
+export function setBypass(store: ProjectStore, moduleIdStr: Id, bypass: boolean, opts: { display?: string } = {}): CommandResult {
   const locked = lockedResult(store);
   if (locked) return locked;
   const mod = findModule(store.getState().patch, moduleIdStr);
@@ -173,7 +181,7 @@ export function setBypass(store: ProjectStore, moduleIdStr: Id, bypass: boolean)
   return run(store, bypass ? 'patch:Bypass effect' : 'patch:Turn effect back on', (d) => {
     const m = d.patch.modules.find((x) => x.id === moduleIdStr);
     if (m) m.bypass = !!bypass;
-  });
+  }, undefined, opts.display !== undefined ? { display: opts.display } : {});
 }
 
 /* ------------------------------------------------------------------ */
@@ -202,8 +210,30 @@ function dropDanglingMacroTargets(d: Project): void {
 }
 
 /**
+ * The cable from a part's default LFO to a new filter's cutoff, exactly as the
+ * default patch has it, when that LFO exists and has no outgoing cable (its
+ * only cable went with a removed filter): so Motion moves the filter again.
+ */
+function lfoCableFor(patch: Patch, trackId: Id, filterId: Id): Connection | null {
+  const lfo = moduleId.lfo(trackId);
+  const m = findModule(patch, lfo);
+  if (!m || m.type !== 'lfo' || patch.connections.some((c) => c.from.module === lfo)) return null;
+  return validateConnection(patch, { module: lfo, port: 'out' }, { module: filterId, port: 'cutoff' }).ok ? conn(lfo, 'out', filterId, 'cutoff', 1) : null;
+}
+
+/** A module id a part's sound designs big-knob mappings for (its default Drive or Filter slot). */
+function isDesignSlot(trackId: Id, id: Id): boolean {
+  return id === moduleId.drive(trackId) || id === moduleId.filter(trackId);
+}
+
+/**
  * Insert a new effect into a part's linear chain at `index` among its
- * effects (default: last, just before the channel).
+ * effects (default: last, just before the channel). An effect that takes
+ * back the part's default Drive or Filter slot (the default one was removed)
+ * gets the big-knob mappings the part's sound designs for it again (the
+ * Drive big knob drives a re-added Drive; Tone and Motion move a re-added
+ * Filter). A filter added to a part whose LFO has no cable left is cabled
+ * to it as in the default patch.
  */
 export function insertEffect(store: ProjectStore, trackId: Id, type: ModuleType, index?: number): CommandResult & { moduleId?: Id } {
   const locked = lockedResult(store);
@@ -216,14 +246,17 @@ export function insertEffect(store: ProjectStore, trackId: Id, type: ModuleType,
   const effects = chain.slice(1, -1);
   if (effects.length >= PATCH_LIMITS.maxEffectsPerTrack) return refuse('limit', `A part can have up to ${PATCH_LIMITS.maxEffectsPerTrack} effects.`);
   if (p.patch.modules.length >= PATCH_LIMITS.maxModules) return refuse('limit', 'The patch already has as many modules as it can hold.');
-  if (p.patch.connections.length + 1 > PATCH_LIMITS.maxConnections) return refuse('limit', CONNECTION_MESSAGES.limit);
   const at = index === undefined || !Number.isFinite(index) ? effects.length : clamp(Math.round(index), 0, effects.length);
   const id = freeModuleId(p.patch, trackId, type);
   const mod = createModule(id, type, trackId, INSERT_DEFAULTS[type]);
+  const lfoCable = type === 'filter' ? lfoCableFor({ modules: [...p.patch.modules, mod], connections: p.patch.connections }, trackId, id) : null;
+  if (p.patch.connections.length + 1 + (lfoCable ? 1 : 0) > PATCH_LIMITS.maxConnections) return refuse('limit', CONNECTION_MESSAGES.limit);
   const newChain = [chain[0], ...effects.slice(0, at), id, ...effects.slice(at), chain[chain.length - 1]];
   const r = run(store, `patch:Add ${MODULE_DEFS[type].label}`, (d) => {
     d.patch.modules.splice(moduleInsertIndex(d.patch, trackId), 0, mod);
     applyChain(d.patch, chain, newChain);
+    if (lfoCable) d.patch.connections.push(lfoCable);
+    if (isDesignSlot(trackId, id)) refillMacros(d, [trackId], new Set([id]));
   });
   return { ...r, moduleId: id };
 }
@@ -232,17 +265,97 @@ export function insertEffect(store: ProjectStore, trackId: Id, type: ModuleType,
  * Remove an effect or LFO. The sound that fed it is reconnected to where it
  * went, so removing an effect from a chain keeps the part audible. Macro
  * targets on the module are removed with it. Protected modules stay.
+ * `affectedMacros`: the owning part's big knobs that moved something heard
+ * before and move nothing now (a removed Drive leaves the Drive big knob
+ * with nothing to drive; a removed Filter takes the LFO's only cable, so
+ * Motion moves nothing), for the message to name.
  */
-export function removeEffect(store: ProjectStore, moduleIdStr: Id): CommandResult {
+export function removeEffect(store: ProjectStore, moduleIdStr: Id): CommandResult & { affectedMacros?: MacroId[] } {
   const locked = lockedResult(store);
   if (locked) return locked;
-  const mod = findModule(store.getState().patch, moduleIdStr);
+  const p = store.getState();
+  const mod = findModule(p.patch, moduleIdStr);
   if (!mod) return NOT_FOUND('module');
   if (MODULE_DEFS[mod.type].protected) return refuse('protected', 'The instrument, channel and master output are always part of the patch.');
-  return run(store, `patch:Remove ${MODULE_DEFS[mod.type].label}`, (d) => {
+  const recipe = (d: Project) => {
     removeModuleFromPatch(d.patch, moduleIdStr);
     dropDanglingMacroTargets(d);
+  };
+  const before = mod.trackId ? MACRO_IDS.filter((m) => macroReach(p, mod.trackId!, m) === 'audible') : [];
+  const r = run(store, `patch:Remove ${MODULE_DEFS[mod.type].label}`, recipe);
+  if (!r.changed || !mod.trackId) return r;
+  const after = store.getState();
+  return { ...r, affectedMacros: before.filter((m) => macroReach(after, mod.trackId!, m) === 'none') };
+}
+
+/* ------------------------------------------------------------------ */
+/* What a big knob reaches                                             */
+/* ------------------------------------------------------------------ */
+
+/** Modules whose sound reaches the master output through audio cables (the master included). */
+function audibleModules(patch: Patch): Set<Id> {
+  const audible = new Set<Id>([MASTER_ID]);
+  const audio = patch.connections.filter((c) => {
+    const from = findModule(patch, c.from.module);
+    return !!from && portDef(from.type, c.from.port, 'out')?.kind === 'audio';
   });
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const c of audio) {
+      if (audible.has(c.to.module) && !audible.has(c.from.module)) {
+        audible.add(c.from.module);
+        grew = true;
+      }
+    }
+  }
+  return audible;
+}
+
+/** Whether moving `target` changes what is heard (see macroReach). */
+function targetReaches(patch: Patch, audible: ReadonlySet<Id>, target: MacroTarget): boolean {
+  if (target.min === target.max) return false;
+  const mod = findModule(patch, target.module);
+  if (!mod) return false;
+  if (mod.type === 'lfo') {
+    // An LFO is heard only through a cable into a module that is heard (and not switched off).
+    if (mod.bypass) return false;
+    return patch.connections.some((c) => {
+      if (c.from.module !== mod.id || (c.amount ?? 1) === 0) return false;
+      const to = findModule(patch, c.to.module);
+      return !!to && !to.bypass && audible.has(to.id);
+    });
+  }
+  if (mod.bypass || !audible.has(mod.id)) return false;
+  if (mod.type === 'channel' && (target.param === 'sendA' || target.param === 'sendB')) {
+    // A send is heard only when its output is cabled to something heard, and not to a switched-off return: the
+    // engine silences a switched-off module fed only by sends (AudioEngine.bypassedReturns).
+    const fedOnlyBySends = (id: Id) => {
+      const incoming = patch.connections.filter((c) => c.to.module === id && c.to.port === 'in');
+      return incoming.length > 0 && incoming.every((c) => findModule(patch, c.from.module)?.type === 'channel' && (c.from.port === 'sendA' || c.from.port === 'sendB'));
+    };
+    return patch.connections.some((c) => {
+      if (c.from.module !== mod.id || c.from.port !== target.param || !audible.has(c.to.module)) return false;
+      const to = findModule(patch, c.to.module);
+      return !(to?.bypass && fedOnlyBySends(to.id));
+    });
+  }
+  return true;
+}
+
+/**
+ * Whether a part's big knob changes what is heard: 'audible' when at least
+ * one of its targets does, 'none' when it has no targets, or every target is
+ * inert: its module is gone, switched off or not heard (no path to the
+ * output), its range does not move, it is an LFO whose cables reach nothing
+ * heard (an LFO-depth target whose LFO lost its cable), or a send cabled
+ * nowhere. Pure.
+ */
+export function macroReach(p: Project, trackId: Id, macro: MacroId): 'audible' | 'none' {
+  const t = findTrack(p, trackId);
+  const targets = t?.macroMap[macro] ?? [];
+  if (!targets.length) return 'none';
+  const audible = audibleModules(p.patch);
+  return targets.some((x) => targetReaches(p.patch, audible, x)) ? 'audible' : 'none';
 }
 
 /** Move an effect to a new position (index among the part's effects) in its linear chain. */
@@ -462,4 +575,128 @@ export function restoreDefaultPatch(store: ProjectStore): CommandResult {
     dropDanglingMacroTargets(d);
     refillMacros(d, trackIds, recreated);
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Copy and paste a part's effects                                     */
+/* ------------------------------------------------------------------ */
+
+/** One copied effect: its type, settings and on/off. */
+export interface EffectClipItem {
+  type: ModuleType;
+  params: ParamValues;
+  bypass: boolean;
+}
+
+/** A part's effects, copied (what "Copy effects" keeps for "Paste effects"). */
+export interface EffectChainClip {
+  /** The part they were copied from ("Paste effects from Chords"). */
+  from: string;
+  /** In signal order. */
+  effects: EffectClipItem[];
+}
+
+/** A part's default Drive or Filter doing nothing: drive at 0, or an open low-pass with no brightness change. */
+function neutralDefault(trackId: Id, mod: PatchModule, values: ParamValues): boolean {
+  if (mod.id === moduleId.drive(trackId) && mod.type === 'drive') return (values.amount ?? 0) === 0;
+  if (mod.id === moduleId.filter(trackId) && mod.type === 'filter') {
+    const cutoff = specById(MODULE_PARAMS.filter, 'cutoff')!;
+    return (values.mode ?? 0) === 0 && (values.cutoff ?? cutoff.default) >= cutoff.max && (values.bright ?? 0) === 0;
+  }
+  return false;
+}
+
+/**
+ * Copy a part's effects in signal order (pure): each effect's type, the
+ * settings it plays with now (big knobs applied, since they do not travel
+ * with the copy) and on/off. The part's default Drive and Filter are left
+ * out while they do nothing. Null when the part has custom routing (no
+ * simple chain) or does not exist.
+ */
+export function copyEffectChain(p: Project, trackId: Id): EffectChainClip | null {
+  const t = findTrack(p, trackId);
+  const chain = t ? trackChain(p.patch, trackId) : null;
+  if (!t || !chain) return null;
+  const effects: EffectClipItem[] = [];
+  for (const id of chain.slice(1, -1)) {
+    const mod = findModule(p.patch, id);
+    if (!mod) continue;
+    const values = resolveModuleParams(p, mod);
+    if (neutralDefault(trackId, mod, values)) continue;
+    effects.push({ type: mod.type, params: { ...values }, bypass: mod.bypass });
+  }
+  return { from: t.name, effects };
+}
+
+/** A pasted clip's effects, checked: insertable types only, known settings clamped. */
+function cleanClipEffects(clip: EffectChainClip): EffectClipItem[] | null {
+  if (!clip || !Array.isArray(clip.effects)) return null;
+  const out: EffectClipItem[] = [];
+  for (const e of clip.effects) {
+    if (!e || !MODULE_DEFS[e.type]?.insertable) return null;
+    const params: ParamValues = {};
+    for (const [k, v] of Object.entries(e.params ?? {})) {
+      const spec = specById(MODULE_PARAMS[e.type], k);
+      if (spec && isFiniteNumber(v)) params[k] = clampParam(spec, v);
+    }
+    out.push({ type: e.type, params, bypass: !!e.bypass });
+  }
+  return out;
+}
+
+/**
+ * Paste copied effects onto a part, in one undo step: after its effects, or
+ * (`replace`) instead of them. Replacing keeps the part's default Drive and
+ * Filter (its big knobs drive them); the pasted effects follow them. An
+ * effect that takes back a default slot gets its big-knob mappings again,
+ * and a pasted filter is cabled to an LFO that has no cable left, as in
+ * insertEffect. Refused, with nothing changed, when the part would hold more
+ * than PATCH_LIMITS.maxEffectsPerTrack effects or the patch would be too
+ * big, or the part has custom routing.
+ */
+export function pasteEffectChain(store: ProjectStore, trackId: Id, clip: EffectChainClip, opts: { replace?: boolean } = {}): CommandResult & { moduleIds?: Id[]; removed?: number } {
+  const locked = lockedResult(store);
+  if (locked) return locked;
+  const p = store.getState();
+  const t = findTrack(p, trackId);
+  if (!t) return NOT_FOUND('part');
+  const effects = cleanClipEffects(clip);
+  if (!effects) return refuse('invalid', 'The copied effects could not be read.');
+  if (!effects.length) return refuse('empty', 'There are no effects to paste.');
+  const chain = trackChain(p.patch, trackId);
+  if (!chain) return refuse('not-linear', NOT_LINEAR_MESSAGE);
+  const current = chain.slice(1, -1);
+  const removed = opts.replace ? current.filter((id) => !isDesignSlot(trackId, id)) : [];
+  const total = current.length - removed.length + effects.length;
+  if (total > PATCH_LIMITS.maxEffectsPerTrack) {
+    return refuse('limit', `Pasting would give ${t.name} ${total} effects; a part can have up to ${PATCH_LIMITS.maxEffectsPerTrack}.${opts.replace ? '' : ' Paste them instead of its effects, or remove some first.'}`);
+  }
+
+  // Plan on a copy of the patch, so the limits are checked against the exact result.
+  const patch: Patch = structuredClone(p.patch);
+  for (const id of removed) removeModuleFromPatch(patch, id);
+  const base = trackChain(patch, trackId);
+  if (!base) return refuse('not-linear', NOT_LINEAR_MESSAGE);
+  const added: Id[] = [];
+  for (const e of effects) {
+    const id = freeModuleId(patch, trackId, e.type);
+    const mod = createModule(id, e.type, trackId, e.params);
+    mod.bypass = e.bypass;
+    patch.modules.splice(moduleInsertIndex(patch, trackId), 0, mod);
+    added.push(id);
+  }
+  applyChain(patch, base, [base[0], ...base.slice(1, -1), ...added, base[base.length - 1]]);
+  const filter = added.find((id) => findModule(patch, id)?.type === 'filter');
+  const lfoCable = filter ? lfoCableFor(patch, trackId, filter) : null;
+  if (lfoCable) patch.connections.push(lfoCable);
+  if (patch.modules.length > PATCH_LIMITS.maxModules) return refuse('limit', 'The patch already has as many modules as it can hold.');
+  if (patch.connections.length > PATCH_LIMITS.maxConnections) return refuse('limit', CONNECTION_MESSAGES.limit);
+  const designed = new Set(added.filter((id) => isDesignSlot(trackId, id)));
+  const r = run(store, opts.replace ? 'patch:Replace effects' : 'patch:Paste effects', (d) => {
+    d.patch.modules = patch.modules;
+    d.patch.connections = patch.connections;
+    dropDanglingMacroTargets(d);
+    if (designed.size) refillMacros(d, [trackId], designed);
+  });
+  return { ...r, moduleIds: added, removed: removed.length };
 }

@@ -4,7 +4,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
-import { jumpIn, masterPeakOver, openFresh, pageErrors, parseWavHeader, wavStats16 } from './helpers';
+import { jumpIn, masterPeakOver, openFresh, pageErrors, parseWavHeader, wavStats24 } from './helpers';
 
 const CEILING = 0.8912509381337456; // -1 dBFS
 
@@ -74,7 +74,7 @@ test('Jump In → groove → switch clips → Tone/Space → keyboard → record
   await page.keyboard.down('KeyD');
   await page.waitForTimeout(400);
   await page.keyboard.up('KeyD');
-  await page.getByRole('button', { name: /^Launch scene Lift/ }).click();
+  await page.getByRole('button', { name: /^Play row Lift/ }).click();
   await page.waitForTimeout(3500);
   await page.getByRole('button', { name: 'Stop recording' }).click();
   const perf = await page.evaluate(() => (window as any).__switchboard.project().performances[0]);
@@ -83,7 +83,7 @@ test('Jump In → groove → switch clips → Tone/Space → keyboard → record
   expect(types.has('noteOn')).toBe(true);
   expect(types.has('scene')).toBe(true);
 
-  // Export is also in the More menu at every width (the strip shows it from 1280 px in Simple).
+  // Export is also in the More menu at every width (the strip shows it from 1366 px).
   await page.getByRole('button', { name: /^More:/ }).click();
   await page.getByRole('menuitem', { name: /Export WAV/ }).click();
   const dialog = page.getByRole('dialog', { name: 'Export audio' });
@@ -95,27 +95,28 @@ test('Jump In → groove → switch clips → Tone/Space → keyboard → record
   const h = parseWavHeader(wav);
   expect(h.channels).toBe(2);
   expect(h.sampleRate).toBe(48000);
-  expect(h.bitDepth).toBe(16);
+  // 24-bit is the Export dialog's default.
+  expect(h.bitDepth).toBe(24);
   const seconds = h.frames / h.sampleRate;
   const expected = await page.evaluate(
     ({ id, tail }) => (window as any).__switchboard.session.renderPlan({ kind: 'performance', performanceId: id }, tail).totalSeconds,
     { id: perf.id, tail: await page.evaluate(() => (window as any).__switchboard.project().arrangement.tailSeconds) },
   );
   expect(Math.abs(seconds - expected)).toBeLessThan(0.01);
-  const stats = wavStats16(wav, h.dataOffset, h.frames, h.channels);
+  const stats = wavStats24(wav, h.dataOffset, h.frames, h.channels);
   expect(stats.finite).toBe(true);
   expect(stats.rms).toBeGreaterThan(0.005);
-  expect(stats.peak).toBeLessThanOrEqual(CEILING + 1 / 32768);
+  expect(stats.peak).toBeLessThanOrEqual(CEILING + 1 / 8388608);
 
   expect(pageErrors(page)).toEqual([]);
 });
 
 test('Jump In always lands on the lit Loops pads, even when another view was left open last time', async ({ page }) => {
-  // A returning user who last left the app in Arrange with the Steps pad mode.
+  // A returning user who last left the app in the Song view with the Steps pad mode.
   await page.addInitScript(() => localStorage.setItem('switchboard01.ui', JSON.stringify({ view: 'arrange', padMode: 'steps', guideDone: true })));
   await openFresh(page);
   // Behind the Welcome card (inert), the remembered view is showing.
-  await expect(page.locator('header[aria-label="Transport"] [role="tab"][aria-selected="true"]')).toContainText('Arrange');
+  await expect(page.locator('header[aria-label="Transport"] [role="tab"][aria-selected="true"]')).toContainText('Song');
   await jumpIn(page);
   await expect(page.getByRole('tab', { name: 'Play', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('tab', { name: 'Loops', exact: true })).toHaveAttribute('aria-selected', 'true');

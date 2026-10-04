@@ -388,10 +388,18 @@ describe('Flanger', () => {
     expect(diffDb(L, x, 0, frames(1))).toBeLessThan(-100);
   });
 
-  it('a still delay of 0.3 ms makes the comb: a notch at 1667 Hz, full level at 3333 Hz', async () => {
+  it('a still delay of 0.3 ms makes the comb: a notch at 1667 Hz, a +3 dB crest at 3333 Hz (equal-power mix, level-matched)', async () => {
     const make = fl({ depth: 0, feedback: 0, mix: 0.5 });
-    expect(await gainAt(make, 1 / (2 * 0.0003))).toBeLessThan(-25);
-    expect(Math.abs(await gainAt(make, 1 / 0.0003))).toBeLessThan(0.5);
+    const notch = 1 / (2 * 0.0003);
+    const crest = 1 / 0.0003;
+    // Both tones at once: what the notch takes the crest gets back, so the blend keeps the input's
+    // energy and the level match leaves it alone. Dry and wet are cos/sin(45°) = 0.707 each: in
+    // phase they add to 1.414 (+3 dB).
+    const { L } = await run(make, sines([[notch, 0.25], [crest, 0.25]], 1));
+    expect(db(toneAmp(L, notch, A, B) / 0.25)).toBeLessThan(-25);
+    expect(Math.abs(db(toneAmp(L, crest, A, B) / 0.25) - 20 * Math.log10(Math.SQRT2))).toBeLessThan(0.5);
+    // A lone tone on the crest keeps its own level: the slow level match takes the +3 dB back.
+    expect(Math.abs(await gainAt(make, crest))).toBeLessThan(0.5);
   });
 
   it('sweeps the notches across the spectrum', async () => {

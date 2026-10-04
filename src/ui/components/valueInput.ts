@@ -7,7 +7,9 @@
  * "40" on a percentage (40%), "220" or "220 ms" on a time shown in ms
  * ("0.8 s" or "800 ms" always work),
  * "L20" / "R35" / "C" on a pan control, and an option name on a stepped
- * control.
+ * control. A control shown as minus its stored number (`negate`, Gate Depth:
+ * stored 60, shown "-60.0 dB") is typed as shown ("-40"); a plain "40" there
+ * means the same 40 dB, since every value it can show is at or below zero.
  */
 import { clampParam, type ParamSpec } from '../../project/params';
 
@@ -20,6 +22,14 @@ export function newGestureId(kind: string): string {
 }
 
 const NUM = /^([+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+))\s*([a-zµ%×']*)$/i;
+
+/**
+ * Controls shown as minus their stored number (ParamSpec.negate). The same rule as displayValue /
+ * fromDisplayValue in project/params: the shown number is minus the stored one.
+ */
+function negated(spec: ParamSpec): boolean {
+  return spec.negate === true;
+}
 
 function toNumber(s: string): number {
   return Number(s.replace(',', '.'));
@@ -129,14 +139,22 @@ export function parseParamInput(spec: ParamSpec, raw: string, current?: number):
       if (suffix === 'k') v *= 1000;
       else if (suffix !== '') return null;
   }
+  if (negated(spec)) {
+    // Typed as shown: "-40" stores 40. A positive number cannot be shown (all values read at or
+    // below zero), so it is read as the same amount: "40" stores 40 too.
+    v = -v;
+    if (v < spec.min && -v >= spec.min) v = -v;
+  }
   return clampParam(spec, v);
 }
 
 /** The text an entry field starts with: the current value in display units, without the unit. */
 export function paramEditText(spec: ParamSpec, value: number): string {
-  const v = clampParam(spec, value);
-  if (spec.curve === 'enum' && spec.options) return spec.options[v] ?? String(v);
-  if (spec.curve === 'bool') return v ? 'On' : 'Off';
+  const stored = clampParam(spec, value);
+  if (spec.curve === 'enum' && spec.options) return spec.options[stored] ?? String(stored);
+  if (spec.curve === 'bool') return stored ? 'On' : 'Off';
+  // The number the control shows (minus the stored one on a `negate` control).
+  const v = negated(spec) && stored !== 0 ? -stored : stored;
   const trim = (n: number, digits: number) => String(Number(n.toFixed(digits)));
   switch (spec.unit) {
     case 'Hz':

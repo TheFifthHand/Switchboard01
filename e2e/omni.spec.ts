@@ -6,7 +6,7 @@
  * never cover the transport or the pads, and stay hidden once hidden.
  */
 import { expect, test } from '@playwright/test';
-import { jumpIn, openFresh, pageErrors } from './helpers';
+import { jumpIn, openFresh, pageErrors, startNewGroove } from './helpers';
 
 test('it is called Omni Song: page title, Welcome card and app manifest; the offline worker keeps its address', async ({ page, request }) => {
   await openFresh(page);
@@ -48,13 +48,15 @@ test('after Jump In, "Try this" hints suggest one thing at a time, follow what y
   await page.getByRole('button', { name: 'Mute Drums', exact: true }).click();
   await expect(hint).toContainText('Drag a clip onto another pad.');
 
-  // Hidden is remembered: not even a new Jump In brings it back. (Pressed with the keyboard: right
+  // Hidden is remembered: not even a new groove brings it back. (Pressed with the keyboard: right
   // after the chip changes, mouse clicks on it are ignored for a moment so a double-click elsewhere
   // cannot hide it by accident; keys always work.)
   await hint.getByRole('button', { name: 'Hide hints' }).press('Enter');
   await expect(hint).toBeHidden();
   await page.reload();
-  await jumpIn(page);
+  // Coming back: Continue is the main key; Start a new groove is the second.
+  await expect(page.getByRole('button', { name: /^Continue “/ })).toBeFocused();
+  await startNewGroove(page);
   await page.waitForTimeout(600);
   await expect(page.getByRole('complementary', { name: /^Try this/ })).toHaveCount(0);
   expect(pageErrors(page)).toEqual([]);

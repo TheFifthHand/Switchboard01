@@ -4,29 +4,42 @@
  * & Bells, Textures & FX, Recordings) with icons and counts; a search finds
  * sounds across every category by name, tag, category or description.
  *
- * Choosing a sound applies it at once (one undoable edit) and keeps the
- * dialog open so sounds can be compared. Preview plays a short example on the
- * part with its *current* sound as a session 'preview' note (drums: kick,
- * snare and hat together; bass: the key's root; poly: a triad in the project
- * key; sampler: the recording at its original pitch). Previews play the exact
- * pitch, bypass the arpeggiator and Musical Assist and are never recorded.
+ * Browsing is safe (shape-07): when the dialog opens it keeps the part's
+ * sound as it is (snapshotTrackSound: instrument, big knobs and their maps,
+ * its effects' settings), and every choice made while it is open is one undo
+ * step (an undo group). Choosing a sound applies it at once and keeps the
+ * dialog open so sounds can be compared. Done, × and Escape keep the current
+ * choice; "Cancel (back to House Stab as you had it)" puts the snapshot back
+ * (restoreTrackSound), and leaves no undo step, so Undo still undoes what
+ * came before. An import from Recordings is its own step (with its own
+ * Undo): the browse so far is kept, and Cancel then goes back to the sound
+ * as it was after the import.
+ *
+ * Preview plays a short example on the part with its *current* sound as a
+ * session 'preview' note (drums: kick, snare and hat together; bass: the
+ * key's root; poly: a triad in the project key; sampler: the recording at
+ * its original pitch). Previews play the exact pitch, bypass the
+ * arpeggiator and Musical Assist and are never recorded.
  *
  * Keyboard: the category list is a vertical tab list (arrows, Home/End);
  * in the sound list arrows move by on-screen position, Enter or Space
  * chooses; in the search field ArrowDown jumps to the results and Escape
- * clears the search (a second Escape closes the dialog).
+ * clears the search (a second Escape closes the dialog, keeping the choice).
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Button, Dialog, Icon, Notice, Switch, type IconName } from '../../ui/components';
+import { Button, Dialog, Icon, Notice, Switch, newGestureId, type IconName } from '../../ui/components';
 import { ALL_SOUNDS, SOUND_CATEGORIES, categoryOfSound, kitInfo, soundCategoryInfo, soundMatchScore, type CatalogSound, type SoundCategory } from '../../content/catalog';
 import { SCALES, keyLabel } from '../../music/scales';
 import { IMPORT_LIMITS } from '../../persistence/audioImport';
 import type { Id, Instrument, InstrumentKind, Project, SampleMeta } from '../../project/types';
-import { changeInstrumentSound } from '../../state/commands';
-import { shallowEqual } from '../../state/store';
+import { changeInstrumentSound, deepEqual, restoreTrackSound, snapshotTrackSound, type CommandResult, type TrackSound } from '../../state/commands';
+import type { ApplyOptions, ProjectStore } from '../../state/projectStore';
+import { shallowEqual, useStore } from '../../state/store';
 import { session, useProject } from '../instance';
 import { notify, runtimeStore, useRuntime } from '../runtime';
 import { INSTRUMENT_LABEL, soundName } from '../labels';
+import { ImportConfirm } from './sampler/ImportSampleButton';
+import { chooseFileForPart, clearImportStatus, importStatusOf, importStore, resolveImport } from './sampler/importState';
 import styles from './SoundBrowser.module.css';
 
 type SoundEntry = Pick<CatalogSound, 'kind' | 'id' | 'name' | 'description' | 'category' | 'tags'>;
@@ -252,7 +265,142 @@ export function SoundBrowser({ open, trackId, onClose }: SoundBrowserProps) {
 /** 'all' shows search matches from every category. */
 type Scope = SoundCategory | 'all';
 
-function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void }) {
+/** What Undo calls one browse ("Undo: Change sound"). */
+const BROWSE_DISPLAY = 'Change sound';
+
+interface BrowseState {
+  /** The part's sound as Cancel brings it back (when browsing began, or after a change from elsewhere). */
+  snap: TrackSound | null;
+  /** The project it belongs to (another project opened: Cancel has nothing to go back to). */
+  projectId: Id;
+  /** Every edit of this browse (choices, Cancel) carries this gesture: back-to-back ones are one undo step. */
+  gesture: string;
+  /** Undo steps this browse made (ids); none are tracked while a Record Notes pass (an undo group) runs. */
+  own: Set<number>;
+  /** True while this browse's own edit is being applied. */
+  applying: boolean;
+}
+
+/** The project store as a command sees it, applying with `gesture` and naming the step `display`. */
+function storeWithGesture(gesture: string, display: string): ProjectStore {
+  const store = session.store;
+  const adapter = {
+    getState: () => store.getState(),
+    apply: (label: string, recipe: Parameters<ProjectStore['apply']>[1], opts: ApplyOptions = {}) => store.apply(label, recipe, { ...opts, gesture: opts.gesture ?? gesture, display: opts.display ?? display }),
+  };
+  return adapter as unknown as ProjectStore;
+}
+
+/** True when two snapshots describe the same sound. */
+function sameSound(a: TrackSound | null, b: TrackSound | null): boolean {
+  return deepEqual(a, b);
+}
+
+/**
+ * One browse (shape-07). It keeps the part's sound as it is when it opens,
+ * and makes every choice (and Cancel) with one gesture id, so back-to-back
+ * choices are one undo step and a Cancel that comes back to where it began
+ * leaves no step at all (the store drops a gesture that ends where it
+ * started). `end('keep')` (Done, ×, Escape, the dialog going away) keeps the
+ * choice and says so; `end('cancel')` first puts the kept sound back.
+ *
+ * Nothing that happens elsewhere meanwhile is ever folded into the browse's
+ * step or undone by Cancel: an audio take that lands, an edited version of a
+ * recording, an import (also one started from this dialog) is its own undo
+ * step, and only breaks the run of choices into two steps. When such an edit
+ * changes this part's sound (an import that makes it a sampler, say), Cancel
+ * goes back to the sound as that edit left it; an edit elsewhere (an import
+ * put on another part, one that failed) leaves Cancel where it was.
+ */
+function useBrowse(trackId: Id) {
+  const state = useRef<BrowseState | null>(null);
+  const nameOf = (p: Project, snap: TrackSound | null) => (snap ? soundName(p, snap.instrument) : '');
+  const [baseName, setBaseName] = useState(() => {
+    const p = session.store.getState();
+    return nameOf(p, snapshotTrackSound(p, trackId));
+  });
+
+  /** Run one of this browse's own edits (a choice, Cancel) with its gesture. */
+  const own = useCallback(<R extends CommandResult>(fn: (store: ProjectStore) => R, display: string): R => {
+    const st = state.current;
+    if (!st) return fn(session.store);
+    // A Record Notes pass is an undo group of its own: the edit joins it, and is not this browse's step.
+    const tracked = runtimeStore.getState().recording !== 'notes';
+    st.applying = true;
+    try {
+      const r = fn(storeWithGesture(st.gesture, display));
+      const top = session.store.undoEntryId();
+      if (tracked && r.changed && !r.noStep && top !== null) st.own.add(top);
+      return r;
+    } finally {
+      st.applying = false;
+    }
+  }, []);
+
+  const choose = useCallback((kind: InstrumentKind, soundId: string) => own((store) => changeInstrumentSound(store, trackId, kind, soundId), BROWSE_DISPLAY), [own, trackId]);
+
+  const end = useCallback(
+    (how: 'keep' | 'cancel') => {
+      const st = state.current;
+      if (!st) return;
+      const p = session.store.getState();
+      const t = p.tracks.find((x) => x.id === trackId);
+      if (!t || p.id !== st.projectId) return;
+      const was = nameOf(p, st.snap);
+      let missing = 0;
+      let restored: CommandResult | null = null;
+      if (how === 'cancel' && st.snap) {
+        restored = own((store) => restoreTrackSound(store, trackId, st.snap!), `Back to ${was}`);
+        if (restored.refused) notify(restored.refused, 'warn');
+        missing = (restored as { missing?: number }).missing ?? 0;
+      }
+      const top = session.store.undoEntryId();
+      const ownTop = top !== null && st.own.has(top);
+      // Close this browse's step: a later edit never joins it.
+      if (ownTop) session.store.endGesture();
+      // Ended: a late store change (the dialog closing) is not this browse's any more.
+      state.current = null;
+      const now = session.store.getState();
+      const nowName = soundName(now, now.tracks.find((x) => x.id === trackId)!.instrument);
+      if (how === 'cancel') {
+        const gone = missing ? ` (${missing === 1 ? 'one effect it had is' : `${missing} effects it had are`} no longer on the part, so ${missing === 1 ? 'it stays' : 'they stay'} removed)` : '';
+        const step = !!restored && restored.changed && !restored.noStep && ownTop;
+        notify(`${t.name} is back to ${was} as you had it${gone}.`, 'info', step ? 'undo' : undefined);
+      } else if (!sameSound(st.snap, snapshotTrackSound(now, trackId))) {
+        notify(`${t.name} now plays ${nowName}.${ownTop ? ` Undo brings back ${was} as you had it.` : ''}`, 'info', ownTop ? 'undo' : undefined);
+      }
+    },
+    [own, trackId],
+  );
+  // The dialog going away (Done, ×, Escape) keeps the choice. (Before the set-up below, so its clean-up runs first.)
+  useEffect(() => () => end('keep'), [end]);
+  useEffect(() => {
+    const p = session.store.getState();
+    const snap = snapshotTrackSound(p, trackId);
+    state.current = { snap, projectId: p.id, gesture: newGestureId('browse'), own: new Set(), applying: false };
+    setBaseName(nameOf(p, snap));
+    // A change this browse did not make: it stays its own step; when it changed this part's sound, Cancel goes back to that.
+    const off = session.store.subscribe((next, prev) => {
+      const st = state.current;
+      if (!st || st.applying || next.id !== st.projectId) return;
+      if (next.tracks === prev.tracks && next.patch === prev.patch) return;
+      const was = snapshotTrackSound(prev, trackId);
+      const now = snapshotTrackSound(next, trackId);
+      if (sameSound(was, now)) return;
+      st.snap = now;
+      setBaseName(nameOf(next, now));
+    });
+    return () => {
+      off();
+      state.current = null;
+    };
+  }, [trackId]);
+  return { choose, end, baseName };
+}
+
+function SoundBrowserDialog({ trackId: openedFor, onClose }: { trackId: Id; onClose(): void }) {
+  // The part it opened for, whatever gets selected meanwhile (an import put on another part selects that part).
+  const [trackId] = useState(openedFor);
   const info = useProject(
     (p) => {
       const t = p.tracks.find((x) => x.id === trackId);
@@ -280,8 +428,10 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
   const [scope, setScope] = useState<Scope>(startCategory);
   const [autoPreview, setAutoPreview] = useState(true);
   const [active, setActive] = useState<string | null>(null);
-  const [importing, setImporting] = useState<string | null>(null);
-  const [importResult, setImportResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const importStatus = useStore(importStore, (st) => importStatusOf(st, trackId));
+  const importing = importStatus.phase === 'decoding' ? importStatus.fileName : null;
+  const importResult = importStatus.phase === 'done' ? importStatus : null;
+  const browse = useBrowse(trackId);
   const fileRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
@@ -302,12 +452,21 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
   // The roving tab stop: the focused card, else the current sound, else the first card.
   const tabStop = active && entries.some((e) => keyOf(e) === active) ? active : entries.some((e) => keyOf(e) === currentKey) ? currentKey : entries[0] ? keyOf(entries[0]) : null;
 
+  const importBusy = importStatus.phase === 'confirm' || importStatus.phase === 'decoding';
+
+  // An old import result belongs to the last time the dialog was open; a file still waiting for a choice
+  // when the dialog goes away is not imported.
+  useEffect(() => {
+    clearImportStatus(trackId);
+    return () => void resolveImport(trackId, 'cancel');
+  }, [trackId]);
+
   if (!info) return null;
 
   const choose = (entry: SoundEntry) => {
     setActive(keyOf(entry));
     if (keyOf(entry) !== currentKey) {
-      if (!session.accepted(changeInstrumentSound(session.store, trackId, entry.kind, entry.id))) return;
+      if (!session.accepted(browse.choose(entry.kind, entry.id))) return;
     }
     if (autoPreview && !previewOff) void preview();
   };
@@ -372,14 +531,13 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
     }
   };
 
-  const onImport = async (file: File | undefined) => {
+  const onImport = (file: File | undefined) => {
     if (!file) return;
-    setImporting(file.name);
-    setImportResult(null);
-    const res = await session.importSample(file, trackId);
-    setImporting(null);
-    setImportResult(res);
-    if (res.ok && autoPreview && !isRecordingPart(runtimeStore.getState(), trackId)) void preview();
+    // Checked first; the browse pauses while it is decoded and put on a part (useBrowse).
+    // Its result is said in the dialog's status line (a toast would only cover the dialog's keys).
+    void chooseFileForPart(file, trackId, { toast: false }).then((res) => {
+      if (res?.ok && autoPreview && !isRecordingPart(runtimeStore.getState(), trackId)) void preview();
+    });
   };
 
   const visibleKinds = new Set<InstrumentKind>(entries.map((e) => e.kind));
@@ -407,10 +565,10 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
     <Dialog
       open
       onClose={onClose}
-      title={`Sound for ${info.name}`}
+      title={`Change instrument: ${info.name}`}
       description={
         <>
-          Any part can play any sound. Choosing one changes <strong>{info.name}</strong> right away, and Undo brings the previous one back. Use Preview to compare.
+          Any part can play any sound. Choosing one changes <strong>{info.name}</strong> right away, so you can compare: Done keeps your choice (one Undo goes back), Cancel goes back to {browse.baseName || 'its sound'} as you had it.
         </>
       }
       size="lg"
@@ -428,7 +586,19 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
           <Button icon="play" onClick={() => void preview()} disabled={!canPreview} tip={previewTip}>
             Preview
           </Button>
-          <Button variant="primary" onClick={onClose}>
+          <Button
+            variant="secondary"
+            className={styles.cancel}
+            aria-label={`Cancel (back to ${browse.baseName} as you had it)`}
+            onClick={() => {
+              browse.end('cancel');
+              onClose();
+            }}
+            tip={`Puts ${info.name} back to ${browse.baseName} exactly as you had it, with your knob settings and effects, and leaves no undo step for the sounds you tried.`}
+          >
+            Cancel <span className={styles.cancelWhere}>(back to {browse.baseName} as you had it)</span>
+          </Button>
+          <Button variant="primary" onClick={onClose} tip="Keeps the sound chosen now. One Undo goes back to the sound you had.">
             Done
           </Button>
         </>
@@ -615,19 +785,34 @@ function SoundBrowserDialog({ trackId, onClose }: { trackId: Id; onClose(): void
                 onChange={(e) => {
                   const f = e.currentTarget.files?.[0];
                   e.currentTarget.value = '';
-                  void onImport(f);
+                  onImport(f);
                 }}
               />
-              <Button icon="upload" size="sm" onClick={() => fileRef.current?.click()} disabled={!!importing || takeLocked} tip={IMPORT_LIMITS.description}>
-                {importing ? 'Importing…' : 'Import WAV or MP3…'}
-              </Button>
-              <span className={styles.importNote} role="status" data-tone={importResult && !importResult.ok ? 'error' : undefined}>
-                {importing ? `Decoding "${importing}" on this device…` : importResult ? importResult.message : IMPORT_LIMITS.description}
-              </span>
+              <div className={styles.importRow}>
+                <Button
+                  icon="upload"
+                  size="sm"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={importBusy || takeLocked}
+                  tip={`${IMPORT_LIMITS.description} It goes into a new clip on ${info.name} (an empty pad), at its recorded pitch.`}
+                >
+                  {importing ? 'Importing…' : 'Import WAV or MP3…'}
+                </Button>
+                <span className={styles.importNote} role="status" data-tone={importResult && !importResult.ok ? 'error' : undefined}>
+                  {importing ? `Decoding "${importing}" on this device…` : importResult?.ok ? importResult.message : importResult ? '' : IMPORT_LIMITS.description}
+                </span>
+              </div>
+              {importResult && !importResult.ok && (
+                <Notice tone="warning" className={styles.importRefused} onDismiss={() => clearImportStatus(trackId)} dismissLabel="Dismiss import message">
+                  {importResult.message}
+                </Notice>
+              )}
             </div>
           )}
         </div>
       </div>
+      {/* A file waiting for a choice stays in sight whatever category is shown. */}
+      <ImportConfirm trackId={trackId} className={styles.confirm} />
     </Dialog>
   );
 }

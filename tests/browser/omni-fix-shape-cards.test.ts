@@ -1,8 +1,8 @@
 /**
  * Shape fixes, in real Chromium with the app's theme, session and toasts:
- * - Every Simple effect card's one knob changes the sound: the first main
- *   setting no big knob (macro) sets; when big knobs set them all, the card
- *   shows that big knob itself and says so.
+ * - Every Simple effect card's knob changes the sound: the effect's main
+ *   setting, or (when a big knob sets it) that big knob itself, and the card
+ *   says so; a Filter card adds Resonance while the filter is closed.
  * - Switching to Advanced from Shape says so in a toast with "Back to Simple";
  *   the switch is named "Show every setting (Advanced)" / "Show fewer
  *   settings (Simple)".
@@ -19,6 +19,7 @@ import { session } from '../../src/app/instance';
 import { runtimeStore } from '../../src/app/runtime';
 import { ShapeView } from '../../src/app/views/shape/ShapeView';
 import { MixView } from '../../src/app/views/mix/MixView';
+import { setSendsRow } from '../../src/app/views/mix/mixPrefs';
 import { ADVANCED_TOAST_TEXT } from '../../src/app/views/shape/shared';
 import { STARTERS } from '../../src/content/starters';
 import { createProject } from '../../src/project/factory';
@@ -76,7 +77,8 @@ const card = (root: Element, id: string) => root.querySelector<HTMLElement>(`#si
 const toast = () => [...document.querySelectorAll<HTMLElement>('[role="status"]')].find((x) => x.textContent?.includes(ADVANCED_TOAST_TEXT)) ?? null;
 
 beforeEach(async () => {
-  await page.viewport(1366, 768);
+  // Tall enough for the three Advanced columns side by side (shorter windows show them as tabs: r4-shape-layout).
+  await page.viewport(1366, 900);
   // Let a resize settle first: a resize closes an open menu (its button may have moved).
   await actFrame();
   await actFrame();
@@ -90,37 +92,41 @@ afterEach(() => {
 });
 
 describe('Simple effect cards: the one knob always changes the sound', () => {
-  it('default Drive: its Drive amount belongs to the Drive big knob, so the card offers Tone, and dragging it changes the project', async () => {
+  it('default Drive: its Drive amount belongs to the Drive big knob, so the card carries that big knob, and dragging it turns the macro', async () => {
     const m = setup();
     const drive = card(m.container, 't4:drive');
     expect(drive.querySelectorAll('[role="slider"]')).toHaveLength(1);
-    const tone = slider(drive, 'Tone');
-    expect(tone.hasAttribute('aria-readonly')).toBe(false);
-    expect(drive.textContent).toContain('Drive is set by the Drive knob.');
-    expect(drive.textContent).toContain('Tone tames or keeps the fizz the crunch adds.');
-    const before = mod('t4:drive').params.tone;
-    drag(tone, 60);
-    expect(mod('t4:drive').params.tone).toBeGreaterThan(before);
+    const knob = slider(drive, 'Drive');
+    expect(knob.hasAttribute('aria-readonly')).toBe(false);
+    expect(drive.textContent).toContain('Drive is set by the Drive big knob: the knob here turns it.');
+    expect(drive.textContent).toContain('Turn Drive up for more grit.');
+    const before = track('t4').macros.drive;
+    drag(knob, 60);
+    expect(track('t4').macros.drive).toBeGreaterThan(before);
     await endBurst();
     // Arrow keys too.
-    const mid = mod('t4:drive').params.tone;
-    key(tone, 'keydown', { key: 'ArrowDown' });
-    expect(mod('t4:drive').params.tone).toBeLessThan(mid);
+    const mid = track('t4').macros.drive;
+    key(knob, 'keydown', { key: 'ArrowDown' });
+    expect(track('t4').macros.drive).toBeLessThan(mid);
   });
 
-  it('default Filter: Cutoff belongs to the Tone big knob, so the card offers Resonance, which arrows and drags change', async () => {
+  it('default Filter: Cutoff belongs to a big knob, so the card carries it; Resonance comes in once the filter closes below 12 kHz', async () => {
     const m = setup();
-    const filter = card(m.container, 't4:filter');
-    const res = slider(filter, 'Resonance');
+    const filter = () => card(m.container, 't4:filter');
+    const by = [...filter().querySelectorAll('[role="slider"]')].map((x) => x.getAttribute('aria-label'));
+    expect(by).toHaveLength(1);
+    const knobName = by![0]!;
+    expect(['Tone', 'Motion']).toContain(knobName);
+    expect(filter().textContent).toContain(`Cutoff is set by the ${knobName} big knob: the knob here turns it.`);
+    expect(filter().textContent).toContain('Resonance appears once the filter closes below 12 kHz.');
+    // Close the filter with the card's own knob (Tone down / Motion up): Resonance appears, free to turn.
+    key(slider(filter(), knobName), 'keydown', { key: knobName === 'Tone' ? 'Home' : 'End' });
+    await endBurst();
+    const res = slider(filter(), 'Resonance');
     expect(res.hasAttribute('aria-readonly')).toBe(false);
-    expect(filter.textContent).toContain('Cutoff is set by the Tone knob.');
     const before = mod('t4:filter').params.resonance;
     key(res, 'keydown', { key: 'ArrowUp' });
-    const up = mod('t4:filter').params.resonance;
-    expect(up).toBeGreaterThan(before);
-    await endBurst();
-    drag(res, 40);
-    expect(mod('t4:filter').params.resonance).toBeGreaterThan(up);
+    expect(mod('t4:filter').params.resonance).toBeGreaterThan(before);
   });
 
   it('every card of every part, in a new project and in every starter song, has a knob that is free to turn', () => {
@@ -132,9 +138,13 @@ describe('Simple effect cards: the one knob always changes the sound', () => {
         expect(cards.length, `${p.name} ${t.name}`).toBeGreaterThan(0);
         for (const c of cards) {
           const knobs = [...c.querySelectorAll<HTMLElement>('[role="slider"]')];
-          expect(knobs, c.id).toHaveLength(1);
-          expect(knobs[0].hasAttribute('aria-readonly'), `${p.name} ${c.id} ${knobs[0].getAttribute('aria-label')}`).toBe(false);
-          expect(knobs[0].getAttribute('aria-disabled'), c.id).not.toBe('true');
+          // The main knob, and a filter's Resonance while the filter is closed.
+          expect(knobs.length, c.id).toBeGreaterThanOrEqual(1);
+          expect(knobs.length, c.id).toBeLessThanOrEqual(2);
+          for (const k of knobs) {
+            expect(k.hasAttribute('aria-readonly'), `${p.name} ${c.id} ${k.getAttribute('aria-label')}`).toBe(false);
+            expect(k.getAttribute('aria-disabled'), c.id).not.toBe('true');
+          }
         }
       }
       cleanup();
@@ -149,9 +159,9 @@ describe('Simple effect cards: the one knob always changes the sound', () => {
     const drive = card(m.container, 't4:drive');
     const knobs = [...drive.querySelectorAll<HTMLElement>('[role="slider"]')];
     expect(knobs).toHaveLength(1);
-    expect(knobs[0].getAttribute('aria-label')).toBe('Drive (big knob)');
+    expect(knobs[0].getAttribute('aria-label')).toBe('Drive');
     expect(knobs[0].hasAttribute('aria-readonly')).toBe(false);
-    expect(drive.textContent).toContain('Drive, Tone and Mix are set by the Drive knob. The knob here turns that big knob.');
+    expect(drive.textContent).toContain('Drive is set by the Drive big knob: the knob here turns it.');
     const before = track('t4').macros.drive;
     const toneBefore = mod('t4:drive').params.tone;
     key(knobs[0], 'keydown', { key: 'PageUp' });
@@ -214,15 +224,15 @@ describe('One set of words', () => {
     expect(h2.scrollWidth).toBeLessThanOrEqual(h2.clientWidth + 1);
   });
 
-  it('the effect count reads “2 effects (up to 6)” in Simple and Advanced', async () => {
+  it('the effect count reads “2 effects (up to 8)” in Simple and Advanced', async () => {
     const m = setup();
     const effects = () => [...m.container.querySelectorAll('h2')].find((x) => x.textContent === 'Effects')!.closest('section')!;
-    expect(effects().textContent).toContain('2 effects (up to 6)');
+    expect(effects().textContent).toContain('2 effects (up to 8)');
     act(() => void cmd.insertEffect(session.store, 't4', 'chorus'));
-    expect(effects().textContent).toContain('3 effects (up to 6)');
+    expect(effects().textContent).toContain('3 effects (up to 8)');
     act(() => setUiMode('advanced'));
     await actFrame();
-    expect(effects().textContent).toContain('3 effects (up to 6)');
+    expect(effects().textContent).toContain('3 effects (up to 8)');
   });
 
   it('the delay module is “Echo” everywhere: menu, card, rack, cables and Mix', async () => {
@@ -255,8 +265,11 @@ describe('One set of words', () => {
     expect(cables.textContent).not.toMatch(/Delay/);
     m.unmount();
 
+    // Mix shows a strip's effects in its Advanced “Sends & effects” row (folded on short windows).
+    act(() => setSendsRow(true));
     const mix = setup({ project: project(), mode: 'advanced', view: 'mix' });
     const strip = mix.container.querySelector<HTMLElement>('[data-testid="strip-t4"]')!;
     expect([...strip.querySelectorAll('li')].map((x) => x.textContent)).toContain('Echo');
+    act(() => setSendsRow(null));
   });
 });

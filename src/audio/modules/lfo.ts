@@ -17,7 +17,7 @@
 import { PPQ, type Id, type ParamValues } from '../../project/types';
 import { LFO_DIVISION_BEATS, LFO_PARAMS, BPM_SPEC, clampParam, readParam } from '../../project/params';
 import { Rng } from '../../project/rng';
-import { PARAM_SMOOTHING, type ModuleEnv, type ModuleNode } from './types';
+import { PARAM_SMOOTHING, type AutomationMode, type ModuleEnv, type ModuleNode } from './types';
 
 /** Samples in the single-cycle wavetable (keeps playbackRate <= 1 at the fastest division/tempo). */
 export const LFO_TABLE_SIZE = 2048;
@@ -128,6 +128,9 @@ export class LfoModule implements ModuleNode {
   private wave: number;
   private division: number;
   private depth: number;
+  /** Song automation: time of the previous point, and when Depth was last written by it. */
+  private autoPrev = 0;
+  private autoLast = -Infinity;
   private disposed = false;
 
   constructor(
@@ -352,6 +355,24 @@ export class LfoModule implements ModuleNode {
     else this.applyRate(t);
   }
 
+  /** Song automation: Depth set at `time` ('anchor' / 'step') or ramped linearly to it ('ramp'); shape and rate as setParams. */
+  automate(params: ParamValues, time: number, mode: AutomationMode): void {
+    if (this.disposed) return;
+    const t = Math.max(Number.isFinite(time) ? time : 0, this.ctx.currentTime);
+    const depth = readParam(LFO_PARAMS, params, 'depth');
+    const prevPoint = this.autoPrev;
+    this.autoPrev = t;
+    if (mode === 'anchor' || depth !== this.depth) {
+      // Held unchanged over the points before (a flat stretch): the move starts at the previous point.
+      if (mode === 'ramp' && Number.isFinite(this.depth) && this.autoLast < prevPoint - 1e-9 && prevPoint < t) this.out.gain.setValueAtTime(this.depth, prevPoint);
+      if (mode === 'ramp') this.out.gain.linearRampToValueAtTime(depth, t);
+      else this.out.gain.setValueAtTime(depth, t);
+      this.autoLast = t;
+    }
+    this.depth = depth;
+    this.setParams(params, t);
+  }
+
   setBypass(_bypass: boolean, _time: number): void {
     // Nothing to do here: the engine glides a bypassed LFO's cables to 0
     // (AudioEngine.reconcileConnections), so the LFO keeps its phase and
@@ -404,11 +425,23 @@ export class LfoModule implements ModuleNode {
    * Cancel depth automation scheduled at/after `time`; depth keeps heading to
    * the latest value (the engine re-applies the value that should hold).
    */
-  cancelAfter(time: number): void {
+  cancelAfter(time: number, hold = false): void {
     if (this.disposed) return;
     const t = Math.max(Number.isFinite(time) ? time : 0, this.ctx.currentTime);
+    if (hold) {
+      // A depth ramp under way stops where it is; the engine re-applies the value to hold.
+      this.out.gain.cancelAndHoldAtTime(t);
+      this.depth = Number.NaN;
+      return;
+    }
     this.out.gain.cancelScheduledValues(t);
-    this.out.gain.setTargetAtTime(this.depth, t, PARAM_SMOOTHING);
+    if (Number.isFinite(this.depth)) this.out.gain.setTargetAtTime(this.depth, t, PARAM_SMOOTHING);
+  }
+
+  /** Stop: the next setParams writes Depth again even if the automation ended on the project's value. */
+  endAutomation(_time: number): void {
+    this.depth = Number.NaN;
+    this.autoLast = -Infinity;
   }
 
   /** Number of sources alive (current + fading), for resource checks. */

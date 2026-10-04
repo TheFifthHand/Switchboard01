@@ -2,52 +2,59 @@
  * Mastering: the finishing chain on the whole mix (Project.mastering).
  *
  *   MASTERING ───────────────────────── [Compare A/B] [On/Off]
- *   Presets   [Clean] [Warm] [Punchy] …  + what the chosen one does
- *   Loudness  target (Streaming −14 · Gentle −18 · Loud −9)
+ *   Presets   [Clean] [Warm] [Punchy] …        Level-matched (−6.4 dB)
+ *             what the chosen one does
+ *   Loudness  Loudness target (Streaming −14 · Gentle −18 · Loud −9)
  *             Momentary · Short-term · Integrated · True peak   [↺ Reset]
- *             how far from the target; [Match target]  Loudness 0.0 → +6.0 dB
- *             what true peak means (amber above −1 dBTP, red above 0)
+ *             how far from the target (or "Measuring the new setting…")
+ *             [Match target]  Loudness drive 0.0 → +6.0 dB
+ *             what true peak means (amber at the −1 dBTP ceiling, red above 0)
  *   Spectrum  lows · mids · highs of the output
  *   Advanced: every control as knobs, grouped Clean-up / EQ / Glue (with the
- *             Glue gain-reduction indicator) / Colour / Stereo / Loudness.
+ *             Glue gain-reduction indicator) / Colour / Stereo / Loudness drive.
  *
  * Beside the mixer the sections stack in one scrolling column; below the
  * mixer (full width) Presets and Loudness sit left of the Spectrum.
  *
- * Live readouts (loudness, Glue) are written to the DOM from
- * requestAnimationFrame loops a few times a second; React only renders when a
- * setting, the mode or "is there a measurement" changes. Edits are undoable
- * commands (one step per knob gesture); a performance take refuses them and
- * the panel says why.
+ * Live readouts (loudness, Glue, the A/B trim) are written to the DOM from
+ * the meters' shared loop a few times a second, and sleep with it; React only
+ * renders when a setting or the mode changes. The readings follow what is
+ * heard now (loudnessMatch.ts): a change to the mastering or the master
+ * volume restarts them. Edits are undoable commands (one step per knob
+ * gesture); a performance take refuses them and the panel says why.
  */
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
-import { Button, Icon, Knob, Panel, SegmentedControl, Switch, Tooltip, useRafLoop } from '../../../ui/components';
+import { Button, Icon, Knob, Panel, SegmentedControl, Switch, Tooltip, meterWake } from '../../../ui/components';
 import { MASTERING_PRESETS } from '../../../content/mastering';
 import { MASTERING_PARAMS, readParam, specById, type ParamSpec } from '../../../project/params';
-import {
-  MASTERING_LOCKED_MESSAGE,
-  applyMasteringPreset,
-  matchLoudnessTarget,
-  setMasteringEnabled,
-  setMasteringParam,
-  type CommandResult,
-  type LoudnessMatch,
-} from '../../../state/commands';
+import { MASTERING_LOCKED_MESSAGE, applyMasteringPreset, setMasteringEnabled, setMasteringParam, type CommandResult } from '../../../state/commands';
 import { session, useProject } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { engageCompare, releaseCompare, useCompare } from './compare';
+import {
+  MATCH_PASSES,
+  clearMatchResult,
+  distanceText,
+  loudnessTick,
+  matchState,
+  minusLufs,
+  onMatchFocusRequest,
+  readingBasis,
+  startMatch,
+  takeMatchFocusRequest,
+  useMatchState,
+  watchLoudness,
+  type LoudnessReading,
+} from './loudnessMatch';
 import { formatDb, formatLoudness, mixFrameLive, readMixFrame } from './mixMeters';
 import { LOUDNESS_TARGETS, setLoudnessTarget, useLoudnessTarget, type LoudnessTargetId } from './mixPrefs';
 import { Spectrum } from './Spectrum';
+import { useMixTask } from './useMixTask';
 import styles from './MasteringPanel.module.css';
 
 /** A press shorter than this is a click: the comparison stays on until the next click. */
 export const COMPARE_HOLD_MS = 300;
 const READOUT_INTERVAL_MS = 200;
-/** After a match, readings older than this (ms) still reflect the old setting. */
-const FRESH_READING_MS = 600;
-/** Within this many dB of the target counts as on target. */
-const ON_TARGET_DB = 1;
 const MINUS = '−';
 
 /** Report a mastering edit: the take lock gets its own explanation. */
@@ -73,6 +80,9 @@ function SectionTitle(props: { id: string; children: ReactNode; aside?: ReactNod
 /* ------------------------------------------------------------------ */
 /* A/B                                                                 */
 /* ------------------------------------------------------------------ */
+
+const COMPARE_OFF = 'Compare A/B';
+const COMPARE_ON = 'Hearing: no mastering';
 
 function CompareButton(props: { enabled: boolean }) {
   const { enabled } = props;
@@ -136,16 +146,15 @@ function CompareButton(props: { enabled: boolean }) {
     }
   };
 
-  const label = active ? 'Hearing: no mastering' : 'Compare A/B';
   return (
     <Tooltip
       name="Compare with and without mastering"
       tip={
         !enabled && !active
           ? 'Mastering is off, so there is nothing to compare.'
-          : 'Hold to hear your mix without mastering; let go to hear it with. A quick click keeps it off until you click again.'
+          : 'Hold to hear your mix without mastering; let go to hear it with. A quick click keeps it off until you click again. Both are played at the same loudness, so you compare the sound, not the volume.'
       }
-      detail="Only for listening: the project and every export keep their mastering. Leaving the Mix view turns it back on."
+      detail="Only for listening: the project and every export keep their mastering. The un-mastered sound is turned up or down by the loudness difference of the last 3 seconds. Leaving the Mix view turns mastering back on."
     >
       <button
         type="button"
@@ -153,7 +162,7 @@ function CompareButton(props: { enabled: boolean }) {
         data-active={active || undefined}
         aria-pressed={active}
         // The name starts with the words on the button (WCAG 2.5.3), then says what it does.
-        aria-label={active ? 'Hearing: no mastering (Compare A/B)' : 'Compare A/B (hear without mastering)'}
+        aria-label={active ? `${COMPARE_ON} (Compare A/B)` : `${COMPARE_OFF} (hear without mastering)`}
         aria-disabled={disabled || undefined}
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
@@ -163,9 +172,46 @@ function CompareButton(props: { enabled: boolean }) {
         onKeyDown={onKeyDown}
       >
         <Icon name="stereo" size={14} />
-        <span>{label}</span>
+        {/* Both words take the same place, so the key keeps the width of the longer one and never moves. */}
+        <span className={styles.compareWords}>
+          <span data-shown={!active || undefined}>{COMPARE_OFF}</span>
+          <span data-shown={active || undefined}>{COMPARE_ON}</span>
+        </span>
       </button>
     </Tooltip>
+  );
+}
+
+/** While comparing: how much the un-mastered sound is turned to match (MeterFrame.compareTrimDb). */
+function LevelMatchNote() {
+  const cmp = useCompare();
+  const active = cmp.mode !== 'off';
+  const ref = useRef<HTMLSpanElement>(null);
+  /** Whether the comparison had a loudness reading to match from when it started. */
+  const measured = useRef(false);
+  useLayoutEffect(() => {
+    if (!active) return;
+    const l = readMixFrame().loudness;
+    measured.current = !!l && Number.isFinite(l.shortTerm) && Number.isFinite(l.preMasteringShortTerm ?? NaN);
+    meterWake();
+  }, [active]);
+  useMixTask(
+    {
+      frame() {
+        const el = ref.current;
+        if (!el) return false;
+        const trim = readMixFrame().compareTrimDb ?? 0;
+        const text = measured.current || Math.abs(trim) >= 0.05 ? `Level-matched (${formatDb(trim)})` : 'Not level-matched: play a few seconds first';
+        if (el.textContent !== text) el.textContent = text;
+        return false;
+      },
+    },
+    active,
+  );
+  return (
+    <span className={styles.levelMatch} role="status" data-testid="level-match">
+      {active ? <span ref={ref} /> : null}
+    </span>
   );
 }
 
@@ -184,7 +230,9 @@ function Presets(props: { locked: boolean }) {
   };
   return (
     <section className={styles.section} aria-labelledby={titleId} data-section="presets">
-      <SectionTitle id={titleId}>Presets</SectionTitle>
+      <SectionTitle id={titleId} aside={<LevelMatchNote />}>
+        Presets
+      </SectionTitle>
       <div className={styles.chips} role="group" aria-labelledby={titleId}>
         {MASTERING_PRESETS.map((p) => (
           <Tooltip key={p.id} tip={p.description}>
@@ -194,13 +242,13 @@ function Presets(props: { locked: boolean }) {
           </Tooltip>
         ))}
       </div>
-      <p className={styles.note} data-testid="preset-note">
+      <p className={`${styles.note} ${styles.presetNote}`} data-testid="preset-note" title={current ? `${current.name}: ${current.description}` : undefined}>
         {current ? (
           <>
             <strong>{current.name}:</strong> {current.description}
           </>
         ) : (
-          'Custom settings: your own changes. Pick a preset to start again from one.'
+          'Custom settings: pick a preset to start again from one.'
         )}
       </p>
     </section>
@@ -216,29 +264,28 @@ type ReadoutKey = 'momentary' | 'shortTerm' | 'integrated' | 'truePeak';
 const READOUTS: readonly { key: ReadoutKey; name: string; unit: string; tip: string }[] = [
   { key: 'momentary', name: 'Momentary', unit: 'LUFS', tip: 'Loudness of the last 0.4 seconds: jumps with every hit.' },
   { key: 'shortTerm', name: 'Short-term', unit: 'LUFS', tip: 'Loudness of the last 3 seconds: how loud this part of the song feels.' },
-  { key: 'integrated', name: 'Integrated', unit: 'LUFS', tip: 'Average loudness since you started playing (or pressed Reset): the number streaming services use.' },
+  {
+    key: 'integrated',
+    name: 'Integrated',
+    unit: 'LUFS',
+    tip: 'Average loudness since you started playing, pressed Reset or changed the mastering or the master volume: the number streaming services use.',
+  },
   {
     key: 'truePeak',
     name: 'True peak',
     unit: 'dBTP',
-    tip: 'The highest peak so far, counting the peaks between samples too. Amber: just above the limiter’s −1 dB, which is normal. Red: above 0 dBTP, which may distort on some players.',
+    tip: 'The highest peak so far, counting the peaks between samples too. The limiter keeps it at −1 dBTP. Amber: at that ceiling, which is normal for a loud master. Red: above 0 dBTP, which may distort on some players.',
   },
 ];
 
-const minusLufs = (lufs: number) => `${lufs < 0 ? MINUS : ''}${Math.abs(lufs)} LUFS`;
+/** True peak this close under the limiter's −1 dBTP ceiling (or above it) reads amber: the limiter is catching peaks. */
+export const TRUE_PEAK_NEAR_DB = -1.5;
 
-/** How a true-peak reading is shown: amber just above the limiter's −1 dB (normal), red above 0 dBTP. */
+/** How a true-peak reading is shown: plain, amber at the −1 dBTP ceiling (normal), red above 0 dBTP. */
 export type PeakLevel = 'ok' | 'near' | 'over';
 export function truePeakLevel(db: number | undefined): PeakLevel {
   if (db === undefined || !Number.isFinite(db)) return 'ok';
-  return db > 0 ? 'over' : db > -1 ? 'near' : 'ok';
-}
-
-/** Advice after a match that hit the end of the Loudness range (null when it did not). */
-function limitAdvice(r: LoudnessMatch): string | null {
-  if (r.limit === 'max') return 'That is as far as Loudness goes. To get louder still, raise the parts or the master volume.';
-  if (r.limit === 'min') return 'Loudness is now at 0 dB. To get quieter still, lower the master volume.';
-  return null;
+  return db > 0 ? 'over' : db > TRUE_PEAK_NEAR_DB ? 'near' : 'ok';
 }
 
 function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: boolean }) {
@@ -246,152 +293,140 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
   const titleId = useId();
   const target = useLoudnessTarget();
   const loudnessDb = useProject((p) => readParam(MASTERING_PARAMS, p.mastering.params, 'loudness'));
+  const playing = useRuntime((s) => s.playing && !s.paused);
+  const measuring = useMatchState((s) => s.measuring);
+  const matching = useMatchState((s) => s.matching);
+  const result = useMatchState((s) => s.result);
+  const lastMatch = useMatchState((s) => s.lastMatch);
   const values = useRef<Record<ReadoutKey, HTMLElement | null>>({ momentary: null, shortTerm: null, integrated: null, truePeak: null });
   const peakNameRef = useRef<HTMLSpanElement>(null);
   const statusRef = useRef<HTMLParagraphElement>(null);
-  const latest = useRef({ integrated: -Infinity, shortTerm: -Infinity });
-  const hasRef = useRef(false);
+  const matchRef = useRef<HTMLButtonElement>(null);
+  const latest = useRef<LoudnessReading>({ integrated: -Infinity, shortTerm: -Infinity });
   const lastAt = useRef(-Infinity);
-  /**
-   * After a match: the next one waits for an integrated reading taken at the
-   * new setting (the old reading, a report already on its way from the meter,
-   * and the 3 s short-term window all still hold the old level).
-   */
-  const freshAfter = useRef<number | null>(null);
-  const [measured, setMeasured] = useState(false);
-  /** Advice when Match could not do (all of) what was asked; a plain match needs none. */
-  const [result, setResult] = useState<string | null>(null);
-  /** The last match's before → after, shown beside the button while Loudness is still there. */
-  const [lastMatch, setLastMatch] = useState<{ before: number; after: number } | null>(null);
+  /** There is a reading to match from (React state: it changes rarely, the readings themselves do not render). */
+  const [hasBasis, setHasBasis] = useState(false);
+  const targetRef = useRef(target);
+  useLayoutEffect(() => {
+    targetRef.current = target;
+  });
 
-  // A new target refreshes the distance-to-target line at once.
+  // Sent here by "Match target in Mix" (the export report): bring Match into view and focus it,
+  // once the dialog that asked has closed and given focus back.
+  useEffect(() => {
+    let raf = 0;
+    const go = () => {
+      if (!takeMatchFocusRequest()) return;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        raf = requestAnimationFrame(() => {
+          const el = matchRef.current;
+          if (!el) return;
+          el.scrollIntoView({ block: 'center', inline: 'nearest' });
+          el.focus({ preventScroll: true });
+        });
+      });
+    };
+    go();
+    const off = onMatchFocusRequest(go);
+    return () => {
+      off();
+      cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  // A new target, a new state of the readings, or of Match: the status line is written again at once.
   useLayoutEffect(() => {
     lastAt.current = -Infinity;
-  }, [target]);
-
-  useRafLoop((_, now) => {
-    if (now - lastAt.current < READOUT_INTERVAL_MS) return;
-    lastAt.current = now;
-    const l = readMixFrame().loudness;
-    const live = mixFrameLive();
-    const text: Record<ReadoutKey, string> = {
-      momentary: formatLoudness(l?.momentary, ''),
-      shortTerm: formatLoudness(l?.shortTerm, ''),
-      integrated: formatLoudness(l?.integrated, ''),
-      truePeak: formatLoudness(l?.truePeakDb, '', true),
-    };
-    for (const k of Object.keys(text) as ReadoutKey[]) {
-      const el = values.current[k];
-      if (el && el.textContent !== text[k]) el.textContent = text[k];
-    }
-    // Amber just above the limiter's −1 dB (normal for true peak), red above 0 dBTP, which also says so in words.
-    const level = truePeakLevel(l?.truePeakDb);
-    const peakEl = values.current.truePeak;
-    if (peakEl && peakEl.dataset.level !== level) peakEl.dataset.level = level;
-    const peakName = level === 'over' ? 'Peak too high' : 'True peak';
-    if (peakNameRef.current && peakNameRef.current.textContent !== peakName) {
-      peakNameRef.current.textContent = peakName;
-      peakNameRef.current.dataset.level = level;
-    }
-    const integrated = l?.integrated ?? -Infinity;
-    const shortTerm = l?.shortTerm ?? -Infinity;
-    if (freshAfter.current !== null && ((now >= freshAfter.current && Number.isFinite(integrated)) || !live)) freshAfter.current = null;
-    const waiting = freshAfter.current !== null;
-    latest.current = waiting ? { integrated: -Infinity, shortTerm: -Infinity } : { integrated, shortTerm };
-    const basis = waiting
-      ? null
-      : Number.isFinite(integrated)
-        ? { which: 'Integrated', v: integrated }
-        : Number.isFinite(shortTerm)
-          ? { which: 'Short-term', v: shortTerm }
-          : null;
-    let status: string;
-    if (!basis) {
-      const playing = runtimeStore.getState().playing;
-      status = !live || !playing ? 'Start playback to measure.' : !l ? 'Loudness metering is not available.' : 'Measuring: play a few seconds.';
-    } else {
-      const t = target;
-      const diff = basis.v - t.lufs;
-      status =
-        Math.abs(diff) < ON_TARGET_DB
-          ? `${basis.which}: on the ${t.name} target, ${minusLufs(t.lufs)} (within ${ON_TARGET_DB} dB).`
-          : `${basis.which}: ${Math.abs(diff).toFixed(1)} dB ${diff < 0 ? 'quieter' : 'louder'} than the ${t.name} target, ${minusLufs(t.lufs)}.`;
-    }
-    if (statusRef.current && statusRef.current.textContent !== status) statusRef.current.textContent = status;
-    const has = basis !== null;
-    if (has !== hasRef.current) {
-      hasRef.current = has;
-      setMeasured(has);
-    }
-  }, true);
+    meterWake();
+  }, [target, measuring, matching, enabled, comparing, locked]);
 
   const reason = locked ? MASTERING_LOCKED_MESSAGE : !enabled ? 'Turn mastering on to match a target.' : comparing ? 'Finish comparing (A/B) first.' : null;
-  const blocked = reason ?? (!measured ? 'Play your song for a few seconds to measure it first.' : null);
+  const hasBasisRef = useRef(false);
+  // Match waits for a fresh reading while the readings are being taken again; otherwise it needs one.
+  const blocked = matching ? null : blockedReason(reason, hasBasis, measuring, playing);
+
+  useMixTask({
+    frame(now) {
+      if (now - lastAt.current < READOUT_INTERVAL_MS) return runtimeStore.getState().playing;
+      const dt = Number.isFinite(lastAt.current) ? now - lastAt.current : 0;
+      lastAt.current = now;
+      const l = readMixFrame().loudness;
+      const live = mixFrameLive();
+      let wrote = false;
+      const write = (el: HTMLElement | null, text: string) => {
+        if (el && el.textContent !== text) {
+          el.textContent = text;
+          wrote = true;
+        }
+      };
+      write(values.current.momentary, formatLoudness(l?.momentary, ''));
+      write(values.current.shortTerm, formatLoudness(l?.shortTerm, ''));
+      write(values.current.integrated, formatLoudness(l?.integrated, ''));
+      write(values.current.truePeak, formatLoudness(l?.truePeakDb, '', true));
+      // Amber at the limiter's −1 dBTP ceiling (normal), red above 0 dBTP, which also says so in words.
+      const level = truePeakLevel(l?.truePeakDb);
+      const peakEl = values.current.truePeak;
+      if (peakEl && peakEl.dataset.level !== level) peakEl.dataset.level = level;
+      const peakName = level === 'over' ? 'Peak too high' : 'True peak';
+      if (peakNameRef.current && peakNameRef.current.textContent !== peakName) {
+        peakNameRef.current.textContent = peakName;
+        peakNameRef.current.dataset.level = level;
+      }
+      const reading = { integrated: l?.integrated ?? -Infinity, shortTerm: l?.shortTerm ?? -Infinity };
+      latest.current = reading;
+      loudnessTick(now, reading, dt);
+      const run = runtimeStore.getState();
+      const isPlaying = run.playing && !run.paused;
+      const t = targetRef.current;
+      const fresh = !matchState().measuring;
+      const basis = readingBasis(reading);
+      let status: string;
+      if (!fresh) {
+        status = !isPlaying
+          ? 'Start playback to measure the new setting.'
+          : `Measuring the new setting… ${basis ? distanceText({ ...basis, which: 'Short-term' }, t.lufs, t.name) : ''}`.trim();
+      } else if (!basis) {
+        status = !live || !isPlaying ? 'Start playback to measure.' : !l ? 'Loudness metering is not available.' : 'Measuring: play a few seconds.';
+      } else status = distanceText(basis, t.lufs, t.name);
+      write(statusRef.current, status);
+      if ((basis !== null) !== hasBasisRef.current) {
+        hasBasisRef.current = basis !== null;
+        setHasBasis(basis !== null);
+      }
+      return isPlaying || wrote;
+    },
+  });
 
   const match = () => {
-    if (blocked) return;
-    const t = target;
-    const m = latest.current;
-    const useIntegrated = Number.isFinite(m.integrated);
-    const value = useIntegrated ? m.integrated : m.shortTerm;
-    const r = matchLoudnessTarget(session.store, t.lufs, value);
-    if (r.refused) {
-      notify(MASTERING_LOCKED_MESSAGE, 'warn');
-      return;
-    }
-    if (!r.changed) {
-      setResult(
-        r.message ??
-          (r.limit === 'min'
-            ? `Louder than the ${t.name} target already, with Loudness at 0 dB. Lower the master volume to get quieter.`
-            : r.limit === 'max'
-              ? `Quieter than the ${t.name} target, with Loudness already at its most (${formatDb(r.after)}). Raise the parts or the master volume to get louder.`
-              : `Already on the ${t.name} target.`),
-      );
-      return;
-    }
-    session.resetLoudness();
-    // The next match needs a reading taken at the new setting.
-    freshAfter.current = performance.now() + FRESH_READING_MS;
-    latest.current = { integrated: -Infinity, shortTerm: -Infinity };
-    hasRef.current = false;
-    setMeasured(false);
-    lastAt.current = -Infinity;
-    setLastMatch({ before: r.before, after: r.after });
-    setResult(limitAdvice(r));
-    notify(
-      `Loudness ${formatDb(r.before)} → ${formatDb(r.after)} to aim for ${minusLufs(t.lufs)} (the ${useIntegrated ? 'integrated' : 'short-term'} reading was ${formatLoudness(value)}). Play on, then match again to fine-tune.`,
-      'info',
-      'undo',
-    );
+    if (blocked || matching) return;
+    startMatch(latest.current);
   };
 
-  const reset = () => {
-    session.resetLoudness();
-    setResult(null);
-    lastAt.current = -Infinity;
-  };
-
-  // "0.0 → +6.0 dB" while Loudness is still where the last match put it.
+  // "0.0 → +6.0 dB" while Loudness drive is still where the last match put it.
   const showMatch = lastMatch !== null && Math.abs(lastMatch.after - loudnessDb) < 0.05;
-  const loudnessText = showMatch ? `Loudness ${formatDb(lastMatch.before)} → ${formatDb(lastMatch.after)}` : `Loudness ${formatDb(loudnessDb)}`;
+  const driveText = showMatch ? `${formatDb(lastMatch.before).replace(/ dB$/, '')} → ${formatDb(lastMatch.after)}` : formatDb(loudnessDb);
+  const matchWords = matching ? `Matching… ${Math.max(1, matching.applied)}/${MATCH_PASSES}` : 'Match target';
 
   return (
     <section className={styles.section} aria-labelledby={titleId} data-section="loudness">
-      <SectionTitle id={titleId}>Loudness</SectionTitle>
-      <SegmentedControl<LoudnessTargetId>
-        label="Loudness target"
-        options={LOUDNESS_TARGETS.map((t) => ({ value: t.id, label: `${t.name} ${MINUS}${Math.abs(t.lufs)}`, tip: `${minusLufs(t.lufs)}. ${t.description}` }))}
-        value={target.id}
-        onChange={(id) => {
-          setLoudnessTarget(id);
-          setResult(null);
-        }}
-        block
-        className={styles.targets}
-      />
+      {/* The section is named for its selector (design-16): the target, how far the song is from it, and Match. */}
+      <SectionTitle id={titleId}>Loudness target</SectionTitle>
+      <div className={styles.field}>
+        <SegmentedControl<LoudnessTargetId>
+          label="Loudness target"
+          options={LOUDNESS_TARGETS.map((t) => ({ value: t.id, label: `${t.name} ${MINUS}${Math.abs(t.lufs)}`, tip: `${minusLufs(t.lufs)}. ${t.description}` }))}
+          value={target.id}
+          onChange={(id) => {
+            setLoudnessTarget(id);
+            clearMatchResult();
+          }}
+          block
+          className={styles.targets}
+        />
+      </div>
       <div className={styles.readoutRow}>
-        <div className={styles.readouts} role="group" aria-label="Loudness readings">
+        <div className={styles.readouts} role="group" aria-label="Loudness readings" data-hint-avoid="">
           {READOUTS.map((r) => (
             <Tooltip key={r.key} tip={r.tip}>
               <div className={styles.readout} data-key={r.key}>
@@ -407,7 +442,7 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
                     }}
                   >
                     {'—'}
-                  </span>{' '}
+                  </span>
                   <span className={styles.unit}>{r.unit}</span>
                 </span>
               </div>
@@ -415,31 +450,54 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
           ))}
         </div>
         <Tooltip tip="Start measuring again from now (integrated loudness and true peak).">
-          <button type="button" className={styles.reset} aria-label="Reset loudness readings" onClick={reset}>
+          <button
+            type="button"
+            className={styles.reset}
+            aria-label="Reset loudness readings"
+            onClick={() => {
+              session.resetLoudness();
+              clearMatchResult();
+              lastAt.current = -Infinity;
+              meterWake();
+            }}
+          >
             <Icon name="undo" size={14} />
             <span>Reset</span>
           </button>
         </Tooltip>
       </div>
-      <p ref={statusRef} className={styles.status} data-testid="loudness-status">
+      <p ref={statusRef} className={styles.status} data-testid="loudness-status" data-hint-avoid="">
         Start playback to measure.
       </p>
       <div className={styles.matchRow}>
         <Button
+          ref={matchRef}
           variant="primary"
           size="lg"
           icon="sparkle"
           onClick={match}
-          aria-disabled={blocked ? true : undefined}
-          data-blocked={blocked ? '' : undefined}
+          aria-disabled={blocked || matching ? true : undefined}
+          aria-label={matching ? `${matchWords}: matching the ${target.name} target` : undefined}
+          data-blocked={blocked || matching ? '' : undefined}
+          data-matching={matching ? '' : undefined}
           className={styles.match}
-          tip={blocked ?? `Set the Loudness control so the song lands on ${minusLufs(target.lufs)}.`}
-          detail={`Moves Loudness by the measured difference, using the integrated reading when there is one, otherwise the short-term one. It is approximate: the limiter holds peaks below ${MINUS}1 dBFS, so a big push adds less than the numbers say. One undo step.`}
+          tip={
+            matching
+              ? `Matching the ${target.name} target: after each fresh 3-second reading it corrects again, up to ${MATCH_PASSES} times, while the music plays. Stopping playback, Mute All, the A/B or any change to the song stops it.`
+              : (blocked ?? `Set Loudness drive so the song lands on ${minusLufs(target.lufs)}.`)
+          }
+          detail={`Moves Loudness drive by the measured difference: the integrated reading when it is of the current settings, else the short-term one. The limiter holds peaks below ${MINUS}1 dBTP, so a push adds less than the numbers say; while the music plays, Match checks again after each fresh 3-second reading and corrects again, until it is within 0.5 dB or after ${MATCH_PASSES} passes. One press is one undo step.`}
         >
-          Match target
+          {/* Both words take the same place, so the key keeps its width. */}
+          <span className={styles.matchWords}>
+            <span data-shown={!matching || undefined}>Match target</span>
+            <span data-shown={matching ? true : undefined} aria-hidden={!matching || undefined}>
+              {matching ? matchWords : `Matching… ${MATCH_PASSES}/${MATCH_PASSES}`}
+            </span>
+          </span>
         </Button>
-        <span className={`${styles.loudnessNow} mono`} data-testid="loudness-control">
-          {loudnessText}
+        <span className={styles.loudnessNow} data-testid="loudness-control">
+          <span className={styles.loudnessNowName}>Loudness drive</span> <span className={`${styles.loudnessNowValue} mono`}>{driveText}</span>
         </span>
       </div>
       {reason && !locked && <p className={styles.blocked}>{reason}</p>}
@@ -447,10 +505,17 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
         {result ?? ''}
       </p>
       <p className={styles.fine} data-testid="true-peak-note">
-        True peak counts the peaks between samples, so it can read just above the limiter’s {MINUS}1 dBFS: amber is normal, red (above 0 dBTP) may distort.
+        True peak amber: at the limiter’s {MINUS}1 dBTP ceiling (normal). Red: above 0 dBTP.
       </p>
     </section>
   );
+}
+
+/** Why Match cannot act now, or null. While the readings are being taken again it can (it waits for them). */
+function blockedReason(reason: string | null, hasBasis: boolean, measuring: boolean, playing: boolean): string | null {
+  if (reason) return reason;
+  if (measuring) return playing ? null : 'Play your song to measure the new setting first.';
+  return hasBasis ? null : 'Play your song for a few seconds to measure it first.';
 }
 
 /* ------------------------------------------------------------------ */
@@ -470,7 +535,7 @@ export const MASTERING_GROUPS: readonly Group[] = [
   { id: 'glue', title: 'Glue', ids: ['glue', 'punch'], text: 'Gentle compression that makes the parts sound like one song.' },
   { id: 'colour', title: 'Colour', ids: ['saturation'], text: 'Analogue-style warmth and density.' },
   { id: 'stereo', title: 'Stereo', ids: ['width', 'monoBass'], text: 'How wide the mix is, and solid centred lows.' },
-  { id: 'loudness', title: 'Loudness', ids: ['loudness'], text: 'Drive into the limiter: louder, with less dynamic range.' },
+  { id: 'loudness', title: 'Loudness drive', ids: ['loudness'], text: 'Drive into the limiter: louder, with less dynamic range. Match target sets it for you.' },
 ];
 
 function groupsWithSpecs(): { group: Group; specs: ParamSpec[] }[] {
@@ -504,24 +569,25 @@ function GlueMeter() {
   const barRef = useRef<HTMLSpanElement>(null);
   const textRef = useRef<HTMLSpanElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const at = useRef(0);
-  useRafLoop((_, now) => {
-    if (now - at.current < 60) return;
-    at.current = now;
-    const gr = readMixFrame().glueReductionDb;
-    const known = gr !== undefined && Number.isFinite(gr);
-    const v = known ? Math.max(0, gr) : 0;
-    if (barRef.current) barRef.current.style.transform = `scaleX(${Math.min(1, v / 12)})`;
-    const text = !known ? '—' : v < 0.1 ? 'Resting' : `${MINUS}${v.toFixed(1)} dB`;
-    if (textRef.current && textRef.current.textContent !== text) textRef.current.textContent = text;
-    if (rootRef.current) {
-      const now10 = String(Math.round(v * 10) / 10);
-      if (rootRef.current.getAttribute('aria-valuenow') !== now10) {
-        rootRef.current.setAttribute('aria-valuenow', now10);
+  const shown = useRef('');
+  useMixTask({
+    frame() {
+      const gr = readMixFrame().glueReductionDb;
+      const known = gr !== undefined && Number.isFinite(gr);
+      const v = known ? Math.max(0, gr) : 0;
+      const key = known ? String(Math.round(v * 10)) : '-';
+      if (key === shown.current) return v >= 0.1;
+      shown.current = key;
+      if (barRef.current) barRef.current.style.transform = `scaleX(${Math.min(1, v / 12)})`;
+      const text = !known ? '—' : v < 0.1 ? 'Resting' : `${MINUS}${v.toFixed(1)} dB`;
+      if (textRef.current && textRef.current.textContent !== text) textRef.current.textContent = text;
+      if (rootRef.current) {
+        rootRef.current.setAttribute('aria-valuenow', String(Math.round(v * 10) / 10));
         rootRef.current.setAttribute('aria-valuetext', known ? (v < 0.1 ? 'Not compressing' : `Turning down ${v.toFixed(1)} dB`) : 'Not measured');
       }
-    }
-  }, true);
+      return true;
+    },
+  });
   return (
     <Tooltip tip="How much Glue is turning the mix down right now. A few dB on the loudest moments sounds natural." detail="Glue compressor gain reduction, from 0 to 12 dB.">
       <div ref={rootRef} className={styles.glue} role="meter" aria-label="Glue gain reduction" aria-valuemin={0} aria-valuemax={12} aria-valuenow={0} aria-valuetext="Not measured">
@@ -580,6 +646,9 @@ export function MasteringPanel(props: { advanced: boolean; className?: string })
   const comparing = cmp.mode !== 'off' || cmp.waiting;
   const spectrumId = useId();
 
+  // The readings follow what is heard now: changes to the mastering or the master volume restart them.
+  useEffect(() => watchLoudness(), []);
+
   const onSwitch = (on: boolean) => {
     if (comparing) releaseCompare();
     acceptMastering(setMasteringEnabled(session.store, on));
@@ -600,7 +669,7 @@ export function MasteringPanel(props: { advanced: boolean; className?: string })
             onChange={onSwitch}
             disabled={takeLocked}
             tip={enabled ? 'Switch the whole mastering chain off: you hear the mix exactly as it is.' : 'Switch mastering on.'}
-            detail="The output limiter (peaks below −1 dBFS) always stays on."
+            detail="The output limiter (peaks below −1 dBTP) always stays on."
           />
         </>
       }

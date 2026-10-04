@@ -1,12 +1,15 @@
 /**
  * The transport strip in the running app (real Chromium layout): the offline
  * readiness and Update states are on screen and fit the compact strip at the
- * target sizes without pushing anything off it; Stop and Export show their
- * words from 1280 px (so on the common 1366 px laptop), whatever the save or
- * update state; Update never reloads during playback, a recording or with
- * unsaved edits; the More menu carries both where the strip has no room; and
- * at 200 % zoom the strip (with Mute All) stays on screen while the page
- * scrolls.
+ * target sizes without pushing anything off it; Stop shows its word from
+ * 1280 px and Export from 1366 px (so on the common 1366 px laptop), whatever
+ * the save or update state; Undo and Redo are on the strip at every width from
+ * 1024 to 1920 px and the Simple · Advanced switch from 1366 px (in the More
+ * menu narrower, where the strip stays one row), in Simple and Advanced, with
+ * nothing overlapping; Update never reloads during
+ * playback, a recording or with unsaved edits; the More menu carries both
+ * where the strip has no room; and at 200 % zoom the strip (with Mute All)
+ * stays on screen while the page scrolls.
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -17,7 +20,7 @@ import { session } from '../../src/app/instance';
 import { offlineStore, patchRuntime, runtimeStore, type OfflineState } from '../../src/app/runtime';
 import type { BootInfo } from '../../src/app/session';
 import { deleteDb } from '../../src/persistence/db';
-import { setGuideDone, setTipsEnabled, setUiMode } from '../../src/state/uiStore';
+import { setGuideDone, setTipsEnabled, setUiMode, uiStore } from '../../src/state/uiStore';
 import { cleanup, mount, wait } from './ui-harness';
 
 let boot: BootInfo;
@@ -102,13 +105,78 @@ function wordShown(b: HTMLElement | null, word: string): boolean {
   return r.width >= word.length * 5 && r.left >= box.left - 0.5 && r.right <= Math.min(box.right, bar.right) + 0.5 && getComputedStyle(el).clip === 'auto';
 }
 
-/** Stop and Export with their words: from 1280 px in Simple, whatever the save or update state. */
-function expectStopAndExportWords(label: string) {
+/** Stop with its word from 1280 px and Export from 1366 px in Simple, whatever the save or update state. */
+function expectStopAndExportWords(label: string, opts: { exportKey?: boolean } = {}) {
   const stop = buttonNamed('Stop', bar());
   const exportKey = buttonNamed('Export', bar());
   expect(wordShown(stop, 'Stop'), `${label}: "Stop" shown`).toBe(true);
-  expect(wordShown(exportKey, 'Export'), `${label}: "Export" shown`).toBe(true);
+  if (opts.exportKey !== false) expect(wordShown(exportKey, 'Export'), `${label}: "Export" shown`).toBe(true);
   expect(stop!.getBoundingClientRect().height, `${label}: Stop is a primary key`).toBeGreaterThanOrEqual(40);
+}
+
+/** The Simple · Advanced switch's two keys, on the strip itself (not in a menu), whole and not covered. */
+function expectSwitchOnStrip(label: string) {
+  const b = bar();
+  const box = b.getBoundingClientRect();
+  expect(document.querySelector('[role="menu"]'), `${label}: no menu open`).toBeNull();
+  for (const name of ['Simple', 'Advanced']) {
+    const radio = [...b.querySelectorAll<HTMLElement>('[role="radio"]')].find((r) => r.textContent === name);
+    expect(shown(radio), `${label}: "${name}" on the strip`).toBe(true);
+    expect(radio!.closest('[role="menu"]'), `${label}: "${name}" not in a menu`).toBeNull();
+    const r = radio!.getBoundingClientRect();
+    expect(r.left >= box.left - 0.5 && r.right <= box.right + 0.5 && r.top >= box.top - 0.5 && r.bottom <= box.bottom + 0.5, `${label}: "${name}" inside the strip`).toBe(true);
+    expect(Math.min(r.width, r.height), `${label}: "${name}" is a 32 px target`).toBeGreaterThanOrEqual(32);
+    // The key itself is what a click at its middle reaches (nothing on top of it).
+    expect(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('[role="radio"]'), `${label}: "${name}" not covered`).toBe(radio);
+  }
+}
+
+/** Below 1366 px the switch is not on the strip but one press away in More, where it works. */
+async function expectSwitchInMore(label: string) {
+  const b = bar();
+  for (const name of ['Simple', 'Advanced']) expect(shown([...b.querySelectorAll<HTMLElement>('[role="radio"]')].find((r) => r.textContent === name)), `${label}: "${name}" not on the strip`).toBe(false);
+  const mode = uiStore.getState().uiMode;
+  const more = buttonNamed(/^More:/, b)!;
+  expect(shown(more), `${label}: More on the strip`).toBe(true);
+  await act(async () => {
+    more.click();
+  });
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitemcheckbox"]')].find((el) => el.textContent?.includes('Show every control (Advanced)'));
+  expect(item, `${label}: the switch in More`).toBeTruthy();
+  expect(item!.getAttribute('aria-checked'), `${label}: More says the mode`).toBe(String(mode === 'advanced'));
+  await act(async () => {
+    item!.click();
+  });
+  expect(uiStore.getState().uiMode, `${label}: More switches the mode`).toBe(mode === 'advanced' ? 'simple' : 'advanced');
+  act(() => setUiMode(mode));
+  await settle();
+}
+
+/** No two visible controls of the strip overlap, and none is smaller than 32 px. */
+function expectNoOverlap(label: string) {
+  const els = [...bar().querySelectorAll<HTMLElement>('button, [role="radio"], [role="tab"], input, [role="slider"], [role="status"][tabindex]')].filter(
+    (el) => shown(el) && !el.closest('[aria-hidden="true"]') && !el.parentElement?.closest('button, [role="radio"], [role="tab"], [role="slider"]'),
+  );
+  const small = els
+    .filter((el) => el.matches('button, [role="radio"], [role="tab"], input'))
+    .filter((el) => Math.min(el.getBoundingClientRect().width, el.getBoundingClientRect().height) < 31.5)
+    .map((el) => el.getAttribute('aria-label') ?? el.textContent);
+  expect(small, `${label}: targets under 32 px`).toEqual([]);
+  const overlaps: string[] = [];
+  for (let i = 0; i < els.length; i++) {
+    for (let j = i + 1; j < els.length; j++) {
+      if (els[i].contains(els[j]) || els[j].contains(els[i])) continue;
+      // A knob's own value key may reach over its caption (Master keeps it inside the strip); a drag from it still turns the knob.
+      const knob = els[i].closest('[data-typable]');
+      if (knob && knob === els[j].closest('[data-typable]')) continue;
+      const a = els[i].getBoundingClientRect();
+      const c = els[j].getBoundingClientRect();
+      const x = Math.min(a.right, c.right) - Math.max(a.left, c.left);
+      const y = Math.min(a.bottom, c.bottom) - Math.max(a.top, c.top);
+      if (x > 0.5 && y > 0.5) overlaps.push(`${els[i].getAttribute('aria-label') ?? els[i].textContent} / ${els[j].getAttribute('aria-label') ?? els[j].textContent}`);
+    }
+  }
+  expect(overlaps.join(' | '), `${label}: overlapping controls`).toBe('');
 }
 
 async function until<T>(fn: () => T | null | undefined | false, what: string, ms = 5000): Promise<T> {
@@ -124,8 +192,8 @@ async function until<T>(fn: () => T | null | undefined | false, what: string, ms
 }
 
 describe('Offline readiness in the transport', () => {
-  it('shows Caching…, Offline ready and Online only in the strip, and fits at 1366 x 768', async () => {
-    await page.viewport(1366, 768);
+  it('shows Caching…, Offline ready and Online only in the strip from 1440 px, in More at 1366 x 768, and fits', async () => {
+    await page.viewport(1440, 900);
     await openApp();
     for (const [state, text] of [
       ['installing', 'Caching…'],
@@ -139,33 +207,43 @@ describe('Offline readiness in the transport', () => {
       // The icon carries the state on screen; the words are its text for screen readers and the tooltip.
       expect(status!.querySelector('svg')).not.toBeNull();
       expectStripFits(text);
+      expectSwitchOnStrip(`1440 px, ${text}`);
     }
-    // The save state, Stop and Export with their words, the Simple · Advanced switch and More stay in
-    // view next to it; Undo, Redo and Projects are in More (and Ctrl+Z / Ctrl+Shift+Z work anywhere).
+    // At 1440 px Export, Undo and Redo are on the strip; Projects joins them from 1600 px (below, it is in More and on the save state).
+    for (const name of ['Export', /^Undo/, /^Redo/]) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
+    expect(shown(buttonNamed(/^Projects \(open:/, bar())), 'Projects at 1440').toBe(false);
+
+    // At 1366 x 768 the Simple · Advanced switch, the save state, Stop and Export with their words, Undo
+    // and Redo and More stay in view; the offline state and Projects make room for them and are in More
+    // (Ctrl+Z / Ctrl+Shift+Z work anywhere too).
     setOffline('ready');
-    for (const name of [/^Autosave: /, /^More:/]) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
+    await page.viewport(1366, 768);
+    await settle();
+    for (const name of [/^Autosave: /, /^More:/, /^Undo/, /^Redo/]) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
     expectStopAndExportWords('1366 px, offline ready');
-    for (const name of ['Simple', 'Advanced']) expect(shown([...bar().querySelectorAll('[role="radio"]')].find((r) => r.textContent === name)), name).toBe(true);
-    for (const name of [/^Undo/, /^Redo/, /^Projects \(open:/]) expect(shown(buttonNamed(name, bar())), String(name)).toBe(false);
+    expectSwitchOnStrip('1366 px, offline ready');
+    expectStripFits('1366 px, offline ready');
+    expect(shown([...bar().querySelectorAll<HTMLElement>('[role="status"]')].find((el) => el.textContent?.includes('Offline ready'))), 'offline state in More at 1366').toBe(false);
+    for (const name of [/^Projects \(open:/]) expect(shown(buttonNamed(name, bar())), String(name)).toBe(false);
     expect(buttonNamed(/^Autosave: /, bar())!.textContent).toContain('Preview');
-    // From 1440 px Projects is on the strip too; from 1600 px Undo and Redo.
-    await page.viewport(1440, 900);
-    await settle();
-    for (const name of [/^Projects \(open:/, 'Export']) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
-    expectStripFits('1440 px, offline ready');
-    await page.viewport(1600, 900);
-    await settle();
-    for (const name of [/^Undo/, /^Redo/, /^Projects \(open:/, 'Export']) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
-    expectStripFits('1600 px, offline ready');
     // What the strip has no room for is one press away in More.
     await act(async () => {
       buttonNamed(/^More:/, bar())!.click();
     });
     const items = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role^="menuitem"]')].map((el) => el.textContent ?? '');
-    for (const word of ['Undo', 'Redo', 'Projects…', 'Export WAV…', 'Show every control (Advanced)']) expect(items.some((t) => t.includes(word)), word).toBe(true);
+    for (const word of ['Undo', 'Redo', 'Projects…', 'Export WAV…', 'Show every control (Advanced)']) expect(items.some((t) => t.includes(word)), `${word} in ${items.join(' / ')}`).toBe(true);
+    // The offline state is the menu's last line: a status, not an item (it cannot be chosen or focused).
+    const menuText = document.querySelector<HTMLElement>('[role="menu"]')?.textContent ?? '';
+    expect(menuText, 'Offline ready in More').toContain('Offline ready');
+    expect(items.some((t) => t.includes('Offline ready')), 'offline state is not a menu item').toBe(false);
     await act(async () => {
       buttonNamed(/^More:/, bar())!.click();
     });
+    await page.viewport(1600, 900);
+    await settle();
+    for (const name of [/^Undo/, /^Redo/, /^Projects \(open:/, 'Export']) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
+    expectSwitchOnStrip('1600 px, offline ready');
+    expectStripFits('1600 px, offline ready');
   });
 
   it('fits the strip at every width from 1024 to 1920 px, with an update waiting, a preview or a failed save', async () => {
@@ -181,9 +259,16 @@ describe('Offline readiness in the transport', () => {
             await wait(0);
           });
           expectStripFits(`${w} px, ${state}, ${save}`);
-          if (w >= 1280) expectStopAndExportWords(`${w} px, ${state}, ${save}`);
+          if (w >= 1280) expectStopAndExportWords(`${w} px, ${state}, ${save}`, { exportKey: w >= 1366 });
           // Narrower, Stop is its square (still named Stop) and Export is in More.
           else expect(wordShown(buttonNamed('Stop', bar()), 'Stop'), `${w} px: Stop as its square`).toBe(false);
+          // Undo and Redo are always on the strip (as icons where their words have no room); the switch from 1366 px.
+          for (const name of [/^Undo/, /^Redo/]) expect(shown(buttonNamed(name, bar())), `${w} px, ${state}, ${save}: ${name}`).toBe(true);
+          if (w >= 1366) expectSwitchOnStrip(`${w} px, ${state}, ${save}`);
+          else for (const name of ['Simple', 'Advanced']) expect(shown([...bar().querySelectorAll('[role="radio"]')].find((r) => r.textContent === name)), `${w} px: "${name}" in More`).toBe(false);
+          expectNoOverlap(`${w} px, ${state}, ${save}`);
+          // One row at every width (Simple).
+          expect(bar().getBoundingClientRect().height, `${w} px, ${state}, ${save}: one row`).toBeLessThan(70);
         }
       }
     };
@@ -203,16 +288,57 @@ describe('Offline readiness in the transport', () => {
     }
   });
 
+  it('keeps Undo and Redo on the strip at 1024-1920 px and the Simple · Advanced switch from 1366 px (in More, on one row, below), in Simple and Advanced', async () => {
+    await openApp();
+    for (const mode of ['simple', 'advanced'] as const) {
+      act(() => setUiMode(mode));
+      for (const w of [1024, 1280, 1366, 1440, 1600, 1920]) {
+        await page.viewport(w, 900);
+        await settle();
+        for (const state of ['unsupported', 'ready', 'update-ready'] as const) {
+          setOffline(state, state === 'update-ready' ? () => {} : null);
+          await act(async () => {
+            await wait(0);
+          });
+          const label = `${mode} ${w} px, ${state}`;
+          if (w >= 1366) expectSwitchOnStrip(label);
+          else await expectSwitchInMore(label);
+          for (const kind of ['undo', 'redo'] as const) {
+            const k = bar().querySelector<HTMLButtonElement>(`button[data-history="${kind}"]`);
+            expect(shown(k), `${label}: ${kind} on the strip`).toBe(true);
+            expect(k!.closest('[role="menu"]'), `${label}: ${kind} not in a menu`).toBeNull();
+            expect(k!.getAttribute('aria-label'), `${label}: ${kind}'s name`).toMatch(kind === 'undo' ? /^Undo/ : /^Redo/);
+          }
+          // Stop and Export keep their words from 1366 px (Simple; Advanced's Swing takes their room until 1600 / 1700 px).
+          if (mode === 'simple' && w >= 1366) expectStopAndExportWords(label);
+          expectStripFits(label);
+          expectNoOverlap(label);
+          // One row: Simple at every width, Advanced (with Swing) from 1180 px; it wraps onto two rows below, as before.
+          expect(bar().getBoundingClientRect().height, `${label}: rows`).toBeLessThan(mode === 'simple' || w >= 1180 ? 70 : 120);
+        }
+      }
+    }
+    act(() => setUiMode('simple'));
+  });
+
   it('Update waits for playback and recordings to stop, writes pending edits first, then applies', async () => {
+    // Below 1600 px a waiting update is a coral dot on More (Update is the menu's first row); from 1600 px the key is on the strip.
     await page.viewport(1366, 768);
     await openApp();
     let applied = 0;
     setOffline('update-ready', () => {
       applied += 1;
     });
+    await settle();
+    expect(shown(buttonNamed('Update', bar())), 'Update in More at 1366').toBe(false);
+    expect(buttonNamed(/^More:/, bar())!.getAttribute('aria-label')).toContain('update ready');
+    expectSwitchOnStrip('1366 px, update ready');
+    await page.viewport(1600, 900);
+    await settle();
     const update = buttonNamed('Update', bar())!;
     expect(shown(update)).toBe(true);
     expectStripFits('update ready');
+    expectSwitchOnStrip('1600 px, update ready');
 
     act(() => patchRuntime({ playing: true }));
     expect(update.disabled).toBe(true);
@@ -232,7 +358,7 @@ describe('Offline readiness in the transport', () => {
   });
 
   it('Update does not reload while the latest edits could not be saved', async () => {
-    await page.viewport(1366, 768);
+    await page.viewport(1600, 900);
     await openApp();
     let applied = 0;
     setOffline('update-ready', () => {

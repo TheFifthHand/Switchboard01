@@ -29,7 +29,7 @@ function session(p: Project = house()): Session {
 
 beforeEach(async () => {
   await deleteDb();
-  patchRuntime({ muteAll: false, stalled: null, playing: false, mode: 'live', replayId: null, songBlock: null, audio: 'off', audioMessage: null });
+  patchRuntime({ muteAll: false, stalled: null, playing: false, mode: 'live', replayId: null, songCursor: 0, audio: 'off', audioMessage: null });
 });
 
 afterEach(async () => {
@@ -131,10 +131,35 @@ describe('A failed audio start', () => {
   });
 });
 
-describe('Resume after a stall', () => {
-  it('resumes the song from the block that was playing', async () => {
+describe('A busy moment in a visible tab (perf-01)', () => {
+  it('playback skips the missed stretch and plays on; a performance take keeps recording through it and ends only on Stop', async () => {
     const s = session();
-    await s.playSong(1);
+    await s.play();
+    await s.togglePerformance();
+    expect(rt().recording).toBe('performance');
+    await sleep(400);
+    const before = s.transport!.getStats().skips;
+    // The main thread busy for well over the scheduling margin, in a visible tab with audio running.
+    s.transport!.simulateStall(1400, { hidden: false });
+    await sleep(1700);
+    expect(s.transport!.getStats().skips).toBeGreaterThan(before);
+    expect(rt()).toMatchObject({ playing: true, stalled: null, recording: 'performance' });
+    // At most one quiet notice, and never the stop banner.
+    expect(rt().notice?.text ?? '').not.toMatch(/stopped/i);
+    await sleep(300);
+    s.stop();
+    const perf = s.store.getState().performances.at(-1)!;
+    expect(perf).toBeTruthy();
+    // The take covers the whole time it ran (2.4 s at the starter's tempo), skip included.
+    const seconds = ((perf.endTick - perf.startTick) / 96) * (60 / s.store.getState().bpm);
+    expect(seconds).toBeGreaterThan(2);
+  });
+});
+
+describe('Resume after a stall', () => {
+  it('resumes the song from the bar where it stopped', async () => {
+    const s = session();
+    await s.playSong({ fromBar: 4 });
     expect(rt().mode).toBe('song');
     await sleep(250);
     s.transport!.simulateStall(700);
@@ -146,7 +171,8 @@ describe('Resume after a stall', () => {
     expect(rt().stalled).toBeNull();
     expect(rt().playing).toBe(true);
     expect(rt().mode).toBe('song');
-    expect(rt().songBlock).toBe(1);
+    // From the bar the music had reached (bar 5), not from the top.
+    expect(s.sequencer!.songPasses()![0].from).toBe(4 * 384);
     expect(s.transport!.playing).toBe(true);
   });
 
@@ -181,7 +207,7 @@ describe('Resume after a stall', () => {
 
   it('Resume only clears the banner when playback was restarted another way (Record Notes keeps recording)', async () => {
     const s = session();
-    await s.playSong(1);
+    await s.playSong({ fromBar: 4 });
     await sleep(250);
     s.transport!.simulateStall(700);
     await until(() => rt().stalled !== null, 'the stall');

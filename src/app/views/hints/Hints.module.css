@@ -2,6 +2,7 @@
  * The "Try this" chip. Row layout: label | suggestion | buttons, the
  * suggestion wrapping inside its column when the free spot is narrow.
  * Stacked layout (narrow spots): label and buttons, the suggestion below.
+ * Column layout (the narrowest): label, suggestion, buttons, one under another.
  * Compact hides the second sentence. Placement (Hints.tsx) picks the layout.
  * Teal marks guidance (teal = focus / selection), like the quick guide. It
  * floats in a free spot and sits below the transport, dialogs, menus, toasts
@@ -37,13 +38,31 @@
     'text text';
   padding: 4px 6px 9px 12px;
 }
+/* Column (the narrowest spots): label, suggestion and buttons one under another, the buttons wrapping. */
+.chip[data-column] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    'label'
+    'text'
+    'actions';
+  row-gap: 4px;
+  padding: 7px 6px 6px 12px;
+}
+.chip[data-column] .actions {
+  justify-self: start;
+  justify-content: flex-start;
+  margin-left: -6px;
+}
 .chip[data-ready] {
   visibility: visible;
   animation: chipIn var(--t-med) var(--ease);
 }
+/*
+ * The chip arrives with a small slide only, never a fade: it reappears after
+ * every view switch, and its words must keep their full contrast throughout.
+ */
 @keyframes chipIn {
   from {
-    opacity: 0;
     transform: translateY(3px);
   }
 }
@@ -111,9 +130,38 @@
 .main {
   font-weight: 600;
 }
+/* "Next, in Play:" — a step done in another view, on one line with the button that goes there. */
+.where {
+  color: var(--teal-ink);
+  font-weight: 600;
+  white-space: nowrap;
+}
 .more {
   color: var(--ink-2);
   font-size: var(--fs-sm);
+}
+/* Minimal: "Next hint" as its arrow alone (the button keeps its name), for a narrow free spot on one row. */
+.chip[data-minimal] .nextWord {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.chip[data-minimal] .next[data-size] {
+  width: 32px;
+  padding: 0;
+  gap: 0;
+}
+/* Terse (a step done in another view, narrowest spot): "Next, in Arrange:" and its button; the words stay for screen readers. */
+.chip[data-terse] .main {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 /* Compact: only the suggestion itself, for a small free spot. */
 .chip[data-compact] .more {

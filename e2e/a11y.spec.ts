@@ -61,7 +61,11 @@ async function tabTour(page: Page, presses: number) {
   return seen;
 }
 
+/** A tour takes two screenshots per Tab stop (some 300 in all): it needs more than the default 90 s on a busy machine. */
+const TOUR_TIMEOUT_MS = 240_000;
+
 test('keyboard only: Jump In, reach every essential control, play a note, change a macro', async ({ page }) => {
+  test.setTimeout(TOUR_TIMEOUT_MS);
   await openFresh(page);
   // The Jump In button has focus on arrival; Enter is the gesture that starts audio.
   await expect(page.getByRole('button', { name: 'Jump In' })).toBeFocused();
@@ -121,12 +125,13 @@ test('keyboard only: Jump In, reach every essential control, play a note, change
 });
 
 test('keyboard only: every Tab stop in Shape and Arrange has a name and a visible focus ring', async ({ page }) => {
+  test.setTimeout(TOUR_TIMEOUT_MS);
   await openFresh(page);
   await page.getByRole('button', { name: 'Jump In' }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing)).toBe(true);
   const skip = page.getByRole('button', { name: /Skip/ });
   if (await skip.isVisible().catch(() => false)) await skip.click();
-  for (const view of ['Shape', 'Arrange']) {
+  for (const view of ['Shape', 'Song']) {
     const tab = page.getByRole('tab', { name: view, exact: true });
     await tab.click();
     await tab.focus();
@@ -153,8 +158,8 @@ test('automated accessibility audit of the main views has no serious or critical
   }
   await page.getByRole('tab', { name: 'Shape', exact: true }).click();
   await audit(page, 'shape');
-  await page.getByRole('tab', { name: 'Arrange', exact: true }).click();
-  await audit(page, 'arrange');
+  await page.getByRole('tab', { name: 'Song', exact: true }).click();
+  await audit(page, 'song');
 });
 
 test('200 % zoom: the transport strip with Mute All stays on screen while the page scrolls', async ({ page }) => {

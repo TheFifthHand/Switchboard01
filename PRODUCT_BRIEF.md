@@ -104,6 +104,8 @@ Show scene names, bar counts, a playhead, and an estimated duration. Scene block
 
 Support saving a live performance as an editable sequence of launch, note, and parameter events. Make it clear whether playback follows the arrangement or live pad control.
 
+_Note added with Omni Song 2.3 (not part of the original brief): this view is now the **Song** view. The song is no longer a sequence of scene blocks with repeat counts; every part has its own row, scenes and loops are dragged onto the rows and stretched to play longer, and named sections (Intro, Drop …) label stretches of it. See `docs/OMNI_UX.md` › Song view and `docs/ACCEPTANCE.md`._
+
 ## 4. Musical building blocks
 
 Implement the following core instruments with real sound:
