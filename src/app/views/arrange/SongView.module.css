@@ -362,6 +362,26 @@
 .sectionEdge[data-section-edge='end'] {
   right: 0;
 }
+.sectionMore {
+  position: absolute;
+  top: 5px;
+  left: calc(var(--e) * var(--ppb) * 1px - 24px);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: calc(var(--sections-h) - 10px);
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--shell-hi);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.sectionMore:hover {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
 .sectionRename {
   width: 100%;
   min-width: 0;

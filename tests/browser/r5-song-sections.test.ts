@@ -126,6 +126,17 @@ describe('sections', () => {
     expect(regions().some((r) => r.trackId === project().tracks[0].id && r.start <= 8 && r.start + r.bars >= 12)).toBe(true);
   });
 
+  it('the ⋯ at its end, under the pointer, opens its actions', async () => {
+    await open();
+    const { mouse } = await import('./r4-uikit-input');
+    await mouse('mouseMoved', centre(sectionEl('S2'), 0.3));
+    await settle(60);
+    const more = document.querySelector<HTMLElement>('[data-section-more]')!;
+    expect(more.getAttribute('aria-label')).toBe('Actions for the section Drop');
+    await clickAt(centre(more));
+    expect(document.querySelector('[role="menu"]')?.getAttribute('aria-label')).toBe('Actions for the section Drop');
+  });
+
   it('a stretch of the song with no section offers “+ Add section”', async () => {
     await open();
     const add = document.querySelector<HTMLElement>('[data-section-gap]')!;
