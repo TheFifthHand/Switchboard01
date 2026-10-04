@@ -30,8 +30,12 @@ Use headphones or speakers; start with a moderate volume.
 
   Already running? Double-clicking "Start Omni Song.bat" again just opens
   the running copy in your browser; the new window closes by itself after a
-  few seconds. If an older SWITCHBOARD / 01 window is still open, the new
-  window says so: close the old window first, then start Omni Song again.
+  few seconds. If the open window runs another version (for example the
+  one you used before this download), the new window says so and waits:
+  close the other small black window, and the new one starts this version
+  by itself, at the same address, with all your projects. Open pages switch
+  to the new version by themselves; a page you are using offers "Update"
+  in the More menu instead, so nothing is interrupted.
 
   Your browser keeps projects separately for each address, and the port
   number (4173) is part of the address. The launcher always uses
