@@ -1390,8 +1390,10 @@ export class Session {
     for (const r of results) {
       const cur = runtimeStore.getState().tracks[r.trackId] ?? { playingSlot: null, queued: null };
       if (cur.playingSlot === r.slot && r.slot !== null) {
-        // Re-launching the playing clip restarts it at the next bar.
-        setTrackRuntime(r.trackId, { playingSlot: cur.playingSlot, queued: { slot: r.slot, atTick: r.atTick } });
+        // Launching the clip that plays keeps it playing in phase and calls off a queued stop or
+        // switch, so whatever the sequencer still has queued for the part (normally nothing) shows.
+        const q = this.sequencer?.getTrackState(r.trackId).queued ?? null;
+        setTrackRuntime(r.trackId, { playingSlot: cur.playingSlot, queued: q ? { slot: q.slot, atTick: q.atTick } : null });
       } else if (cur.playingSlot === null && r.slot === null) {
         setTrackRuntime(r.trackId, { playingSlot: null, queued: null });
       } else {

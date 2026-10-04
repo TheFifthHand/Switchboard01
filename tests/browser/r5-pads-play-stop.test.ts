@@ -206,11 +206,14 @@ describe('Clicking the playing pad', () => {
 
     // A second click before the bar line: it keeps playing past it.
     await clickEl(p);
-    expect(rt('t3')!.queued?.slot).toBe(row);
+    // The queued stop is called off: nothing is left to happen at the bar line, and the clip keeps its phase.
+    expect(rt('t3')!.queued).toBeNull();
+    expect(phase('t3')!.startTick).toBe(start);
     expect(p.dataset.state).toBe('playing');
     expect(actionText(p)).toBe('Stop');
     await until(() => tick() > q.atTick + TICKS_PER_BEAT, 'the bar line');
     expect(rt('t3')).toMatchObject({ playingSlot: row, queued: null });
+    expect(phase('t3')!.startTick).toBe(start);
 
     // Stop it again and let it stop.
     await earlyInBar();
@@ -384,6 +387,7 @@ describe('Pause where the pads are', () => {
     await clickEl(pad('t3', row));
     expect(runtimeStore.getState()).toMatchObject({ playing: true, paused: false });
     expect(rt('t3')).toMatchObject({ playingSlot: row, queued: null });
+    expect(phase('t3')!.startTick).toBe(start);
     expect(phase('t3')!.startTick).toBe(start);
 
     await clickEl(pauseKey());
