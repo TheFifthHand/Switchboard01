@@ -10,7 +10,7 @@ import { ProjectStore } from '../../src/state/projectStore';
 import { addSceneToSong } from '../../src/state/commands/arrangement';
 import { Sequencer } from '../../src/time/sequencer';
 import { makeSnapshot } from '../../src/time/snapshot';
-import { makeClip, makeProject, notesOf, runTo, sec } from './sequencer-fixtures';
+import { makeClip, makeProject, notesOf, ofKind, runTo, sec } from './sequencer-fixtures';
 
 /** `rows` scenes; t1 plays pitch = row in every row (1 bar). */
 function rowsProject(rows: number): Project {
@@ -33,6 +33,18 @@ describe('8 scenes', () => {
     const small = rowsProject(2);
     const s2 = new Sequencer({ getProject: () => small });
     expect(() => s2.launchScene(2, 0)).toThrow(RangeError);
+  });
+
+  it('the song plays regions of every row, in order', () => {
+    const p = rowsProject(MAX_SCENES);
+    const t1 = p.tracks.find((t) => t.id === 't1')!;
+    // Rows 8 down to 1, one bar each.
+    p.arrangement = { tailSeconds: 0, sections: [], regions: [7, 6, 5, 4, 3, 2, 1, 0].map((row, i) => ({ id: `r${row}`, trackId: 't1', clipId: t1.clips[row]!.id, start: i, bars: 1, offset: 0 })) };
+    const seq = new Sequencer({ getProject: () => p });
+    seq.start(0, { mode: { kind: 'song', fromBar: 0 } });
+    const ev = runTo(seq, 0, sec(8 * 384) + 1);
+    expect(notesOf(ev, 't1').map((n) => n.pitch)).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
+    expect(ofKind(ev, 'end')).toHaveLength(1);
   });
 
   it('the song takes loops of every row, in any order', () => {

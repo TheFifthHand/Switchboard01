@@ -7,10 +7,11 @@
  * and schedules what comes back on the audio clock.
  *
  * See src/time/contracts.ts for the timing model. Implementation notes:
- * - Every state change (clip switch, song block, recorded control event,
- *   end) is a boundary: the window is generated up to it, the change is
- *   applied, generation continues. Applied switches are kept in a short
- *   history so `invalidate()` can roll them back and replay them.
+ * - Every state change (clip switch, a song region's start or end, a
+ *   recorded control event, the end) is a boundary: the window is generated
+ *   up to it, the change is applied, generation continues. Applied switches
+ *   are kept in a short history so `invalidate()` can roll them back and
+ *   replay them.
  * - A note already handed out can only be shortened through a `NoteCut`
  *   (`takeCuts()`): the driver releases that voice early. That happens when
  *   a launch is queued after the outgoing clip's note was generated, a mono
@@ -18,17 +19,19 @@
  *   change makes a sounding note's end tick come sooner.
  * - A replayed take's recorded tempo changes are all in the clock from the
  *   start, so every note length and time already follows them.
- * - Song mode lays every block's part changes out as transitions ('song'
- *   source) when it starts; `replanSong()` replaces those from the edit
- *   point (or the start of a block not heard yet) when the song is edited
- *   while it plays.
- * - A song loop (`setSongLoop`) continues the plan with the loop's blocks
- *   again and again: one pass of it is kept as a template and laid out
- *   again a little ahead of the generation cursor (`extendSong`); entries
- *   that played long ago are dropped (`pruneSong`), so a long loop never
- *   grows the plan.
+ * - Song mode plays the song's regions on an absolute song timeline mapped
+ *   onto the transport through passes (`SongPass`, see contracts.ts). Each
+ *   part's regions become 'song' transitions in its launcher (the clip, in
+ *   phase, at a region's start; silence at its end unless the next region
+ *   starts there), laid out a little ahead of the generation cursor
+ *   (`extendSong`), so a looping song never grows its plan.
+ *   `replanSong()` lays them out again from the edit point when the song is
+ *   edited while it plays or is paused: a part whose music changed there
+ *   switches there, in phase; nothing else moves, and the playhead never
+ *   jumps (time is absolute).
  */
 import {
+  MAX_SONG_BARS,
   TICKS_PER_BAR,
   TICKS_PER_BEAT,
   TICKS_PER_STEP,
@@ -42,13 +45,13 @@ import {
   type Project,
   type Track,
 } from '../project/types';
-import { blockBars, blockRowOverrides, clampRepeats } from '../project/arrangement';
+import { regionEnd, songBars } from '../project/arrangement';
 import type { ClipPhase, LaunchResult, PlayMode, SeqEvent, SongLoop, StartOptions, TrackLaunchState } from './contracts';
 import { MAX_SWING_TICKS, TempoMap, clampBpm, clampSwing, swingWarp } from './clock';
 import { EMPTY_LATCH, arpDivisionTicks, arpGateTicks, arpGridAtOrAfter, arpInput, arpNoteAt, updateLatch, type LatchState } from './arp';
-import { GAIN_KEY, hasMoves, restValue, segmentAt, timelineSegments, valueIn, type MoveSegment } from './moves';
+import { GAIN_KEY, hasMoves, restValue, segmentAt, timelineSegments, valueIn, type MoveSegment, type SectionSpan } from './moves';
 import { projectFromSnapshot } from './snapshot';
-import { sameSongLoop, songLoopRange } from './songLoop';
+import { cleanSongLoop, sameSongLoop } from './songLoop';
 
 export type NoteEvent = Extract<SeqEvent, { kind: 'note' }>;
 export type BeatEvent = Extract<SeqEvent, { kind: 'beat' }>;
@@ -72,20 +75,6 @@ export interface SeqPosition {
   beat: number;
   /** 0..15 */
   step: number;
-}
-
-export interface SongBlockPlan {
-  /** Index into project.arrangement.blocks (-1: a block deleted while it played, sounding on to the next bar line, where the block that followed it takes over). */
-  index: number;
-  blockId: Id;
-  /** The block's scene row (what every part plays unless `parts` says otherwise). */
-  row: number;
-  /** Parts that play another row in this block (null = silent there); see project/arrangement.ts. */
-  parts: Readonly<Record<Id, number | null>>;
-  bars: number;
-  repeats: number;
-  startTick: number;
-  endTick: number;
 }
 
 /** Applied transport state older than this is forgotten; `invalidate()` cannot rewind further back. */
@@ -121,192 +110,251 @@ function clipLength(clip: Clip): number {
   return clampInt(clip.bars, 1, 64) * TICKS_PER_BAR;
 }
 
-/** Scene length in bars: the longest clip in the row (at least 1). */
-export function sceneBars(project: Project, row: number): number {
-  let bars = 1;
-  for (const t of project.tracks) {
-    const c = t.clips[row];
-    if (c && c.bars > bars) bars = c.bars;
-  }
-  return bars;
-}
-
-/** Arrangement blocks laid out on the song timeline (blocks whose scene is missing are skipped). */
-export function songBlocks(project: Project): SongBlockPlan[] {
-  const out: SongBlockPlan[] = [];
-  let tick = 0;
-  project.arrangement.blocks.forEach((b, index) => {
-    const row = project.scenes.findIndex((s) => s.id === b.sceneId);
-    if (row < 0) return;
-    const bars = blockBars(project, b);
-    const repeats = clampRepeats(b.repeats);
-    const len = bars * repeats * TICKS_PER_BAR;
-    out.push({ index, blockId: b.id, row, parts: blockRowOverrides(project, b), bars, repeats, startTick: tick, endTick: tick + len });
-    tick += len;
-  });
-  return out;
-}
+/* ------------------------------------------------------------------ */
+/* Song timeline                                                       */
+/* ------------------------------------------------------------------ */
 
 /**
- * Where tick `tick` of a song plan (see `Sequencer.songPlan`) lies on the
- * lane `lane` (`songBlocks` of the project as it is now), in ticks from the
- * lane start: the lane start of the plan block containing it plus how far
- * into that block it is, never past the block's length on the lane (a block
- * shortened below the playhead sounds on to the next bar line while the
- * playhead waits at its end). While a block deleted as it played sounds on
- * to the next bar line, the playhead waits where the block that takes over
- * starts (the end of the block before it), or at the end of the song.
+ * A stretch of the song timeline as playback plays it: song ticks [from, to)
+ * from transport tick `at` on (song tick from + k plays at transport tick
+ * at + k). `to` is Infinity for the last pass of a song that plays on to its
+ * end. Passes are whole bars and follow one another without gaps.
  */
-export function songLaneTick(plan: readonly SongBlockPlan[], lane: readonly SongBlockPlan[], tick: number): number {
-  if (!plan.length) return 0;
-  let i = plan.findIndex((b) => tick < b.endTick);
-  if (i < 0) i = plan.length - 1;
-  const b = plan[i];
-  const here = lane.find((x) => x.blockId === b.blockId);
-  if (here) return here.startTick + Math.min(Math.max(0, tick - b.startTick), here.endTick - here.startTick);
-  for (let j = i + 1; j < plan.length; j++) {
-    const next = lane.find((x) => x.blockId === plan[j].blockId);
-    if (next) return next.startTick;
-  }
-  return lane.length ? lane[lane.length - 1].endTick : 0;
+export interface SongPass {
+  at: number;
+  from: number;
+  to: number;
 }
 
-/** Song length in ticks: sum of scene bars x repeats. */
+/** Transport tick where a pass ends (Infinity for an open one). */
+export function passEnd(p: SongPass): number {
+  return p.to === Infinity ? Infinity : p.at + (p.to - p.from);
+}
+
+/** Song length in ticks: where its last region or section ends. */
 export function songLengthTicks(project: Project): number {
-  const blocks = songBlocks(project);
-  return blocks.length ? blocks[blocks.length - 1].endTick : 0;
+  return songBars(project) * TICKS_PER_BAR;
 }
 
-/** What one part plays in a song block: the scene row whose slot it plays (null: silent) and the clip there. */
-interface PartPlay {
-  row: number | null;
-  clipId: Id | null;
+/** One region of a part in song ticks: the clip it plays, in phase. */
+interface PartSpan {
+  from: number;
+  to: number;
+  clipId: Id;
+  /** Song tick where the clip's loop starts (its position 0) for this region: at or before `from`. */
+  anchor: number;
+  /** The clip's length in ticks. */
+  len: number;
 }
 
-/** What every part plays in a planned block. */
-function partPlays(project: Project, b: SongBlockPlan): Record<Id, PartPlay> {
-  const out: Record<Id, PartPlay> = {};
+/** What a part plays in the song: a clip and the transport tick its loop counts from, or null (silent). */
+interface SongPlay {
+  clipId: Id;
+  /** Canonical: the loop start in (−len, 0], so one phase has one value. */
+  loopStart: number;
+}
+
+/** Every clip by part and id, with its slot (one lookup per region instead of a search). */
+function clipIndex(project: Project): Map<string, { clip: Clip; slot: number }> {
+  const out = new Map<string, { clip: Clip; slot: number }>();
   for (const t of project.tracks) {
-    const row = Object.prototype.hasOwnProperty.call(b.parts, t.id) ? b.parts[t.id] : b.row;
-    const clip = row !== null ? t.clips[row] : null;
-    out[t.id] = { row, clipId: clip ? clip.id : null };
+    t.clips.forEach((clip, slot) => {
+      // As regionClip: the first slot holding the clip.
+      const key = clip ? `${t.id}\u0000${clip.id}` : '';
+      if (clip && !out.has(key)) out.set(key, { clip, slot });
+    });
   }
   return out;
 }
 
-/** A planned block placed on the song timeline at `startTick`, with what its parts play now. */
-function songEntry(project: Project, b: SongBlockPlan, startTick: number): SongEntry {
-  return { ...b, startTick, endTick: startTick + (b.endTick - b.startTick), phases: [{ tick: startTick, parts: partPlays(project, b) }] };
-}
-
-/**
- * Lay out passes of a loop (`state.cycle`, going on with its block
- * `state.cycleNext`) after the last entry of `blocks` until the plan reaches
- * past `until`. Every pass plays its blocks exactly as the song does there.
- */
-function layCycles(project: Project, blocks: SongEntry[], state: { cycle: readonly SongBlockPlan[] | null; cycleNext: number }, until: number): void {
-  const cycle = state.cycle;
-  let last = blocks[blocks.length - 1];
-  if (!cycle?.length || !last) return;
-  while (last.endTick <= until) {
-    const b = cycle[state.cycleNext % cycle.length];
-    state.cycleNext = (state.cycleNext + 1) % cycle.length;
-    last = songEntry(project, b, last.endTick);
-    blocks.push(last);
+/** Each part's regions as spans of song ticks, in time order (regions whose clip is gone play nothing). */
+function songParts(project: Project): Map<Id, PartSpan[]> {
+  const out = new Map<Id, PartSpan[]>();
+  const clips = clipIndex(project);
+  for (const r of project.arrangement.regions) {
+    const rc = clips.get(`${r.trackId}\u0000${r.clipId}`);
+    if (!rc) continue;
+    const len = clipLength(rc.clip);
+    const from = r.start * TICKS_PER_BAR;
+    let list = out.get(r.trackId);
+    if (!list) out.set(r.trackId, (list = []));
+    list.push({ from, to: regionEnd(r) * TICKS_PER_BAR, clipId: rc.clip.id, anchor: from - r.offset * TICKS_PER_BAR, len });
   }
-}
-
-/**
- * The block playing (`anchor`) as the project has it now (`b`), from its
- * start to `end`: what played before `from` stays, and parts whose clip
- * changed switch at `from`, in phase with the block start.
- */
-function keepPlaying(project: Project, anchor: SongEntry, b: SongBlockPlan, end: number, from: number): SongEntry {
-  const parts = partPlays(project, b);
-  const phases = anchor.phases.filter((ph) => ph.tick < from);
-  const now = phases.length ? phases[phases.length - 1].parts : null;
-  if (from < end && (!now || project.tracks.some((t) => !samePart(now[t.id], parts[t.id])))) phases.push({ tick: from, parts });
-  return { ...b, startTick: anchor.startTick, endTick: end, phases };
-}
-
-/** Two choices sound the same: the same clip, or silence. */
-function samePart(a: PartPlay | undefined, b: PartPlay): boolean {
-  return !!a && a.clipId === b.clipId;
-}
-
-/** Every part plays the same clip (or nothing) in both: switching from `a` to `b` would change nothing you hear. */
-function sameClips(project: Project, a: Readonly<Record<Id, PartPlay>>, b: Readonly<Record<Id, PartPlay>>): boolean {
-  return project.tracks.every((t) => (a[t.id]?.clipId ?? null) === (b[t.id]?.clipId ?? null));
-}
-
-/** What a block's parts play from `tick` on (the phase in effect before `tick`, else its first). */
-function partsBefore(e: SongEntry, tick: number): Record<Id, PartPlay> | null {
-  let parts = e.phases.length ? e.phases[0].parts : null;
-  for (const ph of e.phases) if (ph.tick < tick) parts = ph.parts;
-  return parts;
-}
-
-function partsKey(parts: Readonly<Record<Id, number | null>>): string {
-  return Object.keys(parts)
-    .sort()
-    .map((k) => `${k}=${parts[k]}`)
-    .join(',');
-}
-
-function blockKey(b: SongBlockPlan): string {
-  return `${b.index}:${b.blockId}:${b.startTick}-${b.endTick}:${b.row}:${b.bars}x${b.repeats}:${partsKey(b.parts)}`;
-}
-
-/**
- * Everything a replan can change: placement and content of the blocks
- * starting before `limit` (from `skip` on), part phases from `first` on, the
- * end, and the loop still to come (`cycle`, a pending jump).
- */
-function songKey(blocks: readonly SongEntry[], first: number, end: number | null, loop: { skip: number; limit: number; cycle: readonly SongBlockPlan[] | null; jumpAt: number | null }): string {
-  const out = [`end ${end}`, `jump ${loop.jumpAt}`, `cycle ${loop.cycle ? loop.cycle.map((b) => `${b.blockId}:${b.endTick - b.startTick}:${b.row}:${partsKey(b.parts)}`).join(',') : '-'}`];
-  for (let i = loop.skip; i < blocks.length; i++) {
-    const e = blocks[i];
-    if (e.startTick >= loop.limit) break;
-    let k = blockKey(e);
-    if (i >= first) for (const ph of e.phases) k += `;${ph.tick}=` + Object.values(ph.parts).map((p) => `${p.row}/${p.clipId}`).join(',');
-    out.push(k);
+  for (const list of out.values()) {
+    list.sort((x, y) => x.from - y.from);
+    // Regions of a part never overlap (see tidyRegions); should two, the later one wins from its start.
+    for (let i = 0; i + 1 < list.length; i++) if (list[i].to > list[i + 1].from) list[i] = { ...list[i], to: list[i + 1].from };
   }
-  return out.join('|');
-}
-
-/** Length of one pass of a loop (0 without one). */
-function cycleTicks(cycle: readonly SongBlockPlan[] | null): number {
-  return cycle ? cycle.reduce((n, b) => n + b.endTick - b.startTick, 0) : 0;
+  return out;
 }
 
 /**
- * Identity of the song as playback lays it out: blocks in order, their
- * lengths and what every part plays in them (row and clip). A change to it
- * while the song plays is what `Sequencer.replanSong` follows.
+ * Did what the song plays change from `prev` to `p`: a region (part, clip,
+ * place, length, offset), the slot or length of a clip, or the song's
+ * length? A change while the song plays is what `Sequencer.replanSong`
+ * follows. Cheap: edits keep what they did not touch identical.
  */
-export function songSignature(project: Project): string {
-  return songBlocks(project)
-    .map((b) => {
-      const parts = partPlays(project, b);
-      return `${b.index}:${b.blockId}:${b.bars}x${b.repeats}:` + project.tracks.map((t) => `${parts[t.id].row}/${parts[t.id].clipId}`).join(',');
-    })
-    .join('|');
+export function songPlayChanged(p: Project, prev: Project): boolean {
+  if (p.arrangement.regions !== prev.arrangement.regions) {
+    const a = p.arrangement.regions;
+    const b = prev.arrangement.regions;
+    if (a.length !== b.length) return true;
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i];
+      const y = b[i];
+      if (x !== y && (x.trackId !== y.trackId || x.clipId !== y.clipId || x.start !== y.start || x.bars !== y.bars || x.offset !== y.offset)) return true;
+    }
+  }
+  if (p.tracks !== prev.tracks) {
+    if (p.tracks.length !== prev.tracks.length) return true;
+    for (let i = 0; i < p.tracks.length; i++) {
+      const t = p.tracks[i];
+      const u = prev.tracks[i];
+      if (t.id !== u.id) return true;
+      if (t.clips === u.clips) continue;
+      if (t.clips.length !== u.clips.length) return true;
+      for (let k = 0; k < t.clips.length; k++) if ((t.clips[k]?.id ?? null) !== (u.clips[k]?.id ?? null) || (t.clips[k]?.bars ?? 0) !== (u.clips[k]?.bars ?? 0)) return true;
+    }
+  }
+  return p.arrangement.sections !== prev.arrangement.sections && songBars(p) !== songBars(prev);
+}
+
+/** a mod n in [0, n). */
+function mod(a: number, n: number): number {
+  return ((a % n) + n) % n;
+}
+
+/** A loop start as one value per phase: in (−len, 0]. */
+function canonicalLoopStart(tick: number, len: number): number {
+  const r = mod(tick, len);
+  return r === 0 ? 0 : r - len;
+}
+
+function samePlay(a: SongPlay | null | undefined, b: SongPlay | null | undefined): boolean {
+  if (!a || !b) return !a && !b;
+  return a.clipId === b.clipId && a.loopStart === b.loopStart;
+}
+
+/** Index of the pass holding transport tick `tick` (the first before they start, the last after they end), -1 for none. */
+function passIndexAt(passes: readonly SongPass[], tick: number): number {
+  if (!passes.length) return -1;
+  for (let i = passes.length - 1; i >= 0; i--) if (passes[i].at <= tick) return i;
+  return 0;
+}
+
+/** The span of `spans` holding song tick `s`, or null. */
+function spanAt(spans: readonly PartSpan[] | undefined, s: number): PartSpan | null {
+  if (!spans) return null;
+  let lo = 0;
+  let hi = spans.length;
+  // First span ending after s.
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (spans[mid].to <= s) lo = mid + 1;
+    else hi = mid;
+  }
+  const sp = spans[lo];
+  return sp && sp.from <= s ? sp : null;
+}
+
+/** What a part with regions `spans` plays at transport tick `tick` through `passes` (null: silent there). */
+function playAt(spans: readonly PartSpan[] | undefined, passes: readonly SongPass[], tick: number): SongPlay | null {
+  const i = passIndexAt(passes, tick);
+  if (i < 0) return null;
+  const p = passes[i];
+  if (tick < p.at || tick >= passEnd(p)) return null;
+  const sp = spanAt(spans, p.from + (tick - p.at));
+  return sp ? { clipId: sp.clipId, loopStart: canonicalLoopStart(p.at + (sp.anchor - p.from), sp.len) } : null;
+}
+
+/** Transport ticks in (lo, hi] where what a part plays may change: pass starts, its regions' starts and ends. */
+function changePoints(spans: readonly PartSpan[] | undefined, passes: readonly SongPass[], lo: number, hi: number): number[] {
+  const out: number[] = [];
+  for (const p of passes) {
+    if (p.at > hi) break;
+    const end = passEnd(p);
+    if (end <= lo) continue;
+    if (p.at > lo) out.push(p.at);
+    if (!spans) continue;
+    // Song ticks of the pass that lie in (lo, hi].
+    const a = p.from + Math.max(0, lo - p.at);
+    const b = Math.min(p.to, p.from + (hi - p.at));
+    let i = 0;
+    while (i < spans.length && spans[i].to <= a) i++;
+    for (; i < spans.length && spans[i].from <= b; i++) {
+      for (const x of [spans[i].from, spans[i].to]) {
+        if (x <= p.from || x >= p.to) continue;
+        const t = p.at + (x - p.from);
+        if (t > lo && t <= hi) out.push(t);
+      }
+    }
+  }
+  out.sort((x, y) => x - y);
+  return out.filter((t, i) => i === 0 || t !== out[i - 1]);
+}
+
+/** A song transition to be laid out: part `trackId` plays `play` from `atTick` on. */
+interface SongChange {
+  trackId: Id;
+  atTick: number;
+  play: SongPlay | null;
+}
+
+/**
+ * The changes of what each part plays over transport ticks (lo, hi], each
+ * part going on from what it plays at `lo` (`last`, updated to what it plays
+ * at `hi`). `at` (in (lo, hi]) is looked at too: an edit point, where what a
+ * part plays may change without a region starting or ending there.
+ */
+function songChanges(trackIds: readonly Id[], parts: ReadonlyMap<Id, PartSpan[]>, passes: readonly SongPass[], last: Map<Id, SongPlay | null>, lo: number, hi: number, at?: number): SongChange[] {
+  const out: SongChange[] = [];
+  for (const id of trackIds) {
+    const spans = parts.get(id);
+    let cur = last.get(id) ?? null;
+    const points = changePoints(spans, passes, lo, hi);
+    if (at !== undefined && at > lo && at <= hi && !points.includes(at)) points.unshift(at);
+    for (const t of points) {
+      const play = playAt(spans, passes, t);
+      if (samePlay(cur, play)) continue;
+      out.push({ trackId: id, atTick: t, play });
+      cur = play;
+    }
+    last.set(id, cur);
+  }
+  return out;
+}
+
+/** Where the song ends on the transport: its length through the last pass, or null while it loops (no end). */
+function songEndTick(passes: readonly SongPass[], project: Project): number | null {
+  const last = passes[passes.length - 1];
+  if (!last || last.to !== Infinity) return null;
+  return last.at + (songLengthTicks(project) - last.from);
+}
+
+/** `passes` with passes of `loop` (song ticks) laid after a last pass that ends, until they reach past `until`. */
+function extendPasses(passes: SongPass[], loop: { from: number; to: number } | null, until: number): void {
+  if (!loop) return;
+  for (let guard = 0; guard < 100_000; guard++) {
+    const last = passes[passes.length - 1];
+    const end = last ? passEnd(last) : Infinity;
+    if (end > until) return;
+    passes.push({ at: end, from: loop.from, to: loop.to });
+  }
 }
 
 const KIND_ORDER: Record<SeqEvent['kind'], number> = {
   end: 0,
-  block: 1,
-  launch: 2,
-  tempo: 3,
-  swing: 4,
-  master: 5,
-  mute: 6,
-  param: 7,
-  macro: 8,
-  songGain: 9,
-  macroRamp: 10,
-  beat: 11,
-  note: 12,
+  launch: 1,
+  tempo: 2,
+  swing: 3,
+  master: 4,
+  mute: 5,
+  param: 6,
+  macro: 7,
+  songGain: 8,
+  macroRamp: 9,
+  beat: 10,
+  note: 11,
 };
 
 function compareEvents(a: SeqEvent, b: SeqEvent): number {
@@ -391,16 +439,18 @@ type TransitionSource = 'live' | 'song' | 'replay';
 
 interface Transition {
   atTick: number;
-  /** Target slot (null = stop) unless `row` is set. */
+  /** Target slot (null = stop) unless `row` or `clipId` is set. */
   slot: number | null;
   /** Scene row resolved when applied: that slot if it holds a clip, else stop. */
   row: number | null;
+  /** Song changes: the clip resolved when applied (the slot holding it now; null, or gone: stop). */
+  clipId?: Id | null;
   source: TransitionSource;
   /** Order among transitions at the same tick (later wins); song changes are negative, so a pad tapped for that bar wins. */
   seq: number;
   /** Tick at which the request was made (queued state becomes visible then). */
   requestTick: number;
-  /** Loop start of the clip it starts (default `atTick`): a part switched inside a song block plays in phase with the block. */
+  /** Loop start of the clip it starts (default `atTick`): a song region's clip plays in phase with the region. */
   loopStart?: number;
 }
 
@@ -468,43 +518,27 @@ interface ReplayState {
   tempoOverrideTick: number | null;
 }
 
-/** A block on the song timeline (absolute ticks) and what its parts play. */
-interface SongEntry extends SongBlockPlan {
-  /**
-   * What every part plays from `tick` on: from the block start, then after
-   * each switch made because the block changed while it played. The song
-   * transitions in the launcher always mirror these.
-   */
-  phases: { tick: number; parts: Record<Id, PartPlay> }[];
-}
-
 interface SongState {
   /**
-   * The whole song on the timeline: history (blocks before the start point,
-   * or before the block that was playing at the last replan, laid out in the
-   * current order), then the blocks that play.
+   * The song timeline on the transport, from the pass playing (passes that
+   * ended before the history floor are forgotten). The last pass is open
+   * when the song plays on to its end; while it loops, passes of the loop are
+   * laid after it as playback gets near (`extendPasses`).
    */
-  blocks: SongEntry[];
-  /** First entry that plays (earlier ones are history and never send a 'block' event). */
-  first: number;
-  /** Next entry whose 'block' event is due. */
-  next: number;
+  passes: SongPass[];
+  /** Each part's regions as the song was last laid out. */
+  parts: Map<Id, PartSpan[]>;
+  /** Song transitions are in the launchers for every change at a tick up to here. */
+  laidTo: number;
+  /** What each part plays at `laidTo` (the last change laid out). */
+  last: Map<Id, SongPlay | null>;
   /**
-   * While the song loops: one pass of the loop (its blocks as the lane had
-   * them at the last layout), laid out again after the last entry whenever
-   * playback gets near it (`extendSong`). Null: the song ends after the last
-   * entry.
+   * The edit point of the last replan and what each part played just before
+   * it: another edit at the same point (two edits while paused) changes
+   * what follows from there, never what played before it.
    */
-  cycle: SongBlockPlan[] | null;
-  /** The block of `cycle` that follows the last entry. */
-  cycleNext: number;
-  /**
-   * Blocks after the loop on the lane (ids, at the last layout): where the
-   * song goes on when every block it would loop through was deleted.
-   */
-  after: Id[];
-  /** A loop set while the playhead was outside it: at this bar line playback continues at the loop's first block. */
-  jumpAt: number | null;
+  editAt: number;
+  editBefore: Map<Id, SongPlay | null>;
 }
 
 /** Events with tick < untilTick and time < floorTime were already handed out (and not cancelled). */
@@ -779,6 +813,12 @@ export class Sequencer {
   }
 
   private slotFor(track: Track, tr: Transition): number | null {
+    if (tr.clipId !== undefined) {
+      // A song change plays its clip wherever it is now (scenes and clips move while the song plays).
+      if (tr.clipId === null) return null;
+      const at = track.clips.findIndex((c) => c?.id === tr.clipId);
+      return at < 0 ? null : at;
+    }
     const slot = tr.row !== null ? tr.row : tr.slot;
     return slot !== null && track.clips[slot] ? slot : null;
   }
@@ -858,27 +898,11 @@ export class Sequencer {
       launcher ??= perf.snapshot.launcher;
       endTick = perf.endTick;
     } else if (mode.kind === 'song') {
-      const blocks = songBlocks(base);
-      const total = blocks.length ? blocks[blocks.length - 1].endTick : 0;
-      const from = blocks.findIndex((b) => b.index >= mode.fromBlock);
-      fromTick ??= from >= 0 ? blocks[from].startTick : total;
-      const f = fromTick;
-      // Blocks before the start position are history; the block containing it switches in at the start.
-      let first = blocks.findIndex((b) => b.endTick > f);
-      if (first < 0) first = blocks.length;
-      // Starting before the loop's end it plays into the loop and loops; starting after it, to the song's end.
-      const range = songLoopRange(blocks, this.loop);
-      const loops = range !== null && first <= range[1];
-      song = {
-        blocks: (loops ? blocks.slice(0, range[1] + 1) : blocks).map((b) => songEntry(base, b, b.startTick)),
-        first,
-        next: first,
-        cycle: loops ? blocks.slice(range[0], range[1] + 1) : null,
-        cycleNext: 0,
-        after: loops ? blocks.slice(range[1] + 1).map((b) => b.blockId) : [],
-        jumpAt: null,
-      };
-      endTick = loops ? null : total;
+      // The transport tick of the first pass is its song tick: bar lines and beats match the song's.
+      const at = clampInt(mode.fromBar, 0, MAX_SONG_BARS) * TICKS_PER_BAR;
+      fromTick = at;
+      song = { passes: this.firstPasses(at), parts: songParts(base), laidTo: at - 0.5, last: new Map(), editAt: -Infinity, editBefore: new Map() };
+      endTick = songEndTick(song.passes, base);
     }
 
     const from = Number.isFinite(fromTick) ? (fromTick as number) : 0;
@@ -935,10 +959,8 @@ export class Sequencer {
       rt.recent = [];
     }
 
-    if (song) {
-      for (let i = song.first; i < song.blocks.length; i++) this.insertSongPhase(song.blocks[i], 0, song.blocks[i].startTick - TICKS_PER_BAR);
-      this.extendSong(startTick + 2 * TICKS_PER_BAR);
-    }
+    // Every part starts with what the song plays at the start (silent ones need nothing).
+    if (song) this.extendSong(startTick + 2 * TICKS_PER_BAR);
 
     // Arpeggiator input moves onto the transport grid.
     this.freeClock = null;
@@ -1014,7 +1036,6 @@ export class Sequencer {
       // Every voice is released at the pause: nothing sounds on into the resume.
       rt.recent = [];
     }
-    if (this.song) this.song.next = this.songIndexFrom(tick);
     const rp = this.replay;
     if (rp) {
       rp.next = 0;
@@ -1276,7 +1297,10 @@ export class Sequencer {
    * Stopped: arm (or disarm) the clip for the next Play. Playing: queue the
    * change for the next bar. Paused: queue it for the next bar after the
    * pause point, so it happens there after Resume (`atTime` is then where
-   * that bar would have been without the pause).
+   * that bar would have been without the pause). The clip the part plays
+   * (heard at that point) launched again plays on in phase: a stop or switch
+   * queued for the part is called off and its loop is not restarted (in the
+   * song, it also holds against a song change on that bar line).
    */
   private request(track: Track, slot: number | null, time: number): LaunchResult {
     const t = Number.isFinite(time) ? time : 0;
@@ -1290,6 +1314,20 @@ export class Sequencer {
     const nowTick = ps ? ps.tick : this.clock.tickAt(t);
     const at = nextBarTick(nowTick);
     const result: LaunchResult = { trackId: track.id, slot, atTick: at, atTime: this.clock.timeAt(at) };
+    const heard = slot !== null ? this.playingAt(track.id, nowTick) : null;
+    if (heard && heard.slot === slot && track.clips[slot]) {
+      // Live requests from that bar on are called off, also one applied ahead already (the driver
+      // regenerates from it, and the rewind must not bring it back).
+      const later = (tr: Transition): boolean => tr.source === 'live' && tr.atTick >= at;
+      rt.pending = rt.pending.filter((tr) => !later(tr));
+      for (const h of rt.history) h.due = h.due.filter((tr) => !later(tr));
+      // A song (or take) change on that bar line: the pad keeps the clip, in phase, there.
+      const other = (tr: Transition): boolean => tr.source !== 'live' && tr.atTick === at;
+      if (rt.pending.some(other) || rt.history.some((h) => h.due.some(other))) {
+        this.insertTransition(rt, { atTick: at, slot, row: null, source: 'live', seq: ++this.transitionSeq, requestTick: nowTick, loopStart: heard.startTick });
+      }
+      return result;
+    }
     const queued = rt.pending.find((tr) => tr.source === 'live' && tr.atTick === at);
     if (queued && queued.slot === slot) return result;
     // One queued request per track: the newest replaces later live requests.
@@ -1355,89 +1393,23 @@ export class Sequencer {
   }
 
   /**
-   * Scene rows were reordered (`rows` maps an old row to its new row): song
-   * playback keeps playing the same scenes. Live launches follow per part
-   * through `relocateSlots`; a replay plays its own snapshot.
+   * The song changed while it plays (or is paused): what the parts play from
+   * the edit point on follows the project's regions as they are now. The
+   * edit point is the playhead at `time` (the pause point while paused),
+   * rounded up to a whole tick: nothing before it changes and the playhead
+   * never moves (time is absolute). A part whose music at the edit point
+   * differs from what the song had it play just before switches there, in
+   * phase with its region (its notes sounding across the edit point end
+   * there; one that joins mid-loop does not play the notes it missed);
+   * every later change follows the new regions. A part a pad was tapped on
+   * keeps the pad until the song changes what it plays. The end moves with
+   * the song's length, never behind the playhead (at least the next bar
+   * line). Returns true when playback changed: the driver then cancels what
+   * it scheduled from `time` and calls `invalidate(time)`. False outside
+   * song mode, while stopped, or once the song is over.
    */
-  relocateSongRows(rows: ReadonlyMap<number, number>): boolean {
-    const song = this.song;
-    if (!song || !rows.size || this.replay) return false;
-    const row = (r: number): number => rows.get(r) ?? r;
-    const rowOrNull = (r: number | null): number | null => (r === null ? null : row(r));
-    const remapTr = (tr: Transition): Transition => (tr.row !== null && rows.has(tr.row) ? { ...tr, row: rows.get(tr.row)! } : tr);
-    const remapParts = (from: Readonly<Record<Id, number | null>>): Record<Id, number | null> => {
-      const parts: Record<Id, number | null> = {};
-      for (const [id, r] of Object.entries(from)) parts[id] = rowOrNull(r);
-      return parts;
-    };
-    if (song.cycle) song.cycle = song.cycle.map((b) => ({ ...b, row: row(b.row), parts: remapParts(b.parts) }));
-    song.blocks = song.blocks.map((b) => {
-      const parts = remapParts(b.parts);
-      const phases = b.phases.map((ph) => {
-        const pp: Record<Id, PartPlay> = {};
-        for (const [id, p] of Object.entries(ph.parts)) pp[id] = { row: rowOrNull(p.row), clipId: p.clipId };
-        return { tick: ph.tick, parts: pp };
-      });
-      return { ...b, row: row(b.row), parts, phases };
-    });
-    for (const rt of this.tracks.values()) {
-      rt.pending = rt.pending.map(remapTr);
-      for (const h of rt.history) h.due = h.due.map(remapTr);
-    }
-    return true;
-  }
-
-  /**
-   * The song changed while it plays (or is paused): lay out the rest of it
-   * again from the project, anchored on the block playing at `time` (at the
-   * pause point while paused). Blocks before it are history. The edit point
-   * is the playhead at `time` (the pause point while paused), rounded up to
-   * a whole tick: nothing before it changes.
-   * - The playing block, found by its id, keeps its start tick and takes its
-   *   new length. Parts whose clip in it changed (its scene, a part switched
-   *   off or on, a layered part, the clip in that slot) switch at the edit
-   *   point, in phase with the block start: a part switched off stops there
-   *   (its sounding notes end), one switched on joins mid-loop (its notes
-   *   that would have started before the edit point are not played late).
-   * - When the edited lane puts another block under the playhead and that
-   *   block plays the same clips as what sounds now (a split while a later
-   *   pass plays, a join while the second block plays, undoing either, a
-   *   deleted block whose neighbour plays the same), playback continues in
-   *   that block: nothing switches and every clip keeps its loop phase. The
-   *   playhead's place on the edited lane: the new order laid out from the
-   *   playing block's start or, when that block was deleted, from the start
-   *   of the nearest block before it that is still in the song (with none,
-   *   the block after it takes its place).
-   * - When the playing block became several blocks of its scene with other
-   *   parts (a song helper: Build up, Strip down, Breakdown, or undoing or
-   *   redoing one) and the block the edited lane puts under the playhead is
-   *   one this edit made or changed, playback continues in that block from
-   *   its start on the lane (a pass line of the block that played, so the
-   *   song keeps its phrase grid); its parts that differ from what sounds
-   *   switch at the edit point, in phase with that start.
-   * - Otherwise a block that no longer reaches the playhead (shortened below
-   *   it) or that was deleted sounds on to the next bar line, where the block
-   *   after it takes over (for a deleted block: the first block that followed
-   *   it and still exists, at its place in the new order), or the song ends.
-   * - Everything after it (order, scenes, parts, repeats, lengths, the end)
-   *   follows the project. The end never lies behind the playhead.
-   * A block whose start has not sounded yet (right after Play, or paused or
-   * resumed on its first tick) starts as the project has it now; deleted,
-   * the block that followed it starts in its place.
-   * With a loop: after the loop's last block the loop's first block follows
-   * (also when the block playing is the one handing over); the song has no
-   * end while it loops. An edit never jumps: a playhead before the loop
-   * plays into it, one after it plays to the song's end. A jump to the loop
-   * set by `setSongLoop` still waiting for its bar line is kept. `loop`
-   * given: the loop as the session left it after this edit (see
-   * songLoopAfterEdit), taken without a jump.
-   * Returns true when playback changed: the driver then cancels what it
-   * scheduled from `time` and calls `invalidate(time)`. False outside song
-   * mode, while stopped, or once the song is over.
-   */
-  replanSong(time: number, loop?: SongLoop | null): boolean {
-    if (loop !== undefined) this.loop = loop ? { fromBlockId: loop.fromBlockId, toBlockId: loop.toBlockId } : null;
-    return this.layoutSong(time, false);
+  replanSong(time: number): boolean {
+    return this.relayoutSong(time, false);
   }
 
   /** The looped part of the song, or null (it plays through). */
@@ -1446,347 +1418,207 @@ export class Sequencer {
   }
 
   /**
-   * Loop the blocks from `loop.fromBlockId` to `loop.toBlockId` (inclusive,
-   * either way round, in the song's current order), or play the song through
-   * again (null). Stopped, it applies to the next song start. While the song
-   * plays or is paused (as of the playhead at `time`, or the pause point):
-   * - the block under the playhead lies in the new loop: playback goes on
-   *   and, at the end of the loop's last block, continues at the start of
-   *   its first block, again and again;
-   * - it lies outside: playback continues at the loop's first block at the
-   *   next bar line (in its place when the block has not sounded yet, right
-   *   after Play or Resume);
-   * - cleared: nothing changes until the loop's end would come; the song
-   *   plays on from there to its end (a jump still waiting is dropped).
+   * Loop bars [fromBar, toBar) of the song (see cleanSongLoop), or play it
+   * through (null). Stopped, it applies to the next song start: one that
+   * starts before the loop's end plays into the loop and repeats it, one
+   * after it plays to the end. While the song plays or is paused (as of the
+   * playhead at `time`, or the pause point):
+   * - the playhead lies inside the new loop: playback goes on and, at the
+   *   loop's end, continues at its start, again and again;
+   * - it lies outside: playback continues at the loop's start at the next bar
+   *   line (at once when nothing of that bar has sounded: right after Play,
+   *   or paused on a bar line);
+   * - cleared: playback plays on to the song's end.
    * Replay and live playback do not use it. Returns true when playback
    * changed (the driver regenerates from `time`), as `replanSong`.
    */
   setSongLoop(loop: SongLoop | null, time: number): boolean {
-    const next = loop ? { fromBlockId: loop.fromBlockId, toBlockId: loop.toBlockId } : null;
+    const next = cleanSongLoop(loop);
     if (sameSongLoop(next, this.loop)) return false;
     this.loop = next;
-    return this.layoutSong(time, true);
+    return this.relayoutSong(time, true);
+  }
+
+  /** The loop in song ticks, or null. */
+  private loopTicks(): { from: number; to: number } | null {
+    return this.loop ? { from: this.loop.fromBar * TICKS_PER_BAR, to: this.loop.toBar * TICKS_PER_BAR } : null;
+  }
+
+  /** The passes of a song starting at transport (and song) tick `at`: into the loop when it starts before the loop's end, else to the end. */
+  private firstPasses(at: number): SongPass[] {
+    const loop = this.loopTicks();
+    return [{ at, from: at, to: loop && at < loop.to ? loop.to : Infinity }];
   }
 
   /**
-   * Lay out the song again from the block under the playhead (see
-   * `replanSong`); `loopSet`: the loop was just set or changed, so a
-   * playhead outside it jumps to it (see `setSongLoop`).
+   * The passes after the loop was set, changed or cleared with the playhead
+   * at `pos` (see setSongLoop): the pass playing keeps what it played so far.
    */
-  private layoutSong(time: number, loopSet: boolean): boolean {
+  private passesForLoop(passes: readonly SongPass[], pos: number): SongPass[] {
+    const loop = this.loopTicks();
+    const i = Math.max(0, passIndexAt(passes, pos));
+    const cur = passes[i];
+    const out = passes.slice(0, i);
+    const s = cur.from + Math.max(0, pos - cur.at);
+    if (!loop) out.push({ ...cur, to: Infinity });
+    else if (s >= loop.from && s < loop.to) out.push({ ...cur, to: loop.to });
+    else {
+      // Outside the loop: on to the next bar line (nothing of a bar not heard yet plays), then the loop.
+      const jump = Math.ceil(pos / TICKS_PER_BAR) * TICKS_PER_BAR;
+      if (jump <= cur.at) out.push({ at: cur.at, from: loop.from, to: loop.to });
+      else out.push({ ...cur, to: cur.from + (jump - cur.at) }, { at: jump, from: loop.from, to: loop.to });
+    }
+    return out;
+  }
+
+  /**
+   * Lay out the song's changes again from the edit point (see replanSong);
+   * `loopChanged`: the loop was just set, changed or cleared, so the passes
+   * after the playhead change too (see setSongLoop).
+   */
+  private relayoutSong(time: number, loopChanged: boolean): boolean {
     const song = this.song;
     const ps = this.pausedState;
     if (!song || this.replay || this._mode.kind !== 'song' || (!this._playing && !ps)) return false;
     const t = Number.isFinite(time) ? time : 0;
     // The playhead waits at its floor (the start or resume point) until that time comes.
-    const floor = ps ? ps.tick : this.playheadFloor;
-    const pos = ps ? ps.tick : Math.max(floor, this.clock.tickAt(t));
+    const pos = ps ? ps.tick : Math.max(this.playheadFloor, this.clock.tickAt(t));
     if (this.endTick !== null && pos >= this.endTick) return false;
-    this.extendSong(pos + TICKS_PER_BAR);
-    const old = song.blocks;
-    let ai = song.first;
-    while (ai < old.length && old[ai].endTick <= pos) ai++;
-    if (ai >= old.length) return false;
-    const anchor = old[ai];
-    // Its start was heard: it lies before the playhead's floor (also right after Resume, while the
-    // playhead still waits at the pause point) or its time has passed. Else it can still start as edited.
-    const started = anchor.startTick < floor || (!ps && this.clock.timeAt(anchor.startTick) < t);
-    // Nothing before this tick changes: what already sounds stays.
-    const from = started ? Math.ceil(pos) : anchor.startTick;
-
+    const from = Math.ceil(pos);
     const project = this.getProject();
-    const plan = songBlocks(project);
-    const order = new Map(plan.map((b, i) => [b.blockId, i]));
-    const length = (b: SongBlockPlan): number => b.endTick - b.startTick;
-    const range = songLoopRange(plan, this.loop);
-    // The block that plays after lane block `i`: the next one, or the loop's first after its last.
-    const after = (i: number): number => (range && i === range[1] ? range[0] : i + 1);
-    // Old and new layouts are compared up to here: past one whole pass of either loop after the anchor.
-    const horizon = anchor.endTick + 2 * TICKS_PER_BAR + Math.max(cycleTicks(song.cycle), range ? plan[range[1]].endTick - plan[range[0]].startTick : 0);
-    this.extendSong(horizon);
+    const ids = project.tracks.map((tr) => tr.id);
+    // What each part plays just before the edit point (it stays). The layout follows the latest regions
+    // from the last edit point on, so after an earlier one they say it; at the same point, it was kept.
+    let before = song.editBefore;
+    if (song.editAt !== from) {
+      before = new Map();
+      for (const id of ids) before.set(id, playAt(song.parts.get(id), song.passes, from - 0.5));
+    }
+    song.editAt = from;
+    song.editBefore = before;
+    const last = new Map(before);
+    const passes = loopChanged ? this.passesForLoop(song.passes, pos) : [...song.passes];
+    const parts = songParts(project);
+    const until = Math.max(song.laidTo, from);
+    extendPasses(passes, this.loopTicks(), until + TICKS_PER_BAR);
+    const changes = songChanges(ids, parts, passes, last, from - 0.5, until, from);
+    let end = songEndTick(passes, project);
+    // The end never lies behind the playhead: a song cut short below it ends at the next bar line.
+    if (end !== null && end <= pos) end = nextBarTick(pos);
+    const key = (c: { trackId: Id; atTick: number; clipId: Id | null; loopStart: number | null }) => `${c.trackId}@${c.atTick}=${c.clipId}/${c.loopStart}`;
+    const laid = this.songTransitionsFrom(from).map((tr) => key({ trackId: tr.trackId, atTick: tr.atTick, clipId: tr.clipId ?? null, loopStart: tr.clipId ? (tr.loopStart ?? null) : null }));
+    const next = changes.map((c) => key({ trackId: c.trackId, atTick: c.atTick, clipId: c.play?.clipId ?? null, loopStart: c.play?.loopStart ?? null }));
+    laid.sort();
+    next.sort();
+    song.parts = parts;
+    song.passes = passes;
+    if (laid.join('|') === next.join('|') && end === this.endTick) return false;
 
-    // The first block after the anchor (in the plan being played) that is still in the song; with
-    // every one of them deleted (a whole loop), the first block after the loop that still is.
-    let successor = plan.length;
-    for (let i = ai + 1; i < old.length && successor === plan.length; i++) successor = order.get(old[i].blockId) ?? plan.length;
-    for (let i = 0; i < song.after.length && successor === plan.length; i++) successor = order.get(song.after[i]) ?? plan.length;
-    const at = order.get(anchor.blockId);
-    // What plays: `kept` (the block under the playhead, null when the next block starts in its place),
-    // after the history plan[0, cut) and before the rest: plan[next, …) in song order.
-    let kept: SongEntry | null = null;
-    let cut = successor;
-    let next = successor;
-    if (!started) {
-      if (at !== undefined) kept = keepPlaying(project, anchor, plan[at], anchor.startTick + length(plan[at]), from);
-    } else if (loopSet && (at === undefined || anchor.startTick + length(plan[at]) <= pos)) {
-      // Setting the loop changes what follows, never the block the playhead is in: one deleted (or
-      // shortened below the playhead) by an earlier edit sounds on to its bar line as it did.
-      kept = { ...anchor, phases: anchor.phases.filter((ph) => ph.tick < from) };
-    } else {
-      const sounding = partsBefore(anchor, from);
-      // A block this edit made or changed: not in the plan being played, or there with another length
-      // or other part choices.
-      const changedHere = (b: SongBlockPlan): boolean => {
-        const o = old.find((e) => e.blockId === b.blockId);
-        return !o || o.repeats !== b.repeats || o.bars !== b.bars || partsKey(o.parts) !== partsKey(b.parts);
-      };
-      // The playhead's place on the edited lane (see above): the block laid out under it there, and its start.
-      let under = successor;
-      let start = anchor.startTick;
-      for (let p = ai; p >= 0; p--) {
-        const j = order.get(old[p].blockId);
-        if (j !== undefined) {
-          under = j;
-          start = old[p].startTick;
-          break;
-        }
-      }
-      for (let guard = 0; under < plan.length && start + length(plan[under]) <= pos && guard < 100_000; guard++) {
-        start += length(plan[under]);
-        under = after(under);
-      }
-      if (under < plan.length && under === at && start === anchor.startTick) {
-        // Still under the playhead: it plays on, its changed parts switch now.
-        kept = keepPlaying(project, anchor, plan[at], anchor.startTick + length(plan[at]), from);
-      } else if (under < plan.length && sounding && sameClips(project, sounding, partPlays(project, plan[under]))) {
-        // Another block now covers the playhead with the same clips (also its own next pass in a loop
-        // it was shortened in): continue in it, nothing switches.
-        const b = plan[under];
-        kept = { ...b, startTick: start, endTick: start + length(b), phases: [{ tick: start, parts: partPlays(project, b) }] };
-      } else if (under < plan.length && sounding && under !== at && plan[under].row === anchor.row && changedHere(plan[under])) {
-        // The playing block became several blocks of its scene with other parts (Build up, Strip down,
-        // Breakdown, or undoing / redoing one): continue in the one this edit put under the playhead, from
-        // its start on the lane (a pass line of the block that played, so the song keeps its phrase grid);
-        // its parts that differ from what sounds switch now, in phase with that start.
-        const b = plan[under];
-        const end = start + length(b);
-        const parts = partPlays(project, b);
-        const phases = [{ tick: start, parts: sounding }];
-        if (from < end && !sameClips(project, sounding, parts)) phases.push({ tick: from, parts });
-        kept = { ...b, startTick: start, endTick: end, phases };
-      } else if (at !== undefined) {
-        // Shortened below the playhead: it ends at the next bar line (its changed parts switch now).
-        kept = keepPlaying(project, anchor, plan[at], nextBarTick(pos), from);
-      } else {
-        // Deleted: what it plays sounds on to the next bar line, where its successor takes over.
-        kept = { ...anchor, index: -1, endTick: nextBarTick(pos), phases: anchor.phases.filter((ph) => ph.tick < from) };
-      }
-    }
-    if (kept && kept.index >= 0) {
-      cut = order.get(kept.blockId)!;
-      next = after(cut);
-    }
-
-    // A jump to the loop: kept while it waits for its bar line; set when the loop was just set and the
-    // block the lane shows at the playhead lies outside it.
-    let jumpAt = range && song.jumpAt !== null && song.jumpAt > pos ? song.jumpAt : null;
-    if (loopSet) {
-      const shown = kept && kept.index >= 0 ? cut : next;
-      jumpAt = range && (shown < range[0] || shown > range[1]) ? (started ? nextBarTick(pos) : anchor.startTick) : null;
-    }
-    if (range && jumpAt !== null) {
-      if (!started || !kept) {
-        // Not heard yet: the loop's first block starts in its place.
-        kept = null;
-        jumpAt = null;
-        cut = range[0];
-      } else {
-        // It sounds on to the bar line (its changed parts switched as above), then the loop starts.
-        const end = Math.min(kept.endTick, jumpAt);
-        kept = { ...kept, endTick: end, phases: kept.phases.filter((ph, i) => i === 0 || ph.tick < end) };
-      }
-      next = range[0];
-    }
-
-    const history = plan.slice(0, cut);
-    // With the loop ahead: up to its last block, then the loop again and again (laid out as playback gets there).
-    const loops = range !== null && next <= range[1];
-    const rest = loops ? plan.slice(next, range[1] + 1) : plan.slice(next);
-    const restStart = kept ? kept.endTick : anchor.startTick;
-
-    // History is drawn in the current order, ending where the kept block (or the rest) starts.
-    const blocks: SongEntry[] = [];
-    let tick = (kept ? kept.startTick : restStart) - history.reduce((n, b) => n + length(b), 0);
-    for (const b of history) {
-      blocks.push({ ...b, startTick: tick, endTick: tick + length(b), phases: [] });
-      tick += length(b);
-    }
-    const first = blocks.length;
-    if (kept) blocks.push(kept);
-    tick = restStart;
-    for (const b of rest) {
-      const e = songEntry(project, b, tick);
-      blocks.push(e);
-      tick = e.endTick;
-    }
-    const cycle = loops ? plan.slice(range[0], range[1] + 1) : null;
-    const cyc = { cycle, cycleNext: 0 };
-    layCycles(project, blocks, cyc, horizon);
-    // Every path above ends the song at or after the next bar line (at the playhead for a block not
-    // heard yet); kept as a guard, since an end behind the playhead is never handed out. A loop has no end.
-    const end = cycle ? null : Math.max(tick, started ? nextBarTick(pos) : pos);
-    const afterLoop = cycle ? plan.slice(range![1] + 1).map((b) => b.blockId) : [];
-    // History counts too, unless a loop repeats blocks there (nothing audible depends on it). A looping
-    // plan is compared as far as both are laid out; one without a loop as a whole.
-    const looped = cycle !== null || song.cycle !== null;
-    const limit = looped ? horizon : Infinity;
-    const oldJump = song.jumpAt !== null && song.jumpAt > pos ? song.jumpAt : null;
-    const same =
-      songKey(blocks, first, end, { skip: looped ? first : 0, limit, cycle, jumpAt }) ===
-      songKey(old, ai, this.endTick, { skip: looped ? ai : 0, limit, cycle: song.cycle, jumpAt: oldJump });
-    if (same) {
-      song.after = afterLoop;
-      return false;
-    }
-
-    // Song changes from `from` on are replaced: those waiting and those applied that a rewind would bring back.
+    // Song changes from the edit point on are replaced: those waiting and those applied that a rewind would bring back.
     const stale = (tr: Transition): boolean => tr.source === 'song' && tr.atTick >= from;
     for (const rt of this.tracks.values()) {
       rt.pending = rt.pending.filter((tr) => !stale(tr));
       for (const h of rt.history) h.due = h.due.filter((tr) => !stale(tr));
     }
-    song.blocks = blocks;
-    song.first = first;
-    song.cycle = cycle;
-    song.cycleNext = cyc.cycleNext;
-    song.after = afterLoop;
-    song.jumpAt = jumpAt;
-    if (kept) for (let i = 0; i < kept.phases.length; i++) if (kept.phases[i].tick >= from) this.insertSongPhase(kept, i, pos);
-    for (let i = first + (kept ? 1 : 0); i < blocks.length; i++) this.insertSongPhase(blocks[i], 0, blocks[i].startTick - TICKS_PER_BAR);
-    // Blocks already announced count as sent; a rewind (invalidate) recounts from its own point.
-    song.next = this.songIndexFrom(ps ? ps.tick : this.cursor);
+    for (const c of changes) this.insertSongChange(c);
+    song.laidTo = until;
+    song.last = last;
     this.endTick = end;
     return true;
   }
 
+  /** Song transitions at or after `from`, waiting or applied (a rewind brings those back), with their part. */
+  private songTransitionsFrom(from: number): (Transition & { trackId: Id })[] {
+    const out: (Transition & { trackId: Id })[] = [];
+    for (const [trackId, rt] of this.tracks) {
+      for (const tr of rt.pending) if (tr.source === 'song' && tr.atTick >= from) out.push({ ...tr, trackId });
+      for (const h of rt.history) for (const tr of h.due) if (tr.source === 'song' && tr.atTick >= from) out.push({ ...tr, trackId });
+    }
+    return out;
+  }
+
   /**
-   * While the song loops: lay out passes of the loop after the last entry
-   * until the plan reaches past `until` (their part changes go to the
-   * launcher as at the start).
+   * Lay out the song's changes up to transport tick `until` (passes of a loop
+   * as needed); they reach the launchers a bar ahead (pads show what comes).
    */
   private extendSong(until: number): void {
     const song = this.song;
-    if (!song?.cycle) return;
-    const n = song.blocks.length;
-    layCycles(this.getProject(), song.blocks, song, until);
-    for (let i = n; i < song.blocks.length; i++) this.insertSongPhase(song.blocks[i], 0, song.blocks[i].startTick - TICKS_PER_BAR);
+    if (!song || until <= song.laidTo) return;
+    const project = this.activeProject();
+    extendPasses(song.passes, this.loopTicks(), until + TICKS_PER_BAR);
+    const ids = project.tracks.map((t) => t.id);
+    for (const c of songChanges(ids, song.parts, song.passes, song.last, song.laidTo, until)) this.insertSongChange(c);
+    song.laidTo = until;
   }
 
-  /**
-   * While the song loops: forget entries that played before `floor` (a
-   * rewind never goes back that far). The history before them is drawn
-   * again right before what is left, so the plan stays one piece.
-   */
+  /** A song change into its part's launcher (seen there a bar ahead). */
+  private insertSongChange(c: SongChange): void {
+    const tr: Transition = {
+      atTick: c.atTick,
+      slot: null,
+      row: null,
+      clipId: c.play?.clipId ?? null,
+      source: 'song',
+      seq: -(++this.transitionSeq),
+      requestTick: c.atTick - TICKS_PER_BAR,
+    };
+    if (c.play) tr.loopStart = c.play.loopStart;
+    // Notes already sounding across the switch end there when it is applied (applyDue), so an edit undone before it leaves them alone.
+    this.insertTransition(this.rt(c.trackId), tr);
+  }
+
+  /** Forget passes that ended before `floor` (a rewind never goes back that far). */
   private pruneSong(floor: number): void {
     const song = this.song;
-    if (!song?.cycle) return;
-    let k = song.first;
-    while (k + 1 < song.next && song.blocks[k].endTick < floor) k++;
-    const n = k - song.first;
-    if (n <= 0) return;
-    const shift = song.first > 0 ? song.blocks[k].startTick - song.blocks[song.first - 1].endTick : 0;
-    if (shift) {
-      for (let i = 0; i < song.first; i++) {
-        const e = song.blocks[i];
-        song.blocks[i] = { ...e, startTick: e.startTick + shift, endTick: e.endTick + shift, phases: e.phases.map((ph) => ({ tick: ph.tick + shift, parts: ph.parts })) };
-      }
-    }
-    song.blocks.splice(song.first, n);
-    song.next -= n;
+    if (!song) return;
+    let k = 0;
+    while (k + 1 < song.passes.length && passEnd(song.passes[k]) < floor) k++;
+    if (k > 0) song.passes = song.passes.slice(k);
   }
 
-  /**
-   * The song on its timeline while it plays or is paused in song mode: every
-   * block with absolute ticks (history first, in the current order, then the
-   * block playing and what follows it), or null.
-   */
-  songPlan(): SongBlockPlan[] | null {
+  /** The pass holding transport tick `tick` while the song plays or is paused (passes laid out as far as needed), else null. */
+  private passAt(tick: number): SongPass | null {
     const song = this.song;
-    if (!song || (!this._playing && !this.pausedState)) return null;
-    return song.blocks.map((b) => ({ index: b.index, blockId: b.blockId, row: b.row, parts: { ...b.parts }, bars: b.bars, repeats: b.repeats, startTick: b.startTick, endTick: b.endTick }));
+    if (!song || this._mode.kind !== 'song' || (!this._playing && !this.pausedState) || !Number.isFinite(tick)) return null;
+    extendPasses(song.passes, this.loopTicks(), tick + TICKS_PER_BAR);
+    const i = passIndexAt(song.passes, tick);
+    return i < 0 ? null : song.passes[i];
   }
 
   /**
-   * `songLaneTick` on the plan as it plays now (a looping song lays out its
-   * next passes as it goes, so a copy taken earlier may end before `tick`).
-   * Null when the song is not playing or paused.
+   * The song bar (fractional, 0-based) that transport tick `tick` plays,
+   * while the song plays or is paused; null otherwise. Before the start it is
+   * the start; after the end, the end.
    */
-  songLaneTickAt(lane: readonly SongBlockPlan[], tick: number): number | null {
-    const song = this.song;
-    if (!song || (!this._playing && !this.pausedState) || !Number.isFinite(tick)) return null;
-    return songLaneTick(song.blocks, lane, this.playedTick(song, tick));
+  songBarAt(tick: number): number | null {
+    const p = this.passAt(tick);
+    if (!p) return null;
+    let at = Math.max(p.at, tick);
+    if (this.endTick !== null) at = Math.min(at, this.endTick);
+    const s = p.from + (at - p.at);
+    return (p.to === Infinity ? s : Math.min(s, p.to)) / TICKS_PER_BAR;
   }
 
   /**
-   * History is laid out again by every edit, in the lane's order, ending
-   * where the block under the edit point starts; an edit made just before a
-   * block (or loop pass) starts leaves the playhead there for a moment (the
-   * edit point lies a little ahead of it). That moment counts as the start
-   * of the block that plays first.
-   */
-  private playedTick(song: SongState, tick: number): number {
-    const e = song.blocks[song.first];
-    return e && tick < e.startTick ? e.startTick : tick;
-  }
-
-  /**
-   * The song block at `tick` as the lane shows it: the block of the plan
-   * containing it. While a block deleted as it played sounds on to the next
-   * bar line, the block that takes over there. Null when the song is not
-   * playing or paused, or when nothing follows (the song ends).
-   */
-  songBlockAt(tick: number): { index: number; blockId: Id } | null {
-    const song = this.song;
-    if (!song || (!this._playing && !this.pausedState) || !Number.isFinite(tick)) return null;
-    const at = this.playedTick(song, tick);
-    let i = song.blocks.findIndex((b) => at < b.endTick);
-    if (i < 0) return null;
-    while (i < song.blocks.length && song.blocks[i].index < 0) i++;
-    const b = song.blocks[i];
-    return b ? { index: b.index, blockId: b.blockId } : null;
-  }
-
-  /**
-   * The song plays (or is paused) inside its loop and will repeat it: the
-   * block the lane shows at `tick` (see `songBlockAt`) is one of the loop's
-   * blocks the plan repeats. False while it plays towards the loop (or a
-   * jump to it waits for its bar line), when it plays on to its end (no loop,
-   * a loop cleared, or started after the loop), and when the song is not
-   * playing or paused.
+   * The song plays (or is paused) inside its loop at transport tick `tick`
+   * and will repeat it. False while it plays towards the loop (or on to the
+   * next bar line before jumping into it), when it plays on to its end (no
+   * loop, a loop cleared, or started after the loop), and when the song is
+   * not playing or paused.
    */
   songLoopingAt(tick: number): boolean {
-    const cycle = this.song?.cycle;
-    if (!cycle?.length) return false;
-    const at = this.songBlockAt(tick);
-    return !!at && cycle.some((b) => b.blockId === at.blockId);
+    const loop = this.loopTicks();
+    const p = this.passAt(tick);
+    if (!loop || !p || p.to !== loop.to) return false;
+    const s = p.from + Math.max(0, tick - p.at);
+    return s >= loop.from && s < loop.to;
   }
 
-  /**
-   * First song entry (not history) whose 'block' event falls at or after
-   * `tick`: at its start, or at the transport start for the block a start
-   * position falls in.
-   */
-  private songIndexFrom(tick: number): number {
-    const song = this.song!;
-    let i = song.first;
-    while (i < song.blocks.length && Math.max(song.blocks[i].startTick, this.startTick) < tick) i++;
-    return i;
-  }
-
-  /**
-   * Song transitions for phase `i` of a block: every part at the block start;
-   * at a later phase, the parts it switches, in phase with the block start.
-   */
-  private insertSongPhase(e: SongEntry, i: number, requestTick: number): void {
-    const ph = e.phases[i];
-    const prev = i > 0 ? e.phases[i - 1].parts : null;
-    for (const [trackId, part] of Object.entries(ph.parts)) {
-      if (prev && samePart(prev[trackId], part)) continue;
-      const tr: Transition = { atTick: ph.tick, slot: null, row: part.row, source: 'song', seq: -(++this.transitionSeq), requestTick };
-      if (i > 0) tr.loopStart = e.startTick;
-      // Notes already sounding across the switch end there when it is applied (applyDue), so an edit undone before it leaves them alone.
-      this.insertTransition(this.rt(trackId), tr);
-    }
+  /** The song's passes while it plays or is paused (copies), else null. */
+  songPasses(): SongPass[] | null {
+    const song = this.song;
+    if (!song || (!this._playing && !this.pausedState)) return null;
+    return song.passes.map((p) => ({ ...p }));
   }
 
   private insertTransition(rt: TrackRt, tr: Transition): void {
@@ -2042,7 +1874,7 @@ export class Sequencer {
     for (let guard = 0; guard < 1_000_000 && !this._ended; guard++) {
       const untilTick = this.clock.tickAt(untilTime);
       if (this.cursor >= untilTick) break;
-      // A looping song is laid out a bar past what is generated (pads show the next block's clips a bar ahead).
+      // The song is laid out a bar past what is generated (pads show what each part plays next a bar ahead).
       this.extendSong(untilTick + TICKS_PER_BAR);
       const b = this.nextBoundary();
       if (b <= this.cursor) {
@@ -2059,8 +1891,6 @@ export class Sequencer {
   private nextBoundary(): number {
     let b = this.endTick ?? Infinity;
     for (const rt of this.tracks.values()) if (rt.pending.length && rt.pending[0].atTick < b) b = rt.pending[0].atTick;
-    const song = this.song;
-    if (song && song.next < song.blocks.length) b = Math.min(b, song.blocks[song.next].startTick);
     const rp = this.replay;
     if (rp && rp.next < rp.controls.length) b = Math.min(b, rp.controls[rp.next].t);
     return b;
@@ -2087,13 +1917,6 @@ export class Sequencer {
     }
     const rp = this.replay;
     if (rp) while (rp.next < rp.controls.length && rp.controls[rp.next].t <= at) this.applyControl(rp.controls[rp.next++], out);
-    const song = this.song;
-    if (song) {
-      while (song.next < song.blocks.length && song.blocks[song.next].startTick <= at) {
-        const b = song.blocks[song.next++];
-        this.push(out, { kind: 'block', tick: at, time: this.clock.timeAt(at), blockIndex: b.index, blockId: b.blockId, sceneRow: b.row });
-      }
-    }
     const byId = new Map(project.tracks.map((t) => [t.id, t]));
     const ids = [...project.tracks.map((t) => t.id), ...[...this.tracks.keys()].filter((id) => !byId.has(id))];
     for (const id of ids) {
@@ -2117,7 +1940,7 @@ export class Sequencer {
         this.push(out, { kind: 'launch', tick: at, time: this.clock.timeAt(at), trackId: id, slot: next?.slot ?? null, clipId: next?.clipId ?? null });
       } else {
         // The same pad plays on, but its clip may have been replaced since notes were handed out (an edit
-        // just after a block start, re-applied by the rewind): what another clip still sounds ends here.
+        // just after a region start, re-applied by the rewind): what another clip still sounds ends here.
         this.cutAtSwitch(rt, at, next?.clipId ?? null);
       }
     }
@@ -2203,23 +2026,22 @@ export class Sequencer {
 
   /**
    * Song moves for the window [a, b) (see moves.ts): each move segment of
-   * the plan's blocks that starts in it, the rest value of targets a move had
-   * moved where a block starts without one, and, once after a start, resume,
+   * the sections the passes play that starts in it, the rest value of targets
+   * a move had moved where a pass or section starts (or a section ends with
+   * more song after it) without one, and, once after a start, resume,
    * invalidation or skip (`moveSync`), the state there: a move under way
    * goes on from the value it has reached, a target no move holds rests.
    */
   private moveEvents(a: number, b: number, project: Project, out: SeqEvent[]): void {
-    const song = this.song!;
     const sync = this.moveSync;
     if (!this.moved.size && !hasMoves(project)) {
       if (sync !== null && this.clock.timeAt(b) > sync) this.moveSync = null;
       return;
     }
-    // Blocks whose moves can act in the window: an echo throw returns a bar after its block; a block
-    // starting within a bar after the window may take a target over.
-    const near: SongEntry[] = [];
-    for (const e of song.blocks) if (e.startTick < b + TICKS_PER_BAR && e.endTick + TICKS_PER_BAR > a) near.push(e);
-    const segs = timelineSegments(project, near);
+    // Sections whose moves can act in the window: an echo throw returns a bar after its section; a
+    // section starting within a bar after the window may take a target over.
+    const { spans, rests } = this.sectionSpans(project, a - TICKS_PER_BAR, b + TICKS_PER_BAR);
+    const segs = timelineSegments(project, spans);
     let from = a;
     if (sync !== null) {
       const at = Math.max(a, this.clock.tickAt(sync));
@@ -2236,12 +2058,52 @@ export class Sequencer {
         from = at;
       }
     }
-    for (const s of segs) if (s.tick0 >= from && s.tick0 < b) this.pushMove(out, s, s.tick0, this.clock.timeAt(s.tick0), s.v0);
-    if (!this.moved.size) return;
-    for (const e of near) {
-      if (e.startTick < from || e.startTick >= b) continue;
-      for (const key of [...this.moved]) if (!segmentAt(segs, key, e.startTick)) this.pushRest(out, project, key, e.startTick, this.clock.timeAt(e.startTick));
+    // In time order (a move starting at a rest point holds its target there).
+    const starts = segs.filter((s) => s.tick0 >= from && s.tick0 < b);
+    const points = rests.filter((t) => t >= from && t < b);
+    let i = 0;
+    for (const t of points) {
+      for (; i < starts.length && starts[i].tick0 <= t; i++) this.pushMove(out, starts[i], starts[i].tick0, this.clock.timeAt(starts[i].tick0), starts[i].v0);
+      for (const key of [...this.moved]) if (!segmentAt(segs, key, t)) this.pushRest(out, project, key, t, this.clock.timeAt(t));
     }
+    for (; i < starts.length; i++) this.pushMove(out, starts[i], starts[i].tick0, this.clock.timeAt(starts[i].tick0), starts[i].v0);
+  }
+
+  /**
+   * The sections the song's passes play over transport ticks [lo, hi), as
+   * move spans (see moves.ts SectionSpan), and the ticks where a target no
+   * move holds goes back to rest: where a pass starts, where a section starts,
+   * and where a section ends with more of the song after it (a fade-out at
+   * the song's end stays faded through the tail). In time order.
+   */
+  private sectionSpans(project: Project, lo: number, hi: number): { spans: SectionSpan[]; rests: number[] } {
+    const song = this.song!;
+    const spans: SectionSpan[] = [];
+    const rests: number[] = [];
+    const length = songLengthTicks(project);
+    const sections = [...project.arrangement.sections].sort((x, y) => x.start - y.start);
+    extendPasses(song.passes, this.loopTicks(), hi);
+    for (const p of song.passes) {
+      if (p.at >= hi) break;
+      const pe = passEnd(p);
+      if (pe <= lo) continue;
+      rests.push(p.at);
+      for (const sec of sections) {
+        const s0 = sec.start * TICKS_PER_BAR;
+        const s1 = regionEnd(sec) * TICKS_PER_BAR;
+        if (s1 <= p.from || s0 >= p.to) continue;
+        const startTick = p.at + (s0 - p.from);
+        const endTick = p.at + (s1 - p.from);
+        if (startTick >= hi || endTick + TICKS_PER_BAR <= lo) continue;
+        const inside = s1 <= p.to;
+        spans.push({ section: sec, startTick, endTick, from: Math.max(startTick, p.at), to: inside ? Infinity : pe });
+        rests.push(Math.max(startTick, p.at));
+        if (inside && s1 < length) rests.push(endTick);
+      }
+    }
+    spans.sort((x, y) => x.from - y.from);
+    rests.sort((x, y) => x - y);
+    return { spans, rests: rests.filter((t, i) => i === 0 || t !== rests[i - 1]) };
   }
 
   private pushMove(out: SeqEvent[], s: MoveSegment, tick: number, time: number, from: number): void {
@@ -2505,10 +2367,10 @@ export class Sequencer {
    * generation on to `time` without handing out what should already have
    * sounded. The notes and beats of the missed stretch are dropped (never
    * played late); every state change on the way applies in order as if it
-   * had played (clip launches, song blocks, a replayed take's controls, the
-   * end), so the launcher, the song position and each clip's loop phase stay
-   * where the audio clock is. Returns those changes (launch, block, end,
-   * control values) for the driver to pass on, in order. Song moves are sent
+   * had played (clip launches, the song's region changes, a replayed take's
+   * controls, the end), so the launcher, the song position and each clip's
+   * loop phase stay where the audio clock is. Returns those changes (launch,
+   * end, control values) for the driver to pass on, in order. Song moves are sent
    * again from `time` with the value they have reached (see moveEvents).
    * Notes already handed out that the stretch would have ended are cut as
    * usual (takeCuts). Like `skipIdleTo` for the idle arpeggiator.
@@ -2575,9 +2437,9 @@ export class Sequencer {
    * The tick at which part `trackId`'s next change of clip lands, as heard
    * at transport tick `tick`: a switch already generated ahead of it (in the
    * history, not heard yet) or the first queued one (a pad launch, a stop,
-   * or the next song block switching the part to another clip or to
-   * silence). Song blocks that keep the part on the same clip do not count.
-   * Null when nothing is queued. Allocation-free.
+   * or the song switching the part to another clip or to silence at its
+   * next region change). Song changes that keep the part on the same clip
+   * do not count. Null when nothing is queued. Allocation-free.
    */
   queuedAtTick(trackId: Id, tick: number): number | null {
     const rt = this.tracks.get(trackId);
@@ -2597,7 +2459,7 @@ export class Sequencer {
     }
     let cur = rt.playing?.slot ?? null;
     for (const tr of rt.pending) {
-      // Song changes become visible a bar ahead (see insertSongPhase), as in getTrackState.
+      // Song changes become visible a bar ahead (see insertSongChange), as in getTrackState.
       if (tr.source !== 'live' && tr.requestTick > this.cursor) continue;
       const slot = track ? this.slotFor(track, tr) : tr.slot;
       if (slot !== cur) return tr.atTick;
@@ -2648,7 +2510,6 @@ export class Sequencer {
         for (const tr of h.due) this.insertTransition(rt, tr);
       }
     }
-    if (this.song) this.song.next = this.songIndexFrom(r);
     const rp = this.replay;
     if (rp) {
       rp.next = 0;

@@ -1,7 +1,7 @@
 /**
  * perf-01: the app's own main-thread work never makes a note late or stops
  * playback. With the CPU slowed down 4× (CDP), real clicks switch the views
- * Shape → Arrange → Mix → Play, 1.5 s apart, three rounds, while the Jump In
+ * Shape → Song → Mix → Play, 1.5 s apart, three rounds, while the Jump In
  * groove plays. Every note handed to the engine is checked against the audio
  * clock (scheduleNote wrapped): none may be later than 20 ms, and playback
  * never stops. Notes dropped (never played late) and skips are reported too.
@@ -56,7 +56,7 @@ test('view switches at 4× CPU slowdown: no playback stop, no note later than 20
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
   try {
     for (let round = 0; round < 3; round++) {
-      for (const view of ['Shape', 'Arrange', 'Mix', 'Play']) {
+      for (const view of ['Shape', 'Song', 'Mix', 'Play']) {
         await clickReal(page, view);
         await page.waitForTimeout(1500);
       }

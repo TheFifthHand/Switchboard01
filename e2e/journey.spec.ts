@@ -112,11 +112,11 @@ test('Jump In → groove → switch clips → Tone/Space → keyboard → record
 });
 
 test('Jump In always lands on the lit Loops pads, even when another view was left open last time', async ({ page }) => {
-  // A returning user who last left the app in Arrange with the Steps pad mode.
+  // A returning user who last left the app in the Song view with the Steps pad mode.
   await page.addInitScript(() => localStorage.setItem('switchboard01.ui', JSON.stringify({ view: 'arrange', padMode: 'steps', guideDone: true })));
   await openFresh(page);
   // Behind the Welcome card (inert), the remembered view is showing.
-  await expect(page.locator('header[aria-label="Transport"] [role="tab"][aria-selected="true"]')).toContainText('Arrange');
+  await expect(page.locator('header[aria-label="Transport"] [role="tab"][aria-selected="true"]')).toContainText('Song');
   await jumpIn(page);
   await expect(page.getByRole('tab', { name: 'Play', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('tab', { name: 'Loops', exact: true })).toHaveAttribute('aria-selected', 'true');

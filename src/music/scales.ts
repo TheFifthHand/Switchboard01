@@ -254,6 +254,24 @@ export function scaleDegreesInRange(root: number, scale: ScaleId, fromMidi: numb
   return out;
 }
 
+/**
+ * The highest note at or below `midi` on the key's root (G3 = 55 for a G key at or below C4 = 60;
+ * C4 itself for a C key). Never below MIDI 0: then the root an octave up.
+ */
+export function rootAtOrBelow(root: number, midi: number): number {
+  const m = Math.round(midi);
+  const r = m - ((pitchClass(m) - pitchClass(root) + 12) % 12);
+  return r < MIDI_MIN ? r + 12 : r;
+}
+
+/**
+ * The keys of a scale keyboard: `count` ascending in-key notes from the root at or below
+ * `fromMidi` (G Dorian from C4: G3 A3 B♭3 C4 D4 E4 F4 G4 …). Fewer when MIDI ends first.
+ */
+export function scaleKeyboardNotes(root: number, scale: ScaleId, fromMidi: number, count: number): number[] {
+  return scaleDegreesInRange(root, scale, rootAtOrBelow(root, fromMidi), count);
+}
+
 /* Modes are proper names; the others read naturally in lower case ("A minor"). */
 const KEY_WORDS: Record<ScaleId, string> = {
   major: 'major',

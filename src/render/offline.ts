@@ -19,23 +19,22 @@
 import type { AudioEngineApi } from '../audio/contracts';
 import { truePeakKernels } from '../audio/worklets/loudness';
 import { engineLatencyFrames } from '../audio/worklets/limiter';
-import { TICKS_PER_BAR, type Id, type LauncherSnapshotEntry, type PerformanceEvent, type Project } from '../project/types';
+import { MAX_SONG_BARS, TICKS_PER_BAR, type Id, type LauncherSnapshotEntry, type PerformanceEvent, type Project } from '../project/types';
 import { TempoMap, clampBpm, ticksToSeconds } from '../time/clock';
 import type { StartOptions } from '../time/contracts';
-import { Sequencer, songBlocks, songLengthTicks } from '../time/sequencer';
-import { songLoopRange } from '../time/songLoop';
+import { Sequencer, songLengthTicks } from '../time/sequencer';
 import { projectFromSnapshot } from '../time/snapshot';
 import { EngineDispatcher } from '../time/transport';
 import { measureLoudness } from './loudness';
 
 export type RenderSource =
+  /** The whole song: bar 1 to its end, plus the tail. */
   | { kind: 'song' }
   /**
-   * Part of the song: the blocks from `fromBlockId` to `toBlockId`
-   * (inclusive, either way round, in the song's order) played once, as the
-   * song plays them there (a song loop's blocks, exported once).
+   * Part of the song: bars [fromBar, toBar) played once, as the song plays
+   * them there (a song loop, exported once), plus the tail.
    */
-  | { kind: 'songRange'; fromBlockId: Id; toBlockId: Id }
+  | { kind: 'songRange'; fromBar: number; toBar: number }
   | { kind: 'performance'; performanceId: Id }
   | { kind: 'scene'; row: number; bars: number }
   | { kind: 'launcher'; launcher: LauncherSnapshotEntry[]; bars: number };
@@ -84,12 +83,12 @@ function clampBars(bars: number): number {
   return Number.isFinite(bars) ? Math.max(1, Math.min(256, Math.round(bars))) : 1;
 }
 
-/** Where a song range starts and ends on the song timeline, and the block it starts with. */
-function songRange(project: Project, source: { fromBlockId: Id; toBlockId: Id }): { startTick: number; endTick: number; fromBlock: number } {
-  const lane = songBlocks(project);
-  const r = songLoopRange(lane, { fromBlockId: source.fromBlockId, toBlockId: source.toBlockId });
-  if (!r) throw new Error('Those blocks are no longer in the song');
-  return { startTick: lane[r[0]].startTick, endTick: lane[r[1]].endTick, fromBlock: lane[r[0]].index };
+/** The bars a song range covers, whole bars inside the song's range. */
+function songRange(source: { fromBar: number; toBar: number }): { fromBar: number; toBar: number } {
+  const from = Number.isFinite(source.fromBar) ? Math.max(0, Math.round(source.fromBar)) : 0;
+  const to = Number.isFinite(source.toBar) ? Math.min(MAX_SONG_BARS, Math.round(source.toBar)) : 0;
+  if (to <= from) throw new Error('Choose at least one bar of the song to export.');
+  return { fromBar: from, toBar: to };
 }
 
 function findPerformance(project: Project, id: Id) {
@@ -111,10 +110,13 @@ export function computeRenderPlan(project: Project, source: RenderSource, tailSe
       endTick = songLengthTicks(project);
       musicSeconds = ticksToSeconds(endTick, bpm);
       break;
-    case 'songRange':
-      ({ startTick, endTick } = songRange(project, source));
+    case 'songRange': {
+      const r = songRange(source);
+      startTick = r.fromBar * TICKS_PER_BAR;
+      endTick = r.toBar * TICKS_PER_BAR;
       musicSeconds = ticksToSeconds(endTick - startTick, bpm);
       break;
+    }
     case 'performance': {
       const perf = findPerformance(project, source.performanceId);
       startTick = perf.startTick;
@@ -206,11 +208,11 @@ class QuantumScheduler {
 function startOptions(project: Project, source: RenderSource): { opts: StartOptions; endTick: number | null } {
   switch (source.kind) {
     case 'song':
-      return { opts: { mode: { kind: 'song', fromBlock: 0 } }, endTick: null };
+      return { opts: { mode: { kind: 'song', fromBar: 0 } }, endTick: null };
     case 'songRange': {
-      // The song from the range's first block (every part as the song plays it there), ending with its last.
-      const r = songRange(project, source);
-      return { opts: { mode: { kind: 'song', fromBlock: r.fromBlock } }, endTick: r.endTick };
+      // The song from the range's first bar (every part as the song plays it there, in phase), ending at its last.
+      const r = songRange(source);
+      return { opts: { mode: { kind: 'song', fromBar: r.fromBar } }, endTick: r.toBar * TICKS_PER_BAR };
     }
     case 'performance':
       return { opts: { mode: { kind: 'replay', performanceId: source.performanceId } }, endTick: null };

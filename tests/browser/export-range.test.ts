@@ -1,8 +1,8 @@
 /**
- * Exporting the song loop (the looped blocks once, with the tail) through the
- * real session and engine: the WAV is exactly as long as the loop's bars plus
- * the tail (an export starts on the music's first downbeat, MIX-04), and its
- * music is what the song render has over those blocks.
+ * Exporting the song loop (its bars once, with the tail) through the real
+ * session and engine: the WAV is exactly as long as the loop's bars plus the
+ * tail (an export starts on the music's first downbeat, MIX-04), and its
+ * music is what the song render has over those bars.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Session } from '../../src/app/session';
@@ -19,7 +19,7 @@ function clip(name: string, bars: ClipBars, notes: [tick: number, pitch: number,
 }
 const track = (p: Project, id: Id) => p.tracks.find((t) => t.id === id)!;
 
-/** Dry (no reverb or delay sends) song at 120 BPM: a (row 0) b (row 1 x2) c (row 2) d (row 3); bass and chords, notes ending inside each bar. */
+/** Dry (no reverb or delay sends) song at 120 BPM: row 0 for a bar, row 1 for two, rows 2 and 3 a bar each; bass and chords, notes ending inside each bar. */
 function drySong(): Project {
   const p = createProject({ bpm: 120, now: 0 });
   p.seed = 7;
@@ -32,7 +32,12 @@ function drySong(): Project {
     track(p, 't3').clips[row] = clip(`bass${row}`, 1, [[0, 36 + 2 * row, 96], [192, 43 + 2 * row, 96]]);
     track(p, 't4').clips[row] = clip(`chord${row}`, 1, [[0, 60 + row, 240], [0, 64 + row, 240]]);
   }
-  p.arrangement = { tailSeconds: 1, blocks: p.scenes.map((s, i) => ({ id: `b${i}`, sceneId: s.id, repeats: i === 1 ? 2 : 1 })) };
+  const at = [0, 1, 3, 4];
+  p.arrangement = {
+    tailSeconds: 1,
+    sections: [],
+    regions: [0, 1, 2, 3].flatMap((row) => ['t3', 't4'].map((t) => ({ id: `${t}:${row}`, trackId: t, clipId: track(p, t).clips[row]!.id, start: at[row], bars: row === 1 ? 2 : 1, offset: 0 }))),
+  };
   return p;
 }
 
@@ -52,11 +57,11 @@ async function wav(s: Session, source: Parameters<Session['renderWav']>[0]['sour
 }
 
 describe('Export: the loop', () => {
-  it('the WAV is the loop’s bars plus the tail, and plays what the song plays over those blocks', async () => {
+  it('the WAV is the loop’s bars plus the tail, and plays what the song plays over those bars', async () => {
     const s = new Session(drySong());
     live.push(s);
-    // Loop b1..b2: 3 bars at 120 BPM = 6 s, from 2 s into the song.
-    const loop = await wav(s, { kind: 'songRange', fromBlockId: 'b1', toBlockId: 'b2' }, 1.5);
+    // Bars 2–4: 3 bars at 120 BPM = 6 s, from 2 s into the song.
+    const loop = await wav(s, { kind: 'songRange', fromBar: 1, toBar: 4 }, 1.5);
     expect(loop.sampleRate).toBe(SR);
     expect(loop.channels[0].length).toBe(Math.round((6 + 1.5) * SR));
     const song = await wav(s, { kind: 'song' }, 1.5);
@@ -76,7 +81,7 @@ describe('Export: the loop', () => {
         expect(rms(d) / rms(b)).toBeLessThan(0.05);
       }
     }
-    // After the loop's last block nothing new starts: the tail only rings out.
+    // After the loop's last bar nothing new starts: the tail only rings out.
     const tail = loop.channels[0].subarray(Math.round(6.5 * SR));
     const songNext = song.channels[0].subarray(Math.round(8.0 * SR), Math.round(8.5 * SR));
     expect(rms(tail)).toBeLessThan(rms(songNext) * 0.05);

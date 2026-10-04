@@ -1,22 +1,23 @@
 /**
- * Shared driver for the song playback tests (song-live*.test.ts,
- * song-loop*.test.ts): runs a Sequencer the way RealtimeTransport and the
- * session do (25 ms ticker, the transport's look-ahead, cancel-and-regenerate on every
- * change; on an edit, clips and scenes that moved are followed first, the
- * song loop follows the edit, then the song is replanned when its signature
- * or the loop changed) and records everything it hands out.
+ * Shared driver for the song playback tests (r5-engine-*.test.ts): runs a
+ * Sequencer the way RealtimeTransport and the session do (25 ms ticker, the
+ * transport's look-ahead, cancel-and-regenerate on every change; on an edit,
+ * clips that moved within a part are followed first, then the song is laid
+ * out again when what it plays changed) and records everything it hands out.
+ * Also the oracle the tests compare with: the notes a song's regions play
+ * through given passes, computed straight from the regions.
  */
 import { expect } from 'vitest';
-import type { ClipBars, Id, Project } from '../../src/project/types';
+import { regionClip, regionEnd } from '../../src/project/arrangement';
+import type { ClipBars, Id, Project, SongRegion, SongSection } from '../../src/project/types';
 import { TICKS_PER_BAR } from '../../src/project/types';
 import { ProjectStore } from '../../src/state/projectStore';
 import type { SeqEvent, SongLoop, StartOptions } from '../../src/time/contracts';
-import { Sequencer, songBlocks, songSignature, type NoteCut, type NoteEvent, type SongBlockPlan } from '../../src/time/sequencer';
-import { SongLoopHistory, sameSongLoop, songLoopRange } from '../../src/time/songLoop';
+import { Sequencer, passEnd, songPlayChanged, type NoteCut, type NoteEvent, type SongPass } from '../../src/time/sequencer';
 import { DEFAULT_LOOKAHEAD } from '../../src/time/transport';
 import { makeClip, makeProject, notesOf, ofKind, setClip } from './sequencer-fixtures';
 
-export const BAR = 384;
+export const BAR = TICKS_PER_BAR;
 export const BEAT = 96;
 const LOOKAHEAD = DEFAULT_LOOKAHEAD;
 const TICKER = 0.025;
@@ -24,11 +25,11 @@ const TICKER = 0.025;
 export const MARGIN = 0.01;
 const START = 0.05;
 
-/** Bars of the clips in each scene row. */
+/** Bars of the clip in each slot. */
 export const ROW_BARS = [2, 2, 1, 1];
-/** Every bar-note clip plays one note on each of its bar lines; the pitch says its row and which of its bars it is. */
+/** Every bar-note clip plays one note on each of its bar lines; the pitch says its slot and which of its bars it is. */
 export const pitchOf = (row: number, k: number) => 30 + row * 20 + k;
-/** Beat-note clips (t5): one note on every beat; the pitch says the row and the beat within the clip. */
+/** Beat-note clips (t5): one note on every beat; the pitch says the slot and the beat within the clip. */
 export const beatPitch = (row: number, beat: number) => 100 + row * 8 + beat;
 
 export function barClip(row: number, bars = ROW_BARS[row]) {
@@ -45,10 +46,31 @@ export function beatClip(row: number) {
   return makeClip(1, Array.from({ length: 4 }, (_, b) => [b * BEAT, beatPitch(row, b), 48] as [number, number, number]), `beats${row}`);
 }
 
+/** The id of the clip in a part's slot. */
+export function clipId(p: Project, trackId: Id, slot: number): Id {
+  const c = p.tracks.find((t) => t.id === trackId)?.clips[slot];
+  if (!c) throw new Error(`no clip in ${trackId} slot ${slot}`);
+  return c.id;
+}
+
+/** A region of part `trackId` playing the clip in `slot` over bars [start, start + bars), `offset` bars into it. */
+export function region(p: Project, id: Id, trackId: Id, slot: number, start: number, bars: number, offset = 0): SongRegion {
+  return { id, trackId, clipId: clipId(p, trackId, slot), start, bars, offset };
+}
+
+/** Regions for every part with a clip in `slot`, over bars [start, start + bars) (like a scene placed on the song). */
+export function sceneAt(p: Project, slot: number, start: number, bars: number, prefix = `s${slot}@${start}`): SongRegion[] {
+  return p.tracks.filter((t) => t.clips[slot]).map((t) => region(p, `${prefix}:${t.id}`, t.id, slot, start, bars));
+}
+
+export function withSong(p: Project, regions: SongRegion[], sections: SongSection[] = []): Project {
+  return { ...p, arrangement: { ...p.arrangement, regions, sections } };
+}
+
 /**
- * t1 and t2 play bar-note clips in every row; t4 holds a chord in rows 0, 1
- * and 3. Song: b0 row 0 x1 [0, 768), b1 row 1 x2 [768, 2304), b2 row 2 x2
- * [2304, 3072), b3 row 3 x1 [3072, 3456).
+ * t1 and t2 play bar-note clips in every slot; t4 holds a chord in slots 0,
+ * 1 and 3. Song (as 2.2's four blocks were): slot 0 over bars [0, 2), slot 1
+ * over [2, 6), slot 2 over [6, 8), slot 3 over [8, 9).
  */
 export function fixture(): Project {
   let p = makeProject(120);
@@ -57,41 +79,59 @@ export function fixture(): Project {
     p = setClip(p, 't2', row, barClip(row));
     if (row !== 2) p = setClip(p, 't4', row, heldClip(row));
   });
-  p.arrangement = {
-    tailSeconds: 1,
-    blocks: [
-      { id: 'b0', sceneId: p.scenes[0].id, repeats: 1 },
-      { id: 'b1', sceneId: p.scenes[1].id, repeats: 2 },
-      { id: 'b2', sceneId: p.scenes[2].id, repeats: 2 },
-      { id: 'b3', sceneId: p.scenes[3].id, repeats: 1 },
-    ],
-  };
-  return p;
+  return withSong(p, [...sceneAt(p, 0, 0, 2), ...sceneAt(p, 1, 2, 4), ...sceneAt(p, 2, 6, 2), ...sceneAt(p, 3, 8, 1)]);
 }
 
-/** The fixture plus t5 playing a beat-note clip in every row (block lengths stay the same). */
+/** The fixture plus t5 playing a beat-note clip in every slot and region. */
 export function beatFixture(): Project {
   let p = fixture();
   for (let row = 0; row < 4; row++) p = setClip(p, 't5', row, beatClip(row));
-  return p;
+  return withSong(p, [...sceneAt(p, 0, 0, 2), ...sceneAt(p, 1, 2, 4), ...sceneAt(p, 2, 6, 2), ...sceneAt(p, 3, 8, 1)]);
 }
 
-/** Notes of a bar-note part playing `row` over [from, to), its loop starting at `loop`. */
+/** Notes of a bar-note part playing slot `row` over ticks [from, to), its loop starting at `loop`. */
 export function plays(row: number, from: number, to: number, loop = from, bars = ROW_BARS[row]): [number, number][] {
   const out: [number, number][] = [];
-  for (let t = from; t < to; t += BAR) out.push([t, pitchOf(row, ((t - loop) / BAR) % bars)]);
+  for (let t = from; t < to; t += BAR) out.push([t, pitchOf(row, (((t - loop) / BAR) % bars + bars) % bars)]);
   return out;
 }
 
-/** Notes of the beat part playing `row` over [from, to) (first beat at or after `from`). */
-export function beats(row: number, from: number, to: number): [number, number][] {
-  const out: [number, number][] = [];
-  for (let t = Math.ceil(from / BEAT) * BEAT; t < to; t += BEAT) out.push([t, beatPitch(row, (t / BEAT) % 4)]);
-  return out;
-}
-
-/** The unedited song on a bar-note part. */
+/** The unedited fixture song on a bar-note part. */
 export const UNEDITED = [...plays(0, 0, 768), ...plays(1, 768, 2304), ...plays(2, 2304, 3072), ...plays(3, 3072, 3456)];
+
+/**
+ * The oracle: [tick, pitch] of every note part `trackId` plays over
+ * transport ticks [from, to) when the song `p` plays through `passes`,
+ * straight from its regions (each clip in phase with its region).
+ */
+export function expectedNotes(p: Project, passes: readonly SongPass[], trackId: Id, from: number, to: number): [number, number][] {
+  const out: [number, number][] = [];
+  for (const pass of passes) {
+    const pe = passEnd(pass);
+    if (pass.at >= to || pe <= from) continue;
+    for (const r of p.arrangement.regions) {
+      if (r.trackId !== trackId) continue;
+      const rc = regionClip(p, r);
+      if (!rc) continue;
+      const len = rc.clip.bars * BAR;
+      const a = Math.max(r.start * BAR, pass.from);
+      const b = Math.min(regionEnd(r) * BAR, pass.to);
+      const anchor = (r.start - r.offset) * BAR;
+      for (let base = anchor + Math.floor((a - anchor) / len) * len; base < b; base += len) {
+        for (const n of rc.clip.notes) {
+          const s = base + n.tick;
+          if (s < a || s >= b) continue;
+          const t = pass.at + (s - pass.from);
+          if (t >= from && t < to) out.push([t, n.pitch]);
+        }
+      }
+    }
+  }
+  return out.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+}
+
+/** The passes of a song played from `fromBar` with no loop: transport tick = song tick. */
+export const straight = (fromBar = 0): SongPass[] => [{ at: fromBar * BAR, from: fromBar * BAR, to: Infinity }];
 
 export class Rig {
   readonly store: ProjectStore;
@@ -102,19 +142,13 @@ export class Rig {
   cuts: NoteCut[] = [];
   /** Where each edit took effect (whole ticks): a song switch an edit makes lies there. */
   readonly editTicks: number[] = [];
-  /**
-   * With `traceLane`: the lane playhead after every ticker step, how many
-   * edits were made by then, and the song loop on the lane ([start, end)
-   * ticks) with whether the block the lane shows at the playhead is in it.
-   */
-  traceLane = false;
-  readonly laneTrace: { lane: number; edits: number; total: number; loop: [number, number] | null; inside: boolean }[] = [];
-  /** The song loop as the session holds it (runtime `songLoop`). */
-  loop: SongLoop | null = null;
-  /** How the loop follows edits, undo and redo (as the session). */
-  readonly loopHistory = new SongLoopHistory();
   /** Voices released by a pause (note → tick). */
   private readonly released = new Map<NoteEvent, number>();
+  /**
+   * Every pass the song played or will play, by its transport start, kept
+   * past the sequencer's pruning (a later layout replaces what it changed).
+   */
+  readonly passLog = new Map<number, SongPass>();
 
   constructor(p: Project = fixture()) {
     this.store = new ProjectStore(p);
@@ -130,22 +164,27 @@ export class Rig {
     return this.seq.getPosition(this.now).tick;
   }
 
+  /** The song bar under the playhead (fractional), as the Song view draws it. */
+  get bar(): number | null {
+    return this.seq.songBarAt(this.tick);
+  }
+
   pump(): void {
     this.out.push(...this.seq.process(this.now + LOOKAHEAD));
     this.cuts.push(...this.seq.takeCuts());
-    if (this.traceLane && this.seq.songPlan()) {
-      const lane = this.lane();
-      const range = songLoopRange(lane, this.loop);
-      const at = this.seq.songBlockAt(this.tick);
-      const i = at ? lane.findIndex((b) => b.blockId === at.blockId) : -1;
-      this.laneTrace.push({
-        lane: this.laneTick()!,
-        edits: this.editTicks.length,
-        total: lane.at(-1)?.endTick ?? 0,
-        loop: range ? [lane[range[0]].startTick, lane[range[1]].endTick] : null,
-        inside: !!range && i >= range[0] && i <= range[1],
-      });
-    }
+    this.logPasses();
+  }
+
+  private logPasses(): void {
+    const passes = this.seq.songPasses();
+    if (!passes?.length) return;
+    for (const at of [...this.passLog.keys()]) if (at >= passes[0].at) this.passLog.delete(at);
+    for (const p of passes) this.passLog.set(p.at, p);
+  }
+
+  /** Every pass logged so far, in order. */
+  allPasses(): SongPass[] {
+    return [...this.passLog.values()].sort((a, b) => a.at - b.at);
   }
 
   /** What the transport does after a change: cancel what was scheduled from `time`, regenerate. */
@@ -155,34 +194,23 @@ export class Rig {
     this.pump();
   }
 
-  play(opts: StartOptions = { mode: { kind: 'song', fromBlock: 0 } }): this {
+  play(opts: StartOptions = { mode: { kind: 'song', fromBar: 0 } }): this {
     this.seq.start(this.now + START, opts);
     this.pump();
     return this;
   }
 
-  /**
-   * As Session.playSong: from block `fromBlock` or lane bar `fromBar`; with
-   * neither (Play song), from the loop's first block when a loop is set.
-   */
-  playSong(fromBlock?: number, fromBar?: number): this {
-    let block = fromBlock ?? 0;
-    if (fromBlock === undefined && fromBar === undefined) {
-      const lane = songBlocks(this.project);
-      const range = songLoopRange(lane, this.loop);
-      if (range) block = lane[range[0]].index;
-    }
-    return this.play({ mode: { kind: 'song', fromBlock: block }, fromTick: fromBar === undefined ? undefined : fromBar * TICKS_PER_BAR });
+  /** Play the song from bar `fromBar`. */
+  playSong(fromBar = 0): this {
+    return this.play({ mode: { kind: 'song', fromBar } });
   }
 
   /** As Session.setSongLoop: set (or clear) the loop; what was scheduled from the edit point is regenerated. */
-  setLoop(from: Id | null, to: Id | null = from): this {
-    const loop = from === null || to === null ? null : { fromBlockId: from, toBlockId: to };
-    if (sameSongLoop(this.loop, loop)) return this;
+  setLoop(loop: SongLoop | null): this {
     const at = this.now + MARGIN;
     this.editTicks.push(Math.ceil(this.seq.getPosition(this.seq.paused ? this.now : at).tick));
-    this.loop = loop;
     if (this.seq.setSongLoop(loop, at) && this.seq.playing) this.cancelFrom(at);
+    this.logPasses();
     return this;
   }
 
@@ -208,7 +236,7 @@ export class Rig {
 
   /** Play to the end of the song. */
   finish(): this {
-    for (let guard = 0; !this.seq.ended && guard < 20_000; guard++) {
+    for (let guard = 0; !this.seq.ended && guard < 40_000; guard++) {
       this.now += TICKER;
       this.pump();
     }
@@ -218,10 +246,9 @@ export class Rig {
 
   /**
    * Edit the project as the session does (Session.onProjectChange): the
-   * launcher follows clips and scenes that moved (in song mode a clip that
-   * left its part is left to the replan), then the song is replanned when its
-   * signature changed; any other change regenerates. Returns whether the song
-   * was replanned.
+   * launcher follows clips moved within a part, then the song is laid out
+   * again when what it plays changed; any other change regenerates. Returns
+   * whether the song was laid out again with a change.
    */
   edit(fn: (s: ProjectStore) => unknown): boolean {
     const prev = this.project;
@@ -230,18 +257,7 @@ export class Rig {
     if (p === prev) return false;
     const at = this.now + MARGIN;
     this.editTicks.push(Math.ceil(this.seq.getPosition(this.seq.paused ? this.now : at).tick));
-    const song = this.seq.mode.kind === 'song';
-    if (p.scenes !== prev.scenes) {
-      const rows = new Map<number, number>();
-      prev.scenes.forEach((s, i) => {
-        const j = p.scenes.findIndex((x) => x.id === s.id);
-        if (j >= 0 && j !== i) rows.set(i, j);
-      });
-      if (rows.size && this.seq.relocateSongRows(rows) && this.seq.playing) this.cancelFrom(at);
-    }
     if (p.tracks !== prev.tracks) {
-      const partOf = new Map<Id, Id>();
-      for (const tr of p.tracks) for (const c of tr.clips) if (c) partOf.set(c.id, tr.id);
       for (const tr of p.tracks) {
         const was = prev.tracks.find((x) => x.id === tr.id);
         if (!was || was.clips === tr.clips) continue;
@@ -250,23 +266,28 @@ export class Rig {
           if (!c || tr.clips[s]?.id === c.id) return;
           const to = tr.clips.findIndex((x) => x?.id === c.id);
           if (to >= 0) slots.set(s, to);
-          else if (partOf.has(c.id) && !song) slots.set(s, null);
         });
         if (slots.size && this.seq.relocateSlots(tr.id, slots, at) && this.seq.playing) this.cancelFrom(at);
       }
     }
-    // The loop follows the edit (blocks deleted, split, joined; undo and redo of a step that changed it)
-    // and goes to the replan with it.
-    const loop = this.loopHistory.follow(this.loop, prev, p, this.store.lastChange());
     let replanned = false;
-    if (song && (this.seq.playing || this.seq.paused) && (songSignature(p) !== songSignature(prev) || !sameSongLoop(this.seq.songLoop, loop))) {
-      replanned = this.seq.replanSong(at, loop);
+    if (this.seq.mode.kind === 'song' && (this.seq.playing || this.seq.paused) && songPlayChanged(p, prev)) {
+      replanned = this.seq.replanSong(at);
       if (replanned && this.seq.playing) this.cancelFrom(at);
     }
-    if (!sameSongLoop(this.seq.songLoop, loop)) this.seq.replanSong(at, loop);
-    this.loop = loop;
     if (!replanned && this.seq.playing) this.cancelFrom(at);
+    this.logPasses();
     return replanned;
+  }
+
+  /** Replace the song's regions (one undo step). */
+  setRegions(regions: SongRegion[]): boolean {
+    return this.edit((s) => s.apply('arrange:Test', (d) => void (d.arrangement.regions = regions)));
+  }
+
+  /** Change the song's regions with `fn` (one undo step). */
+  regions(fn: (r: SongRegion[], p: Project) => SongRegion[]): boolean {
+    return this.setRegions(fn(this.project.arrangement.regions, this.project));
   }
 
   /** Tap a pad, as RealtimeTransport.launchClip does. */
@@ -299,24 +320,6 @@ export class Rig {
     return this;
   }
 
-  private laneCache: { project: Project; blocks: SongBlockPlan[] } | null = null;
-
-  /** The blocks on the lane as the project has them now. */
-  lane(): SongBlockPlan[] {
-    if (this.laneCache?.project !== this.project) this.laneCache = { project: this.project, blocks: songBlocks(this.project) };
-    return this.laneCache.blocks;
-  }
-
-  /** The lane playhead (ticks from the lane start), as songTimelineBar draws it; null when the song is not on. */
-  laneTick(): number | null {
-    return this.seq.songLaneTickAt(this.lane(), this.tick);
-  }
-
-  /** [blockId, index, start, end] of every block of the plan. */
-  plan(): [Id, number, number, number][] {
-    return (this.seq.songPlan() ?? []).map((b) => [b.blockId, b.index, b.startTick, b.endTick]);
-  }
-
   /** [tick, pitch] of every note a part played, in order. */
   notes(trackId: Id): [number, number][] {
     return notesOf(this.out, trackId)
@@ -339,10 +342,6 @@ export class Rig {
       .map((n) => [n.tick, n.pitch, this.endOf(n)]);
   }
 
-  blocks(): [number, number, Id][] {
-    return ofKind(this.out, 'block').map((b) => [b.tick, b.blockIndex, b.blockId]);
-  }
-
   launches(trackId: Id): [number, number | null][] {
     return ofKind(this.out, 'launch')
       .filter((l) => l.trackId === trackId)
@@ -352,9 +351,12 @@ export class Rig {
   ends(): number[] {
     return ofKind(this.out, 'end').map((e) => e.tick);
   }
-}
 
-export const sceneId = (r: Rig, row: number) => r.project.scenes[row].id;
+  /** The passes as they play now. */
+  passes(): SongPass[] {
+    return this.seq.songPasses() ?? [];
+  }
+}
 
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;

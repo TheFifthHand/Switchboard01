@@ -1,10 +1,21 @@
 /**
- * The small keyboard: two octaves (three on a wide strip, its keys widening
- * to fill the strip), octave shift, a computer-key letter on every key it
- * plays (note names — C4, C5, the root — sit on a rail above their keys),
- * Musical Assist (in-key notes) with a visible explanation and a chromatic
- * mode. Simple shows the key as a summary ("Key: G Dorian"); Advanced adds
- * the key and scale pickers and the arpeggiator strip.
+ * The small keyboard, with octave shift and a computer-key letter on every key
+ * it plays. Musical Assist (it starts on) decides what it shows, with a line
+ * under the switch saying so:
+ *
+ * - On, for a part with notes: a scale keyboard. Only the notes of the
+ *   project's key, as one row of equal keys (no black keys), so every key is
+ *   a different note and nothing needs snapping; as many as fit at about
+ *   SCALE_KEY_MIN_PX a key, up to three octaves. The lowest key is the root
+ *   at or below the octave's C (G3 for G Dorian at octave 4). The home row
+ *   A–' plays the first 11 keys, Q–] keys 12–23.
+ * - Off, or the Chromatic scale: the piano, two octaves (three on a wide
+ *   strip, its keys widening to fill it); note names (C4, C5, the root) sit
+ *   on a rail above their keys. Every key plays exactly its note.
+ *
+ * A MIDI keyboard still plays every key (Assist moves its notes into the key,
+ * in the session). Simple shows the key as a summary ("Key: G Dorian");
+ * Advanced adds the key and scale pickers and the arpeggiator strip.
  *
  * A drum part gets 16 named sound keys with their letters, and the computer
  * keys always use the drum-pad layout (Z–V / A–F / Q–R / 1–4) — the same
@@ -28,10 +39,10 @@
  * it started, so changing the part, the octave or the arpeggiator while it is
  * down still ends that note, on its part and at its pitch.
  */
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { Button, IconButton, MiniKeyboard, Select, Switch, Tooltip, noteKeyLabels, useComputerKeyboard, useElementSize, useKeyCapLabels } from '../../ui/components';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { Button, IconButton, KEY_ACCENT_VELOCITY, KEY_VELOCITY, MiniKeyboard, OCTAVE_KEYS, Select, Switch, Tooltip, isTypingTarget, noteKeyLabels, useComputerKeyboard, useElementSize, useKeyCapLabels, type KeyMapping } from '../../ui/components';
 import { getKitVoiceNames } from '../../audio/instruments/kits';
-import { ROOT_NAMES, SCALES, SCALE_ORDER, keyInterval, keyLabel, keyNoteNames, keyRootName, noteName, scaleMask, type MusicalKey } from '../../music/scales';
+import { ROOT_NAMES, SCALES, SCALE_ORDER, keyInterval, keyLabel, keyNoteNames, keyRootName, noteName, rootAtOrBelow, scaleKeyboardNotes, scaleMask, stepsPerOctave, type MusicalKey } from '../../music/scales';
 import { setAssist, setKey, transposeSong } from '../../state/commands';
 import { OCTAVE_RANGE, keyboardCollapsedFor, setKeyboardCollapsedFor, setKeyboardOctave, shiftKeyboardOctave } from '../../state/uiStore';
 import { DRUM_VOICES, type Id, type Project, type ScaleId } from '../../project/types';
@@ -56,6 +67,117 @@ export const KEY_MAX_PX = 60;
 export const KIT_KEY_MAX_PX = 88;
 /** Height of the keys (the strip is 100 px). */
 const KEYS_HEIGHT = 90;
+/**
+ * Scale keyboard: as many keys as fit at SCALE_KEY_MIN_PX, up to three octaves of the scale (and
+ * the root above); on a narrow strip two octaves while they fit at SCALE_KEY_NARROW_PX, else
+ * fewer keys of that width (at least one octave).
+ */
+const SCALE_KEY_MIN_PX = 44;
+const SCALE_KEY_NARROW_PX = 34;
+/** The widest a scale keyboard's key gets (px). */
+export const SCALE_KEY_MAX_PX = 64;
+
+/**
+ * The scale keyboard's computer keys, by physical position: the home row plays the first 11 keys,
+ * the row above keys 12–23, left to right.
+ */
+export const SCALE_KEYS: readonly KeyMapping[] = (
+  [
+    ['KeyA', 'A'],
+    ['KeyS', 'S'],
+    ['KeyD', 'D'],
+    ['KeyF', 'F'],
+    ['KeyG', 'G'],
+    ['KeyH', 'H'],
+    ['KeyJ', 'J'],
+    ['KeyK', 'K'],
+    ['KeyL', 'L'],
+    ['Semicolon', ';'],
+    ['Quote', "'"],
+    ['KeyQ', 'Q'],
+    ['KeyW', 'W'],
+    ['KeyE', 'E'],
+    ['KeyR', 'R'],
+    ['KeyT', 'T'],
+    ['KeyY', 'Y'],
+    ['KeyU', 'U'],
+    ['KeyI', 'I'],
+    ['KeyO', 'O'],
+    ['KeyP', 'P'],
+    ['BracketLeft', '['],
+    ['BracketRight', ']'],
+  ] as const
+).map(([code, label], index) => ({ code, label, index }));
+
+/** MIDI note -> the letter of the computer key that plays it on a scale keyboard (keys past the 23rd have none). */
+function scaleKeyLabels(notes: readonly number[], labels: ReadonlyMap<string, string> | null): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (const k of SCALE_KEYS) if (k.index < notes.length) out[notes[k.index]] = labels?.get(k.code) ?? k.label;
+  return out;
+}
+
+/**
+ * The scale keyboard's computer keys (SCALE_KEYS; Z / X shift the octave), with the rules of
+ * useComputerKeyboard: nothing while typing or behind a modal dialog, no Ctrl/Meta/Alt chords,
+ * events a control handled or key repeats; every held key is released on key-up, window blur,
+ * the tab hiding, an octave or layout change (`layoutId`: other notes under the keys), disabling
+ * and unmount.
+ */
+function useScaleComputerKeys(options: { enabled: boolean; layoutId: string; onNoteOn(index: number, velocity: number): void; onNoteOff(index: number): void; onOctave(delta: -1 | 1): void }): void {
+  const { enabled, layoutId } = options;
+  const opts = useRef(options);
+  useEffect(() => {
+    opts.current = options;
+  });
+  useEffect(() => {
+    if (!enabled) return;
+    const map = new Map(SCALE_KEYS.map((k) => [k.code, k.index]));
+    /** code -> index currently sounding */
+    const held = new Map<string, number>();
+    const releaseAll = () => {
+      const indices = [...held.values()];
+      held.clear();
+      for (const i of indices) opts.current.onNoteOff(i);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTypingTarget(e.target) || document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]')) return;
+      if (e.code === OCTAVE_KEYS.down.code || e.code === OCTAVE_KEYS.up.code) {
+        e.preventDefault();
+        if (e.repeat) return;
+        releaseAll();
+        opts.current.onOctave(e.code === OCTAVE_KEYS.up.code ? 1 : -1);
+        return;
+      }
+      const index = map.get(e.code);
+      if (index === undefined) return;
+      e.preventDefault();
+      if (e.repeat || held.has(e.code)) return;
+      held.set(e.code, index);
+      opts.current.onNoteOn(index, e.shiftKey ? KEY_ACCENT_VELOCITY : KEY_VELOCITY);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      const index = held.get(e.code);
+      if (index === undefined) return;
+      held.delete(e.code);
+      opts.current.onNoteOff(index);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') releaseAll();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', releaseAll);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', releaseAll);
+      document.removeEventListener('visibilitychange', onVisibility);
+      releaseAll();
+    };
+  }, [enabled, layoutId]);
+}
 
 /** Release the note a key started (if it is still down) and forget it. */
 function release(map: Map<number, () => void>, key: number): void {
@@ -261,13 +383,24 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   const baseNote = isDrums ? KIT_BASE_NOTE : (octave + 1) * 12;
   // A third octave when the keys would still be at least KEYS_WIDE_MIN_PX wide (and stay inside MIDI).
   const keyCount = keysBox.width >= WHITES_WIDE * KEYS_WIDE_MIN_PX && baseNote + KEYS_WIDE - 1 <= 127 ? KEYS_WIDE : KEYS_NARROW;
+  const chromatic = scale === 'chromatic';
+  // Assist on for a part with notes: only the key's notes, one key each (the Chromatic scale has all 12: the piano).
+  const scaleBoard = !isDrums && assist && !chromatic;
+  const perOctave = stepsPerOctave(scale);
+  const fit = (px: number) => Math.floor(keysBox.width / px);
+  // Folded, no keys show: the computer keys play all three octaves.
+  const scaleCount = collapsed ? 3 * perOctave + 1 : Math.min(3 * perOctave + 1, Math.max(fit(SCALE_KEY_MIN_PX), Math.min(2 * perOctave + 1, Math.max(perOctave + 1, fit(SCALE_KEY_NARROW_PX)))));
+  const notes = useMemo(() => (scaleBoard ? scaleKeyboardNotes(root, scale, baseNote, scaleCount) : null), [scaleBoard, root, scale, baseNote, scaleCount]);
   // Drum pads own the computer keys only while they are on screen with a kit selected (same layout, same table).
   const drumPadsOwnKeys = padMode === 'drums' && view === 'play' && isDrums;
   const mask = useMemo(() => (assist ? scaleMask(root, scale) : undefined), [assist, root, scale]);
   const pitchNames = useMemo(() => keyNoteNames(root, scale), [root, scale]);
   const kitNames = useMemo(() => (kitId ? getKitVoiceNames(kitId) : []), [kitId]);
-  // Every key the computer plays shows its letter; note names go on the rail above the keys.
-  const keyLabels = useMemo(() => (isDrums ? kitKeyLabels(KIT_BASE_NOTE, capLabels) : noteKeyLabels(baseNote, capLabels)), [isDrums, baseNote, capLabels]);
+  // Every key the computer plays shows its letter; on the piano, note names go on the rail above the keys.
+  const keyLabels = useMemo(
+    () => (isDrums ? kitKeyLabels(KIT_BASE_NOTE, capLabels) : notes ? scaleKeyLabels(notes, capLabels) : noteKeyLabels(baseNote, capLabels)),
+    [isDrums, notes, baseNote, capLabels],
+  );
   const active = useMemo(() => {
     if (!held) return new Set<number>();
     return new Set(isDrums ? held.map((v) => KIT_BASE_NOTE + v) : held);
@@ -289,9 +422,10 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   );
   const onNoteOff = useCallback((midi: number) => release(pointerNotes.current, midi), []);
 
-  // Computer keys: a kit always uses the drum-pad layout (index = kit sound); a melodic part the notes layout.
+  // Computer keys: a kit always uses the drum-pad layout (index = kit sound); a melodic part the notes
+  // layout on the piano, the scale keyboard's keys left to right on it.
   useComputerKeyboard({
-    enabled: !drumPadsOwnKeys,
+    enabled: !drumPadsOwnKeys && !scaleBoard,
     layout: isDrums ? 'drums' : 'notes',
     onNoteOn: (index, velocity) => {
       release(keyNotes.current, index);
@@ -301,6 +435,18 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
     onOctave: (delta) => {
       if (!isDrums) shiftKeyboardOctave(delta);
     },
+  });
+  useScaleComputerKeys({
+    enabled: scaleBoard,
+    layoutId: notes ? `${notes[0]}:${root}:${scale}` : '',
+    onNoteOn: (index, velocity) => {
+      const pitch = notes?.[index];
+      if (pitch === undefined) return;
+      release(keyNotes.current, index);
+      keyNotes.current.set(index, playLive(trackId, pitch, velocity, 'computer'));
+    },
+    onNoteOff: (index) => release(keyNotes.current, index),
+    onOctave: (delta) => shiftKeyboardOctave(delta),
   });
 
   // Key changes ask first (see KeyChange); nothing to move: the key just changes.
@@ -322,26 +468,24 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   const shownScale = pending?.scale ?? scale;
   const rootOptions = useMemo(() => ROOT_NAMES.map((_, i) => ({ value: String(i), label: keyRootName(i, shownScale) })), [shownScale]);
 
-  const assistTip = !assist
-    ? 'Musical Assist is off: the keyboard is chromatic and plays exactly the key you press.'
-    : isSampler
-      ? `Musical Assist is on, but ${trackName} plays a recording, which Assist never re-pitches: every key plays exactly as pressed, and the Root Note key plays it at its own pitch. The dots show the notes of ${keyLabel(root, scale)}.`
-      : `Musical Assist is on: every key plays a note from ${keyLabel(root, scale)}. Keys outside the key (dimmed) play the nearest in-key note.`;
-  // One short line that fits the column whole (the tip says more, e.g. that the dots still show the key).
-  const assistNote = isDrums
-    ? `${trackName}: keys play the kit sounds.`
-    : !assist
-      ? 'Every key plays as pressed'
-      : isSampler
-        ? 'Recordings play as pressed'
-        : `Snapping to ${keyLabel(root, scale)}`;
-
   const keyName = keyLabel(root, scale);
+  const assistTip = !assist
+    ? 'Musical Assist is off: the keyboard is a piano with all 12 notes, and every key plays exactly its note.'
+    : chromatic
+      ? 'Musical Assist is on, and the Chromatic scale has all 12 notes: the keyboard is a piano, and every key plays exactly its note.'
+      : isSampler
+        ? `Musical Assist is on: the keyboard shows only the notes of ${keyName}, each key its own note. ${trackName} plays its recording at the pitch of the key you press (Assist never re-pitches a recording). Turn Assist off for the full piano.`
+        : `Musical Assist is on: the keyboard shows only the notes of ${keyName}, so every key plays a different note in the key. Turn Assist off for the full piano.`;
+  // One short line that fits the column whole (the tip says more).
+  const assistNote = isDrums ? `${trackName}: keys play the kit sounds.` : scaleBoard ? `Only ${keyName} notes are shown.` : 'All 12 notes, like a piano.';
+  // The lowest key, spelled by the key; the octave reset puts it back on the root at or below C4.
+  const lowest = notes ? noteName(notes[0], { root, scale }) : noteName(baseNote);
+  const resetTo = scaleBoard ? noteName(rootAtOrBelow(root, 60), { root, scale }) : 'C4';
   // Simple hides the arpeggiator strip; a part whose arpeggiator is on still says so.
   const arpNote = !advanced && arpOn ? 'Arpeggiator on (settings in Advanced)' : null;
   // Musical Assist does nothing for drums: the switch is not shown for a kit.
   const assistSwitch = isDrums ? null : (
-    <Tooltip tip={assistTip} detail="Recorded notes follow the same rule. Recordings (sampler parts) are never re-pitched by Assist.">
+    <Tooltip tip={assistTip} detail="A MIDI keyboard plays every key: Assist moves its notes into the key, and Record Notes keeps the note that sounds. Recordings (sampler parts) are never re-pitched by Assist.">
       <div>
         <Switch checked={assist} onChange={(on) => session.accepted(setAssist(session.store, on))} label="Musical Assist" onText="IN KEY" offText="CHROMATIC" tone="teal" size="sm" />
       </div>
@@ -387,13 +531,13 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
         <div className={styles.octave}>
           <IconButton icon="octaveDown" label="Octave down (Z)" size="sm" onClick={() => shiftKeyboardOctave(-1)} disabled={octave <= OCTAVE_RANGE.min} />
           <div className={styles.octLabel}>
-            <span className={`${styles.octValue} mono`}>{noteName(baseNote)}</span>
+            <span className={`${styles.octValue} mono`}>{lowest}</span>
             <span className={styles.octCaption}>lowest key</span>
           </div>
           <IconButton icon="octaveUp" label="Octave up (X)" size="sm" onClick={() => shiftKeyboardOctave(1)} disabled={octave >= OCTAVE_RANGE.max} />
-          <Tooltip tip="Put the lowest key back on C4.">
-            <button type="button" className={styles.reset} onClick={() => setKeyboardOctave(4)} aria-label="Reset octave to C4">
-              <span aria-hidden="true">↺</span> C4
+          <Tooltip tip={resetTo === 'C4' ? 'Put the lowest key back on C4.' : `Put the lowest key back on ${resetTo}, the ${keyRootName(root, scale)} just below C4.`}>
+            <button type="button" className={styles.reset} onClick={() => setKeyboardOctave(4)} aria-label={resetTo === 'C4' ? 'Reset octave to C4' : `Reset octave to ${resetTo}, just below C4`}>
+              <span aria-hidden="true">↺</span> {resetTo}
             </button>
           </Tooltip>
         </div>
@@ -418,6 +562,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
         ) : (
           <MiniKeyboard
             baseNote={baseNote}
+            notes={notes ?? undefined}
             onNoteOn={onNoteOn}
             onNoteOff={onNoteOff}
             activeNotes={active}
@@ -429,7 +574,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
             keys={keyCount}
             height={KEYS_HEIGHT}
             fit
-            keyMaxWidth={KEY_MAX_PX}
+            keyMaxWidth={notes ? SCALE_KEY_MAX_PX : KEY_MAX_PX}
             label={`Keyboard playing ${trackName}`}
           />
         )}

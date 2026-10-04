@@ -1,8 +1,10 @@
 /**
  * Arpeggiator, recording options, the Tips switch and the keyboard legends,
  * in real Chromium: every control changes the project (or the remembered UI
- * setting), drum parts get an explanation instead of arp controls, and white
- * keys carry at most one legend so nothing overlaps the scale dots.
+ * setting), drum parts get an explanation instead of arp controls, and the
+ * piano's white keys carry at most one legend so nothing overlaps the scale
+ * dots. (House is in G Dorian with Musical Assist on: the keyboard strip
+ * shows the scale keyboard, its lowest key G3.)
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -14,7 +16,7 @@ import { RecordOptions } from '../../src/app/views/RecordOptions';
 import { TransportBar } from '../../src/app/views/TransportBar';
 import { getStarter } from '../../src/content/starters';
 import type { Id } from '../../src/project/types';
-import { setArp, setSettings } from '../../src/state/commands';
+import { setArp, setAssist, setSettings } from '../../src/state/commands';
 import { selectTrack, setKeyboardOctave, setPadMode, setTipsEnabled, setUiMode, uiStore } from '../../src/state/uiStore';
 import { TipsProvider } from '../../src/ui/components';
 import { cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
@@ -128,8 +130,8 @@ describe('Arpeggiator', () => {
       act(() => rate.focus());
       key(rate, 'keydown', { key: 'a', code: 'KeyA' });
       key(rate, 'keyup', { key: 'a', code: 'KeyA' });
-      // A = the lowest key (C4 at the default octave).
-      expect(played).toEqual(['on t4 60', 'off t4 60']);
+      // A = the lowest key: G3 at the default octave (House is in G Dorian, so the scale keyboard starts on the G at or below C4).
+      expect(played).toEqual(['on t4 55', 'off t4 55']);
       // The panel stays open while playing.
       expect(dialog()).not.toBeNull();
     } finally {
@@ -313,20 +315,21 @@ describe('Keyboard strip: held keys, drum parts and recordings', () => {
     const rec = recordNotes();
     try {
       const m = strip();
+      // The scale keyboard of G Dorian: A = G3, S = A3.
       key(document.body, 'keydown', { key: 'a', code: 'KeyA' });
       act(() => selectTrack('t3'));
       key(document.body, 'keyup', { key: 'a', code: 'KeyA' });
-      expect(rec.played).toEqual(['on t4 60', 'off t4 60']);
+      expect(rec.played).toEqual(['on t4 55', 'off t4 55']);
 
       rec.played.length = 0;
       key(document.body, 'keydown', { key: 's', code: 'KeyS' });
       click(m.container.querySelector<HTMLButtonElement>('button[aria-label="Octave up (X)"]')!);
       key(document.body, 'keyup', { key: 's', code: 'KeyS' });
-      expect(rec.played).toEqual(['on t3 62', 'off t3 62']);
+      expect(rec.played).toEqual(['on t3 57', 'off t3 57']);
       // The next press plays in the new octave.
       key(document.body, 'keydown', { key: 's', code: 'KeyS' });
       key(document.body, 'keyup', { key: 's', code: 'KeyS' });
-      expect(rec.played.slice(2)).toEqual(['on t3 74', 'off t3 74']);
+      expect(rec.played.slice(2)).toEqual(['on t3 69', 'off t3 69']);
     } finally {
       rec.restore();
     }
@@ -375,22 +378,26 @@ describe('Keyboard strip: held keys, drum parts and recordings', () => {
     }
   });
 
-  it('on a sampler part, says that Musical Assist leaves recordings at the key pressed', async () => {
+  it('on a sampler part, the in-key keys too, and the tip says Musical Assist never re-pitches the recording', async () => {
     await appFonts();
     act(() => selectTrack('t8'));
     const m = strip();
-    expect(m.container.textContent).toContain('Recordings play as pressed');
-    expect(m.container.textContent).not.toContain('Snapping to');
+    expect(m.container.textContent).toContain('Only G Dorian notes are shown.');
     // The whole line is readable (it is not cut off with an ellipsis).
-    const note = [...m.container.querySelectorAll<HTMLElement>('p[aria-live="polite"]')].find((p) => p.textContent?.startsWith('Recordings'))!;
+    const note = [...m.container.querySelectorAll<HTMLElement>('p[aria-live="polite"]')].find((p) => p.textContent?.startsWith('Only'))!;
     expect(note.scrollWidth).toBeLessThanOrEqual(note.clientWidth + 1);
+    const tipped = m.container.querySelector<HTMLElement>('[role="switch"]')!.closest<HTMLElement>('[aria-describedby]')!;
+    const tip = () => (tipped.getAttribute('aria-describedby') ?? '').split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? '').join(' ');
+    expect(tip()).toMatch(/plays its recording at the pitch of the key you press \(Assist never re-pitches a recording\)/);
     act(() => selectTrack('t4'));
-    expect(m.container.textContent).toContain('Snapping to');
+    expect(m.container.textContent).toContain('Only G Dorian notes are shown.');
+    expect(tip()).toMatch(/every key plays a different note in the key/);
   });
 });
 
 describe('Keyboard legends', () => {
-  it('every key the computer plays shows its letter (A and K included); C keys and the root are named on the rail above the keys, never in a key', () => {
+  it('the piano (Assist off): every key the computer plays shows its letter (A and K included); C keys and the root are named on the rail above the keys, never in a key', () => {
+    session.accepted(setAssist(session.store, false));
     const m = mount(h('div', { style: { width: '1340px', height: '100px' } }, h(KeyboardStrip)), { width: 1366 });
     const board = m.container.querySelector<HTMLElement>('[role="group"][aria-label^="Keyboard playing"]')!;
     const keys = [...board.querySelectorAll<HTMLElement>('[data-midi]')];

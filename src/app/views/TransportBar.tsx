@@ -13,20 +13,21 @@ import { BPM_SPEC, MASTER_VOLUME_SPEC, SWING_SPEC } from '../../project/params';
 import { setTipsEnabled, setUiMode, setView, type UiMode, type View } from '../../state/uiStore';
 import { session, useAutosave, useHistory, useProject, useUi } from '../instance';
 import { notify, runtimeStore, transportWord, useOffline, useRuntime, type RuntimeState } from '../runtime';
-import { PAUSE_UNAVAILABLE_MESSAGE } from '../session';
+import { PAUSE_UNAVAILABLE_MESSAGE, songPlayFrom } from '../session';
 import type { MeterFrame } from '../../audio/contracts';
 import { OfflineMenuItems, OfflineMenuStatus, OfflineStatus } from './OfflineStatus';
 import { keysFor } from './hints/shortcuts';
 import { RecordOptions, quantizeCaption, recordOptionsCaption } from './RecordOptions';
 import { MOD_ARIA, MOD_KEY, MenuItem, MenuSeparator, MoreIcon, Popover, anchorFromElement } from './ClipMenu';
 import { DevicesDialog, DevicesKey, midi } from './devices';
-import { songTimelineBar, useSongPlan } from '../songPlayback';
+import { songBars } from '../../project/arrangement';
+import { songPlayheadBar } from '../songPlayback';
 import styles from './TransportBar.module.css';
 
 const VIEW_OPTIONS = [
   { value: 'play', label: 'Play', tip: 'Play: the pads, the selected part’s sound and the keyboard.' },
   { value: 'shape', label: 'Shape', tip: 'Shape: the selected part’s sound in detail, its effects and cables.' },
-  { value: 'arrange', label: 'Arrange', tip: 'Arrange: put scenes in order as a song, and replay recorded performances.' },
+  { value: 'arrange', label: 'Song', tip: 'Song: put loops on each part’s row to build a song, like GarageBand’s tracks.' },
   { value: 'mix', label: 'Mix', tip: 'Mix: a channel strip per part, the master and mastering.' },
 ] as const;
 
@@ -81,19 +82,21 @@ function positionText(tick: number, bar: number, beat: number): string {
   return tick < 0 ? 'Count' : `${bar + 1}.${beat + 1}`;
 }
 
-/** The transport's position; in song mode on the song timeline as the Arrange lane draws it. */
+/** The transport's position; in song mode the bar of the song you hear, as the Song view's playhead shows it. */
 function transportPositionText(t: NonNullable<typeof session.transport>): string {
-  const p = t.getPosition();
-  const song = p.tick < 0 ? null : songTimelineBar(p.tick);
-  if (song === null) return positionText(p.tick, p.bar, p.beat);
+  const song = songPlayheadBar();
+  if (song === null) {
+    const p = t.getPosition();
+    return positionText(p.tick, p.bar, p.beat);
+  }
   const bar = Math.floor(song + 1e-9);
-  return positionText(p.tick, bar, Math.min(3, Math.floor((song - bar) * 4 + 1e-9)));
+  return positionText(0, bar, Math.min(3, Math.floor((song - bar) * 4 + 1e-9)));
 }
 
-/** The current position: Stopped at 1.1, the paused position, or the playhead while playing. */
-function heldPositionText(): string {
+/** The current position: the paused position; stopped, bar 1, or in the Song view the song's cursor (where Play starts). */
+function heldPositionText(songCursor: number | null): string {
   const t = session.transport;
-  if (!t || !t.paused) return '1.1';
+  if (!t || !t.paused) return songCursor === null ? '1.1' : `${songCursor + 1}.1`;
   return transportPositionText(t);
 }
 
@@ -110,8 +113,9 @@ function Position() {
   const mode = useRuntime((s) => s.mode);
   const nothing = useNothingToPlay();
   const word = nothing ? 'Nothing to play yet' : transportWord({ playing, paused, mode });
-  // A song edited while paused moves the paused position on the timeline: show it again.
-  useSongPlan();
+  // Stopped in the Song view: the song's cursor (a ruler click moves it, and a paused song's playhead with it).
+  const songView = useUi((s) => s.view === 'arrange');
+  const cursor = useRuntime((s) => s.songCursor);
   const last = useRef('');
   useRafLoop(() => {
     const t = session.transport;
@@ -129,28 +133,30 @@ function Position() {
         {word}
       </span>
       <span ref={ref} className={`${styles.posValue} mono`} role="timer" aria-label="Bar and beat" aria-hidden={nothing || undefined}>
-        {playing ? '' : heldPositionText()}
+        {playing ? '' : heldPositionText(songView ? cursor : null)}
       </span>
     </div>
   );
 }
 
 /**
- * One key: ▶ Play when stopped or paused, ❚❚ Pause while playing. In Arrange
- * (with blocks in the song) it plays the song, from the loop when one is set;
- * after a pause it continues whatever was playing.
+ * One key: ▶ Play when stopped or paused, ❚❚ Pause while playing. In the
+ * Song view (with something in the song) it plays the song from its cursor,
+ * or from the loop when one is set; after a pause it continues whatever was
+ * playing.
  */
 function PlayPauseButton() {
   const playing = useRuntime((s) => s.playing);
   const paused = useRuntime((s) => s.paused);
   const mode = useRuntime((s) => s.mode);
   const take = useRuntime((s) => s.recording === 'performance');
-  const looping = useRuntime((s) => s.songLoop !== null);
   const arrange = useUi((s) => s.view === 'arrange');
-  const hasSong = useProject((p) => p.arrangement.blocks.length > 0);
+  const length = useProject(songBars);
+  const looping = useRuntime((s) => s.songLoop !== null);
+  const fromBar = useRuntime((s) => songPlayFrom(length, s.songCursor, s.songLoop));
   const blocked = playing && take;
   // Play here starts the song (not the pads): its name and tip say so.
-  const song = arrange && hasSong && !playing && !paused;
+  const song = arrange && length > 0 && !playing && !paused;
   const tip = blocked
     ? PAUSE_UNAVAILABLE_MESSAGE
     : playing
@@ -158,7 +164,7 @@ function PlayPauseButton() {
       : paused
         ? `Continue ${mode === 'song' ? 'the song ' : ''}from where you paused, in time.`
         : song
-          ? `Play song: the blocks below in order, ${looping ? 'starting at the loop' : 'from the first one'}.`
+          ? `Play song from bar ${fromBar + 1}${looping ? ', in the loop' : ''}.`
           : 'Start the lit clips from bar 1.';
   return (
     <Button
@@ -169,7 +175,7 @@ function PlayPauseButton() {
       aria-label={song ? 'Play song' : undefined}
       onClick={() => (blocked ? notify(PAUSE_UNAVAILABLE_MESSAGE, 'warn') : void session.togglePlay({ song: arrange }))}
       tip={tip}
-      detail={song ? `${keysFor('play')} plays the song in Arrange and pauses it. ${keysFor('stop')} stops.` : `${keysFor('play')} plays and pauses. ${keysFor('stop')} stops.`}
+      detail={song ? `${keysFor('play')} plays the song in the Song view and pauses it. ${keysFor('stop')} stops.` : `${keysFor('play')} plays and pauses. ${keysFor('stop')} stops.`}
       aria-keyshortcuts="Space"
       className={styles.play}
       data-song={song || undefined}
@@ -207,7 +213,7 @@ function StopButton() {
           : take
             ? 'Stop playback and the performance recording (the take is kept). Back to bar 1.'
             : song
-              ? 'Stop the song and go back to its start. Play (or Space) in Arrange plays it again.'
+              ? 'Stop the song and go back to where it started. Play (or Space) in the Song view plays it again.'
               : 'Stop and go back to bar 1. The clips that were playing stay lit and start again from the top on Play.'
       }
       detail={`${keysFor('stop')} also stops.`}
@@ -358,7 +364,9 @@ function RecordGroup() {
   // Record Notes waits for its downbeat: the caption counts the beats down.
   const startsAt = useRuntime((s) => (s.recording === 'notes' && s.playing && s.recordStartsAtTick != null ? s.recordStartsAtTick : null));
   // The clip to record into was chosen while another one played: it (and recording) starts at the next bar.
-  const waiting = useRuntime((s) => s.recordTarget !== null && s.playing && (s.tracks[s.recordTarget.trackId]?.playingSlot ?? null) !== s.recordTarget.slot);
+  const waiting = useRuntime((s) => s.recordTarget !== null && s.playing && s.mode !== 'song' && (s.tracks[s.recordTarget.trackId]?.playingSlot ?? null) !== s.recordTarget.slot);
+  // In the song, the part has no loop under the playhead: nothing records until its next one.
+  const nothingHere = useRuntime((s) => s.recording === 'notes' && s.mode === 'song' && s.recordTargetAudible === false);
   const targetName = useProject((p) => (targetId ? (p.tracks.find((t) => t.id === targetId)?.name ?? '') : ''));
   const options = useProject((p) => recordOptionsCaption(p.settings));
   const quantize = useProject((p) => p.settings.recordQuantize);
@@ -376,7 +384,9 @@ function RecordGroup() {
           ? `Count-in · ${targetName}`
           : waiting
             ? `Next bar · ${targetName}`
-            : `Recording · ${targetName}`
+            : nothingHere
+              ? `No loop here · ${targetName}`
+              : `Recording · ${targetName}`
       : recording === 'performance'
         ? 'Recording performance'
         : options
@@ -431,7 +441,7 @@ function RecordGroup() {
           aria-pressed={undefined}
           onClick={() => void session.togglePerformance()}
           aria-label={recording === 'performance' ? 'Stop recording performance' : 'Record Performance'}
-          tip={recording === 'performance' ? 'Stop and keep this performance. Replay or export it in Arrange.' : 'Capture everything you do — launches, notes, knob moves — as a replayable performance.'}
+          tip={recording === 'performance' ? 'Stop and keep this performance. Replay or export it in Song.' : 'Capture everything you do — launches, notes, knob moves — as a replayable performance.'}
           detail="Cables and sound choices are locked while recording so the take replays exactly. Pause is not available during a take; Mute All ends the recording."
           className={recording === 'performance' ? styles.recActive : undefined}
         >
@@ -577,7 +587,7 @@ function switchView(view: View): void {
  * MIDI & audio key needs the room.
  * Unavailable, they stay focusable and their tip says why ("Nothing to
  * undo", or the take lock); available, the tip names the step ("Undo: Move
- * block").
+ * Bounce").
  */
 function HistoryKey(props: { kind: 'undo' | 'redo' }) {
   const { kind } = props;

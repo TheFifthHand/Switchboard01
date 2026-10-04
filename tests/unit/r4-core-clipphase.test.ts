@@ -50,31 +50,35 @@ describe('Sequencer.clipPhaseAt / queuedAtTick', () => {
     expect(seq.clipPhaseAt('t1', 1100, out)).toEqual({ slot: 1, startTick: 768, lengthTicks: 768 });
   });
 
-  it('song mode: the clip loops from its block start; a block that keeps the clip is not a queued change, one that switches it is', () => {
+  it('song mode: the clip loops in phase with its region; a region that plays on in the clip is not a queued change, one that switches it is', () => {
     let p = makeProject(120);
     p = setClip(p, 't1', 0, makeClip(1, [[0, 0]]));
     p = setClip(p, 't1', 1, makeClip(2, [[0, 1]]));
+    const [a, b] = [p.tracks[0].clips[0]!.id, p.tracks[0].clips[1]!.id];
     p.arrangement = {
       tailSeconds: 1,
-      blocks: [
-        { id: 'A', sceneId: p.scenes[0].id, repeats: 2 },
-        { id: 'A2', sceneId: p.scenes[0].id, repeats: 1 },
-        { id: 'B', sceneId: p.scenes[1].id, repeats: 1 },
+      sections: [],
+      regions: [
+        { id: 'A', trackId: 't1', clipId: a, start: 0, bars: 2, offset: 0 },
+        { id: 'A2', trackId: 't1', clipId: a, start: 2, bars: 1, offset: 0 },
+        { id: 'B', trackId: 't1', clipId: b, start: 3, bars: 2, offset: 0 },
       ],
     };
     const seq = new Sequencer({ getProject: () => p });
-    seq.start(0, { mode: { kind: 'song', fromBlock: 0 } });
+    seq.start(0, { mode: { kind: 'song', fromBar: 0 } });
     runTo(seq, 0, sec(700) + 0.3);
     const out = phase();
     expect(seq.clipPhaseAt('t1', 700, out)).toEqual({ slot: 0, startTick: 0, lengthTicks: 384 });
-    // A2 (from 768) plays the same clip: not a queued change.
+    // A2 (from 768) plays on in the same clip: not a queued change.
     expect(seq.queuedAtTick('t1', 700)).toBeNull();
     runTo(seq, sec(700), sec(800) + 0.3);
-    expect(seq.clipPhaseAt('t1', 800, out)).toEqual({ slot: 0, startTick: 768, lengthTicks: 384 });
+    // The loop start is any tick of the clip's phase (one value per phase: at or before 0).
+    expect(seq.clipPhaseAt('t1', 800, out)).toEqual({ slot: 0, startTick: 0, lengthTicks: 384 });
     // B (at 1152) switches to the 2-bar clip; visible a bar ahead.
     expect(seq.queuedAtTick('t1', 800)).toBe(1152);
     runTo(seq, sec(800), sec(1300) + 0.3);
-    expect(seq.clipPhaseAt('t1', 1300, out)).toEqual({ slot: 1, startTick: 1152, lengthTicks: 768 });
+    expect(seq.clipPhaseAt('t1', 1300, out)).toEqual({ slot: 1, startTick: 1152 - 2 * 768, lengthTicks: 768 });
+    expect((1300 - out.startTick) % 768).toBe(1300 - 1152);
   });
 
   it('replay: the take plays its own snapshot; a different scene count is no problem', () => {

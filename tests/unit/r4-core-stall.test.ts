@@ -84,7 +84,7 @@ function rig(project: Project, opts: { hidden?: () => boolean } = {}) {
     wallClock: () => wall,
   });
   const got: { [K in keyof TransportEventMap]?: TransportEventMap[K][] } = {};
-  for (const name of ['stalled', 'skipped', 'block', 'launch'] as const) {
+  for (const name of ['stalled', 'skipped', 'launch'] as const) {
     got[name] = [];
     transport.on(name, (e) => (got[name] as unknown[]).push(e));
   }
@@ -243,21 +243,26 @@ describe('perf-01: a busy main thread never stops or delays playback in a visibl
     r.transport.dispose();
   });
 
-  it('a skip keeps launches and the song position: a block event and a queued launch in the missed stretch still apply', () => {
+  it('a skip keeps launches and the song position: a region change in the missed stretch still applies', () => {
     let p = groove();
     p = setClip(p, 't1', 1, makeClip(1, [[0, 72]]));
     p = setClip(p, 't2', 0, makeClip(1, [[0, 40], [192, 41]]));
     p = setClip(p, 't2', 1, makeClip(1, [[0, 50], [192, 51]]));
-    p.arrangement = { tailSeconds: 1, blocks: [{ id: 'A', sceneId: p.scenes[0].id, repeats: 1 }, { id: 'B', sceneId: p.scenes[1].id, repeats: 2 }] };
+    // Bar 1 plays row 0, bars 2–3 row 1.
+    const at = (trackId: string, slot: number, start: number, bars: number) => ({ id: `${trackId}:${slot}`, trackId, clipId: p.tracks.find((t) => t.id === trackId)!.clips[slot]!.id, start, bars, offset: 0 });
+    p.arrangement = { tailSeconds: 1, sections: [], regions: [at('t1', 0, 0, 1), at('t2', 0, 0, 1), at('t1', 1, 1, 2), at('t2', 1, 1, 2)] };
     const r = rig(p);
-    r.transport.start({ mode: { kind: 'song', fromBlock: 0 } });
+    r.transport.start({ mode: { kind: 'song', fromBar: 0 } });
     r.run(1700);
-    // Block A ends at 2.05 s: the block is missed entirely.
+    // Bar 1 ends at 2.05 s: the change there is missed entirely.
     r.block(600);
     r.run(1000);
     expect(r.got.stalled).toEqual([]);
-    expect(r.got.block!.map((b) => b.blockId)).toEqual(['A', 'B']);
-    expect(r.seq.getTrackState('t2').playing).toMatchObject({ slot: 1, startTick: 384 });
+    expect(r.got.launch!.filter((l) => l.trackId === 't2').map((l) => [l.tick, l.slot])).toEqual([[0, 0], [384, 1]]);
+    expect(r.seq.getTrackState('t2').playing).toMatchObject({ slot: 1 });
+    // The song's playhead is where the audio clock is.
+    const bar = r.seq.songBarAt(r.seq.getPosition(r.ctx.currentTime).tick)!;
+    expect(bar).toBeCloseTo(((r.ctx.currentTime - 0.05) * 2) / 4, 6);
     // B's notes after the skip are on its loop, in time.
     const late = r.notes.filter((n) => n.time > 2.75);
     expect(late.length).toBeGreaterThan(0);
@@ -318,17 +323,21 @@ describe('simulateStall (review minor 6)', () => {
 });
 
 describe('song gain after Stop and Pause (review minors 1, 2)', () => {
-  /** The groove as a song: one block (row 0) of `bars` bars with a Fade out. */
+  /** The groove as a song: `bars` bars of it, in a section with a Fade out. */
   function fadeOutSong(bars: number): Project {
     const p = groove();
-    p.arrangement = { tailSeconds: 1, blocks: [{ id: 'A', sceneId: p.scenes[0].id, repeats: bars, moves: [{ id: 'f', kind: 'fadeOut' }] }] };
+    p.arrangement = {
+      tailSeconds: 1,
+      regions: [{ id: 'r', trackId: 't1', clipId: p.tracks[0].clips[0]!.id, start: 0, bars, offset: 0 }],
+      sections: [{ id: 'A', name: 'Outro', start: 0, bars, moves: [{ id: 'f', kind: 'fadeOut' }] }],
+    };
     return p;
   }
   const gains = (r: ReturnType<typeof rig>, from: number) => r.events.filter((e) => e.kind === 'songGain' && e.at >= from).map((e) => e.args as number[]);
 
   it('a faded ending stays faded after Stop (no timed return to bring effect tails back); the next live sound brings unity back, once', () => {
     const r = rig(fadeOutSong(1));
-    r.transport.start({ mode: { kind: 'song', fromBlock: 0 } });
+    r.transport.start({ mode: { kind: 'song', fromBar: 0 } });
     r.run(2500);
     expect(r.transport.playing).toBe(false);
     const stoppedAt = r.ctx.currentTime;
@@ -344,7 +353,7 @@ describe('song gain after Stop and Pause (review minors 1, 2)', () => {
 
   it('Pause inside a fade out: a live sound is heard at unity; Play goes on from the level the fade had reached', () => {
     const r = rig(fadeOutSong(2));
-    r.transport.start({ mode: { kind: 'song', fromBlock: 0 } });
+    r.transport.start({ mode: { kind: 'song', fromBar: 0 } });
     // 0.95 s into a 4 s fade: at 0.7625.
     r.run(1000);
     expect(r.transport.pause()).toBe(true);
@@ -393,7 +402,7 @@ describe('perf-01: events whose time has passed are dropped, never played late',
 
 describe('perf-01: with the 300 ms look-ahead, live edits still sound at the next event', () => {
   it('a note added just ahead of the playhead (inside what is already scheduled) plays at its time; one removed there does not', async () => {
-    const { Rig } = await import('./song-live-rig');
+    const { Rig } = await import('./r5-engine-rig');
     const cmd = await import('../../src/state/commands');
     let p = makeProject(120);
     p = setClip(p, 't1', 0, makeClip(1, [[0, 0], [192, 1]]));

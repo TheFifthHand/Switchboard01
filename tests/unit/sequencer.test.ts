@@ -166,7 +166,7 @@ describe('Sequencer: live launcher', () => {
     }
   });
 
-  it('playingAt tells which clip (and loop start) a track played at an earlier tick, across switches and restarts', () => {
+  it('playingAt tells which clip (and loop start) a track played at an earlier tick, across switches', () => {
     let p = makeProject();
     p = setClip(p, 't4', 0, makeClip(1, [[0, 60]], 'A'));
     p = setClip(p, 't4', 1, makeClip(1, [[0, 62]], 'B'));
@@ -178,17 +178,17 @@ describe('Sequencer: live launcher', () => {
     runTo(seq, 0, 2.5); // tick 96
     seq.launchClip('t4', 1, 2.5); // at 384
     runTo(seq, 2.5, 4.5); // tick 480
-    seq.launchClip('t4', 1, 4.5); // restart at 768
+    seq.launchClip('t4', 1, 4.5); // already playing: it plays on, in phase
     runTo(seq, 4.5, 6.1); // past 768
     expect(seq.playingAt('t4', 100)).toEqual({ slot: 0, startTick: 0 });
     expect(seq.playingAt('t4', 383)).toEqual({ slot: 0, startTick: 0 });
     expect(seq.playingAt('t4', 384)).toEqual({ slot: 1, startTick: 384 });
     expect(seq.playingAt('t4', 767)).toEqual({ slot: 1, startTick: 384 });
-    expect(seq.playingAt('t4', 800)).toEqual({ slot: 1, startTick: 768 });
+    expect(seq.playingAt('t4', 800)).toEqual({ slot: 1, startTick: 384 });
     expect(seq.playingAt('t9', 800)).toBeNull();
   });
 
-  it('launching the playing slot with nothing queued restarts it at the next bar', () => {
+  it('launching the playing slot again does not restart it: it plays on in phase, nothing is queued', () => {
     let p = makeProject();
     const A = makeClip(2, [[0, 60, 24], [384, 62, 24]], 'A');
     p = setClip(p, 't4', 0, A);
@@ -197,13 +197,14 @@ describe('Sequencer: live launcher', () => {
     seq.start(0);
     const e1 = runTo(seq, 0, 0.5);
     expect(seq.launchClip('t4', 0, 0.5).atTick).toBe(384);
+    expect(seq.getTrackState('t4').queued).toBeNull();
     const e2 = runTo(seq, 0.5, 4.5);
-    expect(ofKind(e2, 'launch')).toMatchObject([{ tick: 384, slot: 0, clipId: A.id }]);
-    // Restarted from the top at 384: pitch 60 there, not A's second bar.
+    expect(ofKind(e2, 'launch')).toEqual([]);
+    // A's second bar at 384, not its first again.
     expect(notesOf([...e1, ...e2], 't4').map((n) => [n.tick, n.pitch])).toEqual([
       [0, 60],
-      [384, 60],
-      [768, 62],
+      [384, 62],
+      [768, 60],
     ]);
   });
 
@@ -315,10 +316,10 @@ describe('Sequencer: live launcher', () => {
   it('hands out the end of a song once, also when invalidated just after it', () => {
     let p = makeProject(120);
     p = setClip(p, 't1', 0, makeClip(1, [[0, 0], [336, 1]]));
-    p.arrangement = { tailSeconds: 1, blocks: [{ id: 'b', sceneId: p.scenes[0].id, repeats: 1 }] };
+    p.arrangement = { tailSeconds: 1, regions: [{ id: 'r', trackId: 't1', clipId: p.tracks[0].clips[0]!.id, start: 0, bars: 1, offset: 0 }], sections: [] };
     const run = (from: number): { first: SeqEvent[]; again: SeqEvent[] } => {
       const seq = new Sequencer({ getProject: () => p });
-      seq.start(0, { mode: { kind: 'song', fromBlock: 0 } });
+      seq.start(0, { mode: { kind: 'song', fromBar: 0 } });
       const first = seq.process(2.1); // the end (tick 384, 2 s) is out
       seq.invalidate(from);
       return { first, again: seq.process(2.5) };
@@ -737,7 +738,7 @@ describe('Sequencer: pause and resume', () => {
     ]);
   });
 
-  it('song mode continues from the same block and bar', () => {
+  it('song mode continues from the same bar, every clip in phase', () => {
     let p = makeProject(120);
     const intro = makeClip(1, [[0, 36]], 'intro');
     const groove = makeClip(1, [[0, 40], [192, 41]], 'groove');
@@ -745,17 +746,19 @@ describe('Sequencer: pause and resume', () => {
     p = setClip(p, 't1', 0, intro);
     p = setClip(p, 't1', 1, groove);
     p = setClip(p, 't6', 1, pad);
-    p.arrangement = { tailSeconds: 1, blocks: [{ id: 'a', sceneId: p.scenes[0].id, repeats: 1 }, { id: 'b', sceneId: p.scenes[1].id, repeats: 2 }] };
+    // Intro over bar 1; the groove and the 2-bar pad over bars 2–5.
+    const at = (trackId: string, clip: typeof intro, start: number, bars: number) => ({ id: `${trackId}@${start}`, trackId, clipId: clip.id, start, bars, offset: 0 });
+    p.arrangement = { tailSeconds: 1, regions: [at('t1', intro, 0, 1), at('t1', groove, 1, 4), at('t6', pad, 1, 4)], sections: [] };
     const seq = new Sequencer({ getProject: () => p });
-    seq.start(0, { mode: { kind: 'song', fromBlock: 0 } });
+    seq.start(0, { mode: { kind: 'song', fromBar: 0 } });
     runTo(seq, 0, sec(1000) + LOOKAHEAD);
-    expect(seq.pause(sec(1000))).toBe(true); // block b, second bar of the 2-bar pad
-    expect(seq.mode).toEqual({ kind: 'song', fromBlock: 0 });
+    expect(seq.pause(sec(1000))).toBe(true); // bar 3, the second bar of the 2-bar pad
+    expect(seq.mode).toEqual({ kind: 'song', fromBar: 0 });
+    expect(seq.songBarAt(seq.getPosition(sec(1000)).tick)).toBeCloseTo(1000 / 384, 9);
     seq.resume(20);
-    expect(seq.mode).toEqual({ kind: 'song', fromBlock: 0 });
+    expect(seq.mode).toEqual({ kind: 'song', fromBar: 0 });
     const after = runTo(seq, 20, 30);
-    // No block or launch is announced again: block b (2 bars x 2) simply carries on, its clips in phase.
-    expect(ofKind(after, 'block')).toEqual([]);
+    // No launch is announced again: the regions simply carry on, their clips in phase.
     expect(ofKind(after, 'launch')).toEqual([]);
     expect(notesOf(after).map((n) => [n.trackId, n.tick])).toEqual([
       ['t1', 1152],
@@ -834,10 +837,11 @@ describe('Sequencer: pause and resume', () => {
     seq.resume(5);
     expect(notesOf(runTo(seq, 5, 7), 't5')).toEqual([]);
     // A song paused right at its end stops instead.
-    const song = { ...p, arrangement: { tailSeconds: 1, blocks: [{ id: 'a', sceneId: p.scenes[0].id, repeats: 1 }] } };
+    const regions = p.tracks.flatMap((t) => (t.clips[0] ? [{ id: t.id, trackId: t.id, clipId: t.clips[0].id, start: 0, bars: 3, offset: 0 }] : []));
+    const song = { ...p, arrangement: { tailSeconds: 1, regions, sections: [] } };
     const s2 = new Sequencer({ getProject: () => song });
-    s2.start(0, { mode: { kind: 'song', fromBlock: 0 } });
-    runTo(s2, 0, 7); // 3 bars (the longest clip in the row) = 6 s
+    s2.start(0, { mode: { kind: 'song', fromBar: 0 } });
+    runTo(s2, 0, 7); // 3 bars = 6 s
     expect(s2.ended).toBe(true);
     expect(s2.pause(6.9)).toBe(false);
   });
@@ -919,24 +923,31 @@ describe('Sequencer: the launcher follows moved clips', () => {
     expect(after[0].time).toBeCloseTo(10 + sec(384 - 192), 9);
   });
 
-  it('a playing song keeps its scenes when the rows are reordered', () => {
+  it('a playing song keeps playing the same clips when the rows are reordered (its regions name clips, not rows)', () => {
     let p = makeProject(120);
     const intro = makeClip(1, [[0, 36]], 'intro');
     const groove = makeClip(1, [[0, 40]], 'groove');
     p = setClip(setClip(p, 't1', 0, intro), 't1', 1, groove);
-    p.arrangement = { tailSeconds: 1, blocks: [{ id: 'a', sceneId: p.scenes[0].id, repeats: 1 }, { id: 'b', sceneId: p.scenes[1].id, repeats: 1 }] };
+    p.arrangement = {
+      tailSeconds: 1,
+      regions: [
+        { id: 'a', trackId: 't1', clipId: intro.id, start: 0, bars: 1, offset: 0 },
+        { id: 'b', trackId: 't1', clipId: groove.id, start: 1, bars: 1, offset: 0 },
+      ],
+      sections: [],
+    };
     const h = new Holder(p);
     const seq = new Sequencer({ getProject: h.get });
-    seq.start(0, { mode: { kind: 'song', fromBlock: 0 } });
+    seq.start(0, { mode: { kind: 'song', fromBar: 0 } });
     runTo(seq, 0, 0.3);
     // Swap rows 0 and 1 (scenes and clips together).
     h.project = { ...h.project, scenes: [h.project.scenes[1], h.project.scenes[0], ...h.project.scenes.slice(2)] };
     h.project = setClip(setClip(h.project, 't1', 0, groove), 't1', 1, intro);
-    seq.relocateSongRows(new Map([[0, 1], [1, 0]]));
     seq.relocateSlots('t1', new Map([[0, 1], [1, 0]]), 0.3);
     seq.invalidate(0.3);
     const after = runTo(seq, 0.3, 5);
     expect(notesOf(after).map((n) => [n.tick, n.clipId])).toEqual([[384, groove.id]]);
-    expect(ofKind(after, 'block').map((b) => [b.tick, b.sceneRow])).toEqual([[384, 0]]);
+    // The groove plays from its new pad (row 0 now).
+    expect(ofKind(after, 'launch').map((l) => [l.tick, l.slot, l.clipId])).toEqual([[384, 0, groove.id]]);
   });
 });

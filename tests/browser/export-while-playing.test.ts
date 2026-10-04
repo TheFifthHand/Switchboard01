@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { STALL_MESSAGE, Session } from '../../src/app/session';
 import { getStarter } from '../../src/content/starters';
+import { sceneRegions } from '../../src/project/arrangement';
 import { deleteDb } from '../../src/persistence/db';
 
 const rt = () => runtimeStore.getState();
@@ -26,7 +27,7 @@ function block(ms: number): void {
 let live: Session[] = [];
 beforeEach(async () => {
   await deleteDb();
-  patchRuntime({ stalled: null, playing: false, paused: false, mode: 'live', songBlock: null, songBlockId: null });
+  patchRuntime({ stalled: null, playing: false, paused: false, mode: 'live', songCursor: 0 });
 });
 afterEach(async () => {
   for (const s of live) s.dispose();
@@ -97,16 +98,20 @@ describe('export while the music plays', () => {
   }, 90000);
 
   it('the song playing while part of it is exported, with a slow start: the song plays on', async () => {
-    const s = new Session(getStarter('house')!.build());
+    // The starter's groove for 32 bars (longer than any export takes), then its lift.
+    const p = getStarter('house')!.build();
+    let n = 0;
+    const id = () => `r${++n}`;
+    p.arrangement = { tailSeconds: 1, sections: [], regions: [...sceneRegions(p, 1, 0, id, 32), ...sceneRegions(p, 2, 32, id, 4)] };
+    const s = new Session(p);
     live.push(s);
     expect(await s.startAudio()).toBe(true);
-    await s.playSong(0);
+    await s.playSong({ fromBar: 0 });
     await sleep(400);
     expect(rt()).toMatchObject({ playing: true, mode: 'song' });
-    const blocks = s.store.getState().arrangement.blocks;
     let first = true;
     const blob = await s.renderWav({
-      source: { kind: 'songRange', fromBlockId: blocks[0].id, toBlockId: blocks[0].id },
+      source: { kind: 'songRange', fromBar: 0, toBar: 4 },
       sampleRate: 44100,
       bitDepth: 16,
       tailSeconds: 0,

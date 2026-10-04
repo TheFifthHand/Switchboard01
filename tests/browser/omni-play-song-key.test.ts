@@ -1,7 +1,8 @@
 /**
- * The transport's Play key and Space in Arrange play the song (from the loop
- * when one is set); in the other views they play the pads. A pause resumes
- * whatever was playing. In Arrange the key says so: its name and tip are
+ * The transport's Play key and Space in the Song view play the song (from
+ * its cursor, or the loop when one is set); in the other views they play the
+ * pads. A pause resumes whatever was playing. In the Song view the key says
+ * so: its name and tip are
  * "Play song" and the word "song" is drawn in the key (its width unchanged);
  * the state word reads "Song" while the song plays. Stop ends the song and
  * Export opens with the song chosen there. With the real engine.
@@ -15,6 +16,7 @@ import { session } from '../../src/app/instance';
 import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import type { BootInfo } from '../../src/app/session';
 import { deleteDb } from '../../src/persistence/db';
+import { songBars } from '../../src/project/arrangement';
 import { setGuideDone, setPadMode, setTipsEnabled, setUiMode, setView } from '../../src/state/uiStore';
 import { cleanup, mount, nextFrame, wait } from './ui-harness';
 
@@ -29,7 +31,7 @@ beforeEach(async () => {
     setUiMode('simple');
     setView('play');
     setPadMode('loops');
-    patchRuntime({ playing: false, paused: false, recording: 'off', notice: null, mode: 'live', songLoop: null });
+    patchRuntime({ playing: false, paused: false, recording: 'off', notice: null, mode: 'live', songLoop: null, songCursor: 0 });
   });
   boot = await session.boot();
 });
@@ -96,8 +98,8 @@ const description = (el: Element) =>
     .map((id) => document.getElementById(id)?.textContent ?? '')
     .join(' ');
 
-describe('Play and Space in Arrange', () => {
-  it('the key says Play song in Arrange, at the same width; Play elsewhere', async () => {
+describe('Play and Space in the Song view', () => {
+  it('the key says Play song in the Song view, at the same width; Play elsewhere', async () => {
     await openApp();
     const width = playKey().getBoundingClientRect().width;
     expect(playKey().getAttribute('aria-label') ?? playKey().textContent).toBe('Play');
@@ -123,13 +125,13 @@ describe('Play and Space in Arrange', () => {
     await act(async () => {
       await wait(60);
     });
-    const blocks = session.store.getState().arrangement.blocks;
-    expect(blocks.length).toBeGreaterThan(2);
+    expect(songBars(session.store.getState())).toBeGreaterThan(12);
+    const startBar = () => session.sequencer!.songPasses()![0].from / 384;
 
-    // The key: the song, from the first block.
+    // The key: the song, from its cursor (bar 1).
     await real(() => userEvent.click(playKey()));
     await until(() => rt().playing && rt().mode === 'song', 'the song to play');
-    expect(rt().songBlock).toBe(0);
+    expect(startBar()).toBe(0);
     expect(stateWord()).toBe('Song');
     // Pause and resume: the song carries on (Space this time).
     await real(() => userEvent.keyboard(' '));
@@ -141,14 +143,14 @@ describe('Play and Space in Arrange', () => {
     act(() => session.stop());
     await until(() => !rt().playing && !rt().paused, 'stop');
 
-    // With a loop set, Space starts at the loop.
+    // With a loop set (the cursor outside it), Space starts at the loop.
     act(() => {
-      session.setSongLoop({ fromBlockId: blocks[2].id, toBlockId: blocks[2].id });
+      session.setSongLoop({ fromBar: 8, toBar: 12 });
     });
     (document.activeElement as HTMLElement | null)?.blur();
     await real(() => userEvent.keyboard(' '));
     await until(() => rt().playing && rt().mode === 'song', 'the song from the loop');
-    expect(rt().songBlockId ?? blocks[rt().songBlock ?? -1]?.id).toBe(blocks[2].id);
+    expect(startBar()).toBe(8);
     act(() => session.stop());
     await until(() => !rt().playing, 'stop');
     act(() => session.setSongLoop(null));
@@ -164,7 +166,7 @@ describe('Play and Space in Arrange', () => {
     expect(stateWord()).toBe('Playing');
   });
 
-  it('Stop and Export in the transport act on the song in Arrange (real clicks)', async () => {
+  it('Stop and Export in the transport act on the song in the Song view (real clicks)', async () => {
     await openApp();
     act(() => setView('arrange'));
     await act(async () => {

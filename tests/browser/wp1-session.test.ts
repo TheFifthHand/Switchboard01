@@ -29,7 +29,7 @@ function session(p: Project = house()): Session {
 
 beforeEach(async () => {
   await deleteDb();
-  patchRuntime({ muteAll: false, stalled: null, playing: false, mode: 'live', replayId: null, songBlock: null, audio: 'off', audioMessage: null });
+  patchRuntime({ muteAll: false, stalled: null, playing: false, mode: 'live', replayId: null, songCursor: 0, audio: 'off', audioMessage: null });
 });
 
 afterEach(async () => {
@@ -157,9 +157,9 @@ describe('A busy moment in a visible tab (perf-01)', () => {
 });
 
 describe('Resume after a stall', () => {
-  it('resumes the song from the block that was playing', async () => {
+  it('resumes the song from the bar where it stopped', async () => {
     const s = session();
-    await s.playSong(1);
+    await s.playSong({ fromBar: 4 });
     expect(rt().mode).toBe('song');
     await sleep(250);
     s.transport!.simulateStall(700);
@@ -171,7 +171,8 @@ describe('Resume after a stall', () => {
     expect(rt().stalled).toBeNull();
     expect(rt().playing).toBe(true);
     expect(rt().mode).toBe('song');
-    expect(rt().songBlock).toBe(1);
+    // From the bar the music had reached (bar 5), not from the top.
+    expect(s.sequencer!.songPasses()![0].from).toBe(4 * 384);
     expect(s.transport!.playing).toBe(true);
   });
 
@@ -206,7 +207,7 @@ describe('Resume after a stall', () => {
 
   it('Resume only clears the banner when playback was restarted another way (Record Notes keeps recording)', async () => {
     const s = session();
-    await s.playSong(1);
+    await s.playSong({ fromBar: 4 });
     await sleep(250);
     s.transport!.simulateStall(700);
     await until(() => rt().stalled !== null, 'the stall');
