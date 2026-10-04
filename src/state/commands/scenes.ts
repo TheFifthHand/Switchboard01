@@ -1,10 +1,10 @@
 /**
  * Scene edits. Scenes are clip rows: scene i is slot i of every part, so a
  * row's clips move, copy and go with it. A project has MIN_SCENES to
- * MAX_SCENES scenes (schema v3). Song blocks point at scenes by id, so adding,
- * moving or copying a row never changes what the song plays.
+ * MAX_SCENES scenes (schema v3). The song's regions point at clips by id, so
+ * adding, moving or copying a row never changes what the song plays; deleting
+ * one takes its clips' regions out of the song (see keepSongWithClips).
  */
-import { blockParts } from '../../project/arrangement';
 import { cloneClipWithNewIds } from '../../project/clone';
 import { uid } from '../../project/factory';
 import { MAX_SCENES, MIN_SCENES, type Clip, type Id, type Project, type Scene } from '../../project/types';
@@ -34,8 +34,8 @@ function moveItem<T>(list: T[], from: number, to: number): void {
 
 /**
  * Reorder the scene rows: the scene at `fromRow` moves to `toRow` and every
- * part's clip in that row moves with it, in one undo step. Song blocks point
- * at scenes by id, so the song keeps playing the same music.
+ * part's clip in that row moves with it, in one undo step. The song's regions
+ * point at clips by id, so the song keeps playing the same music.
  */
 export function moveScene(store: ProjectStore, fromRow: number, toRow: number): CommandResult {
   const p = store.getState();
@@ -91,14 +91,14 @@ export interface SceneResult extends CommandResult {
 }
 
 /* ------------------------------------------------------------------ */
-/* Insert, duplicate, capture, make from a block                       */
+/* Insert, duplicate, capture                                          */
 /* ------------------------------------------------------------------ */
 
 /**
  * Insert an empty scene row at `at` (0 = before the first row, the scene
  * count = after the last; default: the end), in one undo step. Every part
- * gets an empty slot there; the rows after it move down one (song blocks keep
- * playing the same scenes).
+ * gets an empty slot there; the rows after it move down one (the song keeps
+ * playing the same clips).
  */
 export function insertScene(store: ProjectStore, at?: number, name?: string): SceneResult {
   const p = store.getState();
@@ -152,91 +152,38 @@ export function captureScene(store: ProjectStore, slots: Readonly<Record<Id, num
   return { ...r, sceneId: scene.id, row };
 }
 
-/**
- * "Make a scene from this block": a new last scene holding a copy of the clip
- * every part plays in the block (its scene's clip, a clip layered in from
- * another scene, nothing for a part switched off), named after the block
- * ("Drop" for a block called Drop, else like "Groove 2"). The block then
- * plays the new scene with no part changes, so it sounds the same, and its
- * parts can be edited as one scene in Play. One undo step.
- */
-export function sceneFromBlock(store: ProjectStore, blockId: Id): SceneResult {
-  const p = store.getState();
-  const b = p.arrangement.blocks.find((x) => x.id === blockId);
-  if (!b) return NOT_FOUND('block');
-  const own = p.scenes.find((s) => s.id === b.sceneId);
-  if (!own) return refuse('invalid', 'The scene this block played was deleted.');
-  if (p.scenes.length >= MAX_SCENES) return refuse('limit', FULL_MESSAGE);
-  const parts = blockParts(p, b);
-  if (parts.every((x) => x.clip === null)) return refuse('empty', 'No part plays in this block, so there is nothing to make a scene of.');
-  const clips = parts.map((x) => (x.clip ? cloneClipWithNewIds(x.clip) : null));
-  const row = p.scenes.length;
-  const scene: Scene = { id: uid('scene'), name: uniqueSceneName(p, b.label || own.name, !!b.label) };
-  const r = run(store, 'scene:Make a scene from a block', (d) => {
-    insertRow(d, row, scene, clips);
-    const x = d.arrangement.blocks.find((y) => y.id === blockId);
-    if (!x) return;
-    x.sceneId = scene.id;
-    delete x.parts;
-  });
-  return { ...r, sceneId: scene.id, row };
-}
-
 /* ------------------------------------------------------------------ */
 /* Delete                                                              */
 /* ------------------------------------------------------------------ */
 
 export interface DeleteSceneResult extends CommandResult {
-  /** Song blocks that play the scene (the delete is refused without `removeBlocks`; with it they are removed). */
-  blocksUsing?: Id[];
-  /** Song blocks that layer one of its clips into another scene (their part change is cleared). */
-  blocksLayering?: Id[];
+  /** Song regions that played the scene's clips and left the song with it. */
+  regions?: number;
 }
 
-/** The song blocks that play a scene, and those that layer one of its clips in (pure). */
-export function sceneUse(p: Project, sceneId: Id): { blocksUsing: Id[]; blocksLayering: Id[] } {
-  const blocksUsing: Id[] = [];
-  const blocksLayering: Id[] = [];
-  for (const b of p.arrangement.blocks) {
-    if (b.sceneId === sceneId) blocksUsing.push(b.id);
-    else if (b.parts && Object.values(b.parts).includes(sceneId)) blocksLayering.push(b.id);
-  }
-  return { blocksUsing, blocksLayering };
+/** What uses a scene (pure): how many song regions play one of its clips (0 for an unknown scene). */
+export function sceneUse(p: Project, sceneId: Id): { regions: number } {
+  const row = p.scenes.findIndex((s) => s.id === sceneId);
+  const clips = new Set<Id>();
+  if (row >= 0) for (const t of p.tracks) if (t.clips[row]) clips.add(t.clips[row]!.id);
+  return { regions: p.arrangement.regions.filter((r) => clips.has(r.clipId)).length };
 }
 
 /**
  * Delete a scene row and its clips (one undo step). The last scene cannot be
- * deleted. When song blocks play the scene, or layer one of its clips in, the
- * delete is refused and says so (`blocksUsing`, `blocksLayering`), unless
- * `removeBlocks`: then the blocks that play it leave the song and the part
- * changes that layered it in are cleared (those parts follow their block's
- * scene again).
+ * deleted. The song regions that play its clips leave the song in the same
+ * step (`regions`: how many; the UI asks first, see sceneUse), so Undo
+ * brings both back.
  */
-export function deleteScene(store: ProjectStore, row: number, opts: { removeBlocks?: boolean } = {}): DeleteSceneResult {
+export function deleteScene(store: ProjectStore, row: number): DeleteSceneResult {
   const p = store.getState();
   const scene = Number.isInteger(row) ? p.scenes[row] : undefined;
   if (!scene) return NOT_FOUND('scene');
   if (p.scenes.length <= MIN_SCENES) return refuse('invalid', 'A project needs at least one scene.');
   const use = sceneUse(p, scene.id);
-  const n = use.blocksUsing.length;
-  const m = use.blocksLayering.length;
-  if ((n || m) && !opts.removeBlocks) {
-    const plays = n ? `${n === 1 ? '1 song block plays' : `${n} song blocks play`} it` : '';
-    const layers = m ? `${m === 1 ? '1 block layers' : `${m} blocks layer`} one of its clips in` : '';
-    const what = [plays, layers].filter(Boolean).join(' and ');
-    const fix = n ? 'Delete those blocks with it' : 'Delete it and those parts follow their own scene';
-    return { ...refuse('in-use', `${scene.name} is in the song: ${what}. ${fix}, or change the song first.`), ...use };
-  }
-  const gone = new Set(use.blocksUsing);
   const r = run(store, 'scene:Delete scene', (d) => {
     d.scenes.splice(row, 1);
     for (const t of d.tracks) t.clips.splice(row, 1);
-    if (gone.size) d.arrangement.blocks = d.arrangement.blocks.filter((b) => !gone.has(b.id));
-    for (const b of d.arrangement.blocks) {
-      if (!b.parts || !Object.values(b.parts).includes(scene.id)) continue;
-      for (const k of Object.keys(b.parts)) if (b.parts[k] === scene.id) delete b.parts[k];
-      if (!Object.keys(b.parts).length) delete b.parts;
-    }
   });
-  return { ...r, ...use };
+  return { ...r, regions: r.changed ? use.regions : 0 };
 }

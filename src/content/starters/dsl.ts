@@ -14,6 +14,7 @@ import { BUILTIN_SAMPLES, KITS, SYNTH_PRESETS } from '../catalog';
 import { applyKitToProject, applyPresetToProject, applySamplerToProject } from '../presets';
 import { DELAY_ID, REVERB_ID, createClip, createProject, moduleId, uid } from '../../project/factory';
 import { CHANNEL_PARAMS, DRUM_VOICE_PARAM_SPECS, INSTRUMENT_PARAMS, MASTER_VOLUME_SPEC, MODULE_PARAMS, clampParam, specById } from '../../project/params';
+import { songFromBlocks } from '../../project/migrate';
 import { hashString } from '../../project/rng';
 import { keyLabel } from '../../music/scales';
 import {
@@ -543,7 +544,10 @@ export interface StarterSpec {
   parts: Record<TrackRole, PartDef>;
   reverb?: ParamValues;
   delay?: ParamValues;
-  /** Song order as [sceneRow, repeats]. */
+  /**
+   * Song order as [sceneRow, repeats]: each entry plays that scene row `repeats` times its
+   * length (its longest clip), under a section named after the scene.
+   */
   arrangement: readonly (readonly [row: number, repeats: number])[];
   tailSeconds: number;
 }
@@ -621,14 +625,15 @@ export function buildStarter(spec: StarterSpec): Project {
   if (spec.reverb) setModuleParams(project, REVERB_ID, spec.reverb);
   if (spec.delay) setModuleParams(project, DELAY_ID, spec.delay);
 
-  project.arrangement = {
-    blocks: spec.arrangement.map(([row, repeats]) => {
-      const scene = project.scenes[row];
-      if (!scene) throw new Error(`Starter DSL: ${spec.id} arrangement refers to scene row ${row}.`);
-      return { id: uid('blk'), sceneId: scene.id, repeats };
-    }),
-    tailSeconds: spec.tailSeconds,
-  };
+  // The song is written as [row, repeats] entries and laid out by the same rule that upgrades a
+  // version-3 song: a section per entry, named after its scene, over regions of that row's clips.
+  const entries = spec.arrangement.map(([row, repeats], i) => {
+    const scene = project.scenes[row];
+    if (!scene) throw new Error(`Starter DSL: ${spec.id} arrangement refers to scene row ${row}.`);
+    return { id: `entry${i}`, sceneId: scene.id, repeats };
+  });
+  const song = songFromBlocks(project, entries, { section: () => uid('sec'), region: () => uid('rg') });
+  project.arrangement = { ...song, tailSeconds: spec.tailSeconds };
   return project;
 }
 

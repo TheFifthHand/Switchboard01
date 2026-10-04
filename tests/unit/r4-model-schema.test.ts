@@ -1,15 +1,17 @@
 /**
- * Project schema v3: up to 8 scenes, clips of up to 8 bars, per-clip
- * recordings, song moves and designed big-knob positions. Version-2 projects
- * (and .sb01.zip files) still open, unchanged; an older build refuses a
- * version-3 project instead of losing what it cannot hold.
+ * Project schema v3 and v4: up to 8 scenes, clips of up to 8 bars, per-clip
+ * recordings, song moves and designed big-knob positions (v3); the song as
+ * loops and sections (v4, see r5-song-migrate.test.ts for the song's own
+ * upgrade). Version-2 projects (and .sb01.zip files) still open with their
+ * music unchanged; an older build refuses a newer project instead of losing
+ * what it cannot hold.
  */
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import { HOUSE } from '../../src/content/starters/house';
 import { importBundle } from '../../src/persistence/bundle';
 import { createClip, createProject } from '../../src/project/factory';
-import { MIGRATIONS, NEWER_VERSION_MESSAGE, migrateProject, runMigrations } from '../../src/project/migrate';
+import { MIGRATIONS, NEWER_VERSION_MESSAGE, migrateProject, runMigrations, songFromBlocks } from '../../src/project/migrate';
 import {
   CLIP_BAR_CHOICES,
   DEFAULT_SCENE_ROWS,
@@ -24,6 +26,7 @@ import {
   type Project,
 } from '../../src/project/types';
 import { VALIDATION_LIMITS, sanitizeClip, validateProject } from '../../src/project/validate';
+import SONGS_2_2 from './fixtures/v3-songs-2.2.json';
 
 const json = <T>(v: T): T => JSON.parse(JSON.stringify(v));
 /** A copy to damage on purpose (untyped JSON). */
@@ -37,17 +40,23 @@ function check(p: unknown) {
 
 const sceneNames = (n: number) => Array.from({ length: n }, (_, i) => `Scene ${i + 1}`);
 
-/** A version-2 House export, as the previous release wrote it (no designed positions, version 2). */
+/** A version-2 House export, as an older release wrote it (no designed positions, a song of blocks, version 2). */
 function houseV2(): Record<string, unknown> {
-  const p = json(HOUSE.build()) as unknown as Record<string, unknown> & { tracks: Record<string, unknown>[] };
+  const p = json((SONGS_2_2 as Record<string, unknown>).house) as Record<string, unknown> & { tracks: Record<string, unknown>[] };
   for (const t of p.tracks) delete t.macroHome;
   p.version = 2;
   return p;
 }
 
-describe('schema v3 constants', () => {
+/** What upgrading changes: the song of blocks becomes loops and sections, by the same rule as songFromBlocks. */
+function upgradedSong(old: Record<string, unknown>) {
+  const a = old.arrangement as { blocks: unknown[]; tailSeconds: number };
+  return { ...songFromBlocks(old, a.blocks), tailSeconds: a.tailSeconds };
+}
+
+describe('schema constants', () => {
   it('a project holds 1 to 8 scenes and clips of 1 to 8 bars; new projects start with 4 scenes', () => {
-    expect(PROJECT_VERSION).toBe(3);
+    expect(PROJECT_VERSION).toBe(4);
     expect([MIN_SCENES, MAX_SCENES, DEFAULT_SCENE_ROWS]).toEqual([1, 8, 4]);
     // The deprecated alias still names the default, so older view code compiles.
     expect(SCENE_ROWS).toBe(DEFAULT_SCENE_ROWS);
@@ -64,31 +73,35 @@ describe('schema v3 constants', () => {
 });
 
 describe('migration', () => {
-  it('opens a version-2 House export unchanged and saves it as version 3', () => {
+  it('opens a version-2 House export with everything but the song unchanged, and saves it as version 4', () => {
     const v2 = houseV2();
     const r = check(v2);
     expect(r.warnings).toEqual([]);
     expect(r.project.version).toBe(PROJECT_VERSION);
-    expect({ ...r.project, version: 2 }).toEqual(v2);
-    // Saved again, it is a version-3 project that opens as it is.
+    expect({ ...r.project, version: 2, arrangement: null }).toEqual({ ...v2, arrangement: null });
+    expect(r.project.arrangement).toEqual(upgradedSong(v2));
+    // Saved again, it is a version-4 project that opens as it is.
     expect(check(r.project).project).toEqual(r.project);
   });
 
-  it('every step upgrades one version, and the step to 3 changes nothing', () => {
-    expect(MIGRATIONS.map((m) => m.from)).toEqual([1, 2]);
+  it('every step upgrades one version; the step to 3 changes nothing and the step to 4 only the song', () => {
+    expect(MIGRATIONS.map((m) => m.from)).toEqual([1, 2, 3]);
     const v2 = houseV2();
+    const to3 = runMigrations(v2, MIGRATIONS, 3);
+    expect(to3.ok && to3.migrated).toBe(true);
+    if (to3.ok) expect({ ...to3.data, version: 2 }).toEqual(v2);
     const m = migrateProject(v2);
     expect(m.ok && m.migrated).toBe(true);
-    if (m.ok) expect({ ...m.data, version: 2 }).toEqual(v2);
+    if (m.ok) expect({ ...m.data, version: 2, arrangement: upgradedSong(v2) }).toEqual({ ...v2, arrangement: upgradedSong(v2) });
   });
 
-  it('an older build (made for version 2) refuses a version-3 project with the newer-version message', () => {
-    const v3 = json(HOUSE.build());
-    const olderBuild = runMigrations(v3, MIGRATIONS.filter((s) => s.from < 2), 2);
+  it('an older build (made for version 3) refuses a version-4 project with the newer-version message', () => {
+    const v4 = json(HOUSE.build());
+    const olderBuild = runMigrations(v4, MIGRATIONS.filter((s) => s.from < 3), 3);
     expect(olderBuild).toEqual({ ok: false, error: NEWER_VERSION_MESSAGE });
     expect(NEWER_VERSION_MESSAGE).toBe('This project was made with a newer version of Omni Song.');
     // And this build refuses whatever comes after it.
-    expect(validateProject({ ...v3, version: PROJECT_VERSION + 1 })).toEqual({ ok: false, errors: [NEWER_VERSION_MESSAGE] });
+    expect(validateProject({ ...v4, version: PROJECT_VERSION + 1 })).toEqual({ ok: false, errors: [NEWER_VERSION_MESSAGE] });
   });
 
   it('still imports a version-2 project from a .sb01.zip file', async () => {
@@ -199,11 +212,22 @@ describe('a clip that plays its own recording (Clip.sample)', () => {
   });
 });
 
-describe('song moves on blocks', () => {
+/** A new project with three sections to carry song moves. */
+function withSections(): Project {
+  const p = createProject({ now: 0 });
+  p.arrangement.sections = [
+    { id: 'sec_a', name: 'Intro', start: 0, bars: 4 },
+    { id: 'sec_b', name: 'Drop', start: 4, bars: 8 },
+    { id: 'sec_c', name: 'Outro', start: 12, bars: 4 },
+  ];
+  return p;
+}
+
+describe('song moves on sections', () => {
   it('keeps one move of each kind, with parts for filter rise and echo throw', () => {
-    const p = createProject({ now: 0 });
-    p.arrangement.blocks[0].moves = [{ id: 'mv_a', kind: 'fadeIn' }];
-    p.arrangement.blocks[2].moves = [
+    const p = withSections();
+    p.arrangement.sections[0].moves = [{ id: 'mv_a', kind: 'fadeIn' }];
+    p.arrangement.sections[2].moves = [
       { id: 'mv_b', kind: 'filterRise', parts: ['t4', 't5'] },
       { id: 'mv_c', kind: 'echoThrow' },
       { id: 'mv_d', kind: 'fadeOut' },
@@ -214,18 +238,18 @@ describe('song moves on blocks', () => {
   });
 
   it('drops unknown and repeated kinds, missing parts, parts on fades and repeated ids', () => {
-    const p = loose(createProject({ now: 0 }));
-    p.arrangement.blocks[0].moves = [
+    const p = loose(withSections());
+    p.arrangement.sections[0].moves = [
       { id: 'mv_a', kind: 'fadeIn', parts: ['t1'] },
       { id: 'mv_b', kind: 'spin' },
       { id: 'mv_c', kind: 'fadeIn' },
       { id: 'mv_d', kind: 'echoThrow', parts: ['t5', 'ghost', 't5'] },
       { id: 'mv_e', kind: 'filterRise', parts: ['ghost'] },
     ];
-    p.arrangement.blocks[1].moves = [{ id: 'mv_a', kind: 'fadeOut' }];
-    p.arrangement.blocks[2].moves = 'everything';
+    p.arrangement.sections[1].moves = [{ id: 'mv_a', kind: 'fadeOut' }];
+    p.arrangement.sections[2].moves = 'everything';
     const r = check(p);
-    const [a, b, c] = r.project.arrangement.blocks;
+    const [a, b, c] = r.project.arrangement.sections;
     expect(a.moves).toEqual([
       { id: 'mv_a', kind: 'fadeIn' },
       { id: 'mv_d', kind: 'echoThrow', parts: ['t5'] },
@@ -239,14 +263,14 @@ describe('song moves on blocks', () => {
   });
 
   it('an empty list of parts or of moves is left out, and the repair is said (never dropped silently)', () => {
-    const p = loose(createProject({ now: 0 }));
-    p.arrangement.blocks[0].moves = [{ id: 'mv_a', kind: 'filterRise', parts: [] }];
-    p.arrangement.blocks[1].moves = [];
+    const p = loose(withSections());
+    p.arrangement.sections[0].moves = [{ id: 'mv_a', kind: 'filterRise', parts: [] }];
+    p.arrangement.sections[1].moves = [];
     const r = check(p);
-    const [a, b] = r.project.arrangement.blocks;
+    const [a, b] = r.project.arrangement.sections;
     expect(a.moves).toEqual([{ id: 'mv_a', kind: 'filterRise' }]);
     expect(b.moves).toBeUndefined();
-    expect(r.warnings).toEqual(['Adjusted the parts a song move acts on.', 'Removed an empty list of song moves from a block.']);
+    expect(r.warnings).toEqual(['Adjusted the parts a song move acts on.', 'Removed an empty list of song moves from a section.']);
     // What validation keeps round-trips exactly.
     expect(check(JSON.parse(JSON.stringify(r.project))).warnings).toEqual([]);
   });

@@ -2,6 +2,12 @@
  * Clip slot edits: create, delete, rename, length, double, repeat, paste,
  * clear, copy, move between pads, replace notes, and a sampler clip's own
  * recording.
+ *
+ * The song follows in the same undo step (common.ts keepSongWithClips): a
+ * deleted clip's regions leave the song (a clip pasted or recorded over it
+ * takes them over), a clip moved to another part takes its regions to that
+ * part's row, and a new length keeps the regions' bars. A copy never adds
+ * loops to the song.
  */
 import { builtinSampleInfo } from '../../content/catalog';
 import { cloneClip, cloneClipWithNewIds, reIdNotes } from '../../project/clone';
@@ -300,6 +306,8 @@ export interface ClipMoveResult extends CommandResult {
  * moves (keeping its id); onto an occupied pad the two clips swap. Between
  * parts both must hold the same kind of clip (see clipDropProblem). The
  * launcher follows a moved clip within its part; see Session for playback.
+ * The song's regions follow the clip, to the other part's row when it moves
+ * there.
  */
 export function moveClip(store: ProjectStore, fromTrackId: Id, fromSlot: number, toTrackId: Id, toSlot: number): ClipMoveResult {
   const p = store.getState();

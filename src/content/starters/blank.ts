@@ -1,6 +1,6 @@
 /**
  * Blank project: eight parts with their default sounds, balanced faders, no
- * clips and an empty arrangement, ready for someone who wants to start from
+ * clips and an empty song, ready for someone who wants to start from
  * nothing.
  */
 import { kitInfo } from '../catalog';
@@ -50,7 +50,7 @@ export const BLANK: StarterDef = {
       if (kit) setInstrumentParams(project, track.id, { level: kit.level });
       setChannel(project, track.id, { level: BLANK_LEVELS[track.role] + channelLiftDb, pan: 0 });
     }
-    project.arrangement = { blocks: [], tailSeconds: 3 };
+    project.arrangement = { regions: [], sections: [], tailSeconds: 3 };
     return project;
   },
 };
