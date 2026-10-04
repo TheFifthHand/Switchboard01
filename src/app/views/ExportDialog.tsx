@@ -3,9 +3,9 @@
  * automation as playback (not a recording of the speakers) and saves a
  * stereo PCM WAV (24-bit by default; 16-bit files are dithered).
  *
- * Opened from Arrange (or while the song plays) it offers the song first.
- * With a song loop set, "Loop" exports the looped blocks once (with the
- * tail). Music playing on goes on while the export prepares and renders.
+ * Opened from the Song view (or while the song plays) it offers the song
+ * first: bar 1 to its end. With a song loop set, "Loop" exports the looped
+ * bars once ("Bars 9–16", with the tail). Music playing on goes on while the export prepares and renders.
  *
  * Output: the mix as heard (with the project's mastering), or the mix without
  * mastering (the output limiter and its ceiling stay). After a render a line
@@ -21,8 +21,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dialog, NumberField, SegmentedControl, Select, useToasts, type ToastApi } from '../../ui/components';
 import type { RenderSource } from '../../render/offline';
 import { setView, uiStore } from '../../state/uiStore';
-import { songBlocks } from '../../time/sequencer';
-import { songLoopRange } from '../../time/songLoop';
+import { songBars } from '../../project/arrangement';
+import { barRangeWords } from '../../time/songLoop';
 import { session, useProject } from '../instance';
 import { notify, runtimeStore, useRuntime } from '../runtime';
 import { formatSeconds } from '../session';
@@ -84,14 +84,11 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
   const projectName = useProject((p) => p.name);
   const performances = useProject((p) => p.performances);
   const scenes = useProject((p) => p.scenes);
-  const blocks = useProject((p) => p.arrangement.blocks.length);
+  const songLength = useProject(songBars);
   const defaultTail = useProject((p) => p.arrangement.tailSeconds);
   const songLoop = useRuntime((s) => s.songLoop);
-  // The loop's first and last block on the lane (1-based, as the lane counts them), or null.
-  const loopBlocks = useProject((p) => {
-    const r = songLoopRange(songBlocks(p), songLoop);
-    return r ? `${r[0] + 1}-${r[1] + 1}` : null;
-  });
+  // The looped bars as the ruler counts them ("Bars 9–16"), or null.
+  const loopBars = songLoop ? barRangeWords(songLoop.fromBar, songLoop.toBar) : null;
 
   const [source, setSource] = useState<SourceKey>('now');
   const [bars, setBars] = useState(8);
@@ -122,8 +119,8 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
     // Each export starts from the mix as heard: "without mastering" is a choice for one file, not a setting kept.
     setOutput('mix');
     const rt = runtimeStore.getState();
-    // From Arrange, or while the song plays or is paused, the song is what there is to export.
-    const song = blocks > 0 && (uiStore.getState().view === 'arrange' || (rt.mode === 'song' && (rt.playing || rt.paused)));
+    // From the Song view, or while the song plays or is paused, the song is what there is to export.
+    const song = songLength > 0 && (uiStore.getState().view === 'arrange' || (rt.mode === 'song' && (rt.playing || rt.paused)));
     const init = props.initialSource ?? (song ? 'song' : performances.length && rt.recording === 'off' ? `perf:${performances[performances.length - 1].id}` : 'now');
     setSource(init);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -141,26 +138,23 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
   const options = useMemo(() => {
     const o = [{ value: 'now', label: 'Clips playing now (loop)' }];
     for (let r = 0; r < scenes.length; r++) o.push({ value: `scene:${r}`, label: `Scene: ${scenes[r].name} (loop)` });
-    if (blocks) o.push({ value: 'song', label: 'Song (arrangement)' });
-    if (loopBlocks) {
-      const [a, b] = loopBlocks.split('-');
-      o.push({ value: 'loop', label: a === b ? `Loop (block ${a})` : `Loop (blocks ${a}–${b})` });
-    }
+    if (songLength) o.push({ value: 'song', label: `Song (${songLength} bar${songLength === 1 ? '' : 's'})` });
+    if (loopBars) o.push({ value: 'loop', label: `Loop (${loopBars.toLowerCase()})` });
     for (const p of performances) o.push({ value: `perf:${p.id}`, label: `Performance: ${p.name}` });
     return o;
-  }, [scenes, blocks, loopBlocks, performances]);
+  }, [scenes, songLength, loopBars, performances]);
 
   // The loop was cleared while it was chosen: the whole song instead.
   useEffect(() => {
-    if (source === 'loop' && !loopBlocks && progress === null) setSource(blocks ? 'song' : 'now');
-  }, [source, loopBlocks, blocks, progress]);
+    if (source === 'loop' && !loopBars && progress === null) setSource(songLength ? 'song' : 'now');
+  }, [source, loopBars, songLength, progress]);
 
   const renderSource = (): RenderSource => {
     if (source === 'song') return { kind: 'song' };
     if (source === 'loop') {
       if (!songLoop) throw new Error('No loop is set');
-      // The looped blocks once, as the song plays them there.
-      return { kind: 'songRange', fromBlockId: songLoop.fromBlockId, toBlockId: songLoop.toBlockId };
+      // The looped bars once, as the song plays them there.
+      return { kind: 'songRange', fromBar: songLoop.fromBar, toBar: songLoop.toBar };
     }
     if (source.startsWith('perf:')) return { kind: 'performance', performanceId: source.slice(5) };
     if (source.startsWith('scene:')) return { kind: 'scene', row: Number(source.slice(6)), bars };
@@ -177,7 +171,7 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
   const loopish = source === 'now' || source.startsWith('scene:');
   const nothingPlaying = source === 'now' && !(session.sequencer?.getLauncherSnapshot().some((e) => e.playing) ?? false);
   const label = options.find((o) => o.value === source)?.label ?? '';
-  const defaultFile = `${safeName(projectName)} - ${safeName(source === 'loop' && loopBlocks ? `Loop ${loopBlocks}` : label.replace(/^(Performance|Scene): /, '').replace(/ \(.*\)$/, ''))}`;
+  const defaultFile = `${safeName(projectName)} - ${safeName(source === 'loop' && loopBars ? loopBars : label.replace(/^(Performance|Scene): /, '').replace(/ \(.*\)$/, ''))}`;
   const busy = progress !== null;
   useEffect(() => {
     if (busy) progressRef.current?.scrollIntoView({ block: 'nearest' });

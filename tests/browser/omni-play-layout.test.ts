@@ -167,7 +167,7 @@ describe('Sizes and visibility', () => {
         expect(smallTargets(keyboard(), 32).filter((t) => !/^[A-G]#?\d/.test(t)), `${mode} keyboard controls`).toEqual([]);
         // Primary controls: 40 px.
         const tabs = [...transport().querySelectorAll<HTMLElement>('[role="tab"]')];
-        expect(tabs.map((t) => t.textContent)).toEqual(['Play', 'Shape', 'Arrange', 'Mix']);
+        expect(tabs.map((t) => t.textContent)).toEqual(['Play', 'Shape', 'Song', 'Mix']);
         for (const el of [...tabs, transport().querySelector<HTMLElement>('button[aria-keyshortcuts="Space"]'), named(transport(), 'Stop'), named(panel(), 'Mute'), named(panel(), 'Solo'), named(panel(), /^Change instrument/)]) {
           const r = el!.getBoundingClientRect();
           expect(Math.min(r.width, r.height), el!.getAttribute('aria-label') ?? el!.textContent ?? '').toBeGreaterThanOrEqual(40);

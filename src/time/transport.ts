@@ -4,8 +4,8 @@
  * A Web Worker ticker (every `interval` ms) asks the sequencer for every
  * event up to `ctx.currentTime + lookahead` and schedules it on the engine.
  * The audio clock is the only timing authority: the ticker only decides
- * *when we look ahead*, never when anything sounds. UI events (launch, block,
- * end, beat, and arp notes for Record Notes) are held until the audio clock
+ * *when we look ahead*, never when anything sounds. UI events (launch, end,
+ * beat, and arp notes for Record Notes) are held until the audio clock
  * reaches their time.
  *
  * Scheduling margin: 300 ms ahead normally, so the app's own main-thread
@@ -19,7 +19,7 @@
  *
  * Falling behind: a note whose start has passed is dropped, never played
  * late. In a visible tab whose audio is running, a missed stretch is skipped
- * (Sequencer.skipTo: launches, song blocks and loop phases carry on in time,
+ * (Sequencer.skipTo: launches, the song and loop phases carry on in time,
  * a 'skipped' event tells how late it was) and playback goes on. Only a
  * hidden (throttled) tab or a suspended audio device stops playback
  * ('stalled'), coherently and without a backlog.
@@ -86,7 +86,7 @@ export interface DispatcherOptions {
   countInClicks: boolean;
   /** Run `fn` when the audio clock reaches `time`. */
   at: (time: number, fn: () => void) => void;
-  /** launch / block / end / beat events, for the UI or the driver. */
+  /** launch / end / beat events, for the UI or the driver. */
   onEvent: (e: SeqEvent) => void;
   /** Every note sent to the engine (after it is scheduled). */
   onNote?: (e: NoteEvent) => void;
@@ -215,7 +215,6 @@ export class EngineDispatcher {
           // Swing is already part of every note time; no engine module depends on it.
           break;
         case 'launch':
-        case 'block':
         case 'end':
           this.o.onEvent(ev);
           break;
@@ -296,7 +295,6 @@ export class EngineDispatcher {
 
 export interface TransportEventMap {
   launch: Extract<SeqEvent, { kind: 'launch' }>;
-  block: Extract<SeqEvent, { kind: 'block' }>;
   end: Extract<SeqEvent, { kind: 'end' }>;
   beat: BeatEvent;
   /**
@@ -309,11 +307,11 @@ export interface TransportEventMap {
   /**
    * Playback stopped because the scheduler fell behind in a hidden
    * (throttled) tab ('throttled') or with the audio device suspended
-   * ('suspended'); offer Resume. `songBlockId`: in song mode, the block where
-   * the music stopped (the block taking over when the playing one had just
-   * been deleted), found before the stop cleared the song; else null.
+   * ('suspended'); offer Resume. `songBar`: in song mode, the bar of the song
+   * where the music stopped (fractional), found before the stop cleared the
+   * song; else null.
    */
-  stalled: { reason: 'throttled' | 'suspended'; lateBy: number; tick: number; songBlockId: Id | null };
+  stalled: { reason: 'throttled' | 'suspended'; lateBy: number; tick: number; songBar: number | null };
   /**
    * The main thread was busy for longer than the scheduling margin in a
    * visible tab: the missed stretch (`lateBy` seconds) was skipped, notes in
@@ -482,7 +480,7 @@ export class RealtimeTransport {
     this.songGainMoved = false;
     this.songGainHeld = false;
     // Integrated loudness and true peak measure this playback: every start (a replay of a take
-    // recorded mid-song, the song from a later block) begins a new measurement; resume() keeps counting.
+    // recorded mid-song, the song from a later bar) begins a new measurement; resume() keeps counting.
     this.engine.resetLoudness?.();
     this.horizon = now;
     this.schedule(now);
@@ -545,6 +543,35 @@ export class RealtimeTransport {
     this.schedule(now);
     this.ensureTicker();
     return true;
+  }
+
+  /**
+   * Hold paused at a new start position: as if `start(opts)` had begun and
+   * been paused at once, before anything sounded (the song's playhead moved
+   * while it is paused). What played or was paused before stops. `resume()`
+   * then plays from there. Returns false (and stops) when there is nothing
+   * to hold there (the music would end at once).
+   */
+  cue(opts: StartOptions): boolean {
+    this.assertAlive();
+    const mode = opts.mode;
+    if (mode?.kind === 'replay' && !this.sequencer.liveProject().performances.some((p) => p.id === mode.performanceId)) {
+      throw new Error(`Performance "${mode.performanceId}" not found`);
+    }
+    const now = this.ctx.currentTime;
+    if (this.sequencer.playing) {
+      this.dispatcher.releaseAll(now);
+      this.engine.transportStopped(now);
+      this.holdSongGain();
+    }
+    this.dispatcher.cancelFrom(now);
+    this.queue = [];
+    this.sequencer.start(now, opts);
+    const held = this.sequencer.pause(now);
+    if (!held) this.sequencer.stop(now);
+    this.horizon = now;
+    this.ensureTicker();
+    return held;
   }
 
   private stopAt(now: number): void {
@@ -618,30 +645,22 @@ export class RealtimeTransport {
     if (this.sequencer.playing) this.invalidateFrom(at, now);
   }
 
-  /** Scene rows were reordered: a playing song keeps its scenes (see Sequencer.relocateSongRows). */
-  relocateSongRows(rows: ReadonlyMap<number, number>): void {
-    this.assertAlive();
-    const now = this.ctx.currentTime;
-    if (this.sequencer.relocateSongRows(rows) && this.sequencer.playing) this.invalidateFrom(now + INVALIDATE_MARGIN, now);
-  }
-
   /**
-   * The song was edited while it plays or is paused: lay out the rest of it
-   * again from the block playing now (see Sequencer.replanSong) and
-   * regenerate what was scheduled from then on. `loop`: the song loop as the
-   * edit left it (taken without a jump). Returns true when playback changed.
+   * The song was edited while it plays or is paused: what the parts play from
+   * now on follows it (see Sequencer.replanSong), and what was scheduled from
+   * then on is regenerated. Returns true when playback changed.
    */
-  replanSong(loop?: SongLoop | null): boolean {
+  replanSong(): boolean {
     this.assertAlive();
     const now = this.ctx.currentTime;
     const at = now + INVALIDATE_MARGIN;
-    if (!this.sequencer.replanSong(at, loop)) return false;
+    if (!this.sequencer.replanSong(at)) return false;
     if (this.sequencer.playing) this.invalidateFrom(at, now);
     return true;
   }
 
   /**
-   * Loop part of the song, or play it through (null); see
+   * Loop bars of the song, or play it through (null); see
    * Sequencer.setSongLoop. Stopped, it applies to the next song start.
    * Returns true when playback changed (what was scheduled is regenerated).
    */
@@ -856,7 +875,7 @@ export class RealtimeTransport {
 
   /**
    * The tick at which part `trackId`'s queued change of clip lands (a pad
-   * launch or stop, the next song block switching it), as heard now; null
+   * launch or stop, the song switching it at a region's start or end), as heard now; null
    * when nothing is queued or the transport is stopped. Allocation-free.
    */
   queuedAt(trackId: Id): number | null {
@@ -897,9 +916,6 @@ export class RealtimeTransport {
     switch (e.kind) {
       case 'launch':
         this.emit('launch', e);
-        break;
-      case 'block':
-        this.emit('block', e);
         break;
       case 'beat':
         this.emit('beat', e);
@@ -1072,11 +1088,11 @@ export class RealtimeTransport {
   private stall(now: number, hidden: boolean): void {
     const lateBy = now - this.horizon;
     const tick = this.sequencer.getPosition(now).tick;
-    // The music ran out at the horizon (nothing was scheduled after it): the song block playing there.
-    const songBlockId = this.sequencer.songBlockAt(this.sequencer.getPosition(Math.min(now, this.horizon)).tick)?.blockId ?? null;
+    // The music ran out at the horizon (nothing was scheduled after it): the song's bar there.
+    const songBar = this.sequencer.songBarAt(this.sequencer.getPosition(Math.min(now, this.horizon)).tick);
     const reason = hidden || this.ctx.state === 'running' ? 'throttled' : 'suspended';
     this.stopAt(now);
-    this.emit('stalled', { reason, lateBy, tick, songBlockId });
+    this.emit('stalled', { reason, lateBy, tick, songBar });
   }
 
   /** Long animation frames (where the browser reports them) brace too: the next one is likely close. */

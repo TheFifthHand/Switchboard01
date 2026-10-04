@@ -1,8 +1,8 @@
 /**
- * The Export dialog, opened from Arrange or while the song plays, offers the
- * song; with a song loop set it offers the loop (its blocks once, with the
- * tail), and its duration is the loop's bars plus the tail. It offers every
- * scene the project has (1 to 8).
+ * The Export dialog, opened from the Song view or while the song plays,
+ * offers the song (bar 1 to its end); with a song loop set it offers the loop
+ * (its bars once, with the tail), and its duration is the loop's bars plus
+ * the tail. It offers every scene the project has (1 to 8).
  */
 import '../../src/ui/theme.css';
 import { act, createElement as h } from 'react';
@@ -15,12 +15,13 @@ import type { Project } from '../../src/project/types';
 import { setView } from '../../src/state/uiStore';
 import { cleanup, mount } from './ui-harness';
 
-/** 120 BPM, four one-bar scenes; song: b0 b1 (x2) b2 b3 (2 s per bar). */
+/** 120 BPM, four one-bar clips; the song plays them over bars 1, 2–3, 4 and 5 (2 s per bar). */
 function song(): Project {
   const p = createProject({ bpm: 120, now: 0 });
   for (const t of p.tracks) t.clips = t.clips.map(() => null);
   for (let row = 0; row < 4; row++) p.tracks[0].clips[row] = createClip(`r${row}`, 1, [{ tick: 0, pitch: 36, duration: 48, velocity: 0.9 }]);
-  p.arrangement = { tailSeconds: 2, blocks: p.scenes.map((s, i) => ({ id: `b${i}`, sceneId: s.id, repeats: i === 1 ? 2 : 1 })) };
+  const at = [[0, 1], [1, 2], [3, 1], [4, 1]];
+  p.arrangement = { tailSeconds: 2, sections: [], regions: at.map(([start, bars], row) => ({ id: `r${row}`, trackId: 't1', clipId: p.tracks[0].clips[row]!.id, start, bars, offset: 0 })) };
   return p;
 }
 
@@ -43,11 +44,12 @@ function open() {
   return { m, select, summary, labels: () => [...select().options].map((o) => o.textContent) };
 }
 
-describe('Export from Arrange', () => {
-  it('opened in Arrange it offers the song', () => {
+describe('Export from the Song view', () => {
+  it('opened in the Song view it offers the song, from bar 1 to its end', () => {
     setView('arrange');
     const d = open();
     expect(d.select().value).toBe('song');
+    expect(d.labels()).toContain('Song (5 bars)');
     expect(d.summary()).toContain('Duration 12.0 s (10.0 s of music + 2 s tail)');
   });
 
@@ -73,23 +75,23 @@ describe('Export from Arrange', () => {
     }
   });
 
-  it('with a loop set: "Loop (blocks 2–3)" exports those blocks once with the tail; cleared, the song again', () => {
+  it('with a loop set: "Loop (bars 2–4)" exports those bars once with the tail; cleared, the song again', () => {
     setView('arrange');
-    patchRuntime({ songLoop: { fromBlockId: 'b2', toBlockId: 'b1' } });
+    patchRuntime({ songLoop: { fromBar: 1, toBar: 4 } });
     const d = open();
-    expect(d.labels()).toContain('Loop (blocks 2–3)');
+    expect(d.labels()).toContain('Loop (bars 2–4)');
     act(() => {
       const s = d.select();
       s.value = 'loop';
       s.dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(d.select().value).toBe('loop');
-    // b1 (2 bars) and b2 (1 bar): 6 s of music.
+    // Three bars: 6 s of music.
     expect(d.summary()).toContain('(6.0 s of music + 2 s tail)');
-    expect([...document.querySelectorAll('input')].map((i) => i.placeholder).find((x) => x)).toMatch(/Loop 2-3$/);
-    // One block: "Loop (block 4)".
-    act(() => patchRuntime({ songLoop: { fromBlockId: 'b3', toBlockId: 'b3' } }));
-    expect(d.labels()).toContain('Loop (block 4)');
+    expect([...document.querySelectorAll('input')].map((i) => i.placeholder).find((x) => x)).toMatch(/Bars 2–4$/);
+    // One bar: "Loop (bar 4)".
+    act(() => patchRuntime({ songLoop: { fromBar: 3, toBar: 4 } }));
+    expect(d.labels()).toContain('Loop (bar 4)');
     expect(d.summary()).toContain('(2.0 s of music + 2 s tail)');
     act(() => patchRuntime({ songLoop: null }));
     expect(d.labels().some((l) => l?.startsWith('Loop'))).toBe(false);
