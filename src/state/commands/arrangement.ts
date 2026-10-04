@@ -138,9 +138,13 @@ function loopsWords(p: Project, regions: readonly Pick<SongRegion, 'trackId' | '
   return regions.length === 1 ? regionWords(p, regions[0]) : `${regions.length} loops`;
 }
 
-/** A section name as stored: one line, at most MAX_SECTION_NAME characters. */
+/** A section name as stored: one line without spaces at either end, at most MAX_SECTION_NAME characters; null when nothing is left. */
+function cleanSectionName(name: string): string | null {
+  return cleanName(name, MAX_SECTION_NAME)?.trimEnd() || null;
+}
+
 function sectionName(name: string, fallback = 'Section'): string {
-  return cleanName(name, MAX_SECTION_NAME) ?? fallback;
+  return cleanSectionName(name) ?? fallback;
 }
 
 /** What taking bars [from, to) out does to the regions there: those inside go, those across an edge are cut. */
@@ -573,7 +577,7 @@ export function addSection(store: ProjectStore, start: number, bars: number, nam
   const p = store.getState();
   if (!isInt(start) || start < 0 || !isInt(bars) || bars < 1) return refuse('invalid', WHOLE_BARS);
   if (start + bars > MAX_SONG_BARS) return refuse('limit', TOO_LONG);
-  const given = name !== undefined ? cleanName(name, MAX_SECTION_NAME) : null;
+  const given = name !== undefined ? cleanSectionName(name) : null;
   const s: SongSection = { id: newSectionId(), name: given ?? newSectionName(p), start, bars };
   const r = commit(store, p, 'arrange:Add section', `Add ${s.name}`, { sections: placeSection(p.arrangement.sections, s) });
   return { ...r, ...(r.changed ? { sectionId: s.id } : {}) };
@@ -584,7 +588,7 @@ export function renameSection(store: ProjectStore, id: Id, name: string): Comman
   const p = store.getState();
   const s = findSection(p, id);
   if (!s) return NOT_FOUND('section');
-  const v = cleanName(name, MAX_SECTION_NAME);
+  const v = cleanSectionName(name);
   if (!v) return refuse('invalid', 'A section needs a name.');
   return commit(store, p, 'arrange:Rename section', `Rename ${s.name} to ${v}`, { sections: p.arrangement.sections.map((x) => (x.id === id ? { ...x, name: v } : x)) });
 }

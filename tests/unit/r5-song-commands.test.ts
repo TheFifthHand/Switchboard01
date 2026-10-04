@@ -363,6 +363,9 @@ describe('sections', () => {
     expect(sections(store.getState())).toEqual(['Section 1@0+4', 'Big Drop@4+8']);
     cmd.addSection(store, 12, 2, '   ');
     expect(sections(store.getState())).toEqual(['Section 1@0+4', 'Big Drop@4+8', 'Section 3@12+2']);
+    // At most 40 characters, never ending in a space where it was cut.
+    cmd.addSection(store, 14, 2, `${'x'.repeat(39)} and more`);
+    expect(store.getState().arrangement.sections[3].name).toBe('x'.repeat(39));
     expectRefused(store, () => cmd.addSection(store, -1, 2), 'invalid');
     expectRefused(store, () => cmd.addSection(store, 0, 0), 'invalid');
     expectRefused(store, () => cmd.addSection(store, 510, 4), 'limit');

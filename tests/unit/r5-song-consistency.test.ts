@@ -4,7 +4,8 @@
  * same undo step. Deleting a clip, clearing a part or deleting a scene row
  * takes their loops out; moving a clip to another part takes its loops to
  * that row; a new clip length keeps the loops' bars and wraps their offsets;
- * copies never touch the song.
+ * a copy never adds loops (one copied or pasted over a clip the song plays
+ * takes over that clip's loops).
  */
 import { describe, expect, it } from 'vitest';
 import * as cmd from '../../src/state/commands';

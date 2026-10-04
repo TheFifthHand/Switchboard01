@@ -140,11 +140,12 @@ describe('song validation', () => {
       { id: 'sec_d', name: 'Late', start: 510, bars: 9 },
       { id: 'sec_e', name: 'Gone', start: 20, bars: 0 },
       { id: 'sec_f', name: 'Damaged', start: null, bars: 2 },
+      { id: 'sec_g', name: `${'y'.repeat(39)} cut`, start: 30, bars: 2 },
     ];
     const r = check(raw);
-    expect(sections(r.project)).toEqual(['Big Drop@0+8', `${'x'.repeat(40)}@8+4`, 'Section@13+2', 'Late@510+2']);
+    expect(sections(r.project)).toEqual(['Big Drop@0+8', `${'x'.repeat(40)}@8+4`, 'Section@13+2', `${'y'.repeat(39)}@30+2`, 'Late@510+2']);
     expect(r.warnings).toEqual([
-      'Adjusted a song section name. (2 times)',
+      'Adjusted a song section name. (3 times)',
       'Moved a section onto the bar lines.',
       'Named a song section that had no name.',
       'Shortened the song to 512 bars, the longest a song can be.',

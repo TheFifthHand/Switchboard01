@@ -6,8 +6,8 @@
  * The song follows in the same undo step (common.ts keepSongWithClips): a
  * deleted clip's regions leave the song (a clip pasted or recorded over it
  * takes them over), a clip moved to another part takes its regions to that
- * part's row, and a new length keeps the regions' bars. Copies never touch
- * the song.
+ * part's row, and a new length keeps the regions' bars. A copy never adds
+ * loops to the song.
  */
 import { builtinSampleInfo } from '../../content/catalog';
 import { cloneClip, cloneClipWithNewIds, reIdNotes } from '../../project/clone';

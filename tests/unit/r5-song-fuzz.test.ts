@@ -121,8 +121,8 @@ describe('random song edits', () => {
             const a = bar();
             return cmd.removeBars(store, a, a + 1 + int(8));
           }],
-          ['section', () => cmd.addSection(store, bar(), 1 + int(12), rnd() < 0.5 ? undefined : pick(['Drop', '  Big  Drop ', '', 'x'.repeat(60)]))],
-          ['rename', () => cmd.renameSection(store, pick(secs) ?? 'sec_none', pick(['Verse', ' ', 'Chorus 2'])!)],
+          ['section', () => cmd.addSection(store, bar(), 1 + int(12), rnd() < 0.5 ? undefined : pick(['Drop', '  Big  Drop ', '', 'x'.repeat(60), `${'x'.repeat(39)} cut here`]))],
+          ['rename', () => cmd.renameSection(store, pick(secs) ?? 'sec_none', pick(['Verse', ' ', 'Chorus 2', `${'y'.repeat(39)}  z`])!)],
           ['resizeSection', () => cmd.resizeSection(store, pick(secs) ?? 'sec_none', rnd() < 0.5 ? 'start' : 'end', int(13) - 6, pick(gestures))],
           ['moveSection', () => cmd.moveSection(store, pick(secs) ?? 'sec_none', int(25) - 12, { copy: rnd() < 0.3, gesture: pick(gestures) })],
           ['dupSection', () => cmd.duplicateSection(store, pick(secs) ?? 'sec_none')],

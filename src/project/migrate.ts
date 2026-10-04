@@ -88,7 +88,7 @@ function wholeNumber(v: unknown, lo: number, hi: number, fallback: number): numb
 }
 
 function plainName(v: unknown): string {
-  return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, MAX_SECTION_NAME) : '';
+  return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, MAX_SECTION_NAME).trimEnd() : '';
 }
 
 /**

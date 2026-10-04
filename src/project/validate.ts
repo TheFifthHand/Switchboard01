@@ -977,7 +977,7 @@ function validateSection(raw: unknown, trackIds: ReadonlySet<Id>, ids: Set<Id>, 
     if (isNum(raw.bars) && Math.round(raw.bars) < 1) issues.warn('Removed a section with no length from the song.');
     return null;
   }
-  let name = typeof raw.name === 'string' ? raw.name.replace(/\s+/g, ' ').trim().slice(0, MAX_SECTION_NAME) : '';
+  let name = typeof raw.name === 'string' ? raw.name.replace(/\s+/g, ' ').trim().slice(0, MAX_SECTION_NAME).trimEnd() : '';
   if (!name) {
     issues.warn('Named a song section that had no name.');
     name = 'Section';

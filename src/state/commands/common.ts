@@ -169,7 +169,7 @@ function samePlaces(a: ReadonlyMap<Id, ClipPlace>, b: ReadonlyMap<Id, ClipPlace>
  *   into the new length.
  * Returns the regions unchanged (the same array) when nothing applies.
  */
-export function songAfterClipEdit(
+function songAfterClipEdit(
   tracks: readonly Pick<Track, 'id' | 'clips'>[],
   before: ReadonlyMap<Id, ClipPlace>,
   after: ReadonlyMap<Id, ClipPlace>,
@@ -200,7 +200,8 @@ export function songAfterClipEdit(
  * deleting a clip, clearing a part or deleting a scene row takes their
  * regions out of the song; moving a clip to another part moves its regions
  * there; a new length wraps the regions' offsets (see songAfterClipEdit).
- * Copying a clip never touches the song. Edits that leave every clip where
+ * A copy never adds loops to the song (one copied or pasted over a clip the
+ * song plays takes over that clip's loops). Edits that leave every clip where
  * it was and as long as it was cost a quick look at the clips.
  */
 export function keepSongWithClips(d: Project): void {
