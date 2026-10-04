@@ -1,14 +1,14 @@
 /**
  * Song moves played on the real engine (arrange-no-change-over-time,
- * capability-09 stage 1): a block's Fade in / Fade out move the song gain and
- * Filter rise moves the parts' Tone across the block, rendered offline as an
+ * capability-09 stage 1): a section's Fade in / Fade out move the song gain and
+ * Filter rise moves the parts' Tone across the section, rendered offline as an
  * export renders them, and live through the real-time transport the same way.
  * A sine test instrument holds one tone per bar, so levels are easy to read.
  */
 import { describe, expect, it } from 'vitest';
 import { AudioEngine } from '../../src/audio/engine';
 import type { MeterFrame } from '../../src/audio/contracts';
-import type { BlockMove, Project } from '../../src/project/types';
+import type { Project, SongMove } from '../../src/project/types';
 import { renderOffline } from '../../src/render/offline';
 import { Sequencer } from '../../src/time/sequencer';
 import { RealtimeTransport } from '../../src/time/transport';
@@ -21,18 +21,20 @@ const VEL = 0.25;
 /** 120 BPM: a beat is 0.5 s, a bar 2 s. */
 const BEAT_S = 0.5;
 
-/** t3 holds a tone through every bar of every row. Song: A (row 0, 1 bar), B (row 1, 2 bars), C (row 2, 1 bar). */
-function song(p: Project, moves: { A?: BlockMove[]; B?: BlockMove[] }, pitch = TONE): Project {
+/**
+ * t3 holds a tone through every bar of every row. Song: sections and regions A (row 0, 1 bar), B (row 1,
+ * 2 bars), C (row 2, 1 bar).
+ */
+function song(p: Project, moves: { A?: SongMove[]; B?: SongMove[] }, pitch = TONE): Project {
   for (const t of p.tracks) t.clips = t.clips.map(() => null);
   const t3 = p.tracks.find((t) => t.id === 't3')!;
   for (let row = 0; row < 3; row++) t3.clips[row] = makeClip(1, [[0, pitch, 384, VEL]], `tone${row}`);
+  const at = { A: [0, 1], B: [1, 2], C: [3, 1] } as const;
+  const names = ['A', 'B', 'C'] as const;
   p.arrangement = {
     tailSeconds: 0,
-    blocks: [
-      { id: 'A', sceneId: p.scenes[0].id, repeats: 1, ...(moves.A ? { moves: moves.A } : {}) },
-      { id: 'B', sceneId: p.scenes[1].id, repeats: 2, ...(moves.B ? { moves: moves.B } : {}) },
-      { id: 'C', sceneId: p.scenes[2].id, repeats: 1 },
-    ],
+    regions: names.map((id, row) => ({ id, trackId: 't3', clipId: t3.clips[row]!.id, start: at[id][0], bars: at[id][1], offset: 0 })),
+    sections: names.map((id) => ({ id, name: id, start: at[id][0], bars: at[id][1], ...(id !== 'C' && moves[id] ? { moves: moves[id] } : {}) })),
   };
   return p;
 }
@@ -58,7 +60,7 @@ function beatLevel(d: Float32Array, t: number, hz = HZ): number {
 const db = (x: number) => 20 * Math.log10(x);
 
 describe('song moves, rendered (an export)', () => {
-  it('Fade in: the first beat of the block is at least 20 dB below its last; the block before is untouched, the one after at unity', async () => {
+  it('Fade in: the first beat of the section is at least 20 dB below its last; the section before is untouched, the one after at unity', async () => {
     const d = await render(song(coreProject(), { B: [{ id: 'f', kind: 'fadeIn' }] }));
     const a = beatLevel(d, 1.0);
     const first = beatLevel(d, 2.0);
@@ -71,7 +73,7 @@ describe('song moves, rendered (an export)', () => {
     expect(last).toBeGreaterThan(0.8);
   });
 
-  it('Fade out: falls to silence across the block, then the next block is back at unity', async () => {
+  it('Fade out: falls to silence across the section, then the next section is back at unity', async () => {
     const d = await render(song(coreProject(), { B: [{ id: 'f', kind: 'fadeOut' }] }));
     // Linear in gain: 3/4 a quarter in, 1/4 three quarters in.
     expect(beatLevel(d, 2.75)).toBeCloseTo(0.75, 1);
@@ -80,7 +82,7 @@ describe('song moves, rendered (an export)', () => {
     expect(beatLevel(d, 6.5)).toBeGreaterThan(0.9);
   });
 
-  it('Filter rise: the part’s Tone starts closed and opens across the block, back at its own value after it', async () => {
+  it('Filter rise: the part’s Tone starts closed and opens across the section, back at its own value after it', async () => {
     // A bright tone (6 kHz) through the part's filter, whose cutoff the Tone big knob sets.
     const hz = 6000;
     const p = song(baseProject(), { B: [{ id: 'r', kind: 'filterRise', parts: ['t3'] }] }, Math.round(pitchForHz(hz) * 1000) / 1000);
@@ -108,7 +110,7 @@ describe('song moves, live (the real-time transport on an AudioContext)', () => 
     const transport = new RealtimeTransport({ ctx, engine, sequencer: seq });
     const f: MeterFrame = { masterPeakL: 0, masterPeakR: 0, masterRms: 0, limiterReductionDb: 0, tracks: [] };
     try {
-      transport.start({ mode: { kind: 'song', fromBlock: 0 }, fromTick });
+      transport.start({ mode: { kind: 'song', fromBar: fromTick / 384 } });
       const t0 = seq.timeAt(fromTick);
       const out: number[] = [];
       for (const t of times) {
@@ -126,7 +128,7 @@ describe('song moves, live (the real-time transport on an AudioContext)', () => 
     }
   }
 
-  it('a 2-block song with a fade out: live levels follow the offline render within the meter tolerance', async () => {
+  it('a song with a fade-out section: live levels follow the offline render within the meter tolerance', async () => {
     const p = song(coreProject(), { B: [{ id: 'f', kind: 'fadeOut' }] });
     const times = [1.25, 2.75, 3.75, 4.75];
     const d = await render(p);
@@ -158,14 +160,14 @@ describe('song moves, live (the real-time transport on an AudioContext)', () => 
     try {
       const levels: number[] = [];
       for (let pass = 0; pass < 2; pass++) {
-        transport.start({ mode: { kind: 'song', fromBlock: 0 } });
+        transport.start({ mode: { kind: 'song', fromBar: 0 } });
         const t0 = seq.timeAt(0);
         levels.push(await levelAt(t0, 0.15), await levelAt(t0, 1.75));
         // Stopped at ~90 %: the gain holds there until the next start.
         transport.stop();
       }
       // Pause at about half way (song time 1.0 s), Play again half a second later.
-      transport.start({ mode: { kind: 'song', fromBlock: 0 } });
+      transport.start({ mode: { kind: 'song', fromBar: 0 } });
       const t0 = seq.timeAt(0);
       await levelAt(t0, 1.0);
       expect(transport.pause()).toBe(true);
@@ -207,7 +209,7 @@ describe('song moves, live (the real-time transport on an AudioContext)', () => 
       while (ctx.currentTime < time) await new Promise((r) => setTimeout(r, 5));
     };
     try {
-      transport.start({ mode: { kind: 'song', fromBlock: 0 } });
+      transport.start({ mode: { kind: 'song', fromBar: 0 } });
       // B fades out over song time 2..6 s: pause about a fifth of the way in.
       await wait(seq.timeAt(0) + 2.9);
       expect(transport.pause()).toBe(true);

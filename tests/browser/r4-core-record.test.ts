@@ -3,10 +3,12 @@
  * - PLAY-25: waiting for its clip to start, a note played up to an 8th
  *   before the downbeat is kept on the downbeat; an earlier one is not.
  *   runtime.recordStartsAtTick says where recording starts until it does.
- * - arrange-notes-recording-invisible: in the song, a block that does not
- *   play the clip being recorded into does not stop the recording: notes go
- *   into it where its loop would be, runtime.recordTargetAudible turns false
- *   and the transport says so once.
+ * - Song v4: in the song, notes go into the clip of the selected part's
+ *   region under the playhead, in phase with the region, following the song
+ *   from region to region (runtime.recordTarget); where the part has no
+ *   region, nothing is recorded, runtime.recordTargetAudible turns false and
+ *   the transport says so once. With no region under the playhead, Record
+ *   Notes says there is nothing to record into and does not start.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { patchRuntime, runtimeStore } from '../../src/app/runtime';
@@ -72,7 +74,7 @@ const notesOf = (s: Session, slot: number) => [...(s.store.getState().tracks.fin
 
 beforeEach(() => {
   uiStore.setState({ ...defaultUiState() });
-  patchRuntime({ muteAll: false, stalled: null, playing: false, paused: false, mode: 'live', replayId: null, songBlock: null, recording: 'off', recordTarget: null, countingIn: false, held: {}, notice: null, tracks: {}, recordStartsAtTick: null, recordTargetAudible: true });
+  patchRuntime({ muteAll: false, stalled: null, playing: false, paused: false, mode: 'live', replayId: null, songCursor: 0, recording: 'off', recordTarget: null, countingIn: false, held: {}, notice: null, tracks: {}, recordStartsAtTick: null, recordTargetAudible: true });
 });
 afterEach(() => {
   for (const s of live) s.dispose();
@@ -143,78 +145,66 @@ describe('Record Notes: a note caught early keeps the length it was played with 
   });
 });
 
-describe('Record Notes in the song: a block that does not play the clip (arrange-notes-recording-invisible)', () => {
-  it('keeps recording into it where its loop would be, says so once, and recordTargetAudible follows the song', async () => {
-    const p = project();
-    // A plays row 0 (Stabs on t4), B plays row 2 (Other on t4) for 2 bars, then A again.
-    p.arrangement = {
-      tailSeconds: 0,
-      blocks: [
-        { id: 'A', sceneId: p.scenes[0].id, repeats: 1 },
-        { id: 'B', sceneId: p.scenes[2].id, repeats: 2 },
-        { id: 'A2', sceneId: p.scenes[0].id, repeats: 1 },
-      ],
-    };
-    const s = await started(p);
-    selectTrack('t4');
-    selectSlot('t4', 0);
-    await s.playSong(0);
-    await until(() => s.transport!.getPosition().tick > 30, 'block A');
-    await s.toggleRecordNotes();
-    expect(rt()).toMatchObject({ recording: 'notes', recordTarget: { trackId: 't4', slot: 0 }, recordTargetAudible: true });
-    // Block B (from tick 384) plays another clip on the part: recording goes on, silently.
-    await until(() => rt().recordTargetAudible === false, 'block B', 6000);
-    expect(rt().recording).toBe('notes');
-    expect(rt().notice?.text).toBe('Recording into Chords · Stabs, which this block does not play.');
-    // Played in B's second bar on its 2nd beat (song tick 864): Stabs (1 bar, looping from 0) would be at its tick 96.
-    await playAt(s, 't4', 67, 864);
-    // Back in A2 (from 1152) the clip sounds again.
-    await until(() => rt().recordTargetAudible === true, 'block A2', 6000);
-    s.stopRecordNotes();
-    s.stop();
-    const got = notesOf(s, 0).filter((n) => n.pitch === 67);
-    expect(got).toHaveLength(1);
-    expect(Math.abs(got[0].tick - 96)).toBeLessThanOrEqual(10);
-    // The other clip was not touched.
-    expect(notesOf(s, 2).map((n) => n.pitch)).toEqual([50]);
-  });
-});
+/** t4's regions: Stabs (row 0) over bar 1, Other (row 2) over bars 2–3, nothing in bar 4, Stabs again over bar 5. */
+function song(p: Project): Project {
+  const t4 = p.tracks.find((t) => t.id === 't4')!;
+  const [stabs, other] = [t4.clips[0]!.id, t4.clips[2]!.id];
+  p.arrangement = {
+    tailSeconds: 0,
+    sections: [],
+    regions: [
+      { id: 'a', trackId: 't4', clipId: stabs, start: 0, bars: 1, offset: 0 },
+      { id: 'b', trackId: 't4', clipId: other, start: 1, bars: 2, offset: 0 },
+      { id: 'c', trackId: 't4', clipId: stabs, start: 4, bars: 1, offset: 0 },
+    ],
+  };
+  return p;
+}
 
-describe('Record Notes in the song records into the selected clip (play review)', () => {
-  it('the ringed clip, not the one the block plays: the ring stays, the block says it does not play it, and the notes go into it', async () => {
-    const p = project();
-    // A plays row 0 (Stabs on t4), then B plays row 2 (Other on t4).
-    p.arrangement = {
-      tailSeconds: 0,
-      blocks: [
-        { id: 'A', sceneId: p.scenes[0].id, repeats: 2 },
-        { id: 'B', sceneId: p.scenes[2].id, repeats: 1 },
-      ],
-    };
-    const s = await started(p);
+describe('Record Notes in the song: into the region under the playhead', () => {
+  it('records into the clip each region plays, in phase with it; where the part has none, nothing, and it says so once', async () => {
+    const s = await started(song(project()));
     selectTrack('t4');
-    await s.playSong(0);
-    await until(() => s.transport!.getPosition().tick > 30, 'block A');
-    expect(rt().tracks.t4?.playingSlot).toBe(0);
-    // The ring is on Other (row 2), which block A does not play.
+    // The ring is on Other; the region under the playhead plays Stabs: the song decides.
     selectSlot('t4', 2);
+    await s.playSong({ fromBar: 0 });
+    await until(() => s.transport!.getPosition().tick > 30, 'bar 1');
     await s.toggleRecordNotes();
-    expect(rt()).toMatchObject({ recording: 'notes', recordTarget: { trackId: 't4', slot: 2 }, recordTargetAudible: false, mode: 'song' });
+    expect(rt()).toMatchObject({ recording: 'notes', recordTarget: { trackId: 't4', slot: 0 }, recordTargetAudible: true, mode: 'song' });
+    // Nothing was launched or selected: the song plays on, the ring stays.
     expect(uiStore.getState().selectedSlot.t4).toBe(2);
-    expect(rt().notice?.text).toBe('Recording into Chords · Other, which this block does not play.');
-    // Nothing was launched: the song still plays Stabs here.
-    expect(rt().tracks.t4?.playingSlot).toBe(0);
-    // A's second bar, 2nd beat (song tick 480): Other (1 bar, its loop from the block's start) at tick 96.
-    await playAt(s, 't4', 67, 480);
-    // B plays Other: it sounds now.
-    await until(() => rt().recordTargetAudible === true, 'block B', 8000);
-    expect(uiStore.getState().selectedSlot.t4).toBe(2);
+    // Bar 1, beat 3 (tick 192): Stabs at its tick 192.
+    await playAt(s, 't4', 65, 192);
+    // Bars 2–3 play Other: the target follows.
+    await until(() => rt().recordTarget?.slot === 2, 'region b', 6000);
+    // Bar 3, beat 2 (song tick 864): Other (1 bar, from bar 2) at its tick 96.
+    await playAt(s, 't4', 67, 864);
+    // Bar 4: no region on Chords. Nothing records there, and the transport says so once.
+    await until(() => rt().recordTargetAudible === false, 'the gap', 6000);
+    expect(rt().recording).toBe('notes');
+    expect(rt().notice?.text).toBe('Chords has no loop here in the song, so there is nothing to record into until its next one.');
+    await playAt(s, 't4', 69, 1300);
+    // Bar 5 plays Stabs again.
+    await until(() => rt().recordTargetAudible === true && rt().recordTarget?.slot === 0, 'region c', 6000);
     s.stopRecordNotes();
     s.stop();
-    const got = notesOf(s, 2).filter((n) => n.pitch === 67);
-    expect(got).toHaveLength(1);
-    expect(Math.abs(got[0].tick - 96)).toBeLessThanOrEqual(10);
-    // The clip the block played was not touched.
-    expect(notesOf(s, 0).map((n) => n.pitch)).toEqual([48]);
+    expect(notesOf(s, 0).map((n) => n.pitch)).toEqual([48, 65]);
+    expect(Math.abs(notesOf(s, 0)[1].tick - 192)).toBeLessThanOrEqual(10);
+    const other = notesOf(s, 2).filter((n) => n.pitch === 67);
+    expect(other).toHaveLength(1);
+    expect(Math.abs(other[0].tick - 96)).toBeLessThanOrEqual(10);
+    expect([...notesOf(s, 0), ...notesOf(s, 2)].some((n) => n.pitch === 69)).toBe(false);
+  });
+
+  it('with no region of the part under the playhead there is nothing to record into: it says so and does not start', async () => {
+    const s = await started(song(project()));
+    selectTrack('t4');
+    await s.playSong({ fromBar: 3 });
+    await until(() => s.transport!.getPosition().tick > 3 * 384 + 30, 'bar 4');
+    await s.toggleRecordNotes();
+    expect(rt().recording).toBe('off');
+    expect(rt().notice?.text).toBe('Nothing to record into: Chords has no loop at the playhead in the song. Put one on its row, or move the playhead to one.');
+    // No clip was made for it.
+    expect(s.store.getState().tracks.find((t) => t.id === 't4')!.clips.filter((c) => !!c)).toHaveLength(2);
   });
 });
