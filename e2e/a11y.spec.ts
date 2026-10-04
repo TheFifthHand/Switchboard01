@@ -131,7 +131,7 @@ test('keyboard only: every Tab stop in Shape and Arrange has a name and a visibl
   await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing)).toBe(true);
   const skip = page.getByRole('button', { name: /Skip/ });
   if (await skip.isVisible().catch(() => false)) await skip.click();
-  for (const view of ['Shape', 'Arrange']) {
+  for (const view of ['Shape', 'Song']) {
     const tab = page.getByRole('tab', { name: view, exact: true });
     await tab.click();
     await tab.focus();
@@ -158,8 +158,8 @@ test('automated accessibility audit of the main views has no serious or critical
   }
   await page.getByRole('tab', { name: 'Shape', exact: true }).click();
   await audit(page, 'shape');
-  await page.getByRole('tab', { name: 'Arrange', exact: true }).click();
-  await audit(page, 'arrange');
+  await page.getByRole('tab', { name: 'Song', exact: true }).click();
+  await audit(page, 'song');
 });
 
 test('200 % zoom: the transport strip with Mute All stays on screen while the page scrolls', async ({ page }) => {
