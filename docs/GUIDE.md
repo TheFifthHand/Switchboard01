@@ -6,7 +6,8 @@ at a moderate volume.
 
 Words used here: a **part** is one instrument (Drums, Bass, Chords …), shown as a column of pads.
 A **clip** is a short loop on one pad, 1 to 8 bars long. A **scene** is a row of clips, launched
-together; a project has 1 to 8 scenes.
+together; a project has 1 to 8 scenes. In the **Song**, every part has a row, a **loop** is a clip
+placed on its part's row, and a **section** (Intro, Drop …) names a stretch of bars.
 
 Lost? Press **?** (or **⋯ → Help…**) at any time: Help lists every keyboard shortcut, has these
 walkthroughs as short steps, and can show the quick guide and the hints again.
@@ -19,10 +20,13 @@ walkthroughs as short steps, and can show the quick guide and the hints again.
    one next step at a time. Neither blocks anything: you can skip the guide and hide the hints.
    Coming back later, the first key is **Continue** with your project's name; **Start a new
    groove** starts fresh and keeps your earlier project in My projects.
-2. **Swap a clip.** Tap another pad in the **Bass** column, for example *Rolling*. It counts down
-   the beats (**Next bar · 3** …) and takes over on the next bar line, in time. Only one clip per
-   part plays at a time. The scene buttons on the right (Intro, Groove, Lift, Break) switch every
-   part at once.
+2. **Swap a clip.** Point at a pad: its corner says what a click does (**▶ Play**, or **■ Stop** on
+   the one that plays). Tap another pad in the **Bass** column, for example *Rolling*. It counts
+   down the beats (**Next bar · 3** …) and takes over on the next bar line, in time. Only one clip
+   per part plays at a time. Tap the playing pad to stop it at the next bar (it says **Stops at bar
+   9**); tap it again before then and it simply plays on. The scene buttons on the right (Intro,
+   Groove, Lift, Break; their tip says **Play row**) switch every part at once; the row that plays
+   shows **■** and stops its parts at the next bar.
 3. **Mute and Solo.** Press **Mute** at the top of the **Drums** column: the column dims and says
    **Muted**, and the drums go silent (they keep their place in time). Press it again to bring them
    back. **Solo** plays one part on its own (the others say *Not soloed*); press it again to hear
@@ -40,15 +44,20 @@ walkthroughs as short steps, and can show the quick guide and the hints again.
    one Undo puts it back. Drum clips go to drum parts and note clips to melodic parts; the app says
    so if a drop does not fit. Without a mouse: select the pad, choose **Move…**, then the arrow keys
    and Enter.
-6. **Pause.** Press **Pause** (or the Space bar). Everything holds exactly where it is; **Play**
-   continues from there, in time. **Stop** (Shift+Space) goes back to the start instead.
+6. **Pause.** Press **Pause** at the top, **❚❚ Pause** above Stop all beside the scenes, or the
+   Space bar. Everything holds exactly where it is; **Play** (or **▶ Continue**) carries on from
+   there, in time. **Stop** (Shift+Space) goes back to the start instead.
 
 More to try:
 
-- **Play along** on the keyboard at the bottom, or with your computer keys: every key shows the
-  letter that plays it (A S D F … for white keys, W E T Y … for black keys; Z and X change the
-  octave). **Musical Assist** is on, so you stay in the song's key. With a drum part selected the
-  keyboard turns into the kit's 16 sounds, each with its name and letter.
+- **Play along** on the keyboard at the bottom, or with your computer keys. **Musical Assist** is
+  on, so the keyboard shows only the notes of the song's key, as even keys with no black keys:
+  every key is its own note, named in the key (the root notes carry their octave, "G3"), and none
+  can sound wrong. **A S D F G H J K L ; '** play the first 11 keys from the left, **Q W E R T Y U I
+  O P [ ]** the next ones; Z and X change the octave, and the **↺** key (it names the root, "↺ G3")
+  puts it back. Switch Assist off for the whole piano (A S D F … the white keys from C, W E T Y U O
+  P the black keys). With a drum part selected the keyboard turns into the kit's 16 sounds, each
+  with its name and letter.
 - **Variation** (under the big knobs) makes a new take on the selected clip. Press it again to hear
   another: each press starts from your original pattern, not from the last variation. Its menu
   (the small arrow beside it) has **Subtle variation**, **Bold variation** (changes more) and
@@ -64,8 +73,9 @@ Your work saves automatically in this browser; the top right shows a check for *
 - **Scenes.** Press **Add scene** under the scene buttons for a new empty row (up to 8 rows; the
   grid scrolls when they do not fit). A scene button's **⋯** menu can **Insert scene above** or
   **below**, **Duplicate scene** (with copies of its clips), make a **New scene from what's
-  playing**, and **Delete scene**. If the song uses that scene, Omni Song asks first and says which
-  blocks would go. Every one of these is one Undo.
+  playing**, **Add to song** (at the song's end) and **Delete scene**. If the song plays that
+  scene's clips, Omni Song asks first and says how many of the song's loops go with it. Every one of
+  these is one Undo.
 - **Clip length.** A clip's menu (right-click the pad, or its **⋯**) sets its **Length** to 1, 2,
   3, 4 or 8 bars. Longer clips start with empty bars; **Double (repeat)** and **Repeat to 8 bars**
   fill them with the pattern instead. **New clip** offers the same lengths, then **Edit steps**
@@ -157,67 +167,66 @@ Press **Shape** (top left) for the selected part in detail.
 
 ## Build a song (about three minutes)
 
-Open **Arrange** (top left). The **Song** lane plays scenes one after another, left to right. Each
-**block** is one scene played a number of times; the wider the block, the longer it plays, to
-scale. Under each block's name is one row per part: a filled bar means that part plays there,
-**Off** (grey, with a thin coral edge) means it is switched off in that block, and **Lift: Hook**
-(striped, with a layers icon) means it plays another scene's clip there. In Arrange the **Play**
-button at the top (or Space) plays the song; ▶ on a block, or a click on the bar numbers, starts it
-from there. If your pads are playing when you arrive, **▶ Play the song** switches to the song. The
-block playing now is outlined in amber and says **Playing**, and the lane scrolls along with it
-(turn **Follow**, top left of the lane, off to keep it still). You can change the song while it
-plays: every edit is heard right away.
+Open **Song** (top left). It works like the tracks in GarageBand: every part has its own row, the
+ruler on top counts the bars, and you place loops on the rows. A loop plays one of that part's
+clips; make it longer and the clip repeats to fill it. Everything snaps to the bar lines, every
+edit is one Undo (Ctrl+Z), and you hear each change at once, even while the song plays.
 
-1. **Move a block.** Drag a block left or right with the mouse or a pen. On a touch screen, rest
-   your finger on the block for a moment: it pops up, then drag it. A quick swipe just scrolls the
-   lane. The other blocks slide aside to show where it will land. Hold **Ctrl** (Alt, or ⌘ on a
-   Mac) while dragging to drop a **copy** instead. Esc, or letting go away from the lane, puts
-   everything back.
-2. **Play it more times, or fewer.** Drag the grip at a block's right edge. The block grows or
-   shrinks one repeat at a time, and a bubble says how many times it plays ("3 times · 12 bars").
-   With the keyboard, + and − do the same. The mouse wheel scrolls the lane; **−**, **+** and the
-   zoom level (top left; press it to fit the whole song) or Ctrl+wheel change the zoom.
-3. **Split and join.** Point at a block: scissors appear under each line between its repeats; click
-   one to cut the block there. Two neighbours that play the same thing show **Join** under their
-   seam.
-4. **Switch a part in one block.** Click a part's bar in a block to switch it off there; click
-   again to bring it back. With several blocks selected, one click switches that part in all of
-   them. Point at a part's name on the left (or Tab to it) and its **Mute** and **Solo** keys appear;
-   they work like in Play. A part's name opens its menu: Mute, Solo, and switching it off (or back
-   on) in the selected blocks or everywhere.
-5. **Combine scenes.** Drag a scene card from **SCENES** (grab it anywhere; on a touch screen hold
-   it a moment) onto the middle of a block: the parts that are silent in that block take the card's
-   clips. Hold **Shift** while you let go to replace the block's parts instead. To add the card as a
-   new block, rest it on the line between two blocks until a gap opens, then let go; **+** on a card
-   adds it at the end. **▶** on a card plays that scene once on the pads, so you can hear it before
-   you place it.
-6. **Select several.** Click a block to select it (teal), Shift+click for a range, Ctrl+click to add
-   or remove one; **Select blocks named …** in a block's menu picks every block of that name.
-   Dragging, **Ctrl+D** (duplicate), **Ctrl+C** / **Ctrl+X** / **Ctrl+V** and **Delete** work on all
-   selected blocks at once.
-7. **Loop a part of the song.** **Loop** in the Song header says what it will loop ("Loop Groove
-   (block 2)"). Press it and those blocks repeat while the song plays; a chip shows what loops, and
-   its ✕ stops the loop. Or drag across the bar numbers (on a touch screen: rest a finger there
-   first). **Play** starts at the loop.
-8. **Shape a block in one step.** Open a block's **⋯** → **Shape this block…**:
-   - **Build up**: the parts come in one at a time, each time the block plays.
-   - **Strip down**: everything first, then the parts drop out.
-   - **Breakdown**: the drums, percussion and bass switch off in that block.
-   - **Moves**, tick as many as you like: **Fade in** and **Fade out** (the whole song gets louder
-     from silence, or fades away, across the block), **Filter rise** (the melodic parts open up from
-     dark to bright) and **Echo throw** (a burst of echo at the block's end). The block shows them
-     as thin teal ramps, and exports sound the same.
-9. **Shape the song.** **Shape the song…** in the Song header adds an **intro** (the first scene
-   building up) or an **ending** (the last scene stripping down, with echoes ringing out).
+1. **Put music in.** The **Loops** panel on the right holds your **Scenes** and each part's loops.
+   Drag a scene card onto the rows: every part with a clip in that scene gets a loop from the bar
+   you drop it on, and a section named after the scene labels those bars. Or drag one part's loop:
+   it lands only on its own row, which lights up while you carry it (other rows say **Not this
+   part**). **▶** on a scene card plays it once on the pads, so you can hear it first. With an empty
+   song, **Make a song from my scenes** lays out every scene twice, in order, in one step.
+2. **Make a loop longer.** Drag a loop's right edge. A bubble says how long it is and how many times
+   its clip plays ("8 bars · plays 4×"). Drag its left edge to start it later (or earlier): the
+   music stays where it was in time.
+3. **Move it.** Drag a loop along its row; it clicks onto each bar line, and a bubble says where it
+   lands ("Bar 9"). Hold **Alt** (or **Ctrl**) as you let go to drop a copy instead. Where it lands
+   on other loops it wins: the drag already shows them cut short, moved later or gone, exactly as
+   the drop will leave them. Esc puts everything back.
+4. **Fill a gap quickly.** Point at an empty spot on a row: a faint **+** appears. Double-click
+   there and pick one of that part's loops. Double-click a loop to edit its notes in Play › Steps;
+   **Back to Song** on the message brings you back.
+5. **Select several.** Click a loop to select it (teal), Shift- or Ctrl-click to add more, or drag a
+   box across empty row space. Selected loops move, stretch, copy and delete together.
+6. **Play it.** Click a bar number on the ruler to put the playhead there, then press **Play** at the
+   top (it reads **Play song** here) or Space. Click the ruler while it plays to jump there.
+   **Pause** keeps your place; **Stop** takes the playhead back to where you started, so Play
+   plays that part again. If your pads are playing when you arrive, **▶ Play the song** in the Song
+   header switches to the song. **Follow** turns the page as the playhead reaches the edge.
+7. **Loop a stretch.** Drag along the bar numbers: that stretch repeats while the song plays (a teal
+   band). Drag the band's ends to change it; click the band, or **Loop** in the header, to switch
+   looping off and on. With nothing chosen, **Loop** loops the selected loops, else the section
+   under the playhead, else the whole song.
+8. **Name the parts of your song.** The **Sections** strip under the ruler holds labels such as
+   Intro or Drop. Point at a stretch with none and press **+ Add section**; double-click a section
+   to rename it. Drag a section to move it with its music (Alt or Ctrl copies it); drag its edges
+   to change only the label. Right-click a section (or the **⋯** at its end) for **Duplicate**,
+   **Delete section (keep the music)**, **Delete section and its music**, the moves **Fade in**,
+   **Fade out**, **Filter rise** and **Echo throw** (tick as many as you like; exports sound the
+   same), and three helpers:
+   - **Build up**: the parts come in one at a time across the section.
+   - **Strip down**: everything first, then the parts drop out one at a time.
+   - **Breakdown**: the drums, percussion and bass leave the section.
+   A helper that would change nothing is greyed out and says why.
+9. **More on a loop.** Right-click a loop (or its **⋯**) for **Play from here**, **Loop this**,
+   **Duplicate**, **Split at playhead**, **Split here**, **Delete**, **Use another loop**, **Edit
+   notes** and **Make it 2× longer**.
 
-Everything is one Undo away (Ctrl+Z); each edit's message has an **Undo** button too. Each block's
-**⋯** (or right-click, or Enter on a focused block) lists every action. The **Echo tail** beside the
-song's length is how many seconds an exported song keeps ringing after its last block. While you
-record a performance the song is locked; the lane says so until you stop.
+Zoom with **−**, **Fit** and **+** in the Song header, or Ctrl+wheel over the song; the mouse wheel
+or a trackpad scrolls sideways. On a touch screen a swipe scrolls; rest your finger on a loop for a
+moment to pick it up. While you record a performance the song is locked; it says so if you try to
+change it.
 
-Without a mouse: Tab to the lane, then ←/→ choose a block (Shift extends the selection), Alt+←/→
-moves it, + and − change how many times it plays, ↓ enters its parts (Enter switches one, "."
-chooses what it plays), F2 renames, Enter opens the actions.
+With the keyboard: click a loop (or Tab to the song), then ← → move the selected loops a bar
+(Shift: 4), Alt+← → make them shorter or longer, ↑ ↓ go to the part above or below, Ctrl+← → to
+the previous or next loop on the part, Ctrl+C / Ctrl+X / Ctrl+V copy, cut and paste at the playhead,
+Ctrl+D duplicates, Ctrl+E splits at the playhead, Delete removes, Enter or Home take the playhead to
+bar 1, and Shift+F10 opens the loop's actions. Help (?) lists them all.
+
+Songs made in Omni Song 2.1 and 2.2 open on the rows as they were and sound the same: each of their
+blocks becomes a section, and what each part played there becomes a loop.
 
 ## Record and export (about three minutes)
 
@@ -228,10 +237,11 @@ chooses what it plays), F2 renames, Enter opens the actions.
 2. Play: tap pads, launch scenes, play keys, turn knobs. Cables and instrument choices are locked
    while you record, so the take replays exactly as you played it. (Pause is not available during a
    take; Stop ends it.)
-3. Press **Performance** again to stop. The take (*Take 1*) appears in **Arrange → Performances**.
+3. Press **Performance** again to stop. The take (*Take 1*) appears in **Song → Performances**.
    Open it to replay it, rename it, start it later or end it earlier, change recorded values or
-   delete actions; the times are the song's bars and beats. **Make song blocks** turns the scenes
-   you launched into blocks of the song (the notes and knob moves you played stay in the take).
+   delete actions; the times are the music's bars and beats. **Put in the song** adds what you
+   launched to the end of the song: each loop on its part's row, for as long as it played, rounded
+   to whole bars (the notes and knob moves you played stay in the take).
 
 **Record notes into a clip** (optional)
 
@@ -264,8 +274,10 @@ timing grid. Grid, metronome and count-in are in the recording options (the butt
 
 1. Press **Export** (the download button at the top right; on narrow windows it is in the **⋯**
    menu).
-2. In **What to export**, choose the clips playing now, a scene, the **Song (arrangement)**, the
-   loop, or a **Performance**. **Output** is the **Mix** as you hear it, or **Mix without
+2. In **What to export**, choose the clips playing now, a scene, the **Song** ("Song (32 bars)";
+   chosen already when you press Export in Song), the **Loop** you set on the Song ruler ("Loop
+   (bars 9–16)", played once), or a **Performance**. **Output** is the **Mix** as you hear it, or
+   **Mix without
    mastering** if you want to master it elsewhere (the limiter still protects it).
 3. Set the **Echo tail**, **Sample rate**, **Bit depth** (24-bit unless you need smaller files) and
    the file name, then press **Export WAV**. A progress bar shows the time left; **Cancel export**

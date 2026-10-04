@@ -6,21 +6,23 @@ WAV file. Everything runs on your own device: no account, no uploads, no interne
 loaded. All sounds are synthesized by the app itself.
 
 Omni Song is the app that was called **SWITCHBOARD / 01**, renamed with version 2.0; this is version
-2.2. Projects, settings and project files from 1.0 carry over (see
+2.3. Projects, settings and project files from 1.0 carry over (see
 [Coming from SWITCHBOARD / 01](#coming-from-switchboard--01)).
 
 ## What it does
 
 - **Play** — eight parts (Drums, Bass, Chords …) by up to eight rows of loops (scenes), each clip
   1 to 8 bars. Tap a pad to switch a part to another loop; it joins on the next bar, in time, and
-  every playing pad shows where it is in its loop. **Play / Pause** keeps your place, **Stop** goes
-  back to the start. Each part has labelled **Mute** and **Solo** keys. **Drag a clip** onto another
-  pad to move it (hold Ctrl to copy). **Variation** tries new takes on a pattern (Subtle, Bold, Back
-  to original).
-- **Play along** — a keyboard (or your computer keys, each letter shown on its key) with **Musical
-  Assist** keeping every note in the song's key; one key per drum sound on a kit. **Chord pads**
-  play whole chords of the key, **Write a progression…** writes one into a clip, and changing the
-  key can move the whole song with it.
+  every playing pad shows where it is in its loop. A pad says what a click does (**▶ Play** /
+  **■ Stop**), and tapping the playing pad stops it at the next bar instead of starting it again.
+  **Play / Pause** keeps your place (Pause is also beside the pads), **Stop** goes back to the start.
+  Each part has labelled **Mute** and **Solo** keys. **Drag a clip** onto another pad to move it
+  (hold Ctrl to copy). **Variation** tries new takes on a pattern (Subtle, Bold, Back to original).
+- **Play along** — a keyboard (or your computer keys, each letter shown on its key). With **Musical
+  Assist** on it shows only the notes of the song's key, as even keys, so every key is its own note
+  and none sounds wrong; switch it off for the whole piano. One key per drum sound on a kit. **Chord
+  pads** play whole chords of the key, **Write a progression…** writes one into a clip, and changing
+  the key can move the whole song with it.
 - **Steps** — edit a clip note by note: select, drag (across bars), copy and paste notes, finer and
   triplet grids, **Tighten timing** and **Loosen**; paint drum steps with a drag, fill or shift a
   sound.
@@ -33,9 +35,11 @@ Omni Song is the app that was called **SWITCHBOARD / 01**, renamed with version 
   **Squeeze**, gate, reverb, echo, chorus, phaser, flanger, auto pan, drive, tape, bit crusher, stereo
   width). Give any knob to a big knob, copy effects to another part. In Advanced, every setting and
   the real cable routing.
-- **Arrange** — put scenes in order as a song of blocks, to scale; layer and switch parts per block,
-  loop a section, add fades, a filter rise or an echo throw, add an intro or an ending, and turn a
-  recorded performance into song blocks.
+- **Song** — build a song like in GarageBand: every part has its own row; drag scenes or single
+  loops in from the **Loops** panel, move them along their row, drag a loop's right edge to make it
+  repeat longer; everything snaps to the bars. Click the ruler to move the playhead, drag along it to
+  loop a stretch. Name sections (Intro, Drop …) and give them fades, a filter rise, an echo throw,
+  a build-up, a strip-down or a breakdown, and put a recorded performance into the song.
 - **Mix** — a channel strip per part, Reverb and Echo return strips, a **Channel** drawer for a
   part's effects, and the master, with **mastering**: presets (Clean, Gentle, Warm, Punchy, Bright,
   Wide, Loud, Lo-fi), a loudness target (Streaming −14 LUFS, Gentle −18, Loud −9) with live readings
@@ -60,7 +64,7 @@ cable panel. Switching never changes your music, and it is remembered.
 
 After **Jump In**, a three-step **quick guide** points at Play / Pause, the pads with Mute and Solo,
 and Change instrument with the big knobs. Then small **"Try this"** hints suggest one next thing at a
-time and move on when you do it; once you open Arrange they also teach the song. They never block
+time and move on when you do it; once you open Song they also teach the song. They never block
 anything. **Help** (press **?**, or ⋯ → Help…) lists every keyboard shortcut, has short
 walkthroughs and the version, and can start the guide and the hints again. Pointing at any control
 explains it; **Tips** in the More menu turns explanations and hints on or off.
@@ -70,27 +74,35 @@ sound had it), or click the value and type (`2.5k`, `-6`); in Shape, right-click
 to a big knob. Arrow keys, Page Up/Down and Home/End work once a knob has focus. Space plays and
 pauses, Shift+Space stops, M mutes the selected part, Ctrl+Z undoes, Ctrl+S saves, ? opens Help.
 
+### New in 2.3: songs like GarageBand
+
+- **Song** works like GarageBand's tracks: a row per part, loops you drag in, move, copy, stretch
+  and trim, snapping to the bars, a ruler with the playhead and a loop range, sections, a loop
+  browser and keyboard shortcuts (listed in Help). Songs from 2.1 and 2.2 open on the new rows and
+  sound the same. Step-by-step: "Build a song" in [`docs/GUIDE.md`](docs/GUIDE.md).
+- **The in-key keyboard:** with Musical Assist on, only the notes of your key, as even keys; every
+  key plays its own note. The piano's black keys sit centred and every key can be pressed.
+- **Clear pads:** ▶ Play / ■ Stop on the pads, "Stops at bar 9", part keys in words (Play, Stop,
+  Cancel, Skip), ❚❚ Pause / ▶ Continue beside the scenes, and "Play row" on the scene buttons.
+- **Updates that arrive:** a new download opens the new version by itself (a page you are using
+  offers Update instead), the launcher no longer opens an older copy that is still running, and the
+  Welcome card shows the version.
+
 ### New in 2.2: the whole app, deeper and steadier
 
 Up to eight scenes and 8-bar clips; chord pads, Write a progression and moving the song to a new
 key; a piano roll you can select, move, tighten and loosen in, and drum steps you paint; per-clip
 recordings and imports; friendlier Shape (Sound knobs, any knob on a big knob, copy effects); song
-moves, intros and endings, and song blocks from a take; Reverb and Echo returns, a Channel drawer,
-a Match that keeps correcting and a level-matched A/B; exports that start on the beat, with or
-without mastering and with a loudness report; a true-peak limiter; Help (?), versions, recovery
-after a reload, and one tab per project. Playback no longer stops when the computer is busy for a
-moment. All of it is in the list above and in [`docs/GUIDE.md`](docs/GUIDE.md).
+moves; Reverb and Echo returns, a Channel drawer, a Match that keeps correcting and a level-matched
+A/B; exports that start on the beat, with or without mastering and with a loudness report; a
+true-peak limiter; Help (?), versions, recovery after a reload, and one tab per project. Playback no
+longer stops when the computer is busy for a moment. All of it is in the list above and in
+[`docs/GUIDE.md`](docs/GUIDE.md).
 
-### New in 2.1: build a song by moving blocks
+### New in 2.1: the first song timeline
 
-**Arrange** shows the song as one strip of blocks (a scene played a number of passes), with a row
-per part under each block. Drag a block and the others slide aside to make room; let go and it
-clicks into place. Drag a block's right edge to make it longer or shorter, hold Ctrl (or Alt) while
-dragging to copy it, and click a pass line to split it. Click a part in a block to switch it off or
-on just there, or drop a scene card onto a block to layer that scene's parts in. Click the ruler to
-play from any bar. Everything can be undone, works with the keyboard too, and changes what you hear
-right away, even while the song plays. The Loops pads and scene rows move the same smooth way.
-Step-by-step: "Build a song" in [`docs/GUIDE.md`](docs/GUIDE.md).
+A lane of song blocks (2.3 replaces it with the rows above), and Loops pads and scene rows that
+move smoothly when dragged.
 
 ### New in 2.0: MIDI keyboards and audio input
 
@@ -125,10 +137,13 @@ npm run package      # build, then release/omni-song-<version>.zip (app + launch
 
 The browser keeps projects and the offline copy per address, and the port is part of the address.
 So the launchers (`launcher/serve.mjs`, and `launcher/serve.ps1` behind the .bat) stay on port
-4173: if Omni Song (or an older SWITCHBOARD / 01) already answers there they open it and exit; if
-another program holds the port they say that projects saved at the usual address will not appear,
-and how to free it, before using the next free port. With `--strict-port` (for scripts and tests),
-`serve.mjs` stops instead.
+4173. If the same version of Omni Song already answers there, they open it and exit. If another
+version (or SWITCHBOARD / 01) answers, they name it and wait: once its window is closed they start
+this version at the same address, with all your projects. If another program holds the port they
+say that projects saved at the usual address will not appear, and how to free it, before using the
+next free port. With `--strict-port` (for scripts and tests), `serve.mjs` stops instead. Open pages
+switch to a new version by themselves; a page you are using offers **Update** in the ⋯ menu
+instead.
 
 The release zip holds `Start Omni Song.bat`, `START HERE.txt`, `app/` (the production build),
 `launcher/`, `ASSETS.md` and `source/`: the repository files git lists (committed, or new and not
@@ -148,9 +163,10 @@ from disk is not supported (browsers block modules, storage and offline caching 
 - **Project files:** new ones are saved as `.omnisong.zip`; your `.sb01.zip` files still open with
   **Import project file…**.
 - **Windows launcher:** `Start SWITCHBOARD.bat` is now `Start Omni Song.bat`. If an older copy is
-  still running, the new launcher says so and opens it; close the old window to switch.
-- **Installed app:** an installed SWITCHBOARD / 01 updates itself to Omni Song; press **Update**
-  when the app offers it.
+  still running, the new launcher says so and waits; close the old window and the new version
+  starts at the same address.
+- **Installed app:** an installed SWITCHBOARD / 01 updates itself to Omni Song; a page that is in
+  use offers **Update** instead of reloading.
 
 Some internal names keep the first name on purpose (the browser database, saved settings, the
 project format id `switchboard01.project`), so that nothing anyone saved is lost.
@@ -169,8 +185,8 @@ Local test runs need Playwright's Chromium once: `npx playwright install chromiu
 ## Documentation
 
 - [`docs/GUIDE.md`](docs/GUIDE.md) — make your first loop; chords and keys; editing notes and drum
-  steps; shaping sounds; building a song; mixing, mastering and export; keeping your work safe; MIDI
-  keyboards; recording your voice or a guitar.
+  steps; shaping sounds; building a song in the Song view; mixing, mastering and export; keeping
+  your work safe; MIDI keyboards; recording your voice or a guitar.
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — where Omni Song is going (plans, not promises).
 - `docs/OMNI_UX.md` — the interface rulebook. `docs/ARCHITECTURE.md` — layers, contracts, timing.
 - `PRODUCT_BRIEF.md` — the original product brief. `BUILD_STATUS.md` — progress.

@@ -18,8 +18,8 @@ coming from 1.0 (the Welcome card's one-time note, START HERE, project-file impo
    (menu keys included). A finger gets at least 44 px around a knob's dial or a fader's cap.
 5. **State is visible** in text as well as colour: Playing / Paused / Stopped; a muted part is
    dimmed and says **Muted**; a soloed part says **Solo**.
-6. **Direct manipulation, with a keyboard path.** Drag clips, scene rows, song blocks, notes and
-   drum steps; every drag has a keyboard alternative.
+6. **Direct manipulation, with a keyboard path.** Drag clips, scene rows, loops and sections in the
+   song, notes and drum steps; every drag has a keyboard alternative or a menu item.
 7. **Everything is undoable**, and the toast says what happened, with Undo. Undo steps are named in
    the user's words, naming the part where it helps ("Bass level", "Mute Lead", "Move 2 notes").
 8. **Colour is information:** amber = sound playing / signal, teal = selection / focus /
@@ -50,6 +50,8 @@ coming from 1.0 (the Welcome card's one-time note, START HERE, project-file impo
   card. The card traps Tab. After Jump In, focus goes to the quick guide's Next, else to Play.
 - When a reload or a closed tab came right after an edit, the card says the last edits were
   recovered (the rescue copy).
+- A quiet last line names the version ("Version 2.3.0", from `package.json`), so the person can see
+  which version a download opened.
 
 ### Transport (top bar)
 
@@ -57,7 +59,7 @@ Left to right, in clear groups:
 
 | Group | Contents |
 |---|---|
-| Views | **Play · Shape · Arrange · Mix** (segmented, large). The tab changes at once; the view renders right after. No keyboard shortcut (F6 and Ctrl/Alt+digits belong to the browser). |
+| Views | **Play · Shape · Song · Mix** (segmented, large; the Song tab's view value stays `arrange`). The tab changes at once; the view renders right after. No keyboard shortcut (F6 and Ctrl/Alt+digits belong to the browser). |
 | Playback | **Play / Pause** (one key), **Stop**, position (bar.beat) and state word (Playing / Paused / Stopped / Song / Replay; "Nothing to play yet" when playing with no clip sounding) |
 | Tempo | Tempo; Swing (Advanced) |
 | Record | **Notes**, **Performance**, recording options. While Record Notes waits for its downbeat the caption counts down in coral: "Recording in 3…" |
@@ -85,22 +87,27 @@ state, Undo, Redo and More are always on it):
   save from Projects and the words of Undo and Redo; the MIDI & audio key from the offline state.
   Never the save state, Undo, Redo, Export or Stop, nor the switch from 1366 px.
 - Unavailable, Undo and Redo stay focusable and their tip says why ("Nothing to undo yet.");
-  available, they name the step ("Undo: Move block").
+  available, they name the step ("Undo: Move Four Floor").
 - **Tempo and Swing**: Enter commits and hands the keys back to the app (Space plays); dragging
   Tempo moves in whole BPM.
 - The transport writes how far down it reaches on screen (the strip's visible bottom, or the bottom
   of the banners under it) to `--transport-h`, and keeps it current as the strip wraps, banners come
   and go and the page scrolls.
 
-**Play in Arrange plays the song.** In Arrange (with blocks in the song) the Play key reads **Play
-song** and Space does the same: from the loop when one is set, else from the first block. A pause
-resumes whatever was playing. In every other view Play and Space play the pads. Stop ends the song;
-Export opens with the song chosen when pressed in Arrange.
+**Play in Song plays the song.** In the Song view (with loops in the song) the Play key reads **Play
+song** (tip "Play song from bar 9", ", in the loop" when one is on) and Space does the same: from
+the song cursor (the playhead when stopped), or from the loop's start when a loop is on and the
+cursor lies outside it. A pause resumes whatever was playing. With an empty song, Play and Space
+play the pads. In every other view they play the pads. Stopped in the Song view the position
+readout shows the cursor ("9.1"); while the song plays, the song's bar and beat as heard. Export
+opens with the song chosen when pressed in Song or while the song plays or is paused.
 
 **Pause semantics.** Pause holds the musical position (bar, beat, every clip's phase); Play
-continues from exactly there. Stop returns to bar 1, leaving the pads that were playing armed.
-Space = Play/Pause; Shift+Space = Stop. While a performance take records, Pause is unavailable and
-its tip says why; Stop ends the take. During Record Notes, Pause ends the pass (one undo step).
+continues from exactly there. Stop returns to bar 1, leaving the pads that were playing armed; a
+song stops and puts its cursor back where that playback started (or where the ruler last moved
+it), so Play plays the same stretch again. Space = Play/Pause; Shift+Space = Stop. While a
+performance take records, Pause is unavailable and its tip says why; Stop ends the take. During
+Record Notes, Pause ends the pass (one undo step).
 
 **Busy moments.** A visible tab that falls behind skips ahead and keeps time; at most once a minute
 a quiet notice says "Omni Song was busy for a moment, so a few notes were skipped to stay in time."
@@ -126,10 +133,17 @@ view has one hidden h1 naming it and the project.
 
 ### More menu (⋯)
 
-Order: **Update** first when one waits (a coral dot on ⋯ below 1600 px); Undo, Redo; Show every
-control (Advanced), Tips; **New project…**, **Projects…**, **Export WAV…**, **MIDI & audio…**,
-**Help…** (?). The offline state is its last line, plain text that cannot be focused. Focus starts
-on the first item that can be used.
+Order: **Update to the new version** first when one waits (a coral dot on ⋯ below 1600 px); Undo,
+Redo; Show every control (Advanced), Tips; **New project…**, **Projects…**, **Export WAV…**, **MIDI &
+audio…**, **Help…** (?). The offline state is its last line, plain text that cannot be focused.
+Focus starts on the first item that can be used.
+
+**New versions.** A new version opens by itself in every Omni Song page that is not in use. A page
+counts as in use once a key or the pointer was pressed in it since it loaded, while it plays or is
+paused, records, counts in or exports. Such a page is never reloaded under the person: it offers
+**Update to the new version** (unavailable while it plays or records: "Stop playback first:
+updating reloads the page."; it saves first and waits if the latest edits could not be saved), also
+after another page took the update. A refresh opens a waiting version once no page is in use.
 
 ### Help
 
@@ -165,23 +179,49 @@ on the first item that can be used.
   with no chosen slot gets one when selected: the clip it plays, else its first clip, else the first
   slot. A part never selected uses its first clip for ▶, the same slot it gets when selected.
 - **Column headers:** number badge (white on `--teal-key`), part name (one size down under 110 px),
-  sound name on up to two lines, full names in a tooltip while cut. A **part ▶/■** (starts the
-  chosen clip at the next bar / stops the part at the next bar); **Mute** and **Solo** as labelled
-  toggles (≥ 32 px); a real level meter.
+  sound name on up to two lines, full names in a tooltip while cut. The **part key** says what it
+  does in words: **▶ Play** (starts the chosen clip at the next bar), **■ Stop** (stops the part at
+  the next bar; dimmed while the part is stopping), **✕ Cancel** (calls off a start still waiting
+  for the bar line) and, while stopped, **■ Skip** (takes an armed clip off the next Play). A part
+  that plays never shows ▶, so the key never starts a playing clip again. Where a column is too
+  narrow for the word, every column shows only the icon (same name and tip); in columns under
+  170 px the key fills its line beside the ⋯ and the meter moves to its own line. **Mute** and
+  **Solo** as labelled toggles (≥ 32 px); a real level meter.
 - **Mute and Solo:** a muted column dims and says **Muted**; with any solo on, others dim and say
   **Not soloed**; those words take the meter's place in a box of fixed height. A soloed part keeps
   its meter and shows a small **Solo** tag. **M** mutes the selected part. Solo has no letter key
   (S plays a note) and no `aria-keyshortcuts`.
 - **Pads:** empty pads are a quiet outline with "+" (hover/focus: Add clip). Clip pads: name large,
-  length small, state word (Ready / Next bar / Playing / Stopping / Paused / Rec). A playing pad is
-  an even amber wash. Where a pad is at least 100 px tall it shows a sketch of its notes. A long
-  name fades at its end (no ellipsis) and the pad then carries the whole name as its title.
-  - Stopped: a pad that will start says **Starts on Play**, and its part's ■ key reads "Skip <part>
-    when Play starts".
+  length small, state word (Ready / Next bar / Playing / **Stops at bar N** / Paused / Rec; N is
+  the bar number the transport shows, counted on the song's timeline while the song plays). A
+  playing pad is an even amber wash. Where a pad is at least 100 px tall it shows a sketch of its
+  notes. A long name fades at its end (no ellipsis) and the pad then carries the whole name as its
+  title.
+  - **What a click does:** on hover or keyboard focus a small dark key in the pad's bottom-right
+    corner says it: **▶ Play** on a clip that waits, one that is about to stop, and the one holding
+    at a pause; **■ Stop** on the playing clip. None on a clip that already starts at the next bar,
+    on empty pads, while notes record into the clip, while a performance replays, while a clip is
+    carried, or on touch screens. On narrow pads the state word steps out of sight while the key
+    shows; nothing else in the pad moves. Each pad's tooltip and description say what a tap does
+    now ("Playing. Tap to stop it at the next bar; the other parts carry on.").
+  - **No accidental restarts:** tapping the playing pad queues a stop at the next bar and never
+    starts it again; tapping it (or ▶ Play on it) while it is about to stop calls the stop off and it
+    plays on in phase. The same holds while paused and in the song (a pad of the clip a part plays
+    holds it over the song's change on that bar line).
+  - Stopped: a pad that will start says **Starts on Play**, and its part key reads **■ Skip**
+    ("Skip <part> when Play starts").
   - **Loop progress:** a 3 px bar along the bottom of each sounding pad and of the playing scene
     button shows its place in the loop, moving once a sixteenth (once a beat with reduced motion),
     timed from the audio clock. A queued pad counts down: "Next bar · 3".
-- **Scene buttons** say how many parts they play ("4 parts", "1 part", "no clips"), in Inter.
+- **Scene buttons** say how many parts they play ("4 parts", "1 part", "no clips"), in Inter, and
+  are named for what a click does: **Play row <name>**; the row playing as a scene (with no change
+  waiting) shows ■ and is named "Stop row <name> (playing)": a click stops its parts at the next bar
+  without starting them again; paused, the row that held is "Continue row <name> (paused)" and
+  carries on in time.
+- **❚❚ Pause / ▶ Continue** sits in the Scenes column header, above Stop all, while the transport
+  plays or is paused. It is the transport's Play / Pause command (Space too), and says why while a
+  performance take records. A pad pressed while paused follows the usual rule: the clip that held
+  carries on in time; another clip queues and playback carries on.
 - **Keyboard:** the pads with the scene buttons are one Tab stop and the part headers another;
   arrows move, Home/End go to the row's ends, Ctrl+Home/End to the grid's corners. Focus scrolls
   clear of the sticky head. On a focused pad: "." or Shift+F10 opens its actions without playing
@@ -198,7 +238,8 @@ on the first item that can be used.
   or a release away glide it home. Drum and melodic parts never swap clips. Keyboard: **Move…**,
   then arrows and Enter (Ctrl+Enter copies), Esc cancels. One undo step per move or copy.
 - **Scene rows** reorder by dragging the scene button (or Alt+↑/↓): the row lifts, the others
-  slide apart, every part's clips move with it; song blocks keep pointing at the same scenes.
+  slide apart, every part's clips move with it; the song is untouched (its loops name clips, not
+  rows).
 
 ### Pad actions and menus
 
@@ -211,10 +252,12 @@ on the first item that can be used.
   moves to Edit steps and the toast offers **Edit steps**.
 - **Scene menu:** Rename scene…, Launch scene, Move up / down, **Insert scene above / below**,
   **Duplicate scene** (copies its clips), **New scene from what's playing** (a new last row of
-  copies of the playing clips; unavailable when nothing plays), Add to song, Export as WAV…,
-  **Delete scene**. Delete asks first when the song uses the scene ("2 song blocks play it… Undo
-  brings it all back") and offers to delete those blocks too; the only scene cannot be deleted.
-  Each edit is one undo step and every part stays on its clip.
+  copies of the playing clips; unavailable when nothing plays), **Add to song** (the row at the
+  song's end, a loop per part with a clip there and a section named after the scene), Export as
+  WAV…, **Delete scene**. Delete asks first when the song plays the scene's clips ("Groove is in the
+  song: 3 loops play its clips. Deleting it takes them out of the song. Undo brings it all back.");
+  those loops leave the song in the same undo step. The only scene cannot be deleted. Each edit is
+  one undo step and every part stays on its clip.
 
 ### Take lock
 
@@ -253,12 +296,34 @@ the panel can take the whole height.
 
 ### Keyboard strip
 
-- Two octaves; three on a wide strip (from 22 white keys of at least 46 px). Keys widen to fill the
-  strip, white keys up to 60 px.
-- Every key the computer plays shows its letter (A and K included); C4, C5 and the root sit on a
-  rail above the keys, spelled by the key. The octave reset reads **↺ C4** ("Reset octave to C4").
-- **Musical Assist** (IN KEY / CHROMATIC) with a sentence saying what it does. Simple shows the key
-  as a summary ("Key: G Dorian"); Advanced adds the key and scale pickers and the arpeggiator.
+- **Every on-screen key is its own note**; nothing snaps. **Musical Assist** (IN KEY / CHROMATIC; it
+  starts on) decides which keyboard shows, with a line under its switch saying so; the switch's tip
+  says that turning Assist off gives the whole piano.
+- **Scale keyboard** (Assist on, a part with notes, any scale but Chromatic; sampler parts too): only
+  the notes of the project's key, as one row of equal keys with no black keys. As many as fit at
+  44 px or more, up to three octaves plus the root above, never past MIDI 127; a narrow strip keeps
+  two octaves while they fit at 34 px, else shows fewer keys (at least one octave). Pentatonic keys
+  show 5 notes an octave, blues 6. Each key shows its note spelled by the key (B♭ in G Dorian); the
+  roots show their octave ("G3", "G4") over a teal underline, with a thin divider before each root
+  after the first, so a root is never shown by colour alone. The lowest key is the root at or below
+  the octave's C (G3 for G Dorian; C4 in C major). The line reads "Only G Dorian notes are shown."
+  The home row **A S D F G H J K L ; '** plays keys 1–11 and **Q W E R T Y U I O P [ ]** keys 12–23,
+  left to right; a key shows a letter only if a computer key plays it. Folded, the computer keys
+  play all three octaves.
+- **Piano** (Assist off, or the Chromatic scale): two octaves; three on a wide strip (from 22 white
+  keys of at least 46 px). Keys widen to fill the strip, white keys up to 60 px. Black keys are
+  centred on the line between their white keys, 60 % of a white key wide and 55 % of the keys tall,
+  leaving at least 34 px of every white key to press below them. C4, C5 and the root sit on a rail
+  above the keys, spelled by the key. A S D F … are the white keys from C, W E T Y U O P the black
+  keys. The line reads "All 12 notes, like a piano."
+- Every note key is a button named by its note ("G3 (root)", "B♭3"), not a Tab stop; a click with
+  no pointer press (a screen reader) plays it for 300 ms. Changing Assist, the key, the scale or the
+  octave under a held key releases it at once.
+- The octave reset names where it goes: **↺ G3** ("Reset octave to G3, just below C4"); on the piano,
+  or when the root is C, **↺ C4**. Z and X still shift the octave.
+- A MIDI keyboard still plays every key; Assist moves its notes into the key in the session. Simple
+  shows the key as a summary ("Key: G Dorian"); Advanced adds the key and scale pickers and the
+  arpeggiator.
 - The strip folds to a slim bar, remembered **per view**; Mix starts folded. Computer keys still
   play when folded. The strip writes the height it covers to `--keyboard-h` (0 when folded or when
   the page scrolls).
@@ -460,163 +525,185 @@ toast offers "Back to Simple"); a part selector.
 - **Imports** make a new clip on an empty pad that plays the file at its own pitch: "Imported "X"
   as a new clip on Vocal · Groove. It plays at its recorded pitch."
 
-## Arrange (song lane)
+## Song view
 
-The song is one strip of **blocks** (a scene played a number of times, its *repeats*), edge to
-edge, to scale. Code: `src/app/views/arrange/` (pure logic in songLayout, songDrag, songModel,
-laneLoop; gestures in laneGestures; commands in `src/state/commands/arrangement.ts`).
+The **Song** tab (its view value stays `arrange`) builds the song the way GarageBand's Tracks area
+does: every part has its own row, loops sit on the rows on one timeline of whole bars, and named
+sections label stretches of it. Code: `src/app/views/arrange/` (see ARCHITECTURE); the rules are
+`src/project/arrangement.ts`, the commands `src/state/commands/arrangement.ts`.
 
-**One Play per screen.** The transport's Play (and Space) plays the song in Arrange, its Stop stops
-it and its Export starts from the song. The Song header keeps **Length**, **Echo tail** (seconds
-added after the last block when exported), **Loop**, the loop chip and **Shape the song…**. The
-mode box says what plays and how to play it. While the pads play (straight after Jump In) it shows
-an amber 40 px **▶ Play the song** key ("Switched to the song"). While Record Notes writes into a
-clip it says "Recording notes into Chords · Stabs (Groove)", adding "This block does not play it."
-when that is so; cells that play the target show a coral **Rec**.
+**The song in words.** A **loop** (a region) on a part's row plays one of that part's clips from
+its first bar for its length; the clip repeats to fill it, and a loop trimmed at its left edge
+starts that many bars into its clip. A part's loops never overlap, and a part with no loop at a bar
+is silent there; gaps are allowed. Everything is whole bars. The song lasts to the end of its last
+loop or section, at most 512 bars. **Placed wins:** a loop that is dropped, moved, stretched or
+pasted carves what it lands on on its own row (the loops there are cut short, start later in
+phase, split in two, or go), and a drag shows that result before the drop. Old songs of blocks
+(2.1–2.2) open as loops and sections that play the same.
 
 **Layout.**
-- Left: the part names column (does not scroll), 108 px with every name whole, and each part's state
-  in words (Muted / Solo / Not soloed); those parts' cells dim in every block. Hovered, or with
-  keyboard focus, it widens to 160 px over the lane's edge (the lane stays put) and the row shows
-  its **Mute** and **Solo** keys (icon, the word on hover or focus, a 32 × 32 hit area). The column
-  is one Tab stop: arrows move between the parts and their Mute and Solo. A part's name opens its
-  menu: Mute, Solo, Off in selected blocks, Back on in selected blocks, Off everywhere, Back on
-  everywhere. Above it, the lane's view tools: **−**, the zoom level (**Fit** when fitted; **Min**
-  when the song is as small as it goes and still longer than the lane; else a percentage; a press
-  fits the song), **+**, **Follow**.
-- Right: the lane scrolls sideways (never the page): the ruler (a loop row over the bar numbers),
-  then the blocks. A block is a header (name, Playing / Next, length, ▶, ⋯; 32 px keys where there
-  is room) over one cell per part. The playing block has no ▶ and keeps its whole **Playing** word.
-- Part rows grow with the free height, 18 to 48 px (13 px names on tall windows); the lane adds at
-  most 80 px of room under the blocks, so a tall window has no empty band.
-- Below: the **SCENES** palette (every scene, up to 8, and **Add scene**) and the gesture hint.
-  **Performances** folds to one line ("1 take ▸", with the newest take and its Replay); the choice
-  is remembered, and until it is made the panel opens by itself only on tall windows.
+- **Header**, one row: **Song**, the length ("32 bars · 1:02"), **Loop** (with the range when one
+  is set: "Loop · Bars 9–16"), zoom **− Fit +**, **Follow**, **Loops** (shows or hides the loop
+  browser). While the pads play, a chip reads "Your pads are playing · **▶ Play the song**". No
+  paragraphs of help; the "Try this" chip's home is the header's free middle.
+- **Timeline**: one scroller. The ruler (bar numbers from 1, spaced to stay readable at every zoom,
+  and the loop range band) and the **Sections** strip stick to the top, the part headers to the
+  left. Under them one row per part, in track order, all the same height (40–84 px, sharing the
+  free height). The timeline runs on 16 bars past the song's end (at least the view's width), so a
+  loop can be dropped or stretched after the last one.
+- **Part headers** (184 px; 160 px on a narrow timeline): number, name, and the sound, or the
+  part's state in words (**Muted**, **Solo**, **Not soloed**); 32 px **Mute** and **Solo** keys, the
+  same commands as in Play and Mix. A muted or not-soloed row fades what its loops show (the names
+  stay).
+- **Loop browser** at the right, collapsible (**Loops** in the header, or its ✕). It opens by itself
+  while the song is shorter than 32 bars, until the person shows or hides it (remembered).
+- **Performances** under the song, one line until opened (remembered); a take's events open in a
+  tall drawer and the song folds to its header (**Show the song** brings it back).
 
-**Scale.** Widths are proportional to bars; the only minimum is 44 px. Blocks narrower than 112 px
-are **compact**: the header is the name only (a helper's blocks show their step first, "1/4 Lift",
-so neighbours stay told apart; ▶ and ⋯ on hover, focus and while the menu is open), cells show no
-clip names, and a cell's tip says what it plays. Blocks up to 150 px wide show the whole name and
-length at rest, with ▶ and ⋯ over the header's right end on hover or focus. Ruler numbers are evenly
-spaced and the playhead moves the same px per bar in every block. When Arrange opens, the scale is
-the largest readable step at which the whole song fits (a song of 10 blocks or more that only fits
-at an overview step opens there); after that edits never change it: a longer song scrolls. Zoom and
-scroll are remembered per project for the session (a lane never zoomed is remembered as "fit" and
-re-fits to the window); opening Arrange measures once. The scale changes with a window resize, the
-zoom keys (two ladder steps a press), Ctrl/⌘+wheel (one step) or the zoom level key; blocks glide
-200 ms. A **plain wheel** scrolls the lane sideways once nothing around it can scroll that way, and
-counts as the user's own scroll (Follow waits). Fit never makes a cut-off song bigger.
+**Loops.** A rounded rectangle in its part's colour (eight hues kept clear of amber, teal and coral)
+with the clip's name at the top, a picture of its notes repeated for each pass, thin notches where
+the clip starts again, and a hatched band at its left edge when it starts mid-clip. Names cut off
+cleanly and sit above the playhead line; on a very narrow loop the name goes first, then the
+picture; the colour always stays. Each loop is a focusable button named like "Four Floor, Drums,
+bars 9 to 16, plays 4 times" (", starts 2 bars into its loop" when trimmed).
 
-**Cells.** A filled bar with the clip name = the part plays its scene's clip; striped with a layers
-icon and **Lift: Bell Hook** = it plays another scene's clip there; **Off** in muted ink with a thin
-coral edge = switched off in this block; a faint empty outline = the scene has no clip for it.
-Hovering a cell says what a click does.
+**Colour.** Amber = playing: the playhead while the song plays or is paused, a 3 px amber bottom
+edge on each loop under it, the "Your pads are playing" chip, a scene card being heard, and Solo
+(with its word). Teal = selection and focus: the selected loops' outline, the loop range band
+(dimmed while looping is off), the marquee, a carried loop's own row, the **+ Copy** badge, the
+snapped-together flash. Coral = mute and attention: Mute on (with **Muted**), a loop Record Notes
+writes into (a coral edge and the word **Rec**), "Not this part" and "Stays on its own part".
 
-**Colour.** Amber = the block playing now (outline, **Playing**) and the block about to take over
-(dashed, **Next**). Teal = selection, focus, drop targets, the loop band, and move ramps. Coral =
-Off (a thin edge), Rec and the take lock.
+**Playhead and cursor.** One line through the ruler, the sections and the rows, moved each animation
+frame from `songPlayheadBar()` (never React state per frame). Amber while the song plays or is
+paused; neutral when stopped, where it marks the **song cursor**: where Play starts.
+- A **click on the ruler** moves it there. Stopped, that sets the cursor; playing, the song
+  continues from that bar at once; paused, it stays paused there and Play continues from it.
+- **Play** (and Space) plays the song from the cursor; with a loop on and the cursor outside it,
+  from the loop's start; from bar 1 when the cursor lies at or after the song's end. Pause keeps
+  the place. **Stop** puts the cursor back where that playback started (or where the ruler last
+  moved it), like GarageBand's "return to start position", so Play plays the same stretch again.
+- **Enter** or **Home**, with the song focused, takes the playhead to bar 1.
+- **Follow** (on until turned off; remembered): the view turns a page when the playhead reaches the
+  right edge. Never during a drag, nor for 2.5 s after the person scrolled.
 
-**Gestures** (mouse or pen: a press becomes a drag after 4 px):
-- **Touch:** a finger rests 300 ms on a block, or anywhere on a scene card (its keys too), to pick
-  it up; a finger that moves first scrolls. Held and released in place, a block opens its actions.
-  On the **ruler** a swipe scrolls the lane; a 200 ms rest, then a drag, sets a loop.
-- **Select:** click a header (teal); Shift+click a range; Ctrl/⌘+click toggles; a click on empty
-  lane or Esc clears; Ctrl+A selects all. **Select blocks named "Lift"** (block menu) selects every
-  block of that name.
-- **Move:** drag a block; the others slide aside (170 ms) to open the slot; the drop commits what
-  you see (one Undo). Esc, a release above or below the lane, a cancelled pointer or a window switch
-  put everything back. Near the lane's ends it scrolls.
-- **Copy:** hold Ctrl, Alt or ⌘ while dragging (**+ Copy**). Ctrl+D duplicates after itself.
-- **Length:** drag a block's right edge (a 12 px grip inside the block; the hovered block rises
-  above a selected neighbour). Whole repeats, 1–16; a bubble says "3 times · 12 bars". Keyboard + and
-  −; quick presses are one undo step.
-- **Split / join:** scissors under each repeat line on hover; **Join** under a seam of two blocks
-  that play the same. Split keys appear on hover or focus only.
-- **Parts:** click a cell to switch that part off in this block, again to bring it back ("Drums off
-  in Groove", Undo). With several blocks selected, a cell click switches the part in all of them
-  ("Drums off in 4 blocks"). A cell with nothing to switch opens the part picker.
-- **Combine:** a scene card drags from anywhere on it, its keys included (a dotted grip at its left
-  edge says so; the click that ends a drag presses nothing). Drag it onto the middle of a block to
-  **layer** it (fills the silent parts; Shift **replaces**). On a boundary the insertion slot opens
-  only after the card rests there 250 ms (any move over 3 px, or faster than 0.1 px/ms, restarts
-  the wait; a busy moment never opens it). Which way the card came is read from its last 12 px of
-  travel across; carrying on that way closes the slot and layers into the block beyond. Drop in the
-  open slot to **insert** a block.
-- **Clipboard:** Ctrl+C / X / V; right after a Cut, Paste puts the blocks back where they were.
-  Delete or Backspace removes the selection (toast with Undo).
-- **Ruler:** click a bar (or Enter on the focused ruler) to play from there.
+**Loop range** (playback state: never saved, not in undo). A drag along the ruler sets a range of
+whole bars and loops it; the band's ends drag to other bar lines; a click on the band turns looping
+off and on. While looping is off the range stays, dimmed (this session). **Loop** in the header
+switches looping; with no range yet it first sets one: the selected loops' bars, else the section
+at the playhead, else the whole song. **Loop this** (loop menu) and **Loop this section** set it
+too. Set while the song plays: inside the new loop, playback plays on and repeats at its end;
+outside it, playback goes to the loop's start at the next bar line. Cleared: the song plays on to
+its end. Edits never move the loop.
 
-**Loop.** The looped blocks repeat while the song plays (playback state, not saved; Play starts at
-the loop). **Loop** names what it acts on and is pressed only when it names the loop that is on;
-otherwise it offers to move it ("Move loop to Groove (block 2)"). A chip shows the loop ("Loop:
-Groove", "Loop: Groove–Lift") with ✕ to stop it. A drag across the ruler sets a loop snapped to
-block edges, with a toast offering **Stop looping**; each end of the band has a grip. The menu's
-**Loop…** has Loop this block / selected blocks and Stop looping. Edits keep the loop (see
-ARCHITECTURE).
+**Mouse and pen.** Every position snaps to whole bars; every gesture is one undo step; a press
+becomes a drag after 4 px; Esc, a cancelled pointer or leaving the view put everything back;
+nothing is written until the drop. Near the left or right edge the view scrolls by itself.
+- **Move:** drag a loop's body along its row. It steps bar by bar with an 80 ms slide (transform
+  only), so it visibly clicks onto bar lines; a **Bar 9** badge says where it lands, and the loops
+  it would carve are drawn exactly as the drop will leave them. **Alt** or **Ctrl** (⌘) held at the
+  drop copies (**+ Copy · Bar 9**). A loop stays on its own row: more than a row's height away the
+  cursor says not allowed and a coral badge says "Stays on its own part", and the drop still lands
+  on its row. Several selected loops move together.
+- **Right edge** (an 8 px grip, shown on hover): the length; the clip repeats to fill it ("8 bars ·
+  plays 4×", "2½×").
+- **Left edge:** trims or extends the start; the music stays where it was in time ("starts at bar
+  5").
+- **Snapped together:** when a dragged edge meets a neighbour's edge exactly, both flash a thin teal
+  line (no sound).
+- **Select:** a click selects; Shift- or Ctrl-click adds or removes; a drag on an empty part of a
+  row draws a marquee (Shift adds); a click on empty space clears; Ctrl+A selects every loop.
+- **Empty spot:** hovering shows a faint **+** at that bar; a double-click opens a picker of that
+  part's loops (name, length, picture); choosing one puts it there.
+- **Double-click a loop** to edit its notes: Play › Steps opens on its part and clip, with a 20 s
+  toast "Editing the notes of Bounce (Bass)." and **Back to Song**.
+- **Wheel:** a plain wheel or trackpad scrolls sideways (Shift+wheel too); Ctrl+wheel zooms around
+  the pointer, keeping the bar under it in place.
 
-**Block menu.** Play song from here, Rename…, Duplicate, Split in half, Join with next, One more time
-/ One time fewer; then lists that open in place with **Back**: **Parts in this block…** ("Parts in 4
-blocks" with a selection), **Scenes and clips…** (change scene, layer, replace, **Make a scene from
-this block**, edit clips in Play), **Shape this block…**, **Loop…**, **Copy, cut, move…**; and
-**Remove from song**. Icons say what items do (pencil, scissors, join, layers, scene; trash only for
-delete). Toggles inside a menu that stays open show their result by the check mark and a
-screen-reader announcement, not a toast.
+**Touch.** A swipe scrolls the song. A finger that rests 250 ms picks up a loop, an edge or a
+section, and from then on the song does not pan under it. On the ruler a swipe scrolls and a rest
+then a drag sets the loop range. A tap is a click.
 
-**Shape this block…**
-- Song helpers, each one Undo and never changing the song's length: **Build up** (parts come in one
-  at a time: texture, pad, chords, lead, sampler, percussion, bass, drums), **Strip down** (the
-  reverse), **Breakdown** (drums, percussion and bass off). Unavailable with a short reason ("Plays
-  once", "One part", "Uneven clips"…).
-- **Moves**, checkable, each with a one-line explanation: **Fade in**, **Fade out** (the whole song's
-  level across the block), **Filter rise** (melodic parts' Tone opens across the block),
-  **Echo throw** (Echo rises over the block's last beat and returns a bar later). Blocks draw them
-  as thin teal ramps (both fades: up then down, as heard) and name them in the header.
+**Zoom.** **−** and **+** step a ladder of 4 to 128 px per bar; **Fit** shows the whole song at the
+largest step that holds it. A project opens at the zoom it was left at (remembered for the 30
+most recent projects in this browser), else fitted. Zooming re-renders nothing but the ruler.
 
-**Shape the song…** (Song header): **Add an intro** (a build-up of the first scene before the song)
-and **Add an ending** (a strip-down of the last scene after it; an Echo tail of 0 s becomes 2 s).
-One Undo each.
+**Loop menu** (right-click, the ⋯ on a hovered loop, Shift+F10 or the menu key): **Play from here**,
+**Loop this**, **Duplicate** (Ctrl+D), **Split at playhead** (Ctrl+E; unavailable with "Playhead not
+in this loop"), **Split here** (at the bar right-clicked, inside the loop), **Delete**, **Use another
+loop ▸** (the part's other clips, from their start), **Edit notes**, **Make it 2× longer**, and **Name
+these bars as a section** when no section covers the loop. With several loops selected it acts on
+all of them and leaves out the one-loop items.
 
-**Scenes palette.** Each card: ▶ **audition** (one pass on the live pads, stopping at the bar line
-where the pass ends, timed on the audio clock, also if you go to another view meanwhile; a second
-press stops at once; while the pads play it switches at the next bar; while the song plays it is
-unavailable: "Stop the song to audition"), + (add at the end) and ⋯ / right-click (Rename scene,
-Edit clips in Play, Add at the end of the song).
+**Sections.** Labelled bars in the Sections strip, showing icons for their moves. A click selects
+the loops that start in the section (Shift or Ctrl adds them). A double-click, F2 or Enter renames
+it in place (at most 40 characters). A drag moves it with the loops that start in it, which win
+where they land; Alt or Ctrl copies it (with its moves). Its edges resize the label only and stop
+at the neighbouring sections. Hovering a stretch no section covers offers **+ Add section** there.
+The sections are one Tab stop (← → between them). Its menu (right-click, the ⋯ at its end under
+the pointer, Shift+F10):
+- **Play from here**, **Loop this section**, **Rename**, **Duplicate** (its length is inserted right
+  after it and filled with what plays in it, in phase), **Delete section (keep the music)**, **Delete
+  section and its music** (its bars go and the gap closes).
+- The **moves**, as checkboxes (checked when on): **Fade in** and **Fade out** (the whole song's
+  level rises from silence, or falls to it, across the section), **Filter rise** (the melodic parts'
+  Tone opens from dark to their own value across it) and **Echo throw** (Echo rises to 0.85 over
+  the section's last beat and is back a bar later). The section shows their icons; playback and
+  exports move the same way, on every pass of a loop.
+- **Build up** (parts come in one at a time across the section: texture, pad, chords, lead,
+  sampler, percussion, bass, drums, each where its clip starts), **Strip down** (every part first,
+  then they drop out one at a time, the drums first) and **Breakdown** (the drums, percussion and
+  bass leave the section). Only loops inside the section are cut, at clip boundaries, so everything
+  stays in phase and the song keeps its length; one Undo each. When one would do nothing it is
+  unavailable and says why ("No part plays here.", "Only one part plays here: there is nothing to
+  bring in one at a time.", "The clips here are as long as the section, so the parts cannot come in
+  one at a time: make the section longer first.").
 
-**Performances.** A take's events open in a tall side drawer with a header that stays put (Replay,
-Export, **Make song blocks**, close); the song folds to its header meanwhile. Event times are the
-music's bar.beat.step. **Start later…** sits beside **End earlier…**. **Make song blocks** turns the
-take's scene and pad launches into blocks after the song (one Undo); the toast says what was
-rounded, names launches too short to make a block that were left out, and says that played notes and
-knob moves are not carried over. An empty song with takes offers "Make song blocks from <newest
-take>".
+**Loop browser.** **Scenes**: a card for each scene that has clips ("Groove · 4 bars · 4 parts", with
+a dot in each part's colour) and ▶ to hear it once on the pads (the stop is queued on the audio
+clock for the bar line where its pass ends, also if another view opens; a second press stops at
+once; while the pads play it joins them at the next bar; while the song, a replay or a pause holds
+the transport it is unavailable and says why: "Stop the song to hear a scene"). Dragged onto the
+rows, a card shows a ghost of all its loops with what they would carve, and the drop puts a loop of
+each part's clip at that bar, as long as the scene, plus a section named after the scene where no
+section is. **Loops by part**: each part's clips as chips (name, length, picture). A chip lands only
+on its own part's row, which lights teal while it is carried; the other rows say **Not this part**.
+Enter on a card or chip adds it at the playhead (the keyboard way).
 
-**Following the playhead.** While the song plays, the lane glides a page on when the playhead nears
-its right edge. It never turns the page while the pointer moves over the lane, while a menu is open,
-while a key was just pressed in the lane, or while something is carried; it waits 8 s after a scroll
-or edit. **Follow** turns it off (remembered, `switchboard01.songLane`).
+**Empty song.** Inside the timeline one line, "Drag a scene or a loop here — or", and one button,
+**Make a song from my scenes** (every scene with clips, in order, each played twice, with a section
+named after each; one Undo). With no clips at all: "Make some loops on the pads in Play, then drag
+them here."
 
-**Keyboard.** Tab order from Loop: the view tools, the part names (one stop), the ruler, the blocks
-(one stop). In the blocks: ←/→, Home/End; Shift extends; Alt+←/→ moves the selection; ↓ enters the
-part cells (Enter switches, "." picker, Esc back); Enter, ".", the menu key or Shift+F10 open the
-menu; F2 renames. Undo and Redo keep the lane's selection and focus.
+**Keys** (the loops are one Tab stop with roving focus; Space, Shift+Space and Undo / Redo are the
+app's own): ← / → move the selection a bar (Shift: 4); Alt+← / → shorten or lengthen it (Shift: 4);
+↑ / ↓ the loop on the part above or below; Ctrl+← / → the previous or next loop on the same part;
+Delete or Backspace delete; Ctrl+C / X / V copy, cut and paste at the playhead on the same parts;
+Ctrl+D duplicates after the selection; Ctrl+A selects all; Ctrl+E splits at the playhead (Ctrl+T
+too, but browsers keep that for a new tab, so Help lists Ctrl+E); Enter or Home take the playhead to
+bar 1; Shift+F10 or the menu key open the loop's menu; Esc clears the selection. Ctrl is ⌘ on a
+Mac. Tab stops: the header's keys, the sections (one stop), the part headers' Mute and Solo (one
+stop, arrows inside) and the loops (one stop). Every action is on a key or in a menu.
 
-**Feedback.** Edits get one short toast with Undo that names the block ("Moved Groove to position
-3", "Groove: plays 3 times, 12 bars"); a gesture shows one, replacing the one before; an edit that
-left no undo step of its own gets a toast without Undo. A polite status line says the same for
-screen readers.
+**Feedback.** Edits from a key or a menu get one toast with Undo that names what changed ("Deleted 3
+loops", "Split Bounce at bar 9", "Duplicated Drop", "Build up: Drop"); drags say nothing (the
+timeline shows the result, and Undo is one key away); key moves are spoken by a polite status line.
+Undo steps name the clip or section ("Move Four Floor", "Lengthen Bounce", "Delete 3 loops", "Build
+up Drop", "Delete Drop and its music"). Refusals say why in plain words.
 
-**Motion and speed.** Only transform and opacity animate (a zoom also glides widths); slides are Web
-Animations started from where each block is; the lane scrolls on the compositor and never reads
-layout while a pointer moves or it auto-scrolls; a drop re-renders only the blocks that changed.
-Glides are timed from the current time, so a long edit never makes them finish before their first
-frame. With reduced motion blocks jump to their places and the lane jumps to the playhead.
+**Playing and locks.** Every edit is heard at once, also while the song plays or is paused: a part
+whose music changes at the playhead switches there, in phase, and the playhead never jumps. While
+Record Notes writes into the song, the selected part's loop under the playhead is marked **Rec** and
+gets the notes; where the part has no loop nothing is recorded ("Chords has no loop here in the
+song, so there is nothing to record into until its next one."; the transport caption reads "No
+loop here · Chords"). While a performance take records the song is locked: edits are refused with
+"The song is locked while a performance records. Stop the take to change it."
 
-**Playing and locks.** Edits apply while the song plays or is paused; a deleted playing block sounds
-to the next bar line. While a take records the lane says "The song is locked while a take records."
-and refuses edits quietly.
-
-**Simple vs Advanced.** Simple hides the "4 × 4" repeat detail and the cells' ▾; everything else
-stays.
+**Scenes and takes into the song.** A scene's menu in Play has **Add to song** (at the song's end).
+In Performances, **Put in the song** ("To song" where narrow) turns what a take launched into loops
+after the song's end, each on its part's row for as long as it played, rounded to whole bars (one
+Undo); played notes and knob moves stay in the take. It is unavailable, saying why, while a take
+records or when the take launched nothing.
 
 ## Mix view
 
@@ -666,7 +753,9 @@ panel follows a frame later.
 
 ## Export dialog
 
-- **What to export** (clips playing now, a scene, the song, the loop, a performance), **Output**
+- **What to export** (clips playing now, a scene, the song "Song (32 bars)", the loop range "Loop
+  (bars 9–16)" played once, a performance; opened in Song or while the song plays, the song is
+  chosen), **Output**
   (**Mix** or **Mix without mastering**, back to Mix each time the dialog opens), Length (bars, for
   the clips playing now or a scene), **Echo tail**, **Sample rate**, **Bit depth** (**24-bit**
   default; 16-bit is dithered), **File name** (characters file systems refuse are dropped and a
@@ -708,11 +797,15 @@ panel follows a frame later.
 - **"Try this" hints** (`src/app/views/hints/`): a chip suggests one next action at a time and moves
   on when the real state shows it was done (never a timer or a click on the hint). Two tracks: the
   basics (tap a pad in the Bass column, Mute on Drums, drag a clip, Tone, Change instrument, a
-  mastering preset, record a Performance) and the **song** (play the song, a block's repeats, a part
-  switched off in a block, an export), which becomes current when Arrange opens; song steps about
-  blocks wait for a song with blocks, and in another view a basics step that can be done there comes
-  before an Arrange-only one. Any first project starts them; on a Blank project, steps with nothing
-  to tap or drag are passed over.
+  mastering preset, record a Performance) and the **song**, which becomes current when the Song view
+  first opens and teaches the GarageBand way: drag a scene or a loop into the song (more loops
+  filling more bars), drag a loop's right edge to make it play longer (same start, later end), drag
+  a loop to another bar (same length, another start), click a bar number on the ruler (the cursor
+  moved while play state stayed the same), press Play (the song plays while the Song view is open;
+  "Press Play the song, at the top" while the pads play), and export. Song steps about loops wait
+  for a song with loops; in another view a basics step that can be done there comes before a
+  Song-only one. Any first project starts them; on a Blank project, steps with nothing to tap or
+  drag are passed over.
   - Placement: after the view has painted, in idle time; never while a pointer is pressed or a
     modal is open. It prefers the view's hint home (`[data-hint-home]`). It **never** covers the
     transport, the banners under it, the pads, the keyboard, a control or a `[data-hint-avoid]`
@@ -722,8 +815,9 @@ panel follows a frame later.
   - Toasts and tooltips pass above it: they are never a reason to move. It moves only when
     something it must not cover appears under it, and arrives with a short slide (3 px), never a
     fade.
-  - A step that belongs to another view collapses to one line, "Next, in Play: …" (or the pad
-    tab's name), with a button that goes there; its words follow the view on screen.
+  - A step that belongs to another view collapses to one line, "Next, in Play: …" ("Next, in
+    Song: …", or the pad tab's name), with a button that goes there; its words follow the view on
+    screen.
   - Shown only while Tips are on; **Hide hints** says Help (?) shows them again.
 
 ## Cross-cutting rules
@@ -742,13 +836,14 @@ instead. Short form in narrow strips, never spilling over.
 **Touch.** A finger swipe scrolls; it changes a value only when it starts on the grip (a knob's
 dial, a fader's cap, at least 44 px around) or after resting still 250 ms. Lists and lanes follow
 the same idea: drum grid (tap toggles, sideways drag paints), piano roll (tap; 300 ms hold edits),
-song lane (300 ms hold picks up), ruler (200 ms hold sets a loop), Shape knobs (650 ms long press
-opens the knob menu), sampler waveform (two-finger pinch zooms).
+the Song view (a 250 ms rest picks up a loop, an edge or a section; on the ruler a rest, then a
+drag, sets the loop range), Shape knobs (650 ms long press opens the knob menu), sampler waveform
+(two-finger pinch zooms).
 
 **Toasts.** At the top centre, just under the transport and any banner (`--transport-h`), where
 every view keeps headers rather than anything played; the stack is at most 520 px wide. Below an
 open menu; action keys hidden under a modal dialog. When a control (a tab, key, pad, field, a
-field's frame, a song block) lies under the centred stack, it moves to the nearest spot that covers
+field's frame, a loop in the song) lies under the centred stack, it moves to the nearest spot that covers
 none, trying narrower stacks (440, then 360 px) and measuring the height each width really takes; if
 no spot is clear it stays centred. Very wide elements (over 60 % of the window) do not count as
 controls. It is placed each time the stack changes and again after a scroll or resize. Durations:
@@ -773,7 +868,8 @@ keys still show their name.
 **Meters.** Real engine levels, drawn on canvas: amber, light amber from −12 dBFS, coral from −3
 dBFS; a held peak keeps its segment. Strip meters may use the fader's taper.
 
-**Reduced motion.** No slides or springs (blocks, pads and the lane jump to their places); loop
+**Reduced motion.** No slides or springs (pads jump to their places; a dragged loop steps from bar
+to bar without its slide, and the snapped-together line does not flash); loop
 progress moves once a beat; the record dot is a steady coral and its ring steady; the sampler's
 spinners are hidden and their words ("Loading…") stay; the save state's arc, the MIDI & audio light
 and the cable-panel pulses hold still.
@@ -809,10 +905,11 @@ shortcut is listed in Help.
 | Humanize / Quantize (menus) | Loosen (humanize)… / Tighten timing… |
 | Sidechain | never: Pump is a tempo-synced ducking envelope |
 
-Other fixed words: **Starts on Play**, **Next bar · 3**, **Moves nothing here**, **Drum mix**,
-"curve: gentle / even", "over Tone 60–100%", "as you had it", **Level-matched**, **Make song
-blocks**, **Shape the song…**, **Play the song**, **Write a progression…**. Flats are written ♭ and
-spelled by key (B♭ in G Dorian); sharps stay #.
+Other fixed words: **Starts on Play**, **Next bar · 3**, **Stops at bar N**, **Play row**, **Moves
+nothing here**, **Drum mix**, "curve: gentle / even", "over Tone 60–100%", "as you had it",
+**Level-matched**, **Play the song**, **Make a song from my scenes**, **Put in the song**, **Write a
+progression…**. In the song say **loop** (not region or block) and **section**. Flats are written ♭
+and spelled by key (B♭ in G Dorian); sharps stay #.
 
 ## Quality bar for every change
 

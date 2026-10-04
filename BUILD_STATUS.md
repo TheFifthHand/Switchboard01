@@ -57,7 +57,8 @@ name Omni Song. Interface rules: `docs/OMNI_UX.md`. Later ideas: `docs/ROADMAP.m
 
 Asked for: "the movement of song bits so sleek and smooth and so easy to edit and extend and
 combine … perfect and reliable … clicking together." `main` holds the shipped 2.0; this work is
-reviewed as a pull request from the development branch.
+reviewed as a pull request from the development branch. (This lane of blocks shipped in 2.1–2.2; 2.3
+replaced it with the Song view, see below.)
 
 | Step | State | Notes |
 |------|-------|-------|
@@ -115,28 +116,79 @@ and Jump In timings) failed under load in several runs, and on the base under th
 quiet machine (load about 2) the shell slice's final serial e2e run passed 51 of 51. The final
 full-suite numbers are in `TEST_REPORT.md`.
 
+## Omni Song 2.3: songs like GarageBand (round 5)
+
+Asked for after 2.2, by a music maker who compares Omni Song with GarageBand: songs that snap
+together and are easy to move and lengthen, a keyboard where every key can be pressed, part buttons
+that do not just restart the parts, a Pause, and "Nothing feels obvious or intuitive at all." Built in
+six slices on `r5-int` (from the 2.2 release, `3464535`); this round ships as **version 2.3.0**.
+Contract for the song: schema v4 (regions per part on an absolute timeline, sections). Interface
+rules: `docs/OMNI_UX.md`; contracts: `docs/ARCHITECTURE.md`; checks: `docs/ACCEPTANCE.md`.
+
+| Slice | Final commit | What it delivered | Key measurements (from the slice reports) |
+|------|------|------|------|
+| spine | `73fda99` (on the integrator's types and pure rules, `802e210`) | Schema v4: the song is loops (regions) on a row per part on one timeline of whole bars, plus named sections carrying the song moves; `src/project/arrangement.ts` holds the rules (placed wins: what a loop lands on is cut short, started later in phase, split or removed). Migration v3→v4 (each block a section, what each part played a loop, joined where it plays on in phase; deterministic). Validation of loops and sections in plain words (4000 loops, 256 sections, 512 bars). Song commands rewritten, each one undo step in the user's words ("Move Four Floor"). The song follows clip edits in the same undo step (`keepSongWithClips`). Starters built by the migration's rule; library and version lines speak of sections | Song fuzz: 3000 random steps (6 seeds × 500) on House, the song valid after every step, undo / redo exact. Every 2.2 starter song (and an edited one) migrates to the same clip at the same bar and phase, bar by bar |
+| engine | `c2f6f7f` | Song mode plays the loops on an absolute timeline through passes; a loop range in bars that repeats seamlessly; edits while playing or paused act from the edit point, in phase, and never move the playhead; song moves from sections; session API (`playSong`, `seekSong`, `setSongCursor`, `setSongLoop`, `togglePlay({song})`), Stop puts the cursor back where playback started; `src/app/songPlayback.ts`; Record Notes into the loop under the playhead; Song and Loop export sources; the tab reads "Song"; relaunching a playing clip keeps it in phase | 4000-loop song: `process()` 0.04 ms median; `songPlayChanged` 0.003 ms; replan with regeneration 1.7 ms median, 3.4 ms p95. Live-edit fuzz: 60 seeds, and 60 with loops |
+| lane | `be57649` | The Song view like GarageBand's Tracks area: one header row (length, Loop, − Fit +, Follow, Loops), the ruler (playhead, loop range), the Sections strip with its menu (moves, Build up / Strip down / Breakdown), a row per part with Mute and Solo, loops drawn with their notes; move, copy, stretch and trim snapping to bars with the drop's result shown while dragging; marquee, keys and menus; the loop browser (scenes, loops by part, audition); one button for an empty song; "Put in the song" for takes; Song hints and Help keys | 150 loops on screen at 1366 × 768, 2 s drags: p50 16.7 ms, p95 16.7–16.8 ms, max 16.8 ms, 0 frames over 20 ms; 0 DOM mutations to other loops |
+| keys | `ed65caf` | With Musical Assist on, a scale keyboard: only the key's notes as one row of even keys, every key its own note, spelled by the key, roots by octave and a teal underline, A–' and Q–] computer keys; on the piano the black keys are centred (60 % wide, 55 % tall); keys are buttons named by their note; a held key is released when the layout changes | At 1366 px: Simple 20 keys of 45.2 px, Advanced 16 of 44.8 px; 34.2 px of every white key below the black keys |
+| pads | `abe33e3` | Pads say what a click does (▶ Play / ■ Stop) on hover and focus; "Stops at bar N"; the part key in words (Play / Stop / Cancel / Skip); ❚❚ Pause / ▶ Continue above Stop all; scene buttons Play row / Stop row / Continue row; the playing pad is never started again by a click | The part key's words show in every column or none from 1024 to 1920 px (icon only around 1180 px) |
+| update | `3927e85` | A new version opens by itself in every page not in use (`public/sw-takeover.js`, `src/app/pwa.ts`); a page in use is never reloaded and offers Update; a refresh opens a waiting version; the launchers name another version running at the usual address, wait for it, then start this one there; the Welcome card names the version | Takeover e2e: 6 of 6, twice, including the real 2.2.0 release |
+
+Integration changes on `r5-int` (outside any slice): the v4 types and the pure timeline rules with
+their tests went in first (`802e210`); the song playback store moved to `src/app/songPlayback.ts`
+(`fc5857d`); the Loops pads count a queued change's bar on the song's timeline (`5db6374`); pads
+tests follow loops, not blocks (`0d7f5ef`); relaunching the playing clip shows no queued change
+(`9a11870`); the resilience e2e follows the song's bar after a stall, the update e2e takes an
+absolute `E2E_DIST`, the versions test keeps its versions minutes apart, and summaries say sections
+(`9229b1d`); version 2.3.0 with What's new and START HERE (`1089b52`).
+
+**Not done, or worth knowing** (from the slice reports and the docs check):
+- The Song view has no control for **Add an intro / Add an ending** or for inserting and removing
+  bars on their own: the commands (`addIntro`, `addEnding`, `insertBars`, `removeBars`) exist and are
+  tested, but 2.2's "Shape the song…" went with the block lane. The Echo tail field left the Song
+  header; the Export dialog keeps it for each export.
+- "Back to Song" after a double-click into a loop's notes is a 20 s toast, not a key in the Steps
+  header.
+- Ctrl+T also splits, but browsers keep it for a new tab, so Help lists Ctrl+E.
+- On non-US keyboard layouts the scale keyboard's I, [ and ] keys show their US legends.
+- Two words in Play files lag behind the engine: the scene menu still says "Launch scene" (its
+  button says "Play row"), and a stopping pad's tooltip says a tap "starts again from its
+  beginning", while since the integration it plays on in phase.
+- A seek while the song plays restarts the transport at that bar (the usual 50 ms start offset);
+  runtime `songLooping` can be up to a beat late after a jump.
+- Touch was tried with CDP touch events, not on a real tablet; the Windows launcher's version check
+  ran under PowerShell 7 on Linux only.
+
+**Test runs.** The slices ran on a shared, loaded machine (load averages 15 to 32 on 4 CPUs);
+timing tests (`drumSynth`, `variation`, `r4-notes-variation`, `validate`, live-pad timing in
+`wp1-session`, `wp2-notes-recording`, `export-while-playing`) failed under load in some runs and
+passed alone. Final test runs: see TEST_REPORT.md.
+
 ## State at handoff
 
-- Release package: `npm run package` builds `release/omni-song-2.2.0.zip` (production build in
-  `app/`, `Start Omni Song.bat`, `START HERE.txt`, `launcher/`, `ASSETS.md`, and the repository
-  source in `source/`); that zip is in the repository. Older zips stay in git history (2.0 is on
-  `main`).
+- Release package: `npm run package` builds `release/omni-song-<version>.zip` (2.3.0: production
+  build in `app/`, `Start Omni Song.bat`, `START HERE.txt`, `launcher/`, `ASSETS.md`, and the
+  repository source in `source/`). `release/omni-song-2.2.0.zip` is in the repository (the update
+  e2e opens it as the real older version); older zips stay in git history (2.0 is on `main`).
 - Evidence: `TEST_REPORT.md` (results and measurements), `docs/ACCEPTANCE.md` (every requirement of
   the brief with its evidence), `docs/screenshots/`, `evidence/wav/`, `evidence/launcher-smoke.txt`.
-- Guides: `docs/GUIDE.md` (first loop; record, mix, master and export; MIDI keyboard; recording
-  your voice or guitar).
-- At the 2.1 handoff: typecheck clean; unit 1106, browser 1085, e2e 25 tests pass. The 2.2
-  results are in `TEST_REPORT.md`.
+- Guides: `docs/GUIDE.md` (first loop; chords and keys; notes and drum steps; shaping sounds;
+  building a song in the Song view; record, mix, master and export; keeping work safe; MIDI
+  keyboard; recording your voice or guitar).
+- At the 2.1 handoff: typecheck clean; unit 1106, browser 1085, e2e 25 tests pass. The latest
+  results (2.3) are in `TEST_REPORT.md`.
 - Remaining work is local only: listening, physical latency, a real MIDI keyboard and microphone,
   the Windows launcher on Windows, Chrome/Edge on Windows, real background-tab throttling (see
   TEST_REPORT.md).
 
 ## Next action
 
-Run the full suites on a quiet machine and build the 2.2 release zip. For local verification:
-extract `release/omni-song-2.2.0.zip` on Windows, double-click `Start Omni Song.bat`, press Jump In,
-then follow `docs/GUIDE.md`. Possible next steps are in `docs/ROADMAP.md` (local music-generator
-bridge, webcam movement control, WebXR, and the items round 4 deferred).
+Run the full suites on a quiet machine and build the 2.3 release zip (`npm run package`). For
+local verification: extract `release/omni-song-2.3.0.zip` on Windows, double-click `Start Omni
+Song.bat` (with a 2.2 window still open, it should name it and wait), press Jump In, then follow
+"Build a song" in `docs/GUIDE.md` with a mouse or trackpad. Possible next steps are in
+`docs/ROADMAP.md` (local music-generator bridge, webcam movement control, WebXR, and the items
+rounds 4 and 5 deferred).
 
 ## Known limitations / environment notes
 

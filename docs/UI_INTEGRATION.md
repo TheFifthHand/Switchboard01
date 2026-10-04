@@ -6,7 +6,8 @@
 |------|-----|
 | The Project (undoable data) | `useProject(selector, equality?)` from `src/app/instance.ts`; `session.store.getState()` outside React |
 | UI-only selection/view state | `useUi(selector)` + setters from `src/state/uiStore.ts` (`selectTrack`, `selectSlot`, `setPadMode`, `setStepPage`, `selectDrumVoice`, `shiftNotesOctave`, `setCablesOpen`, `setClipboard`, `selectModule`, …) |
-| What the audio side is doing now | `useRuntime(selector)` from `src/app/runtime.ts` (`playing`, `mode`, `tracks[trackId].playingSlot/queued`, `recording`, `recordTarget`, `held[trackId]`, `muteAll`, …) and `notify(text, tone, action?)` for toasts |
+| What the audio side is doing now | `useRuntime(selector)` from `src/app/runtime.ts` (`playing`, `paused`, `mode`, `tracks[trackId].playingSlot/queued`, `recording`, `recordTarget`, `held[trackId]`, `muteAll`, `songCursor`, `songLoop`, `songLooping`, …) and `notify(text, tone, action?)` for toasts |
+| Where the song plays | `src/app/songPlayback.ts`: `songPlayheadBar()` (read in a frame loop), `songBarAt(tick)`, `useSongPlaying()` |
 | Undo state | `useHistory()` |
 | Autosave state | `useAutosave()` |
 
@@ -22,14 +23,17 @@ Clip objects and arrays keep their identity when unchanged (immer structural sha
   `setMacro(trackId, macro, v, gesture)`, `setModuleParam(moduleId, param, v, gesture)`,
   `setInstrumentParam(trackId, param, v, gesture)`, `setMute`, `setBpm`, `setSwing`, `setMasterVolume`,
   `noteOn(trackId, pitch, velocity, 'pad' | 'keyboard' | 'computer')` / `noteOff(...)`,
-  `play/stop/togglePlay/playSong(fromBlock)`, `toggleRecordNotes`, `togglePerformance`,
+  `play/stop/togglePlay({song?})`, `playSong({fromBar?})`, `seekSong(bar)`, `setSongCursor(bar)`,
+  `setSongLoop({fromBar, toBar} | null)`, `toggleRecordNotes`, `togglePerformance`,
   `replayPerformance(id)`, `importSample(file, trackId)`, `renderWav(opts)`, `renderPlan(...)`,
   `newFromStarter(id)`, `openProject(id)`, `importProjectFile(file)`, `exportProjectFile()`,
   `undo()`, `redo()`.
 - **Every other edit** is a command from `src/state/commands` called with `session.store`, wrapped in
   `session.accepted(result)` — that shows refusals (e.g. the performance-take lock, invalid input) as a
   toast and returns `true` when the edit happened. Example:
-  `session.accepted(cmd.renameClip(session.store, trackId, slot, name))`.
+  `session.accepted(cmd.renameClip(session.store, trackId, slot, name))`. Song edits go through the
+  commands in `src/state/commands/arrangement.ts` (the Song view wraps them in
+  `arrange/songActions.ts`); the session follows them while the song plays.
 - Pass the `gesture` id from `Knob`/`NumberField` `onChange(value, info)` (`info.gesture`) so a drag
   is one undo step.
 - `downloadBlob(blob, filename)` from `src/app/download.ts` saves files.
