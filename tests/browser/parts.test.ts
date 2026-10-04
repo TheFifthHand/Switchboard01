@@ -359,7 +359,7 @@ describe('Part panel macros and Variation', () => {
     expect(notes(1)).toBe(bounce);
     const text = runtimeStore.getState().notice!.text;
     expect(text).toMatch(/^Variation on Bass · Rolling: /);
-    expect(text).toContain('Bounce is playing: launch Rolling to hear it.');
+    expect(text).toContain('Bounce is playing: tap the Rolling pad to hear it.');
     act(() => session.undo());
     expect(notes(2)).toBe(rolling);
 
@@ -477,7 +477,7 @@ describe('Scene rename', () => {
     typeInto(input, 'Rise');
     click(dialog()!.querySelector('button[type="submit"]')!);
     expect(session.store.getState().scenes[2].name).toBe('Rise');
-    expect(document.querySelector('button[aria-label^="Launch scene Rise"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label^="Play row Rise"]')).not.toBeNull();
     act(() => session.undo());
     expect(session.store.getState().scenes[2].name).toBe(scene.name);
   });
@@ -485,7 +485,7 @@ describe('Scene rename', () => {
   it('F2 on a scene button opens the rename field; Shift+F10 opens the scene menu', () => {
     mountGrid();
     const scene = session.store.getState().scenes[0];
-    const btn = document.querySelector<HTMLButtonElement>(`button[aria-label^="Launch scene ${scene.name}"]`)!;
+    const btn = document.querySelector<HTMLButtonElement>(`button[aria-label^="Play row ${scene.name}"]`)!;
     act(() => btn.focus());
     key(btn, 'keydown', { key: 'F2' });
     expect(dialog()!.querySelector('input')!.value).toBe(scene.name);
