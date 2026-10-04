@@ -187,13 +187,13 @@ function vary(trackId: Id, strength: Strength): void {
   if (!session.accepted(r)) return;
   const after = session.store.getState().tracks.find((t) => t.id === trackId)?.clips[slot]?.notes ?? clip.notes;
   original.made.add(notesSig(after));
-  // Varying a clip other than the one playing is silent until it is launched: say so
+  // Varying a clip other than the one playing is silent until it plays: say so, in the pads' words
   // (unless it is already queued to start).
   const rt = runtimeStore.getState();
   const tr = rt.tracks[trackId];
   const playingSlot = rt.playing && tr?.queued?.slot !== slot ? (tr?.playingSlot ?? null) : null;
   const playingClip = playingSlot !== null && playingSlot !== slot ? track.clips[playingSlot] : null;
-  const elsewhere = playingClip ? ` ${playingClip.name} is playing: launch ${clip.name} to hear it.` : '';
+  const elsewhere = playingClip ? ` ${playingClip.name} is playing: tap the ${clip.name} pad to hear it.` : '';
   const head = strength === 'bold' ? `Bold variation on ${what}` : `Variation on ${what}`;
   notify(`${head}: ${r.summary ?? 'changed'}.${elsewhere}`, 'info', 'undo');
 }

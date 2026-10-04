@@ -267,8 +267,48 @@
   gap: 4px;
   min-width: 0;
 }
-.partPlay {
+/*
+ * The part's key says what it does: an icon and a word ("▶ Play", "■ Stop",
+ * "✕ Cancel", "■ Skip"). Its content wraps, and the second line falls below
+ * the key: where the key is too narrow for its word, the word goes there and
+ * the icon stays alone, centred (the key's name is the same either way). The
+ * top padding centres the first line.
+ */
+.partPlay[data-size] {
   flex: none;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  column-gap: 5px;
+  row-gap: 24px;
+  min-width: 64px;
+  padding: 9px 9px 0;
+  overflow: hidden;
+}
+/* Beside the '⋯' on a line of its own (the meter goes under them): the key takes the line. */
+@container (max-width: 169px) {
+  .partPlay[data-size] {
+    flex: 1 1 0;
+    min-width: var(--hit);
+  }
+}
+/*
+ * Narrow columns: the word a size down (as Mute and Solo) and a smaller icon. Play, Stop and Skip
+ * take the same room, so every column of a window shows its word or none does.
+ */
+@container (max-width: 131px) {
+  .partPlay[data-size] {
+    column-gap: 3px;
+    padding: 10px 3px 0;
+    font-size: var(--fs-xs);
+  }
+  .partPlay[data-size] svg {
+    width: 12px;
+    height: 12px;
+  }
+  .partPlay[data-size] > span {
+    min-width: 25px;
+    text-align: center;
+  }
 }
 /* The meter and the status word (Muted / Not soloed / Solo) take turns in one box of the same size, so Mute and Solo never move anything. */
 .meter,
@@ -325,7 +365,7 @@
   color: var(--teal-ink);
 }
 /* Not room for the meter between the keys: it takes its own line under them. */
-@container (max-width: 119px) {
+@container (max-width: 169px) {
   .meter,
   .status {
     order: 3;
@@ -470,9 +510,12 @@
   background: var(--coral);
   color: #fff;
 }
-/* While something is carried: the '⋯' keys step aside and the cursor says what a drop does. */
+/* While something is carried: the '⋯' keys and the pads' ▶ Play / ■ Stop step aside (a drop is not a tap), and the cursor says what a drop does. */
 .grid[data-dragging] .more {
   visibility: hidden;
+}
+.grid[data-dragging] .cell button [data-pad-action] {
+  display: none;
 }
 .grid[data-dragging] {
   cursor: grabbing;
@@ -734,6 +777,7 @@
   text-transform: uppercase;
   color: var(--ink-3);
 }
+/* The scene column's keys: Pause / Continue (while the transport runs) and Stop all. */
 .stopAll {
   display: inline-flex;
   align-items: center;

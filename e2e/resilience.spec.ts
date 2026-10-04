@@ -137,8 +137,8 @@ test('three minutes of playback: bounded resources, no drift, output within the 
   test.setTimeout(260_000);
   await openFresh(page);
   await jumpIn(page);
-  // Launch the fullest scene for more voices.
-  await page.getByRole('button', { name: /^Launch scene Lift/ }).click();
+  // Play the fullest scene for more voices.
+  await page.getByRole('button', { name: /^Play row Lift/ }).click();
   const samples: { voices: number; pending: number; sounding: number; peak: number; tick: number; t: number }[] = [];
   const t0 = await page.evaluate(() => ({ tick: (window as any).__switchboard.position().tick, t: (window as any).__switchboard.session.ctx.currentTime }));
   for (let i = 0; i < 18; i++) {
