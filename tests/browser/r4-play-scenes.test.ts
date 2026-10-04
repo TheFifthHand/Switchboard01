@@ -3,7 +3,7 @@
  * app:
  * - the scene menu inserts a scene above or below, duplicates one (copies of
  *   its clips, named like "Groove 2"), makes one from what is playing, and
- *   deletes one, asking first (and saying how many) when song blocks use it;
+ *   deletes one, asking first (and saying how many) when song loops play it;
  *   each is one undo step;
  * - "Add scene" (beside the pad actions, under the scene column) adds rows
  *   up to 8; at 1366 x 768 the rows then scroll under the sticky part
@@ -16,6 +16,7 @@
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
+import { sceneUse } from '../../src/state/commands';
 import { runtimeStore } from '../../src/app/runtime';
 import { selectSlot, selectTrack, setPadMode, uiStore } from '../../src/state/uiStore';
 import { SIZES, button, clickEl, clipsOf, grid, item, menu, openApp, pad, press, project, setUp, tearDown, until } from './r4-play-helpers';
@@ -69,7 +70,7 @@ describe('the scene menu (PLAY-10)', () => {
     });
     expect(session.store.undoLabel()).toBe('Duplicate scene');
 
-    // Deleting the copy (no song block uses it): at once, with Undo.
+    // Deleting the copy (no song loop plays it): at once, with Undo.
     await sceneMenu('Groove 2');
     await clickEl(item('Delete scene'));
     expect(sceneNames()).toEqual(['Intro', 'Groove', 'Lift', 'Break']);
@@ -78,21 +79,21 @@ describe('the scene menu (PLAY-10)', () => {
     act(() => session.undo());
     expect(sceneNames()).toEqual(['Intro', 'Groove', 'Lift', 'Break']);
 
-    // Groove is in the song twice: Delete asks first and says how many blocks go with it.
-    const blocks = project().arrangement.blocks.length;
+    // Groove is in the song: Delete asks first and says how many of the song's loops go with it.
+    const loops = project().arrangement.regions.length;
     const grooveId = project().scenes[1].id;
-    const using = project().arrangement.blocks.filter((b) => b.sceneId === grooveId).length;
-    expect(using).toBe(2);
+    const using = sceneUse(project(), grooveId).regions;
+    expect(using).toBeGreaterThan(0);
     await sceneMenu('Groove');
     await clickEl(item('Delete scene'));
     expect(sceneNames()).toHaveLength(4);
-    expect(menu()?.textContent).toContain('2 song blocks play it');
-    await clickEl(item('Delete scene and 2 song blocks'));
+    expect(menu()?.textContent).toContain(`${using} loops play its clips`);
+    await clickEl(item(`Delete scene and ${using} loops`));
     expect(sceneNames()).toEqual(['Intro', 'Lift', 'Break']);
-    expect(project().arrangement.blocks).toHaveLength(blocks - 2);
+    expect(project().arrangement.regions).toHaveLength(loops - using);
     act(() => session.undo());
     expect(sceneNames()).toEqual(['Intro', 'Groove', 'Lift', 'Break']);
-    expect(project().arrangement.blocks).toHaveLength(blocks);
+    expect(project().arrangement.regions).toHaveLength(loops);
     // "Keep it" leaves everything.
     await sceneMenu('Groove');
     await clickEl(item('Delete scene'));

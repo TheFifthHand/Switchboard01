@@ -3,15 +3,17 @@
  * menu key or F2): rename the scene, launch it, move the row up or down (its
  * clips move with it), insert an empty scene above or below, duplicate it
  * (its clips are copied, the copy named like "Groove 2"), make a new scene
- * from the clips playing now, add it to the arrangement, export it as a WAV
- * loop, or delete it. A project has 1 to 8 scenes. Deleting a scene the song
- * uses asks first, saying how many song blocks play it (they leave the song
- * with it). While a performance take records, the rows that would edit say so
- * and do nothing (Launch and Export stay).
+ * from the clips playing now, add it to the end of the song (a loop for each
+ * of its parts, under a section named after it), export it as a WAV loop, or
+ * delete it. A project has 1 to 8 scenes. Deleting a scene the song plays
+ * asks first, saying how many of the song's loops play its clips (they leave
+ * the song with it). While a performance take records, the rows that would
+ * edit say so and do nothing (Launch and Export stay).
  */
 import { useEffect, useState } from 'react';
 import { MAX_SCENES, MIN_SCENES, type Id } from '../../project/types';
-import { DEFAULT_BLOCK_REPEATS, addBlock, captureScene, deleteScene, duplicateScene, insertScene, renameScene, sceneUse } from '../../state/commands';
+import { songBars } from '../../project/arrangement';
+import { addSceneToSong, captureScene, deleteScene, duplicateScene, insertScene, renameScene, sceneUse } from '../../state/commands';
 import { shallowEqual } from '../../state/store';
 import { session, useProject } from '../instance';
 import { notify, runtimeStore, useRuntime } from '../runtime';
@@ -29,9 +31,9 @@ export interface SceneMenuProps {
 
 const FULL_REASON = `${MAX_SCENES} scenes is the most`;
 
-/** "1 song block", "3 song blocks". */
-function blocksText(n: number): string {
-  return n === 1 ? '1 song block' : `${n} song blocks`;
+/** "1 loop", "3 loops" (of the song). */
+function loopsText(n: number): string {
+  return n === 1 ? '1 loop' : `${n} loops`;
 }
 
 /** What each part plays now (its sounding or armed clip), for "New scene from what's playing". */
@@ -59,8 +61,7 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
         of: p.tracks.length,
         bars: p.tracks.reduce((m, t) => Math.max(m, t.clips[row]?.bars ?? 0), 0),
         rows: p.scenes.length,
-        inSong: use.blocksUsing.length,
-        layered: use.blocksLayering.length,
+        inSong: use.regions,
       };
     },
     shallowEqual,
@@ -99,33 +100,28 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
     );
   }
 
-  const remove = (removeBlocks: boolean) => {
-    const r = deleteScene(session.store, row, { removeBlocks });
+  const remove = () => {
+    const r = deleteScene(session.store, row);
     onClose();
     if (!session.accepted(r)) return;
-    const gone = r.blocksUsing?.length ?? 0;
-    notify(`Deleted the scene ${info.name} and its clips${gone ? `, and the ${blocksText(gone)} that played it` : ''}.`, 'info', 'undo');
+    const gone = r.regions ?? 0;
+    notify(`Deleted the scene ${info.name} and its clips${gone ? `, and the song’s ${loopsText(gone)} that played them` : ''}.`, 'info', 'undo');
     // Focus goes to the scene that took its place (the one above, when it was the last).
     focusScene(Math.min(row, session.store.getState().scenes.length - 1));
   };
 
   if (mode === 'confirmDelete') {
     const n = info.inSong;
-    const m = info.layered;
-    const what = [n ? `${n === 1 ? '1 song block plays' : `${n} song blocks play`} it` : '', m ? `${m === 1 ? '1 block borrows' : `${m} blocks borrow`} one of its clips` : '']
-      .filter(Boolean)
-      .join(' and ');
-    const effect = n ? `Deleting it takes ${n === 1 ? 'that block' : `those ${n} blocks`} out of the song` : 'Deleting it puts those parts back on their own scene';
     return (
       // Its own popover (a fresh mount), so focus lands on its first choice.
       <Popover key="confirm" anchor={anchor} label={`Delete scene ${info.name}?`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
         <MenuHeader eyebrow={eyebrow} title={`Delete ${info.name}?`}>
           <p className={styles.warn}>
-            {info.name} is in the song: {what}. {effect}. Undo brings it all back.
+            {info.name} is in the song: {n === 1 ? '1 loop plays' : `${n} loops play`} its clips. Deleting it takes {n === 1 ? 'that loop' : 'them'} out of the song. Undo brings it all back.
           </p>
         </MenuHeader>
-        <MenuItem icon="trash" tone="danger" onSelect={() => remove(true)}>
-          {n ? `Delete scene and ${blocksText(n)}` : 'Delete scene'}
+        <MenuItem icon="trash" tone="danger" onSelect={remove}>
+          {`Delete scene and ${loopsText(n)}`}
         </MenuItem>
         <MenuItem icon="close" onSelect={() => setMode('menu')}>
           Keep it
@@ -148,7 +144,7 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
       <MenuHeader eyebrow={eyebrow} title={info.name}>
         <div className={styles.meta}>
           {info.parts} of {info.of} parts{info.bars ? ` · ${info.bars} bar${info.bars === 1 ? '' : 's'} long` : ''}
-          {info.inSong ? ` · ${info.inSong}× in the song` : ''}
+          {info.inSong ? ` · in the song` : ''}
           {locked ? ` · ${LOCKED_TEXT}` : ''}
         </div>
       </MenuHeader>
@@ -235,11 +231,12 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
       <MenuSeparator />
       <MenuItem
         icon="plus"
-        hint={info.parts === 0 ? 'a silent section' : `${DEFAULT_BLOCK_REPEATS}× at the end`}
-        disabled={locked}
-        disabledReason={LOCKED_REASON}
+        hint={info.parts === 0 ? undefined : 'at the end'}
+        disabled={locked || info.parts === 0}
+        disabledReason={locked ? LOCKED_REASON : 'No clips in this row'}
         onSelect={() => {
-          if (session.accepted(addBlock(session.store, info.id))) notify(`Added ${info.name} (${DEFAULT_BLOCK_REPEATS}×) to the end of the song. Arrange it in the Arrange view.`, 'info', 'undo');
+          const at = songBars(session.store.getState());
+          if (session.accepted(addSceneToSong(session.store, row, at))) notify(`Added ${info.name} to the end of the song, from bar ${at + 1}. Shape it in the Song view.`, 'info', 'undo');
           onClose();
         }}
       >
@@ -262,10 +259,10 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
         tone="danger"
         disabled={info.rows <= MIN_SCENES || locked}
         disabledReason={why('The only scene')}
-        hint={info.inSong || info.layered ? 'asks first: in the song' : undefined}
+        hint={info.inSong ? 'asks first: in the song' : undefined}
         onSelect={() => {
-          if (info.inSong || info.layered) setMode('confirmDelete');
-          else remove(false);
+          if (info.inSong) setMode('confirmDelete');
+          else remove();
         }}
       >
         Delete scene
