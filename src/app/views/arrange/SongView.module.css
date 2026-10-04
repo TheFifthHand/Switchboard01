@@ -189,7 +189,7 @@
   background-size: calc(var(--ppb) * var(--grid) * 1px) 9px;
   background-position: 0 100%;
   background-repeat: repeat-x;
-  touch-action: none;
+  touch-action: pan-x pan-y;
   user-select: none;
 }
 .rulerNum {
@@ -310,7 +310,7 @@
   cursor: grab;
   overflow: hidden;
   container-type: inline-size;
-  touch-action: none;
+  touch-action: pan-x pan-y;
   user-select: none;
   outline: none;
 }
@@ -522,7 +522,7 @@
     calc(var(--ppb) * var(--grid) * 4px) 100%,
     calc(var(--ppb) * var(--grid) * 1px) 100%;
   cursor: crosshair;
-  touch-action: none;
+  touch-action: pan-x pan-y;
 }
 .row[data-quiet] .region {
   opacity: 0.45;
@@ -549,7 +549,7 @@
   container-type: inline-size;
   cursor: grab;
   user-select: none;
-  touch-action: none;
+  touch-action: pan-x pan-y;
   outline: none;
 }
 .region:hover {
@@ -594,6 +594,28 @@
     0 0 0 1px var(--teal),
     inset 0 0 0 1px var(--teal),
     inset 0 -3px 0 var(--amber);
+}
+.region[data-recording] {
+  box-shadow:
+    0 0 0 1px var(--coral),
+    inset 0 -3px 0 var(--coral);
+}
+/* Recording: the word, with the coral (colour is never alone). */
+.region[data-recording]::after {
+  content: 'Rec';
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  left: auto;
+  bottom: auto;
+  width: auto;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--coral-key);
+  color: #fff;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
+  line-height: 14px;
 }
 .region:focus-visible {
   box-shadow: var(--focus-ring);
@@ -1004,7 +1026,7 @@
   background: linear-gradient(180deg, #fdfdfc, #f1f2f3);
   box-shadow: var(--shadow-raised);
   cursor: grab;
-  touch-action: none;
+  touch-action: pan-x pan-y;
   user-select: none;
   outline: none;
 }
@@ -1106,7 +1128,7 @@
   font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
   cursor: grab;
-  touch-action: none;
+  touch-action: pan-x pan-y;
   user-select: none;
   outline: none;
 }

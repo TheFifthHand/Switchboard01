@@ -27,8 +27,14 @@
  * Pointer moves are cheap: positions come from the geometry cached when the
  * gesture began (no layout reads), and the overlay is told only when what it
  * shows changes (a new bar, the copy key, leaving the row).
+ *
+ * Touch follows the app's rule (ui/components/touchDrag.ts): a finger swipe
+ * scrolls the song; a finger that rests TOUCH_HOLD_MS first picks the loop,
+ * edge or section up, and from then on the browser does not pan. A tap is a
+ * click.
  */
 import { regionEnd, sectionAt, type Edge } from '../../../project/arrangement';
+import { TOUCH_HOLD_MS, TOUCH_SLOP_PX } from '../../../ui/components';
 import type { Id, Project, SongRegion } from '../../../project/types';
 import {
   DRAG_SLOP_PX,
@@ -121,6 +127,9 @@ interface Active {
    * must not scroll the song away).
    */
   armed: boolean;
+  /** A finger that has not rested long enough yet: moving now makes it a swipe (the browser scrolls). */
+  touchWait: boolean;
+  holdTimer: number;
 }
 
 /** Distance from the timeline's left or right edge (px) where a drag starts scrolling the view. */
@@ -137,6 +146,10 @@ export class LaneController {
     if (this.a && e.pointerId === this.a.pointerId) this.cancel();
   };
   private readonly onKey = (e: KeyboardEvent) => this.key(e);
+  /** Once a finger has picked something up, the browser must not pan under it. */
+  private readonly onTouchMove = (e: TouchEvent) => {
+    if (this.a && !this.a.touchWait && e.cancelable) e.preventDefault();
+  };
   private readonly onScroll = () => {
     if (this.a?.started) this.update();
   };
@@ -233,7 +246,16 @@ export class LaneController {
       last: null,
       captured: null,
       armed: g.kind !== 'carry',
+      touchWait: e.pointerType === 'touch',
+      holdTimer: 0,
     };
+    const a = this.a;
+    if (a.touchWait) {
+      a.holdTimer = window.setTimeout(() => {
+        if (this.a === a) a.touchWait = false;
+      }, TOUCH_HOLD_MS);
+      window.addEventListener('touchmove', this.onTouchMove, { passive: false, capture: true });
+    }
     try {
       captureOn.setPointerCapture(e.pointerId);
       this.a.captured = captureOn;
@@ -288,6 +310,11 @@ export class LaneController {
     a.alt = e.altKey;
     a.ctrl = e.ctrlKey;
     a.meta = e.metaKey;
+    if (a.touchWait) {
+      // A finger moving before it rested: a swipe. The browser scrolls; nothing is picked up.
+      if (Math.hypot(e.clientX - a.x0, e.clientY - a.y0) >= TOUCH_SLOP_PX) this.cancel();
+      return;
+    }
     if (!a.started) {
       if (Math.hypot(e.clientX - a.x0, e.clientY - a.y0) < DRAG_SLOP_PX) return;
       a.started = true;
@@ -569,6 +596,8 @@ export class LaneController {
     window.removeEventListener('pointercancel', this.onCancel, true);
     window.removeEventListener('keydown', this.onKey, true);
     window.removeEventListener('keyup', this.onKey, true);
+    window.removeEventListener('touchmove', this.onTouchMove, true);
+    window.clearTimeout(a.holdTimer);
     const sc = this.host.scroller();
     sc?.removeEventListener('scroll', this.onScroll);
     sc?.removeAttribute('data-drag');

@@ -285,25 +285,42 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   /* Playhead                                                          */
   /* ---------------------------------------------------------------- */
 
-  const marked = useRef<{ bar: number; regions: unknown; ids: Set<Id> }>({ bar: -1, regions: null, ids: new Set() });
+  const marked = useRef<{ key: string; regions: unknown; ids: Set<Id>; rec: Set<Id> }>({ key: '', regions: null, ids: new Set(), rec: new Set() });
   const placeHead = useCallback((bar: number) => {
     const x = bar * live.current.ppb;
     const t = `translate3d(${x}px, 0, 0)`;
     if (lineRef.current) lineRef.current.style.transform = t;
     if (headRef.current) headRef.current.style.transform = t;
   }, []);
+  /**
+   * Marks the regions under the playhead (data-playing: a subtle amber edge)
+   * and, while Record Notes writes into one of them, that one (data-recording:
+   * coral, with the word Rec). Only when the bar, the song or the target
+   * changes; a few attribute writes, never a render.
+   */
   const markPlaying = useCallback((bar: number | null) => {
     const sc = scrollerRef.current;
     const m = marked.current;
-    const regions = session.store.getState().arrangement.regions;
+    const p = session.store.getState();
+    const regions = p.arrangement.regions;
+    const rt = songRuntime();
+    const target = rt.recording === 'notes' ? rt.recordTarget : null;
+    const recClip = target ? (p.tracks.find((t) => t.id === target.trackId)?.clips[target.slot]?.id ?? null) : null;
     const whole = bar === null ? -1 : Math.floor(bar);
-    if (whole === m.bar && regions === m.regions) return;
-    m.bar = whole;
+    const key = `${whole}|${target?.trackId ?? ''}|${recClip ?? ''}`;
+    if (key === m.key && regions === m.regions) return;
+    m.key = key;
     m.regions = regions;
-    const now = new Set(bar === null ? [] : regions.filter((r) => r.start <= bar && bar < regionEnd(r)).map((r) => r.id));
-    for (const id of m.ids) if (!now.has(id)) sc?.querySelector(`[data-region-id="${id}"]`)?.removeAttribute('data-playing');
-    for (const id of now) if (!m.ids.has(id)) sc?.querySelector(`[data-region-id="${id}"]`)?.setAttribute('data-playing', '');
+    const under = bar === null ? [] : regions.filter((r) => r.start <= bar && bar < regionEnd(r));
+    const now = new Set(under.map((r) => r.id));
+    const rec = new Set(under.filter((r) => target && r.trackId === target.trackId && r.clipId === recClip).map((r) => r.id));
+    const el = (id: Id) => sc?.querySelector(`[data-region-id="${id}"]`);
+    for (const id of m.ids) if (!now.has(id)) el(id)?.removeAttribute('data-playing');
+    for (const id of now) if (!m.ids.has(id)) el(id)?.setAttribute('data-playing', '');
+    for (const id of m.rec) if (!rec.has(id)) el(id)?.removeAttribute('data-recording');
+    for (const id of rec) if (!m.rec.has(id)) el(id)?.setAttribute('data-recording', '');
     m.ids = now;
+    m.rec = rec;
   }, []);
   useRafLoop(() => {
     const bar = songPlayheadBar();
