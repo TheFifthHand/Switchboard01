@@ -12,6 +12,8 @@
  *    a clip deleted (its regions with it) and brought back by Undo plays on
  *    in phase;
  *  - Resume after a stall continues from the bar where the music stopped;
+ *  - Play and seeks into a held note sound it from there (note chase); the
+ *    playing pad tapped twice shows no change waiting;
  *  - the transport readout shows the song's bar and beat, and the view tab
  *    is called Song.
  */
@@ -84,12 +86,13 @@ function quickSong(bpm = 220): Project {
   return p;
 }
 
-/** t4 plays a one-bar clip with a note on every beat over bars 1–8, a section "Verse" over them. */
+/** t4 plays a one-bar clip with a note on every beat over bars 1–8, a section "Verse" over them; t1 a short note on each bar. */
 function beatSong(bpm = 120): Project {
   const p = emptyProject(bpm);
   track(p, 't4').clips[0] = clip('beats', 1, [0, 1, 2, 3].map((b) => [b * BEAT, 60 + b, 48]));
-  p.arrangement.regions = [region(p, 'beats', 't4', 0, 0, 8)];
-  // The section keeps the song 8 bars long while its only loop is gone.
+  track(p, 't1').clips[0] = clip('tick', 1, [[0, 36, 24]]);
+  // t1's loop keeps the song 8 bars long while t4's is gone (the song ends with its last loop).
+  p.arrangement.regions = [region(p, 'tick', 't1', 0, 0, 8), region(p, 'beats', 't4', 0, 0, 8)];
   p.arrangement.sections = [{ id: 'v', name: 'Verse', start: 0, bars: 8 }];
   return p;
 }
@@ -393,6 +396,44 @@ describe('edits while the song plays (real session)', () => {
     await s.play();
     await until(() => tick(s) > BAR + 40, 'bar 2');
     expect(launchesOf(got, 't1')).toEqual([[0, 0], [BAR, 3]]);
+  });
+});
+
+describe('held notes and pads (engine fix round)', () => {
+  it('Play, a seek while playing and a seek while paused into a held note: it sounds from the bar sought', async () => {
+    // Chords hold one note through bars 1–4.
+    const p = emptyProject(120);
+    track(p, 't4').clips[0] = clip('pad', 4, [[0, 57, 4 * BAR]]);
+    p.arrangement.regions = [region(p, 'pad', 't4', 0, 0, 4)];
+    const s = await started(p);
+    const notes = tapNotes(s);
+    await s.playSong({ fromBar: 2 });
+    await until(() => tick(s) > 2 * BAR + 20, 'bar 3');
+    expect(notes.filter((x) => x.trackId === 't4')).toEqual([{ trackId: 't4', tick: 2 * BAR, pitch: 57 }]);
+    notes.length = 0;
+    s.seekSong(1);
+    await until(() => tick(s) > BAR + 20, 'bar 2');
+    expect(notes.filter((x) => x.trackId === 't4')).toEqual([{ trackId: 't4', tick: BAR, pitch: 57 }]);
+    s.pause();
+    s.seekSong(3);
+    notes.length = 0;
+    await s.play();
+    await until(() => tick(s) > 3 * BAR + 20, 'bar 4');
+    expect(notes.filter((x) => x.trackId === 't4')).toEqual([{ trackId: 't4', tick: 3 * BAR, pitch: 57 }]);
+  });
+
+  it('the playing pad tapped twice in the song: no change waiting, as the engine has it (the row shows Stop row)', async () => {
+    const s = await started(beatSong(120));
+    await s.playSong({ fromBar: 0 });
+    await until(() => tick(s) > 40 && rt().tracks.t4?.playingSlot === 0, 'bar 1');
+    await s.pressClip('t4', 0);
+    expect(rt().tracks.t4).toMatchObject({ playingSlot: 0, queued: { slot: null, atTick: BAR } });
+    await s.pressClip('t4', 0);
+    expect(s.sequencer!.getTrackState('t4', tick(s)).queued).toBeNull();
+    expect(rt().tracks.t4).toMatchObject({ playingSlot: 0, queued: null });
+    // Still nothing waiting two bars on, and the part played on through the bar line.
+    await until(() => tick(s) > 2 * BAR + 40, 'bar 3');
+    expect(rt().tracks.t4).toMatchObject({ playingSlot: 0, queued: null });
   });
 });
 

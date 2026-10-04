@@ -44,7 +44,7 @@ import type { AudioEngineApi, NoteTrigger, VoiceHandle } from '../audio/contract
 import { PPQ, type Id, type Project } from '../project/types';
 import { clampBpm } from './clock';
 import type { ClipPhase, LaunchResult, SeqEvent, SongLoop, StartOptions } from './contracts';
-import type { BeatEvent, NoteCut, NoteEvent, SeqPosition, Sequencer } from './sequencer';
+import { TIME_EPS, type BeatEvent, type NoteCut, type NoteEvent, type SeqPosition, type Sequencer } from './sequencer';
 import { TICKER_WORKER_SOURCE } from './tickerWorker';
 
 /** Seconds scheduled ahead of the audio clock (raised for a while by `brace()`). */
@@ -274,10 +274,14 @@ export class EngineDispatcher {
     }
   }
 
-  /** Stop: cancel voices that have not started, release the sounding ones at `now`. */
+  /**
+   * Stop: cancel voices that have not started, release the sounding ones at
+   * `now`. A voice starting at `now` itself has not sounded: it is cancelled
+   * (Resume plays a note on the pause point once, from there).
+   */
   releaseAll(now: number): void {
     for (const v of this.voices.values()) {
-      if (v.handle.startTime > now) v.handle.cancel();
+      if (v.handle.startTime >= now - TIME_EPS) v.handle.cancel();
       else v.handle.release(now);
     }
     this.voices.clear();

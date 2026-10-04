@@ -1294,18 +1294,28 @@ export class Session {
     this.releaseAllNotes();
   }
 
-  /** Set runtime pad state from the sequencer (after start/stop/load). */
+  /**
+   * Set runtime pad state from the sequencer (after start/stop/load), as of
+   * the playhead: a change generated ahead of it lights its pad when its
+   * 'launch' event arrives, not before.
+   */
   private refreshLauncherRuntime(): void {
     const seq = this.sequencer;
     const p = this.store.getState();
+    const tick = this.launcherTick();
     for (const t of p.tracks) {
       if (!seq) {
         setTrackRuntime(t.id, { playingSlot: null, queued: null });
         continue;
       }
-      const st = seq.getTrackState(t.id);
+      const st = seq.getTrackState(t.id, tick);
       setTrackRuntime(t.id, { playingSlot: st.playing?.slot ?? null, queued: st.queued ? { slot: st.queued.slot, atTick: st.queued.atTick } : null });
     }
+  }
+
+  /** The playhead while playing ('launch' events arrive at it), else undefined (the launcher as it stands). */
+  private launcherTick(): number | undefined {
+    return this.transport?.playing ? this.transport.getPosition().tick : undefined;
   }
 
   private resetRuntimeTracks(): void {
@@ -1392,7 +1402,7 @@ export class Session {
       if (cur.playingSlot === r.slot && r.slot !== null) {
         // Launching the clip that plays keeps it playing in phase and calls off a queued stop or
         // switch, so whatever the sequencer still has queued for the part (normally nothing) shows.
-        const q = this.sequencer?.getTrackState(r.trackId).queued ?? null;
+        const q = this.sequencer?.getTrackState(r.trackId, this.launcherTick()).queued ?? null;
         setTrackRuntime(r.trackId, { playingSlot: cur.playingSlot, queued: q ? { slot: q.slot, atTick: q.atTick } : null });
       } else if (cur.playingSlot === null && r.slot === null) {
         setTrackRuntime(r.trackId, { playingSlot: null, queued: null });

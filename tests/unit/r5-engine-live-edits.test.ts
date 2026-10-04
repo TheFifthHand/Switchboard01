@@ -7,13 +7,15 @@
  * you hear changes nothing. Pads tapped during the song win until the song
  * changes that part. A fuzz of random region edits, undo and redo, pauses,
  * tempo changes and loops checks that no note is ever doubled or dropped
- * against the oracle of the song as edited at each edit point.
+ * against the oracle of the song as edited at each edit point, and that
+ * every chased note is a note the song sounds there, none is lost where a
+ * pass starts or playback resumes, and none doubles a note still sounding.
  */
 import { describe, expect, it } from 'vitest';
 import { carve, insertTime, moveRegions, placeRegions, regionAt, regionClip, removeRegions, removeTime, resizeRegions, splitRegions, swapRegionClip, duplicateRegions } from '../../src/project/arrangement';
 import type { Id, Project, SongRegion } from '../../src/project/types';
 import { notesOf, ofKind } from './sequencer-fixtures';
-import { BAR, MARGIN, Rig, UNEDITED, beatFixture, clipId, expectedNotes, fixture, mulberry32, pitchOf, plays, region, straight, withSong } from './r5-engine-rig';
+import { BAR, MARGIN, Rig, UNEDITED, beatFixture, clipId, expectedChases, expectedNotes, fixture, mulberry32, pitchOf, plays, region, songTickOf, soundingAt, straight, withSong } from './r5-engine-rig';
 
 let counter = 0;
 const newId = () => `x${++counter}`;
@@ -223,6 +225,45 @@ const FUZZ_PARTS = ['t1', 't2', 't4', 't5'] as const;
  *   through the passes), nothing doubled, nothing missing;
  * - one end, nothing after it.
  */
+/**
+ * Chased notes in a fuzz run: each one is a note the song (as edited there)
+ * sounds at that point; none doubles a note of that pitch still sounding;
+ * none is missing where a pass starts or playback resumed.
+ */
+function chaseProblems(r: Rig, segments: readonly { from: number; project: Project }[], passes: ReturnType<Rig['allPasses']>, end: number, id: Id, where: string): string[] {
+  const problems: string[] = [];
+  const projectAt = (tick: number) => [...segments].reverse().find((s) => s.from <= tick)!.project;
+  const all = notesOf(r.out, id);
+  for (const c of all.filter((n) => n.chased)) {
+    const s = songTickOf(passes, c.tick);
+    const real = s !== null && soundingAt(projectAt(c.tick), id, s).some((n) => n.pitch === c.pitch);
+    if (!real) problems.push(`${where}: ${id} chased ${c.tick}:${c.pitch} is not sounding in the song there`);
+    for (const n of all) if (n !== c && n.pitch === c.pitch && n.tick < c.tick && r.endOf(n) > c.tick + 1e-6) problems.push(`${where}: ${id} chased ${c.tick}:${c.pitch} doubles ${n.tick}`);
+  }
+  const got = new Set(r.chased(id).map(([t, p]) => `${t}:${p}`));
+  // Pass starts (one where an edit took effect is left out: what played before it is the earlier song).
+  for (let i = 0; i < segments.length; i++) {
+    const lo = segments[i].from;
+    const hi = Math.min(end, segments[i + 1]?.from ?? Infinity);
+    for (const [t, p] of expectedChases(segments[i].project, passes, id, lo, hi)) {
+      if (i > 0 && t === lo) continue;
+      if (!got.has(`${t}:${p}`)) problems.push(`${where}: ${id} lost the chase of ${p} at pass start ${t}`);
+    }
+  }
+  // Resume points (left out: one an edit while paused took effect at, or too near a switch or the end).
+  for (const at of r.pauses) {
+    if (at >= end - 48 || r.editTicks.some((e) => Math.abs(e - at) <= 1)) continue;
+    const pass = passes[passes.findLastIndex((p) => p.at <= at)];
+    const s = songTickOf(passes, at);
+    if (!pass || s === null) continue;
+    for (const n of soundingAt(projectAt(at), id, s)) {
+      if (Math.min(n.end, pass.to) - s < 48) continue;
+      if (!got.has(`${at}:${n.pitch}`)) problems.push(`${where}: ${id} lost the chase of ${n.pitch} at resume ${at}`);
+    }
+  }
+  return problems;
+}
+
 function runFuzz(seed: number, opts: { loops?: boolean; steps?: number } = {}): string[] {
   const problems: string[] = [];
   const where = `seed ${seed}${opts.loops ? ' (loops)' : ''}`;
@@ -345,6 +386,7 @@ function runFuzz(seed: number, opts: { loops?: boolean; steps?: number } = {}): 
       if (seen.has(k)) problems.push(`${where}: ${id} ${k} twice`);
       seen.add(k);
     }
+    problems.push(...chaseProblems(r, segments, passes, end, id, where));
   }
   // One clip at a time per part: every launch is a switch of the part as a whole (by construction), and
   // launches lie on bar lines or where an edit took effect.

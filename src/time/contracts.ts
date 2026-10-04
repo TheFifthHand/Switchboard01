@@ -30,6 +30,22 @@
  *   a 'launch' event can lie off the bar line. See Sequencer.replanSong.
  * - A clip that started at tick S with length L plays note n at
  *   S + k*L + n.tick for k = 0, 1, 2 ...
+ * - Note chase: where playback enters a clip in the middle of its music
+ *   (Play or a seek from any bar of the song, a song loop pass or a jump
+ *   into the loop, Resume, a "Loop (bars X–Y)" export), a note of a melodic
+ *   part (synth or bass; never a drum kit, nor a sampler, whose recording
+ *   would start over) that began before that point and still sounds there
+ *   is played from it with what is left of its length, at its velocity, as
+ *   if playback had played through ('note' event `chased`). Only notes with
+ *   at least a 16th left are chased (shorter, an attack and release would
+ *   click). A note that started inside a region before it is chased when
+ *   the stretch from its start plays the same clip in phase; a region that
+ *   starts there begins with its own notes. An edit that switches a part
+ *   mid-note (or a pad launch) does not chase: the new music starts with
+ *   its next note. A note already scheduled that an edit (or a launch
+ *   called off) no longer cuts at a switch or at the song's end goes on as
+ *   a chased note from there: a scheduled voice cannot be lengthened, so it
+ *   sounds again from that bar line.
  * - Events are generated for windows of ticks. Each event belongs to exactly
  *   one window (by its un-swung tick). `invalidate(fromTime)` rewinds the
  *   generation cursor so later events are regenerated from current state;
@@ -62,6 +78,12 @@ export type SeqEvent =
       clipId?: Id;
       /** Sampler parts: the clip's own recording (Clip.sample), played instead of the part's. */
       sample?: ClipSample;
+      /**
+       * Chased (see the timing model): a clip note that began before
+       * playback entered its clip here and still sounds; `tick` and `time`
+       * are that point, the duration what is left of the note.
+       */
+      chased?: true;
     }
   /**
    * Song moves: the song gain is `from` at `time` and goes linearly to
