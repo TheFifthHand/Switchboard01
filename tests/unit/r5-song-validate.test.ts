@@ -50,7 +50,7 @@ describe('song validation', () => {
     expect(r.project.arrangement).toEqual(raw.arrangement);
   });
 
-  it('removes loops whose part or clip is gone, or that are damaged; a clip must be on the loop’s own part', () => {
+  it('removes loops whose part or clip is gone, that play another part’s clip, or that are damaged, saying which', () => {
     const { raw, clip } = withSong({});
     raw.arrangement.regions = [
       { id: 'rg_a', trackId: 't1', clipId: clip.Beat, start: 0, bars: 2, offset: 0 },
@@ -65,7 +65,9 @@ describe('song validation', () => {
     const r = check(raw);
     expect(sketch(r.project)).toEqual(['t1:Beat@0+2~0']);
     expect(r.warnings).toEqual([
-      'Removed a loop whose clip no longer exists from the song. (3 times)',
+      'Removed a loop that played another part’s clip.',
+      'Removed a loop of a part that does not exist from the song.',
+      'Removed a loop whose clip no longer exists from the song.',
       'Removed a damaged loop from the song. (3 times)',
       'Removed a loop with no length from the song.',
     ]);

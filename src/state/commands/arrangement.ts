@@ -79,6 +79,11 @@ export interface RegionDraft {
   offset?: number;
 }
 
+/**
+ * What a song command did. `ids`, `trimmed`, `removed` (and a `sectionId`)
+ * come only with an edit that changed the song: a refused command, or one
+ * that changed nothing, carries none of them.
+ */
 export interface SongEditResult extends CommandResult {
   /** The regions the edit made or moved, as they landed (see each command). */
   ids?: Id[];
@@ -191,6 +196,15 @@ function commit(store: ProjectStore, p: Project, label: string, display: string,
   );
 }
 
+/**
+ * A command's result with what the edit made or moved (`made`: ids, a
+ * section id, counts), only when it changed the song: a refusal, or an edit
+ * that changed nothing, names no loops or sections that are not there.
+ */
+function edited<T extends object>(r: CommandResult, made: T): CommandResult & Partial<T> {
+  return r.changed ? { ...r, ...made } : (r as CommandResult & Partial<T>);
+}
+
 /* ------------------------------------------------------------------ */
 /* Song moves                                                          */
 /* ------------------------------------------------------------------ */
@@ -271,7 +285,7 @@ export function toggleSectionMove(store: ProjectStore, id: Id, kind: SongMoveKin
   const has = (s.moves ?? []).some((m) => m.kind === kind);
   const next = has ? (s.moves ?? []).filter((m) => m.kind !== kind) : [...(s.moves ?? []), ...cleanMoves(p, [{ kind, ...(parts ? { parts: [...parts] } : {}) }], false)];
   const r = commit(store, p, 'arrange:Change song moves', `${has ? 'Remove' : 'Add'} ${SONG_MOVE_NAMES[kind]}`, { sections: p.arrangement.sections.map((x) => (x.id === id ? withMoves(x, next) : x)) });
-  return { ...r, on: !has };
+  return edited(r, { on: !has });
 }
 
 /* ------------------------------------------------------------------ */
@@ -317,7 +331,7 @@ export function addRegions(store: ProjectStore, drafts: readonly RegionDraft[], 
   }
   const res = landRegions(p, placed);
   const r = commit(store, p, 'arrange:Add loops', opts.display ?? `Add ${loopsWords(p, placed)}`, { regions: res.regions });
-  return { ...r, ids: res.ids, trimmed: res.trimmed, removed: res.removed };
+  return edited(r, { ids: res.ids, trimmed: res.trimmed, removed: res.removed });
 }
 
 /** Put one clip on the song from bar `start` for `bars` bars (default: the clip's length). One undo step, "Add Four Floor". */
@@ -353,7 +367,7 @@ export function addSceneToSong(store: ProjectStore, row: number, start: number, 
     sections = sortSections([...sections, { id: sectionId, name: sectionName(scene.name), start, bars }]);
   }
   const r = commit(store, p, 'arrange:Add scene to song', `Add ${scene.name}`, { regions: res.regions, sections });
-  return { ...r, ids: res.ids, trimmed: res.trimmed, removed: res.removed, ...(r.changed && sectionId ? { sectionId } : {}) };
+  return edited(r, { ids: res.ids, trimmed: res.trimmed, removed: res.removed, ...(sectionId ? { sectionId } : {}) });
 }
 
 /**
@@ -377,7 +391,7 @@ export function fillSongFromScenes(store: ProjectStore): SongEditResult {
   });
   if (!regions.length) return refuse('empty', 'Your scenes have no clips yet: make some in Play first.');
   const r = commit(store, p, 'arrange:Make a song from scenes', 'Make a song from my scenes', { regions: sortRegions(p, regions), sections });
-  return { ...r, ids: regions.map((x) => x.id) };
+  return edited(r, { ids: regions.map((x) => x.id) });
 }
 
 /* ------------------------------------------------------------------ */
@@ -399,11 +413,11 @@ export function moveRegions(store: ProjectStore, ids: readonly Id[], delta: numb
   if (!isInt(delta)) return refuse('invalid', 'Loops move by whole bars.');
   const pickedIds = picked.map((r) => r.id);
   const d = clampMove(p.arrangement.regions, pickedIds, delta);
-  if (d === 0) return { changed: false, ids: opts.copy ? [] : pickedIds };
+  if (d === 0) return { changed: false };
   const res = movePure(p, p.arrangement.regions, pickedIds, d, { copy: opts.copy, newId: newRegionId });
   const verb = opts.copy ? 'Copy' : 'Move';
   const r = commit(store, p, `arrange:${verb} loops`, `${verb} ${loopsWords(p, picked)}`, { regions: res.regions }, opts.gesture);
-  return { ...r, ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed };
+  return edited(r, { ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed });
 }
 
 /**
@@ -421,11 +435,11 @@ export function resizeRegions(store: ProjectStore, ids: readonly Id[], edge: Edg
   if (edge !== 'start' && edge !== 'end') return refuse('invalid', 'Drag the start or the end of a loop.');
   if (!isInt(delta)) return refuse('invalid', 'Loops change length by whole bars.');
   const pickedIds = picked.map((r) => r.id);
-  if (delta === 0) return { changed: false, ids: pickedIds };
+  if (delta === 0) return { changed: false };
   const res = resizePure(p, p.arrangement.regions, pickedIds, edge, delta, newRegionId);
   const longer = edge === 'end' ? delta > 0 : delta < 0;
   const r = commit(store, p, 'arrange:Resize loops', `${longer ? 'Lengthen' : 'Shorten'} ${loopsWords(p, picked)}`, { regions: res.regions }, gesture);
-  return { ...r, ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed };
+  return edited(r, { ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed });
 }
 
 /** Cut regions `ids` in two at bar `atBar` (those that cross it). `ids` in the result: the new right pieces. One undo step. */
@@ -438,7 +452,7 @@ export function splitRegions(store: ProjectStore, ids: readonly Id[], atBar: num
   if (!crossing.length) return refuse('invalid', 'Split inside a loop: pick a bar between its start and its end.');
   const res = splitPure(p, p.arrangement.regions, crossing.map((r) => r.id), atBar, newRegionId);
   const r = commit(store, p, 'arrange:Split loops', `Split ${loopsWords(p, crossing)}`, { regions: res.regions });
-  return { ...r, ids: res.made.map((x) => x.id) };
+  return edited(r, { ids: res.made.map((x) => x.id) });
 }
 
 /** Take regions `ids` out of the song (one undo step, "Delete Four Floor"; `cut`: the step says Cut, as the clipboard's Cut does). */
@@ -448,7 +462,7 @@ export function removeRegions(store: ProjectStore, ids: readonly Id[], opts: { c
   if (!picked.length) return NOT_FOUND('loop');
   const verb = opts.cut ? 'Cut' : 'Delete';
   const r = commit(store, p, `arrange:${verb} loops`, `${verb} ${loopsWords(p, picked)}`, { regions: removePure(p.arrangement.regions, picked.map((x) => x.id)) });
-  return { ...r, removed: r.changed ? picked.length : 0 };
+  return edited(r, { removed: picked.length });
 }
 
 /**
@@ -465,7 +479,7 @@ export function duplicateRegions(store: ProjectStore, ids: readonly Id[]): SongE
   if (span[1] + (span[1] - span[0]) > MAX_SONG_BARS) return refuse('limit', `There is no room after ${loopsWords(p, picked)}: ${TOO_LONG}`);
   const res = duplicatePure(p, p.arrangement.regions, picked.map((x) => x.id), newRegionId);
   const r = commit(store, p, 'arrange:Duplicate loops', `Duplicate ${loopsWords(p, picked)}`, { regions: res.regions });
-  return { ...r, ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed };
+  return edited(r, { ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed });
 }
 
 /** Copied loops (UI state): each item's part, clip, length, offset and `at`, bars after the first item's start. */
@@ -507,7 +521,7 @@ export function pasteRegions(store: ProjectStore, clip: RegionClipboard, atBar: 
   if (!placed.length) return { ...refuse('empty', 'The copied loops played clips that have been deleted since.'), skipped };
   const res = landRegions(p, placed);
   const r = commit(store, p, 'arrange:Paste loops', `Paste ${loopsWords(p, placed)}`, { regions: res.regions });
-  return { ...r, ids: res.ids, trimmed: res.trimmed, removed: res.removed, skipped };
+  return { ...edited(r, { ids: res.ids, trimmed: res.trimmed, removed: res.removed }), skipped };
 }
 
 /** Region `id` plays another of its part's clips instead, from that clip's start (one undo step). */
@@ -517,9 +531,9 @@ export function setRegionClip(store: ProjectStore, id: Id, clipId: Id): SongEdit
   if (!region) return NOT_FOUND('loop');
   const rc = regionClip(p, { trackId: region.trackId, clipId });
   if (!rc) return refuse('invalid', `That clip is not one of ${partName(p, region.trackId)}’s: a loop plays a clip of its own part.`);
-  if (clipId === region.clipId) return { changed: false, ids: [id] };
+  if (clipId === region.clipId) return { changed: false };
   const r = commit(store, p, 'arrange:Change loop clip', `Play ${rc.clip.name} instead of ${regionWords(p, region)}`, { regions: swapRegionClip(p.arrangement.regions, id, clipId) });
-  return { ...r, ids: [id] };
+  return edited(r, { ids: [id] });
 }
 
 /* ------------------------------------------------------------------ */
@@ -541,7 +555,7 @@ export function insertBars(store: ProjectStore, at: number, bars: number): SongE
   const te = insertTime(p, p.arrangement.regions, p.arrangement.sections, at, bars, newRegionId);
   const split = p.arrangement.regions.filter((r) => r.start < at && at < regionEnd(r)).length;
   const r = commit(store, p, 'arrange:Insert bars', `Insert ${barsText(bars)}`, te);
-  return { ...r, trimmed: split };
+  return edited(r, { trimmed: split });
 }
 
 /**
@@ -556,7 +570,7 @@ export function removeBars(store: ProjectStore, from: number, to: number): SongE
   if (from >= timelineBars(p)) return refuse('empty', 'There is nothing there to remove.');
   const te = removeTime(p, p.arrangement.regions, p.arrangement.sections, from, to, newRegionId);
   const r = commit(store, p, 'arrange:Remove bars', `Remove ${barsText(to - from)}`, te);
-  return { ...r, ...gapChanges(p.arrangement.regions, from, to) };
+  return edited(r, gapChanges(p.arrangement.regions, from, to));
 }
 
 /* ------------------------------------------------------------------ */
@@ -581,7 +595,7 @@ export function addSection(store: ProjectStore, start: number, bars: number, nam
   const given = name !== undefined ? cleanSectionName(name) : null;
   const s: SongSection = { id: newSectionId(), name: given ?? newSectionName(p), start, bars };
   const r = commit(store, p, 'arrange:Add section', `Add ${s.name}`, { sections: placeSection(p.arrangement.sections, s) });
-  return { ...r, ...(r.changed ? { sectionId: s.id } : {}) };
+  return edited(r, { sectionId: s.id });
 }
 
 /** Rename a section (one undo step). An empty name is refused. */
@@ -633,7 +647,7 @@ export function moveSection(store: ProjectStore, id: Id, delta: number, opts: { 
   const owned = sectionRegions(p.arrangement.regions, s);
   const span = spanOf([s, ...owned])!;
   const d = clamp(delta, -span[0], MAX_SONG_BARS - span[1]);
-  if (d === 0) return opts.copy ? { changed: false } : { changed: false, sectionId: id, ids: owned.map((r) => r.id) };
+  if (d === 0) return { changed: false };
   const res = owned.length
     ? movePure(p, p.arrangement.regions, owned.map((r) => r.id), d, { copy: opts.copy, newId: newRegionId })
     : { regions: p.arrangement.regions, moved: [] as SongRegion[], trimmed: 0, removed: 0 };
@@ -641,7 +655,7 @@ export function moveSection(store: ProjectStore, id: Id, delta: number, opts: { 
   const sections = placeSection(p.arrangement.sections, { ...landed, start: s.start + d });
   const verb = opts.copy ? 'Copy' : 'Move';
   const r = commit(store, p, `arrange:${verb} section`, `${verb} ${s.name}`, { regions: res.regions, sections }, opts.gesture);
-  return { ...r, sectionId: landed.id, ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed };
+  return edited(r, { sectionId: landed.id, ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed });
 }
 
 /**
@@ -667,7 +681,7 @@ export function duplicateSection(store: ProjectStore, id: Id): SongEditResult & 
   const regions = placeRegions(p, te.regions, copies, { newId: newRegionId }).regions;
   const copy = withMoves({ id: newSectionId(), name: s.name, start: end, bars: s.bars }, copyMoves(s.moves));
   const r = commit(store, p, 'arrange:Duplicate section', `Duplicate ${s.name}`, { regions, sections: placeSection(te.sections, copy) });
-  return { ...r, ids: copies.map((x) => x.id), ...(r.changed ? { sectionId: copy.id } : {}) };
+  return edited(r, { ids: copies.map((x) => x.id), sectionId: copy.id });
 }
 
 /**
@@ -683,7 +697,7 @@ export function removeSection(store: ProjectStore, id: Id, opts: { withMusic?: b
   if (!opts.withMusic) return commit(store, p, 'arrange:Delete section', `Delete ${s.name}`, { sections: p.arrangement.sections.filter((x) => x.id !== id) });
   const te = removeTime(p, p.arrangement.regions, p.arrangement.sections, s.start, regionEnd(s), newRegionId);
   const r = commit(store, p, 'arrange:Delete section with its music', `Delete ${s.name} and its music`, te);
-  return { ...r, ...gapChanges(p.arrangement.regions, s.start, regionEnd(s)) };
+  return edited(r, gapChanges(p.arrangement.regions, s.start, regionEnd(s)));
 }
 
 /* ------------------------------------------------------------------ */
@@ -854,7 +868,7 @@ export function shapeSection(store: ProjectStore, id: Id, kind: ShapeKind): Song
   const display = kind === 'breakdown' ? `Breakdown in ${s.name}` : `${SHAPE_WORDS[kind]} ${s.name}`;
   const r = commit(store, p, `arrange:${SHAPE_WORDS[kind]}`, display, { regions: plan.regions });
   const ids = plan.regions.filter((x) => x.start < end && regionEnd(x) > s.start).map((x) => x.id);
-  return { ...r, ids, trimmed: plan.trimmed, removed: plan.removed };
+  return edited(r, { ids, trimmed: plan.trimmed, removed: plan.removed });
 }
 
 /* ------------------------------------------------------------------ */
@@ -919,7 +933,7 @@ export function addIntro(store: ProjectStore): SongEditResult & { sectionId?: Id
   const shaped = clips.length > 1 ? shapePlan(p, intro, 0, bars, 'build').regions : intro;
   const section: SongSection = { id: newSectionId(), name: 'Intro', start: 0, bars };
   const r = commit(store, p, 'arrange:Add an intro', 'Add an intro', { regions: sortRegions(p, [...te.regions, ...shaped]), sections: placeSection(te.sections, section) });
-  return { ...r, ids: shaped.map((x) => x.id), ...(r.changed ? { sectionId: section.id } : {}) };
+  return edited(r, { ids: shaped.map((x) => x.id), sectionId: section.id });
 }
 
 /**
@@ -943,7 +957,7 @@ export function addEnding(store: ProjectStore): SongEditResult & { sectionId?: I
   const change: SongChange = { regions: sortRegions(p, [...p.arrangement.regions, ...shaped]), sections: placeSection(p.arrangement.sections, section) };
   if (p.arrangement.tailSeconds === 0) change.tailSeconds = ENDING_TAIL_SECONDS;
   const r = commit(store, p, 'arrange:Add an ending', 'Add an ending', change);
-  return { ...r, ids: shaped.map((x) => x.id), ...(r.changed ? { sectionId: section.id } : {}) };
+  return edited(r, { ids: shaped.map((x) => x.id), sectionId: section.id });
 }
 
 /** Effect tail appended to exports, 0–10 seconds. A shared gesture id (a drag) makes one undo step. */
@@ -1060,5 +1074,5 @@ export function songFromTake(store: ProjectStore, takeId: Id, opts: { at?: numbe
   if (at + end > MAX_SONG_BARS) return refuse('limit', `There is no room for this take there: ${TOO_LONG}`);
   const res = landRegions(p, plan.regions.map((r) => ({ ...r, id: newRegionId(), start: r.start + at })));
   const r = commit(store, p, 'arrange:Make song from a take', `Make song from ${perf.name}`, { regions: res.regions });
-  return { ...r, ids: res.ids, trimmed: res.trimmed, removed: res.removed, rounded: plan.rounded, missing: plan.missing };
+  return { ...edited(r, { ids: res.ids, trimmed: res.trimmed, removed: res.removed }), rounded: plan.rounded, missing: plan.missing };
 }

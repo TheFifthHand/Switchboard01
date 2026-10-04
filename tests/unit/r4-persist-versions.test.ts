@@ -344,6 +344,8 @@ describe('names and row facts', () => {
     expect(songLine({ regions: 0, sections: 2, songSeconds: 20 })).toBe('No song yet');
     // A damaged stored project still lists.
     expect(projectShape({ bogus: true } as unknown as Project)).toMatchObject({ regions: 0, blocks: 0, songSeconds: 0 });
-    expect(projectShape({ bpm: 120, arrangement: { regions: 'x', sections: [{ start: 2, bars: 6 }, null] } } as unknown as Project)).toMatchObject({ regions: 0, sections: 1, songBars: 8, songSeconds: 16 });
+    expect(projectShape({ bpm: 120, arrangement: { regions: 'x', sections: [{ start: 2, bars: 6 }, null] } } as unknown as Project)).toMatchObject({ regions: 0, sections: 1, songBars: 0, songSeconds: 0 });
+    // The song ends with its last loop: a section label past the music does not make it longer.
+    expect(projectShape({ bpm: 120, arrangement: { regions: [{ start: 2, bars: 6 }, null, 'x'], sections: [{ start: 0, bars: 20 }] } } as unknown as Project)).toMatchObject({ regions: 1, sections: 1, songBars: 8, songSeconds: 16 });
   });
 });

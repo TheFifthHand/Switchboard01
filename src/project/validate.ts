@@ -938,7 +938,9 @@ function validateRegion(raw: unknown, tracks: readonly Track[], ids: Set<Id>, is
   const track = tracks.find((t) => t.id === raw.trackId);
   const clip = track ? track.clips.find((c) => c !== null && c.id === raw.clipId) : undefined;
   if (!track || !clip) {
-    issues.warn('Removed a loop whose clip no longer exists from the song.');
+    // Said as it is: a loop plays a clip of its own part only.
+    const elsewhere = typeof raw.clipId === 'string' && tracks.some((t) => t !== track && t.clips.some((c) => c !== null && c.id === raw.clipId));
+    issues.warn(!track ? 'Removed a loop of a part that does not exist from the song.' : elsewhere ? 'Removed a loop that played another part’s clip.' : 'Removed a loop whose clip no longer exists from the song.');
     return null;
   }
   const span = songSpan(raw.start, raw.bars, 'a loop', issues);
