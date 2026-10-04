@@ -420,11 +420,11 @@
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   flex: none;
   width: var(--head-w);
   min-width: 0;
-  padding: 0 6px 0 8px;
+  padding: 0 4px 0 9px;
   background: var(--surface-hi);
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line-soft);
@@ -479,8 +479,8 @@
 .partKey {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);

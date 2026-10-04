@@ -11,6 +11,7 @@ import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
 import { ppbStore } from '../../src/app/views/arrange/laneStore';
+import { HEADER_W } from '../../src/app/views/arrange/songLayout';
 import { songPlayheadBar } from '../../src/app/views/arrange/songApi';
 import type { Project } from '../../src/project/types';
 import {
@@ -140,7 +141,7 @@ describe('playing', () => {
   it('Follow turns the page when the playhead reaches the right edge', async () => {
     await open(48);
     const sc = scroller();
-    const viewBars = (sc.clientWidth - 168) / ppb();
+    const viewBars = (sc.clientWidth - HEADER_W) / ppb();
     expect(sc.scrollLeft).toBe(0);
     await act(async () => {
       await (session as unknown as { playSong(o?: object): Promise<void> }).playSong({ fromBar: Math.floor(viewBars) - 1 });
@@ -172,7 +173,7 @@ describe('zoom and scroll', () => {
     expect(ppb()).toBe(16);
     await clickAt(centre(document.querySelector<HTMLElement>('[data-testid="zoom-fit"]')!));
     const sc = scroller();
-    expect(66 * ppb()).toBeLessThanOrEqual(sc.clientWidth - 168);
+    expect(66 * ppb()).toBeLessThanOrEqual(sc.clientWidth - HEADER_W);
   });
 
   it('a plain wheel scrolls the song sideways', async () => {

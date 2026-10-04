@@ -35,9 +35,9 @@ export const ROW_MIN_PX = 40;
 /** …nor taller than this (a tall window: about 1080 px and up). */
 export const ROW_MAX_PX = 84;
 /** Width of the sticky part headers at the left of the rows. */
-export const HEADER_W = 168;
+export const HEADER_W = 184;
 /** A narrower header for windows under 1280 px. */
-export const HEADER_W_NARROW = 136;
+export const HEADER_W_NARROW = 160;
 
 /** Width of a region's edge grip (px): a press this close to an edge drags the edge. */
 export const EDGE_GRIP_PX = 8;
