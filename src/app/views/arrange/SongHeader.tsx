@@ -16,11 +16,10 @@ import { songBars, spanOf } from '../../../project/arrangement';
 import type { Project } from '../../../project/types';
 import { clampBpm } from '../../../time/clock';
 import { session, useProject } from '../../instance';
-import { notify, useRuntime } from '../../runtime';
+import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { LaneIcon } from './laneIcons';
 import { loopKeyRange, rangeWords } from './laneLoop';
 import { rangeStore, selectionStore, usePxPerBar, useRange } from './laneStore';
-import { songRuntime, songSession, useSongRuntime } from './songApi';
 import { MAX_PX_PER_BAR, MIN_PX_PER_BAR } from './songLayout';
 import { lengthText } from './songModel';
 import type { TimelineHandle } from './SongTimeline';
@@ -33,8 +32,8 @@ const selectHasRegions = (p: Project) => p.arrangement.regions.length > 0;
 
 /** Switch looping on or off (setting the range first when there is none). */
 export function toggleLoop(handle: TimelineHandle | null): void {
-  if (songRuntime().songLoop) {
-    songSession.setSongLoop(null);
+  if (runtimeStore.getState().songLoop) {
+    session.setSongLoop(null);
     return;
   }
   let r = rangeStore.getState();
@@ -50,7 +49,7 @@ export function toggleLoop(handle: TimelineHandle | null): void {
   if (handle) handle.loopBars(r.fromBar, r.toBar);
   else {
     rangeStore.setState(r);
-    songSession.setSongLoop(r);
+    session.setSongLoop(r);
   }
 }
 
@@ -70,7 +69,7 @@ export function SongHeader({ handle, follow, onFollow, browserOpen, onBrowser, f
   const bars = useProject(selectBars);
   const bpm = useProject(selectBpm);
   const hasRegions = useProject(selectHasRegions);
-  const looping = useSongRuntime((s) => !!s.songLoop);
+  const looping = useRuntime((s) => !!s.songLoop);
   const range = useRange();
   const ppb = usePxPerBar();
   const padsPlaying = useRuntime((s) => (s.playing || s.paused) && s.mode === 'live');
@@ -89,7 +88,7 @@ export function SongHeader({ handle, follow, onFollow, browserOpen, onBrowser, f
       {padsPlaying && hasRegions && !recordingTake && (
         <span className={styles.padsChip} role="status" data-testid="pads-playing">
           <span>Your pads are playing</span>
-          <Button size="sm" variant="secondary" icon="play" onClick={() => void songSession.playSong()} data-testid="play-the-song" tip="Switch from your pads to the song: it plays from the playhead (or the loop).">
+          <Button size="sm" variant="secondary" icon="play" onClick={() => void session.playSong()} data-testid="play-the-song" tip="Switch from your pads to the song: it plays from the playhead (or the loop).">
             Play the song
           </Button>
         </span>

@@ -100,7 +100,7 @@ export function setSong(regions: SongRegion[], sections: SongSection[] = []): vo
 export const project = () => session.store.getState();
 export const regions = () => project().arrangement.regions;
 export const sections = () => project().arrangement.sections;
-export const rt = () => runtimeStore.getState() as ReturnType<typeof runtimeStore.getState> & { songCursor: number; songLoop: { fromBar: number; toBar: number } | null };
+export const rt = () => runtimeStore.getState();
 export const undoCount = () => session.store.historySize().undo;
 export const trackId = (name: string) => project().tracks.find((t) => t.name === name)!.id;
 export const clipOf = (trackIdx: number, slot = 0) => project().tracks[trackIdx].clips[slot]!;

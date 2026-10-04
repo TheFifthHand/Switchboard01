@@ -16,7 +16,8 @@ import { regionEnd } from '../../../project/arrangement';
 import type { Id, SongMoveKind } from '../../../project/types';
 import { session } from '../../instance';
 import { notify } from '../../runtime';
-import { songCmd, type Edge, type RegionClipboard, type ShapeKind, type SongEditResult } from './songApi';
+import * as songCmd from '../../../state/commands';
+import type { Edge, RegionClipboard, ShapeKind, SongEditResult } from '../../../state/commands';
 import { clearSelection, setSelection } from './laneStore';
 import { barsText } from './songModel';
 

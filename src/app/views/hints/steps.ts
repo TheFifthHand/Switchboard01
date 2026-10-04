@@ -168,11 +168,6 @@ function changedRegions(c: HintChange): { now: SongRegion; was: SongRegion }[] {
   return out;
 }
 
-/** The song cursor (where Play starts in the Song view), read from the runtime. */
-function songCursor(rt: RuntimeState): number | undefined {
-  return (rt as RuntimeState & { songCursor?: number }).songCursor;
-}
-
 export const HINT_STEPS: readonly HintStep[] = [
   {
     id: 'pad',
@@ -318,8 +313,7 @@ export const HINT_STEPS: readonly HintStep[] = [
     // Stop also set the cursor (where playback starts, and back to it), so a change as playback starts or ends is not it.
     detect: (c) =>
       c.source === 'runtime' &&
-      songCursor(c.runtime) !== undefined &&
-      songCursor(c.runtime) !== songCursor(c.prevRuntime) &&
+      c.runtime.songCursor !== c.prevRuntime.songCursor &&
       c.runtime.playing === c.prevRuntime.playing &&
       c.runtime.paused === c.prevRuntime.paused &&
       c.runtime.mode === c.prevRuntime.mode,

@@ -31,6 +31,8 @@ import type { Id, Project } from '../../../project/types';
 import { selectSlot, selectTrack, setPadMode, setView } from '../../../state/uiStore';
 import { useStore } from '../../../state/store';
 import { session, useProject } from '../../instance';
+import { runtimeStore, useRuntime } from '../../runtime';
+import { songPlayheadBar, useSongPlaying } from '../../songPlayback';
 import { MoreIcon, anchorFromContextEvent, anchorFromElement, isEchoOfKeyboardMenu, noteKeyboardMenu, useToastsIfAny, type MenuAnchor } from '../ClipMenu';
 import { isMac } from '../hints/shortcuts';
 import { DragOverlay } from './DragOverlay';
@@ -43,7 +45,6 @@ import { dragStore, hoverStore, ppbStore, rangeStore, selectionStore, setSelecti
 import { readZoom, writeZoom } from './laneSettings';
 import { PartRow, partKeysNav } from './PartRow';
 import { SectionStrip, type SectionStripProps } from './SectionStrip';
-import { songPlayheadBar, songRuntime, songSession, useSongPlaying, useSongRuntime } from './songApi';
 import * as act from './songActions';
 import { LoopPicker, RegionMenu, SectionMenu, type MenuHost } from './SongMenus';
 import { HEADER_W, HEADER_W_NARROW, RULER_H, SECTIONS_H, barAt, fitZoom, followScroll, gridStep, rowHeight, snapBar, timelineBars, zoomScroll, zoomStep } from './songLayout';
@@ -81,7 +82,7 @@ const selectHasScenes = (p: Project) => p.tracks.some((t) => t.clips.some((c) =>
 /** The bar Play would start from, or the playhead while the song plays or is paused (whole bars). */
 export function currentBar(): number {
   const live = songPlayheadBar();
-  return live !== null ? Math.max(0, Math.floor(live + 1e-6)) : Math.max(0, Math.round(songRuntime().songCursor ?? 0));
+  return live !== null ? Math.max(0, Math.floor(live + 1e-6)) : Math.max(0, Math.round(runtimeStore.getState().songCursor));
 }
 
 export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean; handleRef: Ref<TimelineHandle>; onStatus(text: string): void }) {
@@ -102,8 +103,8 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   const projectId = useProject(selectProjectId);
   const ppb = usePxPerBar();
   const range = useRange();
-  const looping = useSongRuntime((s) => !!s.songLoop);
-  const cursor = useSongRuntime((s) => s.songCursor ?? 0);
+  const looping = useRuntime((s) => !!s.songLoop);
+  const cursor = useRuntime((s) => s.songCursor);
   const songOn = useSongPlaying();
   // Only whether a drag runs (the empty note steps aside); what it shows is the overlay's, the ruler's and the strip's.
   const dragging = useStore(dragStore, (d) => d !== null);
@@ -157,7 +158,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
     ppbStore.setState(remembered ?? fitZoom(projectSongBars(p), size.width - headW));
     if (scrollerRef.current) scrollerRef.current.scrollLeft = 0;
     setSelection({ ids: [], focus: p.arrangement.regions[0]?.id ?? null });
-    rangeStore.setState(songRuntime().songLoop ?? null);
+    rangeStore.setState(runtimeStore.getState().songLoop ?? null);
   }, [projectId, size.width, headW]);
 
   /* ---------------------------------------------------------------- */
@@ -178,7 +179,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   );
 
   // The range on the ruler is the runtime's loop while looping is on (kept while it is off).
-  const runtimeLoop = useSongRuntime((s) => s.songLoop);
+  const runtimeLoop = useRuntime((s) => s.songLoop);
   useEffect(() => {
     if (runtimeLoop && !sameRange(runtimeLoop, rangeStore.getState())) rangeStore.setState({ fromBar: runtimeLoop.fromBar, toBar: runtimeLoop.toBar });
   }, [runtimeLoop]);
@@ -189,14 +190,14 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
 
   const seekOrCursor = useCallback((bar: number) => {
     const b = Math.max(0, Math.round(bar));
-    if (songPlayheadBar() !== null) songSession.seekSong(b);
-    else songSession.setSongCursor(b);
+    if (songPlayheadBar() !== null) session.seekSong(b);
+    else session.setSongCursor(b);
   }, []);
 
   const loopBars = useCallback((fromBar: number, toBar: number) => {
     const r = { fromBar, toBar };
     rangeStore.setState(r);
-    songSession.setSongLoop(r);
+    session.setSongLoop(r);
   }, []);
 
   const controller = useMemo(() => {
@@ -212,7 +213,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
       rangeClick: () => {
         const r = rangeStore.getState();
         if (!r) return;
-        songSession.setSongLoop(songRuntime().songLoop ? null : r);
+        session.setSongLoop(runtimeStore.getState().songLoop ? null : r);
       },
       rangeSet: (r) => loopBars(r.fromBar, r.toBar),
       sectionClick: (id, add) => {
@@ -303,7 +304,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
     const m = marked.current;
     const p = session.store.getState();
     const regions = p.arrangement.regions;
-    const rt = songRuntime();
+    const rt = runtimeStore.getState();
     const target = rt.recording === 'notes' ? rt.recordTarget : null;
     const recClip = target ? (p.tracks.find((t) => t.id === target.trackId)?.clips[target.slot]?.id ?? null) : null;
     const whole = bar === null ? -1 : Math.floor(bar);
@@ -600,7 +601,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
 
   const menuHost: MenuHost = useMemo(
     () => ({
-      playFrom: (bar) => void songSession.playSong({ fromBar: bar }),
+      playFrom: (bar) => void session.playSong({ fromBar: bar }),
       loopBars,
       playheadBar: currentBar,
       editNotes,

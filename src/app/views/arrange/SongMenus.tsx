@@ -16,12 +16,12 @@ import { useState, type ReactNode } from 'react';
 import { ClipSketch } from '../../../ui/components';
 import { regionEnd, sectionAt } from '../../../project/arrangement';
 import { SONG_MOVE_KINDS, TICKS_PER_BAR, type Id, type SongRegion, type SongSection } from '../../../project/types';
+import { shapeProblem, type ShapeKind } from '../../../state/commands';
 import { session, useProject } from '../../instance';
 import { MenuHeader, MenuItem, MenuSeparator, Popover, LOCKED_REASON, MOD_KEY, useEditLocked, type MenuAnchor } from '../ClipMenu';
 import menuStyles from '../ClipMenu.module.css';
 import { LaneIcon, type LaneIconName } from './laneIcons';
 import { MOVE_ICON, MOVE_WORDS } from './SectionStrip';
-import { songCmd, type ShapeKind } from './songApi';
 import * as act from './songActions';
 import { barsText, partLoops, rangeText, sectionLabel } from './songModel';
 import styles from './SongView.module.css';
@@ -188,7 +188,7 @@ export function SectionMenu(props: { section: SongSection; anchor: MenuAnchor; r
   const { section, anchor, returnFocus, host, onClose } = props;
   const locked = useEditLocked();
   const live = useProject((p) => p.arrangement.sections.find((s) => s.id === section.id) ?? section);
-  const problems = useProject((p) => SHAPES.map((s) => songCmd.shapeProblem(p, section.id, s.kind)).join('\u0000'));
+  const problems = useProject((p) => SHAPES.map((s) => shapeProblem(p, section.id, s.kind)).join('\u0000'));
   const problemOf = (i: number) => problems.split('\u0000')[i] || null;
   const reason = locked ? LOCKED_REASON : undefined;
   const run = (fn: () => void) => () => {

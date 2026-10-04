@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
 import { ppbStore } from '../../src/app/views/arrange/laneStore';
 import { HEADER_W } from '../../src/app/views/arrange/songLayout';
-import { songPlayheadBar } from '../../src/app/views/arrange/songApi';
+import { songPlayheadBar } from '../../src/app/songPlayback';
 import type { Project } from '../../src/project/types';
 import {
   barX,

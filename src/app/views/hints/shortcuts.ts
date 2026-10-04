@@ -47,8 +47,10 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
     title: 'Playing notes',
     where: 'With a melodic part selected (Bass, Chords, Lead …).',
     items: [
-      { id: 'white-keys', keys: ['A S D F G H J K L ; \''], does: 'White keys, from C.' },
-      { id: 'black-keys', keys: ['W E T Y U O P'], does: 'Black keys.' },
+      { id: 'scale-keys', keys: ['A S D F G H J K L ; \''], does: 'Musical Assist on (only notes in the key): the first 11 keys, left to right.' },
+      { id: 'scale-keys-high', keys: ['Q W E R T Y U I O P [ ]'], does: 'Musical Assist on: keys 12 to 23, left to right.' },
+      { id: 'white-keys', keys: ['A S D F G H J K L ; \''], does: 'Musical Assist off (the piano): white keys, from C.' },
+      { id: 'black-keys', keys: ['W E T Y U O P'], does: 'Musical Assist off: black keys.' },
       { id: 'octave', keys: ['Z', 'X'], does: 'Octave down, octave up.' },
     ],
   },
