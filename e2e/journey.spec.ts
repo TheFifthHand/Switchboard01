@@ -74,7 +74,7 @@ test('Jump In → groove → switch clips → Tone/Space → keyboard → record
   await page.keyboard.down('KeyD');
   await page.waitForTimeout(400);
   await page.keyboard.up('KeyD');
-  await page.getByRole('button', { name: /^Launch scene Lift/ }).click();
+  await page.getByRole('button', { name: /^Play row Lift/ }).click();
   await page.waitForTimeout(3500);
   await page.getByRole('button', { name: 'Stop recording' }).click();
   const perf = await page.evaluate(() => (window as any).__switchboard.project().performances[0]);

@@ -21,6 +21,13 @@
  * (measured when the pointer comes over the pad, so a pad whose name fits
  * shows no second tooltip). On large pads (about 150 x 120 px and up) a large
  * name steps up to --fs-2xl.
+ *
+ * `action` says what a press does ("▶ Play", "■ Stop"): a small dark key in
+ * the pad's bottom-right corner while a mouse is over the pad or it has
+ * keyboard focus (not on touch screens, where nothing hovers). The state
+ * caption keeps its place beside it; where both do not fit, the action stands
+ * alone until the pointer leaves. It is decorative: the pad's name and its
+ * tooltip say the same in words.
  */
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref } from 'react';
 import { Icon, type IconName } from './Icon';
@@ -34,6 +41,12 @@ export const TAP_SLOP_PX = 6;
 export interface PadPressEvent {
   /** 0..1 */
   velocity: number;
+}
+
+/** What a press does, shown on hover and keyboard focus (see `PadProps.action`). */
+export interface PadAction {
+  icon: IconName;
+  text: string;
 }
 
 export interface PadProps {
@@ -73,6 +86,12 @@ export interface PadProps {
   shortcuts?: string;
   /** A small picture of the content (e.g. a ClipSketch), drawn in the pad's empty middle when it is at least 100 px tall. */
   sketch?: ReactNode;
+  /**
+   * What a press does ("▶ Play", "■ Stop"), shown in the bottom-right corner on hover and keyboard
+   * focus. null: nothing now (the caption row keeps the same height, so a pad whose action comes and
+   * goes never shifts); undefined: a pad without actions.
+   */
+  action?: PadAction | null;
   /**
    * Native title of the pad. Default (undefined): the label, only while the name is cut on screen
    * (checked when the pointer enters); a string: always that; null: never.
@@ -142,6 +161,7 @@ export function Pad(props: PadProps) {
     cornerKey = false,
     shortcuts,
     sketch,
+    action,
     title,
     ref,
     id,
@@ -258,6 +278,12 @@ export function Pad(props: PadProps) {
     [label, sublabel, caption === null || caption === undefined ? PAD_STATE_SPOKEN[state] : caption, selected ? 'selected' : null].filter(Boolean).join(', ');
 
   const cls = [styles.pad, className].filter(Boolean).join(' ');
+  const captionEl = shownCaption ? (
+    <span className={styles.caption}>
+      {icon && <Icon name={icon} size={10} className={styles.capIcon} />}
+      <span className={styles.capText}>{shownCaption}</span>
+    </span>
+  ) : null;
 
   // The full name as a native title only while it is cut: measured as the pointer arrives, and
   // again if the name or state changes after that (no stale name left in the title).
@@ -325,11 +351,19 @@ export function Pad(props: PadProps) {
           {sublabel && <span className={styles.sublabel}>{sublabel}</span>}
         </span>
         {sketch && state !== 'empty' && <span className={styles.sketch}>{sketch}</span>}
-        {shownCaption && (
-          <span className={styles.caption}>
-            {icon && <Icon name={icon} size={10} className={styles.capIcon} />}
-            <span className={styles.capText}>{shownCaption}</span>
+        {action !== undefined ? (
+          // The action first in a reversed, wrapping row: it keeps the corner, and a caption that does not fit beside it wraps out of sight.
+          <span className={styles.foot}>
+            {action && (
+              <span className={styles.action} data-pad-action="">
+                <Icon name={action.icon} size={9} className={styles.actionIcon} />
+                <span>{action.text}</span>
+              </span>
+            )}
+            {captionEl}
           </span>
+        ) : (
+          captionEl
         )}
         {keyHint && <span className={styles.key}>{keyHint}</span>}
       </span>
