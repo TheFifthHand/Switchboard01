@@ -16,6 +16,20 @@
  * keys get a small teal dot and out-of-scale keys are dimmed. `rootPc` marks
  * the root keys with a ring and their note name.
  *
+ * Geometry: each black key is centred on the line between its two white keys,
+ * 60 % of a white key wide and BLACK_KEY_HEIGHT of the keys tall, so every
+ * white key keeps a wide strip below the black keys to press.
+ *
+ * `notes` makes a scale keyboard: exactly those notes (the in-key notes, say),
+ * one row of equal keys with no black keys, so every key is its own note.
+ * Each key shows its name spelled by the key (`pitchNames`: B♭ in F major) and
+ * its computer letter; a root key adds its octave over a teal underline, and a
+ * thin divider before each root marks the octaves.
+ *
+ * Every note key is a button named by its note ("G3 (root)", "B♭3") for
+ * assistive technology, but not a Tab stop (the computer keys play the notes);
+ * a click with no pointer press (a screen reader's) plays it briefly.
+ *
  * Legends: `keyLabels` puts a computer key's letter on its key. Note names (C
  * keys and the root) go where `noteNames` says: 'legend' (default) in the key's
  * legend, under its letter; 'above' on a slim rail across the top of the
@@ -75,15 +89,19 @@ export interface MiniKeyboardProps {
   fit?: boolean;
   /** Widest a white key gets in `fit` mode (px; default the --key-max-w token, 44). */
   keyMaxWidth?: number;
+  /** A scale keyboard: exactly these notes (ascending MIDI), as equal keys; `baseNote` and `keys` are then unused. */
+  notes?: readonly number[];
   className?: string;
 }
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const BLACK_PCS = new Set([1, 3, 6, 8, 10]);
-/** Black key centre offsets from the white-key boundary, in white-key widths. */
-const BLACK_OFFSET: Record<number, number> = { 1: -0.08, 3: 0.08, 6: -0.1, 8: 0, 10: 0.1 };
-const BLACK_WIDTH = 0.6; // of a white key
-export const BLACK_KEY_HEIGHT = 0.62; // of the keys' height
+const BLACK_WIDTH = 0.6; // of a white key, centred on the line between its white keys
+/** Of the keys' height: at the strip's 90 px (76 px of keys under the rail) white keys keep 34 px below the black ones. */
+export const BLACK_KEY_HEIGHT = 0.55;
+/** A press without a pointer (a screen reader's click): how long and how loud the note plays. */
+const TAP_MS = 300;
+const TAP_VELOCITY = 0.8;
 /** Height of the note-name rail ('above'), px. */
 export const NOTE_RAIL_PX = 14;
 /** Kit variant: sounds, rows and the smallest height that keeps rows at least 32 px. */
@@ -112,15 +130,14 @@ function layoutKeys(baseNote: number, count: number): { keys: KeyGeom[]; whites:
   const midis = Array.from({ length: count }, (_, i) => start + i);
   const whites = midis.filter((m) => !BLACK_PCS.has(m % 12)).length;
   // A black key at the top end (e.g. a 16-key drum layout ending on D#) gets room to show in full.
-  const lastPc = midis[midis.length - 1] % 12;
-  const tail = BLACK_PCS.has(lastPc) ? Math.max(0, BLACK_OFFSET[lastPc] + BLACK_WIDTH / 2) : 0;
+  const tail = BLACK_PCS.has(midis[midis.length - 1] % 12) ? BLACK_WIDTH / 2 : 0;
   const ww = 1 / (whites + tail);
   const keys: KeyGeom[] = [];
   let wi = 0;
   for (const m of midis) {
     const pc = m % 12;
     if (BLACK_PCS.has(pc)) {
-      const centre = (wi + BLACK_OFFSET[pc]) * ww;
+      const centre = wi * ww;
       keys.push({ midi: m, black: true, x: centre - (BLACK_WIDTH * ww) / 2, w: BLACK_WIDTH * ww });
     } else {
       keys.push({ midi: m, black: false, x: wi * ww, w: ww });
@@ -128,6 +145,12 @@ function layoutKeys(baseNote: number, count: number): { keys: KeyGeom[]; whites:
     }
   }
   return { keys, whites: whites + tail };
+}
+
+/** A scale keyboard: the notes as equal keys, left to right. */
+function layoutScale(notes: readonly number[]): { keys: KeyGeom[]; whites: number } {
+  const n = notes.length;
+  return { keys: notes.map((midi, i) => ({ midi, black: false, x: i / n, w: 1 / n })), whites: n };
 }
 
 /** Kit key n: its column and row from the top (pad 0 bottom-left, rows bottom to top). */
@@ -190,6 +213,7 @@ export function MiniKeyboard({
   kitLayout = 'grid',
   fit = false,
   keyMaxWidth,
+  notes: scaleNotes,
   className,
 }: MiniKeyboardProps) {
   const kit = variant === 'kit';
@@ -201,9 +225,18 @@ export function MiniKeyboard({
   const kitRows: 1 | 2 = kitRow && perKey < KIT_ONE_ROW_MIN_PX ? 2 : 1;
   const shortNames = kitRows === 2 && perKey * 2 < KIT_SHORT_PX;
   const nameOf = (pc: number) => pitchNames?.[pc] ?? NOTE_NAMES[pc];
-  const count = kit ? KIT_KEYS : keyCount;
-  const { keys, whites } = useMemo(() => (kit ? { keys: [] as KeyGeom[], whites: KIT_COLS } : layoutKeys(baseNote, count)), [kit, baseNote, count]);
-  const rail = !kit && noteNames === 'above';
+  /** "B♭3", spelled by the key when `pitchNames` are given. */
+  const spelled = (midi: number) => `${nameOf(((midi % 12) + 12) % 12)}${Math.floor(midi / 12) - 1}`;
+  const isRootPc = (pc: number) => rootPc !== undefined && ((rootPc % 12) + 12) % 12 === pc;
+  // A scale keyboard (`notes`), and the identity of its notes: the layout (and held notes) follow a change.
+  const scaleBoard = !kit && scaleNotes !== undefined && scaleNotes.length > 0;
+  const notesId = scaleBoard ? scaleNotes.join(',') : '';
+  const count = kit ? KIT_KEYS : scaleBoard ? scaleNotes.length : keyCount;
+  const { keys, whites } = useMemo(
+    () => (kit ? { keys: [] as KeyGeom[], whites: KIT_COLS } : notesId ? layoutScale(notesId.split(',').map(Number)) : layoutKeys(baseNote, count)),
+    [kit, notesId, baseNote, count],
+  );
+  const rail = !kit && !scaleBoard && noteNames === 'above';
   const bedRef = useRef<HTMLDivElement>(null);
   const cbs = useRef({ onNoteOn, onNoteOff });
   useEffect(() => {
@@ -215,6 +248,8 @@ export function MiniKeyboard({
   /** note -> number of pointers holding it. */
   const counts = useRef(new Map<number, number>());
   const [pressed, setPressed] = useState<ReadonlySet<number>>(() => new Set());
+  /** Notes started by a click with no pointer press, ending after TAP_MS. */
+  const taps = useRef(new Set<number>());
 
   const syncPressed = () => setPressed(new Set(counts.current.keys()));
 
@@ -252,9 +287,12 @@ export function MiniKeyboard({
     };
     window.addEventListener('blur', releaseAll);
     document.addEventListener('visibilitychange', onVisibility);
+    const tapTimers = taps.current;
     return () => {
       window.removeEventListener('blur', releaseAll);
       document.removeEventListener('visibilitychange', onVisibility);
+      for (const t of tapTimers) clearTimeout(t);
+      tapTimers.clear();
       releaseAll();
     };
   }, [releaseAll]);
@@ -263,8 +301,19 @@ export function MiniKeyboard({
     if (disabled) releaseAll();
   }, [disabled, releaseAll]);
 
-  // The key layout changed under held notes (octave shift, another variant): release them.
-  useEffect(() => releaseAll, [baseNote, count, kit, releaseAll]);
+  // The key layout changed under held notes (octave shift, another variant, other scale notes): release them.
+  useEffect(() => releaseAll, [baseNote, count, kit, notesId, releaseAll]);
+
+  /** A click with no pointer press (a screen reader activating the key's button): the note sounds briefly. */
+  const tap = (midi: number) => {
+    if (disabled) return;
+    press(midi, TAP_VELOCITY);
+    const t = window.setTimeout(() => {
+      taps.current.delete(t);
+      unpress(midi);
+    }, TAP_MS);
+    taps.current.add(t);
+  };
 
   const hitTest = (clientX: number, clientY: number): { midi: number; velocity: number } | null => {
     const el = bedRef.current;
@@ -286,6 +335,11 @@ export function MiniKeyboard({
       }
       if (!best) return null;
       return { midi: best.midi, velocity: velocityFromPosition((clientY - best.top) / Math.max(1, best.height), 0.35) };
+    }
+    if (scaleBoard) {
+      // Equal keys edge to edge: the key under the point, anywhere on it.
+      const k = keys[Math.min(keys.length - 1, Math.floor(x * keys.length))];
+      return k ? { midi: k.midi, velocity: velocityFromPosition(y, 0.35) } : null;
     }
     if (kit) {
       const col = Math.min(KIT_COLS - 1, Math.floor(x * KIT_COLS));
@@ -340,9 +394,10 @@ export function MiniKeyboard({
   };
 
   const top = kit ? baseNote + KIT_KEYS - 1 : (keys[keys.length - 1]?.midi ?? baseNote);
-  const name = label ?? (kit ? 'Drum kit keys' : `Keyboard, ${noteName(keys[0]?.midi ?? baseNote)} to ${noteName(top)}`);
+  const name = label ?? (kit ? 'Drum kit keys' : `Keyboard, ${spelled(keys[0]?.midi ?? baseNote)} to ${spelled(top)}`);
   const rootStyle: CSSProperties = { height: kit && !kitRow ? Math.max(height, KIT_MIN_HEIGHT) : height };
   if (fit) {
+    // A scale keyboard's keys widen like white keys: `whites` is its key count.
     const unit = keyMaxWidth !== undefined ? `${keyMaxWidth}px` : 'var(--key-max-w, 44px)';
     if (kitRow) rootStyle.maxWidth = `calc(${KIT_KEYS} * ${keyMaxWidth !== undefined ? `${keyMaxWidth}px` : 'var(--key-max-w, 44px)'} + ${3 * KIT_GROUP_GAP_PX}px)`;
     else rootStyle.maxWidth = kit ? `calc(${KIT_COLS} * ${keyMaxWidth !== undefined ? `${keyMaxWidth}px` : 'var(--kit-key-max-w, 150px)'})` : `calc(${whites.toFixed(3)} * ${unit})`;
@@ -351,10 +406,74 @@ export function MiniKeyboard({
   /** A name on the rail: C keys (with their octave) and the root (its letter name). */
   const railName = (midi: number): { text: string; root: boolean } | null => {
     const pc = ((midi % 12) + 12) % 12;
-    const root = rootPc !== undefined && ((rootPc % 12) + 12) % 12 === pc;
+    const root = isRootPc(pc);
     if (pc === 0) return { text: noteName(midi), root };
     if (root) return { text: nameOf(pc), root };
     return null;
+  };
+
+  /** A key's accessible name: "B♭3", "G3 (root)". */
+  const spoken = (midi: number) => `${spelled(midi)}${isRootPc(((midi % 12) + 12) % 12) ? ' (root)' : ''}`;
+  const isLit = (midi: number) => pressed.has(midi) || Boolean(activeNotes?.has(midi));
+
+  const pianoKey = (k: KeyGeom) => {
+    const pc = k.midi % 12;
+    const inScale = scaleMask ? Boolean(scaleMask[pc]) : undefined;
+    const isRoot = isRootPc(pc);
+    const keyLabel = keyLabels?.[k.midi];
+    const showName = noteNames === 'legend' && (pc === 0 || isRoot);
+    const style: CSSProperties = { left: `${k.x * 100}%`, width: `${k.w * 100}%` };
+    if (k.black) style.height = `${BLACK_KEY_HEIGHT * 100}%`;
+    return (
+      <div
+        key={k.midi}
+        className={k.black ? styles.black : styles.white}
+        style={style}
+        role="button"
+        aria-label={spoken(k.midi)}
+        onClick={(e) => e.detail === 0 && tap(k.midi)}
+        data-midi={k.midi}
+        data-note={noteName(k.midi)}
+        data-lit={isLit(k.midi) || undefined}
+        data-pressed={pressed.has(k.midi) || undefined}
+        data-scale={inScale === undefined ? undefined : inScale ? 'in' : 'out'}
+        data-root={isRoot || undefined}
+      >
+        <span className={styles.glow} />
+        {inScale && <span className={styles.dot} />}
+        <span className={styles.legend}>
+          {keyLabel && <span className={styles.keycap}>{keyLabel}</span>}
+          {showName && !k.black && <span className={styles.name}>{isRoot && pc !== 0 ? nameOf(pc) : noteName(k.midi)}</span>}
+        </span>
+      </div>
+    );
+  };
+
+  /** A scale keyboard's key: its name as the key writes it (a root with its octave, over a teal underline) and its letter. */
+  const scaleKey = (k: KeyGeom, i: number) => {
+    const pc = k.midi % 12;
+    const isRoot = isRootPc(pc);
+    const keyLabel = keyLabels?.[k.midi];
+    return (
+      <div
+        key={k.midi}
+        className={styles.step}
+        style={{ left: `${k.x * 100}%`, width: `${k.w * 100}%` }}
+        role="button"
+        aria-label={spoken(k.midi)}
+        onClick={(e) => e.detail === 0 && tap(k.midi)}
+        data-midi={k.midi}
+        data-note={noteName(k.midi)}
+        data-lit={isLit(k.midi) || undefined}
+        data-pressed={pressed.has(k.midi) || undefined}
+        data-root={isRoot || undefined}
+        data-octave={(isRoot && i > 0) || undefined}
+      >
+        <span className={styles.glow} />
+        <span className={styles.stepName}>{isRoot ? spelled(k.midi) : nameOf(pc)}</span>
+        <span className={styles.legend}>{keyLabel && <span className={styles.keycap}>{keyLabel}</span>}</span>
+      </div>
+    );
   };
 
   return (
@@ -399,7 +518,6 @@ export function MiniKeyboard({
           ? Array.from({ length: KIT_KEYS }, (_, i) => {
               const midi = baseNote + i;
               const { col, row } = kitCell(i);
-              const lit = pressed.has(midi) || Boolean(activeNotes?.has(midi));
               const soundName = kitNames?.[i] ?? `Sound ${i + 1}`;
               const keyLabel = keyLabels?.[midi];
               const two = kitTwoRowCell(i);
@@ -412,7 +530,7 @@ export function MiniKeyboard({
                   title={shortNames ? soundName : undefined}
                   data-midi={midi}
                   data-note={soundName}
-                  data-lit={lit || undefined}
+                  data-lit={isLit(midi) || undefined}
                   data-pressed={pressed.has(midi) || undefined}
                   aria-hidden="true"
                 >
@@ -421,37 +539,7 @@ export function MiniKeyboard({
                 </div>
               );
             })
-          : keys.map((k) => {
-              const pc = k.midi % 12;
-              const inScale = scaleMask ? Boolean(scaleMask[pc]) : undefined;
-              const isRoot = rootPc !== undefined && ((rootPc % 12) + 12) % 12 === pc;
-              const lit = pressed.has(k.midi) || Boolean(activeNotes?.has(k.midi));
-              const keyLabel = keyLabels?.[k.midi];
-              const showName = noteNames === 'legend' && (pc === 0 || isRoot);
-              const style: CSSProperties = { left: `${k.x * 100}%`, width: `${k.w * 100}%` };
-              if (k.black) style.height = `${BLACK_KEY_HEIGHT * 100}%`;
-              return (
-                <div
-                  key={k.midi}
-                  className={k.black ? styles.black : styles.white}
-                  style={style}
-                  data-midi={k.midi}
-                  data-note={noteName(k.midi)}
-                  data-lit={lit || undefined}
-                  data-pressed={pressed.has(k.midi) || undefined}
-                  data-scale={inScale === undefined ? undefined : inScale ? 'in' : 'out'}
-                  data-root={isRoot || undefined}
-                  aria-hidden="true"
-                >
-                  <span className={styles.glow} />
-                  {inScale && <span className={styles.dot} />}
-                  <span className={styles.legend}>
-                    {keyLabel && <span className={styles.keycap}>{keyLabel}</span>}
-                    {showName && !k.black && <span className={styles.name}>{isRoot && pc !== 0 ? nameOf(pc) : noteName(k.midi)}</span>}
-                  </span>
-                </div>
-              );
-            })}
+          : keys.map((k, i) => (scaleBoard ? scaleKey(k, i) : pianoKey(k)))}
       </div>
     </div>
   );

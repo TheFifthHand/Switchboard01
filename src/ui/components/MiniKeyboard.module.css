@@ -64,7 +64,7 @@
 
 /* With the rail the keys are shorter: the dot moves up and the letter down, so they never touch. */
 .keyboard[data-rail] .white .dot {
-  top: calc(62% + 3px);
+  top: calc(55% + 3px);
 }
 
 .keyboard[data-rail] .white .legend {
@@ -72,7 +72,8 @@
 }
 
 .white,
-.black {
+.black,
+.step {
   position: absolute;
   top: 0;
   overflow: hidden;
@@ -82,8 +83,9 @@
     background 120ms var(--ease);
 }
 
-/* White keys: a lit face with a hairline gap and a visible front edge. */
-.white {
+/* White keys (and a scale keyboard's keys): a lit face with a hairline gap and a visible front edge. */
+.white,
+.step {
   bottom: 0;
   z-index: 1;
   border-radius: 0 0 5px 5px;
@@ -96,7 +98,9 @@
 }
 
 .white[data-pressed],
-.white[data-lit] {
+.white[data-lit],
+.step[data-pressed],
+.step[data-lit] {
   background: linear-gradient(180deg, #e2e5e7 0%, #f3f3f2 12%, #f4f3f0 100%);
   box-shadow:
     inset -1px 0 0 rgba(20, 24, 28, 0.22),
@@ -110,10 +114,10 @@
   background: linear-gradient(180deg, #d5d9dc 0%, #e1e4e6 9%, #dee1e3 100%);
 }
 
-/* Black keys: graphite caps with a darker front face. */
+/* Black keys: graphite caps with a darker front face (BLACK_KEY_HEIGHT tall, centred on the line between two white keys). */
 .black {
   z-index: 2;
-  height: 62%;
+  height: 55%;
   border-radius: 0 0 3.5px 3.5px;
   background: linear-gradient(180deg, #25282c 0%, #3b3f45 14%, #34383d 80%, #2c2f34 100%);
   box-shadow:
@@ -140,7 +144,8 @@
 }
 
 .white[data-pressed],
-.black[data-pressed] {
+.black[data-pressed],
+.step[data-pressed] {
   transform: translateY(1px);
 }
 
@@ -153,7 +158,8 @@
   transition: opacity 120ms var(--ease);
 }
 
-.white .glow {
+.white .glow,
+.step .glow {
   background: radial-gradient(ellipse 70% 26% at 50% 86%, rgba(242, 166, 52, 0.55) 0%, rgba(242, 166, 52, 0) 100%);
 }
 
@@ -162,7 +168,8 @@
 }
 
 .white[data-lit] .glow,
-.black[data-lit] .glow {
+.black[data-lit] .glow,
+.step[data-lit] .glow {
   opacity: 1;
   transition-duration: 30ms;
 }
@@ -179,7 +186,7 @@
 }
 
 .white .dot {
-  top: calc(62% + 7px);
+  top: calc(55% + 7px);
 }
 
 .black .dot {
@@ -244,6 +251,49 @@
 .white[data-scale='out'] .keycap,
 .white[data-scale='out'] .name {
   color: #8c9299;
+}
+
+/* ---------- scale keyboard: one equal key per in-key note ---------- */
+
+/* The note's name near the top, spelled by the key; a root shows its octave over a teal underline. */
+.stepName {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 7px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  color: var(--ink-2);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.step[data-root] .stepName {
+  color: var(--teal-ink);
+}
+
+.step[data-root] .stepName::after {
+  content: '';
+  width: 18px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--teal);
+}
+
+/* A thin divider before each root: the octaves read at a glance. */
+.step[data-octave]::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: #5b6066;
 }
 
 /* ---------- kit: 16 named sound keys in 4 rows ---------- */

@@ -88,11 +88,11 @@ describe('the strip for a kit', () => {
     expect(strip().textContent).toContain('16 sounds');
     expect(strip().querySelector('[role="switch"]')).toBeNull();
     expect(strip().textContent).toContain('Drums: keys play the kit sounds.');
-    // A melodic part brings the piano and the switch back.
+    // A melodic part brings its keys (Assist on: the scale keyboard, two octaves or more) and the switch back.
     act(() => selectTrack('t3'));
     await settleFrames(2);
     expect([...strip().querySelectorAll('[role="switch"]')].some((s) => s.textContent?.includes('Musical Assist'))).toBe(true);
-    expect(keyboard().querySelectorAll('[data-midi]').length).toBeGreaterThanOrEqual(25);
+    expect(keyboard().querySelectorAll('[data-midi]').length).toBeGreaterThanOrEqual(15);
   });
 
   it('a click on a kit key plays that sound; Advanced shows the same kit keys', async () => {

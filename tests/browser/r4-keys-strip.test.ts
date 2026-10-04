@@ -1,6 +1,7 @@
 /**
  * The keyboard strip in the running app (PLAY-17, PLAY-24, design-02, PLAY-05, MIX-13,
- * arrange-vertical-room, shape-10), with real clicks:
+ * arrange-vertical-room, shape-10), with real clicks. The piano (Musical Assist off; with it on
+ * the strip shows the scale keyboard, see r5-keys-scale):
  * - every key the computer plays shows its letter (A and K included); C4, C5 and the root sit on
  *   a rail above their keys; the octave reset reads "↺ C4" (named "Reset octave to C4");
  * - the keys widen to the strip: wider than 1200 px at 1920 x 1080 (a third octave), and still
@@ -12,7 +13,9 @@
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { notify } from '../../src/app/runtime';
+import { session } from '../../src/app/instance';
 import { NOTE_KEYS } from '../../src/ui/components';
+import { setAssist } from '../../src/state/commands';
 import { selectTrack, setView, uiStore } from '../../src/state/uiStore';
 import { button, clickEl, openApp, setUp, tearDown, until } from './r4-play-helpers';
 import { settleFrames } from './r4-uikit-input';
@@ -29,11 +32,17 @@ afterEach(async () => {
 });
 
 const keyboardH = () => getComputedStyle(document.documentElement).getPropertyValue('--keyboard-h').trim();
+/** Bass, on the piano (Musical Assist off). */
+const pianoBass = () =>
+  act(() => {
+    selectTrack('t3');
+    session.accepted(setAssist(session.store, false));
+  });
 
 describe('legends', () => {
   it('every computer key shows its letter on its key; C4, C5 and the root are on the rail above; reset reads ↺ C4', async () => {
     await openApp(1366, 768);
-    act(() => selectTrack('t3'));
+    pianoBass();
     await settleFrames(2);
     const base = (uiStore.getState().keyboardOctave + 1) * 12;
     for (const k of NOTE_KEYS) {
@@ -61,7 +70,7 @@ describe('legends', () => {
 describe('size', () => {
   it('at 1920 x 1080 the keyboard is wider than 1200 px (a third octave); at 1366 x 768 two octaves fill the strip', async () => {
     await openApp(1920, 1080);
-    act(() => selectTrack('t3'));
+    pianoBass();
     await settleFrames(3);
     expect(keyboard().getBoundingClientRect().width).toBeGreaterThan(1200);
     expect(keyboard().querySelectorAll('[data-midi]')).toHaveLength(37);
@@ -72,7 +81,7 @@ describe('size', () => {
 
   it('at 1366 x 768 the strip holds 25 keys wider than 760 px, nothing overflowing', async () => {
     await openApp(1366, 768);
-    act(() => selectTrack('t3'));
+    pianoBass();
     await settleFrames(3);
     expect(keyboard().querySelectorAll('[data-midi]')).toHaveLength(25);
     expect(keyboard().getBoundingClientRect().width).toBeGreaterThan(760);
