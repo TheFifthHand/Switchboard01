@@ -69,6 +69,7 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
     items: [
       { id: 'pad-move', keys: ['← → ↑ ↓'], does: 'Move between pads.' },
       { id: 'pad-actions', keys: ['.', 'Shift+F10'], does: 'Open the pad’s actions without playing it.' },
+      { id: 'scene-menu', keys: ['Shift+F10', 'F2'], does: 'On a scene button: its menu (rename, insert, duplicate, delete).' },
       { id: 'pad-rename', keys: ['F2'], does: 'Rename the clip.' },
       { id: 'pad-delete', keys: ['Delete'], does: 'Delete the clip (Undo brings it back).' },
       { id: 'pad-copy', keys: ['Ctrl+C', 'Ctrl+V'], does: 'Copy a clip, paste it on another pad.' },

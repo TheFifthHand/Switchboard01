@@ -567,7 +567,8 @@ export function App({ boot }: { boot: BootInfo }) {
       spaceTaken = true;
       if (e.repeat) return;
       if (e.shiftKey) session.stop();
-      // In Arrange, Space plays the song (as the transport's Play song key does); a pause resumes what was playing.
+      // In Song, Space plays the song (as the transport's Play song key does): a paused song continues, and
+      // paused pads stop for the song (session.togglePlay). Elsewhere a pause resumes what was playing.
       else void session.togglePlay({ song: uiStore.getState().view === 'arrange' });
     };
     // The key up of a Space the transport took does not reach the control either.
