@@ -2,9 +2,10 @@
  * Play view follow-ups in the running app (real Chromium, the app's styles
  * and fonts), at 1366 x 768, 1920 x 1080 and 960 x 540 (200 % zoom):
  * - the selected pad's '⋯' never covers its state word ("Playing") or name;
- * - a clip pad says how to reach its actions without playing it (right-click
- *   or Shift+F10), and a focused pad opens them with the menu key and "."
- *   (unless "." is a key that plays notes on this keyboard layout);
+ * - a clip pad says how to reach its actions without playing it (right-click;
+ *   Shift+F10 is among its keyboard shortcuts), and a focused pad opens them
+ *   with the menu key and "." (unless "." is a key that plays notes on this
+ *   keyboard layout);
  * - "Not soloed" is plain grey in the grid and the part panel (coral stays
  *   for Muted, amber for Solo);
  * - the master meter in the transport says what its red top light means;
@@ -171,16 +172,16 @@ describe("the selected pad's '⋯'", () => {
 });
 
 describe('reaching a clip pad’s actions without playing it', () => {
-  it('the pad says how (right-click or Shift+F10), in its tooltip and its description', async () => {
+  it('the pad says how (right-click) in its tooltip and its description; Shift+F10 is in its keyboard shortcuts', async () => {
     await openApp(1366, 768);
     const p = pad('t3', 1);
-    expect(description(p)).toContain('Right-click or Shift+F10 for actions');
+    expect(description(p)).toContain('Right-click for its actions');
     expect(p.getAttribute('aria-keyshortcuts')).toContain('Shift+F10');
     // Hovering shows the same words.
     pointer(p, 'pointerover', { ...pointIn(p), buttons: 0 });
     pointer(p, 'pointermove', { ...pointIn(p), buttons: 0 });
     await settle(500);
-    const bubble = [...document.querySelectorAll<HTMLElement>('body > div[aria-hidden="true"]')].find((d) => d.textContent?.includes('Right-click or Shift+F10 for actions'));
+    const bubble = [...document.querySelectorAll<HTMLElement>('body > div[aria-hidden="true"]')].find((d) => d.textContent?.includes('Right-click for its actions'));
     expect(bubble, 'tooltip').toBeTruthy();
     pointer(p, 'pointerout', { ...pointIn(p), relatedTarget: document.body } as PointerEventInit);
   });

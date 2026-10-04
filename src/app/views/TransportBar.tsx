@@ -13,7 +13,7 @@ import { BPM_SPEC, MASTER_VOLUME_SPEC, SWING_SPEC } from '../../project/params';
 import { setTipsEnabled, setUiMode, setView, type UiMode, type View } from '../../state/uiStore';
 import { session, useAutosave, useHistory, useProject, useUi } from '../instance';
 import { notify, runtimeStore, transportWord, useOffline, useRuntime, type RuntimeState } from '../runtime';
-import { PAUSE_UNAVAILABLE_MESSAGE, songPlayFrom } from '../session';
+import { PAUSE_UNAVAILABLE_MESSAGE, songKeyStartsSong, songPlayFrom } from '../session';
 import type { MeterFrame } from '../../audio/contracts';
 import { OfflineMenuItems, OfflineMenuStatus, OfflineStatus } from './OfflineStatus';
 import { keysFor } from './hints/shortcuts';
@@ -140,10 +140,10 @@ function Position() {
 }
 
 /**
- * One key: ▶ Play when stopped or paused, ❚❚ Pause while playing. In the
- * Song view (with something in the song) it plays the song from its cursor,
- * or from the loop when one is set; after a pause it continues whatever was
- * playing.
+ * One key: ▶ Play when stopped, ❚❚ Pause while playing, ▶ Continue while
+ * paused (the word the Scenes column uses). In the Song view (with something
+ * in the song) it plays the song from its cursor, or from the loop when one
+ * is set, also when the pads are paused (they stop); a paused song continues.
  */
 function PlayPauseButton() {
   const playing = useRuntime((s) => s.playing);
@@ -155,16 +155,17 @@ function PlayPauseButton() {
   const looping = useRuntime((s) => s.songLoop !== null);
   const fromBar = useRuntime((s) => songPlayFrom(length, s.songCursor, s.songLoop));
   const blocked = playing && take;
-  // Play here starts the song (not the pads): its name and tip say so.
-  const song = arrange && length > 0 && !playing && !paused;
+  // Play here starts the song (not the pads): its name and tip say so (session.togglePlay's rule).
+  const song = arrange && !playing && songKeyStartsSong(length, paused ? mode : null);
+  const resume = paused && !song;
   const tip = blocked
     ? PAUSE_UNAVAILABLE_MESSAGE
     : playing
-      ? `Pause: hold the position${mode === 'song' ? ' in the song' : ''}. Play continues from exactly here, in time.`
-      : paused
+      ? `Pause: hold the position${mode === 'song' ? ' in the song' : ''}. Continue carries on from exactly here, in time.`
+      : resume
         ? `Continue ${mode === 'song' ? 'the song ' : ''}from where you paused, in time.`
         : song
-          ? `Play song from bar ${fromBar + 1}${looping ? ', in the loop' : ''}.`
+          ? `Play song from bar ${fromBar + 1}${looping ? ', in the loop' : ''}.${paused ? ' The paused pads stop.' : ''}`
           : 'Start the lit clips from bar 1.';
   return (
     <Button
@@ -179,6 +180,7 @@ function PlayPauseButton() {
       aria-keyshortcuts="Space"
       className={styles.play}
       data-song={song || undefined}
+      data-resume={resume || undefined}
     >
       {song ? (
         <span className={styles.playWord}>
@@ -188,6 +190,8 @@ function PlayPauseButton() {
         </span>
       ) : playing ? (
         'Pause'
+      ) : resume ? (
+        'Continue'
       ) : (
         'Play'
       )}

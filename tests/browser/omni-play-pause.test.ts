@@ -222,7 +222,8 @@ describe('Transport keys', () => {
     act(() => patchRuntime({ mode: 'replay' }));
     expect(word()).toBe('Replay');
     act(() => patchRuntime({ playing: false, paused: true, mode: 'live' }));
-    expect(button(m.container, 'Play')).toBeTruthy();
+    // Paused, the key continues: "Continue", as the Scenes column says.
+    expect(button(m.container, 'Continue')).toBeTruthy();
     expect(word()).toBe('Paused');
     // While a performance records, Pause says why it is unavailable.
     act(() => patchRuntime({ playing: true, paused: false, recording: 'performance' }));

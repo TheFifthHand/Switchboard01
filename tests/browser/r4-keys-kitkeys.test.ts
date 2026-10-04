@@ -2,8 +2,8 @@
  * Kit keys in the running app with real keys and mouse (PLAY-07): with a kit selected the
  * computer keys always use the drum-pad layout (Z–V / A–F / Q–R / 1–4, one table with the Drums
  * pads), so A, S and Z play the same kit sounds in Loops, Steps and Drums modes; the strip shows
- * 16 named sound keys with their letters, the octave controls give way to "KIT · 16 sounds", and
- * the Musical Assist switch is hidden ("Drums: keys play the kit sounds.").
+ * 16 named sound keys with their letters, the octave controls give way to "KIT · 16 sounds" under
+ * "Keys play Drums", and the Musical Assist switch is hidden ("Each key plays one kit sound.").
  */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -87,7 +87,8 @@ describe('the strip for a kit', () => {
     expect(strip().textContent).toContain('KIT');
     expect(strip().textContent).toContain('16 sounds');
     expect(strip().querySelector('[role="switch"]')).toBeNull();
-    expect(strip().textContent).toContain('Drums: keys play the kit sounds.');
+    expect(strip().textContent).toContain('Keys play Drums');
+    expect(strip().textContent).toContain('Each key plays one kit sound.');
     // A melodic part brings its keys (Assist on: the scale keyboard, two octaves or more) and the switch back.
     act(() => selectTrack('t3'));
     await settleFrames(2);

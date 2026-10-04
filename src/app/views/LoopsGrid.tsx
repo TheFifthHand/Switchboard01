@@ -5,7 +5,8 @@
  * (at the next bar), and says which on hover and keyboard focus ("▶ Play",
  * "■ Stop" in its corner); tapping the playing pad never starts it again. The
  * side buttons play a whole row as a scene ("▶ Play row"), or stop it while
- * it plays ("■ Stop row"). State is shown with light AND text: Ready, Next bar
+ * it plays ("■ Stop row"), and say which on hover and keyboard focus as the
+ * pads do. State is shown with light AND text: Ready, Next bar
  * (with a beat countdown), Playing, Stops at bar N, Paused, Rec; an empty pad
  * is a quiet "+" (Add clip). A clip pad shows a small picture of its notes;
  * the playing pad (and the playing scene) shows how far it is through its
@@ -17,8 +18,9 @@
  * part in words ("▶ Play", "■ Stop", "✕ Cancel"), labelled Mute and Solo
  * toggles and a level meter; a muted part's column dims and says Muted, and
  * with any solo on the others say Not soloed (a soloed part keeps its meter
- * and shows a Solo tag). M mutes the selected part; Solo has no key (S plays
- * a note).
+ * and shows a Solo tag). Paused, a part whose clip holds says "❚❚ Paused" in
+ * the meter's place, and its key offers ▶ (continue), never ■ Stop. M mutes
+ * the selected part; Solo has no key (S plays a note).
  *
  * Keyboard: the pads (with the scene buttons) are one Tab stop, the part
  * headers another (roving tabindex); arrow keys move inside, Home / End go to
@@ -46,9 +48,11 @@
  * The selected pad's actions are in the bar under the grid (Edit steps ·
  * Duplicate · Move… · Rename · Delete); right-click, the menu key, Shift+F10
  * or "." open them as a menu at the pad without playing it (the pad's tooltip
- * and description say so), and the '⋯' key in the selected pad's top-right
- * corner too. On a focused pad: Delete removes the clip (with Undo), Ctrl+C /
- * Ctrl+V copy and paste clips, F2 renames.
+ * says right-click; the keys are its keyboard shortcuts and in Help), and the
+ * '⋯' key in the selected pad's top-right corner too. On a focused pad:
+ * Delete removes the clip (with Undo), Ctrl+C / Ctrl+V copy and paste clips,
+ * F2 renames. A clip name too long for its pad ends in "…", and its tooltip
+ * then gives it whole.
  */
 import {
   memo,
@@ -209,7 +213,8 @@ function padTip(look: PadLook, replaying: boolean): string {
   }
 }
 const EMPTY_PAD_TIP = 'Tap to add a clip here: a new one, or paste a copied clip.';
-const PAD_ACTIONS_HINT = 'Right-click or Shift+F10 for actions without playing it (on a focused pad the . key works too). Drag it onto another pad to move it.';
+/** Plain and short: the keys that do the same on a focused pad (Shift+F10, the menu key, ".") are in Help and in aria-keyshortcuts. */
+const PAD_ACTIONS_HINT = 'Right-click for its actions (it does not play). Drag it onto another pad to move it.';
 /** Keys on a focused pad (see onGridKey). */
 const PAD_SHORTCUTS = 'Shift+F10 ContextMenu . F2';
 const CLIP_PAD_SHORTCUTS = `${PAD_SHORTCUTS} Delete`;
@@ -1400,6 +1405,12 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
   const beats = useSyncExternalStore(subscribeBeats, () => (counting ? countdown.get(trackId) : null));
   const caption = look.caption ?? (state === 'queued' ? queuedCaption(beats) : undefined);
   const id = padId(trackId, slot);
+  // A name cut short on its pad ("Congas & B…") is given whole in the tooltip: checked as the pointer or focus arrives.
+  const [nameCut, setNameCut] = useState(false);
+  const checkName = (cell: HTMLElement) => {
+    const n = cell.querySelector<HTMLElement>('[data-pad-name]');
+    setNameCut(!!n && (n.scrollWidth > n.clientWidth + 0.5 || n.scrollHeight > n.clientHeight + 0.5));
+  };
   const onPress = () => {
     if (move) {
       // Choosing where a clip goes (keyboard Move… then a click): drop it here.
@@ -1461,10 +1472,14 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
         if (clip && !(e.target as Element).closest('[data-no-drag]')) onPointerDownPad(e, { trackId, slot });
       }}
       onContextMenu={(e) => onContextMenuOpen(e, (a) => open(a, document.getElementById(id)))}
+      onPointerEnter={(e) => checkName(e.currentTarget)}
+      onFocus={(e) => checkName(e.currentTarget)}
     >
       {/* Always wrapped (an empty pad has a tip too), so the pad never remounts and keeps focus when a clip lands on it. */}
-      <Tooltip tip={clip ? padTip(look, replaying) : EMPTY_PAD_TIP} hint={clip ? PAD_ACTIONS_HINT : undefined}>
+      <Tooltip name={clip && nameCut ? clip.name : undefined} tip={clip ? padTip(look, replaying) : EMPTY_PAD_TIP} hint={clip ? PAD_ACTIONS_HINT : undefined}>
         <Pad
+          className={styles.clipPad}
+          title={null}
           state={state}
           selected={selected}
           label={clip ? clip.name : 'Add clip'}
@@ -1567,6 +1582,7 @@ function LiftedPad({ ui, liftRef, labelRef }: { ui: Extract<DragUi, { kind: 'pad
       style={{ width: ui.width, height: ui.height, transformOrigin: `${ui.grabX}px ${ui.grabY}px` }}
     >
       <Pad
+        className={styles.clipPad}
         state={state}
         label={clip.name}
         sublabel={barsLabel(clip.bars)}
@@ -1634,9 +1650,11 @@ function DragLayer(props: { gestures: GridGestures; liftRef: (el: HTMLDivElement
  * one its pad ring marks, see selection.ts) at the next bar, "■ Stop" stops
  * the part at the next bar (dimmed once it is stopping), "✕ Cancel" calls off
  * a start still waiting for the bar line. Stopped, "■ Skip" takes an armed
- * clip off the next Play. A part that plays never shows ▶, so this key never
- * starts a playing clip again. Where the column is too narrow for the word,
- * only the icon shows (same name); see .partPlay.
+ * clip off the next Play. Paused, a part whose clip holds at the pause offers
+ * "▶ Play", which continues from the pause in time (as its pad does), and its
+ * header says Paused (heldAtPause). This key never starts a playing clip
+ * again. Where the column is too narrow for the word, only the icon shows
+ * (same name); see .partPlay.
  */
 function PartPlayButton({ col, id }: { col: ColumnSummary; id: string }) {
   const transport = useRuntime((s): Transport => (s.playing ? 'playing' : s.paused ? 'paused' : 'stopped'));
@@ -1655,6 +1673,18 @@ function PartPlayButton({ col, id }: { col: ColumnSummary; id: string }) {
     const stop = () => session.stopTrack(col.id);
     if (transport === 'stopped') {
       key = { kind: 'skip', icon: 'stop', word: 'Skip', label: `Skip ${col.name} when Play starts`, tip: 'Its lit clip will not start when you press Play.', disabled: false, onClick: stop };
+    } else if (transport === 'paused' && !queued) {
+      // Its clip holds at the pause: nothing plays, so it does not offer Stop; ▶ carries on from the pause.
+      const held = col.clips[playingSlot!]?.name;
+      key = {
+        kind: 'continue',
+        icon: 'play',
+        word: 'Play',
+        label: `Play ${col.name}: continue from the pause`,
+        tip: `${col.name} is paused${held ? ` in ${held}` : ''}. Press to carry on from the pause, in time: every paused part carries on.`,
+        disabled: false,
+        onClick: () => void session.play(),
+      };
     } else if (queuedOnly) {
       key = {
         kind: 'cancel',
@@ -1729,8 +1759,10 @@ function TrackHeader(props: { col: ColumnSummary; index: number; anySolo: boolea
   const mainRef = useRef<HTMLButtonElement>(null);
   const audible = !col.mute && (!anySolo || col.solo);
   const status = col.mute ? 'Muted' : anySolo && !col.solo ? 'Not soloed' : col.solo ? 'Solo' : null;
-  // Muted and Not soloed take the meter's place; a soloed part is heard, so it keeps its meter (and a Solo tag).
-  const silentWord = status === 'Muted' || status === 'Not soloed' ? status : null;
+  // Its clip holds at a pause (nothing queued): the header says Paused, as its pad does.
+  const heldAtPause = useRuntime((s) => s.paused && (s.tracks[col.id]?.playingSlot ?? null) !== null && !s.tracks[col.id]?.queued);
+  // Muted and Not soloed take the meter's place, and so does Paused (nothing sounds); a soloed part is heard, so it keeps its meter (and a Solo tag).
+  const silentWord = status === 'Muted' || status === 'Not soloed' ? status : heldAtPause ? 'Paused' : null;
   const open = (anchor: MenuAnchor, returnFocus: HTMLElement | null, extra: Partial<MenuBase> = {}) => {
     selectTrack(col.id);
     onMenu({ kind: 'track', trackId: col.id, anchor, returnFocus, ...extra });
@@ -1808,7 +1840,12 @@ function TrackHeader(props: { col: ColumnSummary; index: number; anySolo: boolea
       <div className={styles.headBottom}>
         <PartPlayButton col={col} id={headId(index, 'play')} />
         {silentWord ? (
-          <span className={styles.status} data-status={silentWord === 'Muted' ? 'muted' : 'quiet'}>
+          <span className={styles.status} data-status={silentWord === 'Muted' ? 'muted' : silentWord === 'Paused' ? 'paused' : 'quiet'}>
+            {silentWord === 'Paused' && (
+              <span className={styles.statusIcon} aria-hidden="true">
+                <Icon name="pause" size={10} />
+              </span>
+            )}
             {silentWord}
           </span>
         ) : (
@@ -1907,6 +1944,8 @@ function rowPlays(tracks: Readonly<Record<Id, TrackRuntime>>, columns: readonly 
  */
 type SceneAction = 'play' | 'stop' | 'continue';
 const SCENE_ACTION_NAME: Record<SceneAction, string> = { play: 'Play row', stop: 'Stop row', continue: 'Continue row' };
+/** The word a scene button shows on hover and keyboard focus ("Continue", as the key above the scenes says). */
+const SCENE_ACTION_WORD: Record<SceneAction, string> = { play: 'Play row', stop: 'Stop row', continue: 'Continue' };
 function sceneAction(s: RuntimeState, columns: readonly ColumnSummary[], row: number): SceneAction {
   if (!s.playing && !s.paused) return 'play';
   const on = rowPlays(s.tracks, columns, row);
@@ -1969,12 +2008,12 @@ function SceneButton(props: {
         name={SCENE_ACTION_NAME[action]}
         tip={
           action === 'stop'
-            ? 'Every part of this row stops at the next bar (the transport keeps running).'
+            ? 'Every part of this row stops at the next bar. The transport keeps running, silent, so the next pad or row you tap starts in time; Stop at the top ends it.'
             : action === 'continue'
               ? 'This row is paused here: carry on from the pause, in time.'
-              : `Play the ${scene.name} row: ${scenePartsTip(count, columns.length)}`
+              : `Play the ${scene.name} row from the next bar: ${scenePartsTip(count, columns.length)}`
         }
-        detail="Scenes switch on the next bar. Drag the scene (or Alt+Up / Alt+Down) to reorder the rows; the clips move with it. Right-click, Shift+F10 or F2 for its menu: rename, insert, duplicate, delete."
+        hint="Drag it up or down to move the row (its clips move with it). Right-click for its menu."
       >
         <button
           ref={btnRef}
@@ -2004,6 +2043,11 @@ function SceneButton(props: {
           </span>
           <span className={styles.sceneName}>{scene.name}</span>
           <span className={styles.sceneCount}>{scenePartsText(count)}</span>
+          {/* What a press does, in words, in place of the count on hover and keyboard focus (as a pad's corner key). */}
+          <span className={styles.sceneWord} data-scene-word="" aria-hidden="true">
+            <Icon name={action === 'stop' ? 'stop' : 'play'} size={9} />
+            <span>{SCENE_ACTION_WORD[action]}</span>
+          </span>
         </button>
       </Tooltip>
       <Tooltip name="Scene options" tip="Rename, move, insert, duplicate, capture, add to the song, export or delete this scene.">
