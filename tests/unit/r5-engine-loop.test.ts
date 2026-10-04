@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { TempoMap } from '../../src/time/clock';
 import type { SongPass } from '../../src/time/sequencer';
 import { notesOf, ofKind } from './sequencer-fixtures';
-import { BAR, BEAT, MARGIN, Rig, UNEDITED, beatFixture, beatPitch, expectedNotes, pitchOf, plays } from './r5-engine-rig';
+import { BAR, BEAT, MARGIN, Rig, UNEDITED, beatFixture, beatPitch, expectedChases, expectedNotes, pitchOf, plays } from './r5-engine-rig';
 
 /** Passes of loop [from, to) bars following a first pass of song ticks [first, to) at transport tick `at` (`n` passes in all). */
 function loopPasses(at: number, first: number, from: number, to: number, n: number): SongPass[] {
@@ -49,6 +49,8 @@ describe('a loop plays its bars again and again, exactly as the song plays them 
     const passes = loopPasses(768, 2, 2, 6, 3);
     for (const id of ['t1', 't2', 't4']) expect(r.notes(id).filter(before(5376)), id).toEqual(expectedNotes(r.project, passes, id, 0, 5376));
     expect(r.notes('t1').filter(before(5376))).toEqual([...plays(1, 768, 2304), ...plays(1, 2304, 3840), ...plays(1, 3840, 5376)]);
+    // The loop starts where the region does: nothing is under way to chase.
+    expect(r.chased('t4')).toEqual([]);
     // The 2-bar clip runs on through the seams (4 bars is two of its loops): nothing relaunches.
     expect(r.launches('t1')).toEqual([[768, 1]]);
     expect(r.seq.songLoopingAt(r.tick)).toBe(true);
@@ -64,8 +66,14 @@ describe('a loop plays its bars again and again, exactly as the song plays them 
     for (const id of ['t1', 't2', 't4']) expect(r.notes(id).filter(before(4608)), id).toEqual(expectedNotes(r.project, passes, id, 0, 4608));
     expect(r.notes('t1').filter(before(2304)).map(([, p]) => p)).toEqual([pitchOf(1, 1), pitchOf(1, 0), pitchOf(1, 1)]);
     expect(r.launches('t1').filter(before(4608))).toEqual([[1152, 1], [2304, 1], [3456, 1]]);
-    // The held chord starts where the clip does (its first bar), and is cut at each seam.
-    expect(r.held('t4').filter(before(4608))).toEqual([[1536, 50, 2304], [2688, 50, 3456], [3840, 50, 4608]]);
+    // The held chord sounds as the song plays it there: at the start and at every seam, the chord under way
+    // (struck in the clip's first bar) sounds from there with what is left of it; then it is struck again
+    // where the clip starts over, and cut at the seam.
+    expect(r.held('t4').filter(before(4608))).toEqual([[1152, 50, 1536], [1536, 50, 2304], [2304, 50, 2688], [2688, 50, 3456], [3456, 50, 3840], [3840, 50, 4608]]);
+    expect(r.chased('t4').filter(before(4608))).toEqual([[1152, 50], [2304, 50], [3456, 50]]);
+    expect(r.chased('t4').filter(before(4608))).toEqual(expectedChases(r.project, passes, 't4', 0, 4608));
+    // A drum kit never chases.
+    expect(r.chased('t1')).toEqual([]);
     seamless(r);
   });
 
@@ -74,7 +82,12 @@ describe('a loop plays its bars again and again, exactly as the song plays them 
     r.seq.setSongLoop({ fromBar: 1, toBar: 7 }, 0);
     r.playSong(1).to(BAR + 3 * 6 * BAR);
     const passes = loopPasses(BAR, 1, 1, 7, 3);
-    for (const id of ['t1', 't2', 't4']) expect(r.notes(id).filter(before(19 * BAR)), id).toEqual(expectedNotes(r.project, passes, id, 0, 19 * BAR));
+    for (const id of ['t1', 't2', 't4']) {
+      expect(r.notes(id).filter(before(19 * BAR)), id).toEqual(expectedNotes(r.project, passes, id, 0, 19 * BAR));
+      expect(r.chased(id).filter(before(19 * BAR)), id).toEqual(expectedChases(r.project, passes, id, 0, 19 * BAR));
+    }
+    // Bar 2 is the second bar of the 2-bar held chord of slot 0: chased at the start and at every seam.
+    expect(r.chased('t4').filter(before(19 * BAR))).toEqual([[BAR, 30], [7 * BAR, 30], [13 * BAR, 30]]);
     seamless(r);
   });
 

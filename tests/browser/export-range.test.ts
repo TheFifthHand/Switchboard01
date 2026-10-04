@@ -86,4 +86,25 @@ describe('Export: the loop', () => {
     const songNext = song.channels[0].subarray(Math.round(8.0 * SR), Math.round(8.5 * SR));
     expect(rms(tail)).toBeLessThan(rms(songNext) * 0.05);
   });
+
+  it('a loop starting inside a held note: the note sounds from the loop’s first bar, as the song plays it there (note chase)', async () => {
+    // Chords hold one note through bars 1–4 (a 4-bar clip); export bars 3–4.
+    const p = drySong();
+    track(p, 't4').clips[0] = clip('pad', 4, [[0, 57, 4 * 384]]);
+    p.arrangement = { tailSeconds: 0, sections: [], regions: [{ id: 'pad', trackId: 't4', clipId: track(p, 't4').clips[0]!.id, start: 0, bars: 4, offset: 0 }] };
+    const s = new Session(p);
+    live.push(s);
+    const loop = await wav(s, { kind: 'songRange', fromBar: 2, toBar: 4 }, 0);
+    const song = await wav(s, { kind: 'song' }, 0);
+    expect(loop.channels[0].length).toBe(4 * SR);
+    // Bars 3–4 are 4 s from 4 s into the song. The loop file is not silent there (it was, before notes were chased).
+    const a = loop.channels[0];
+    const b = song.channels[0].subarray(4 * SR, 8 * SR);
+    expect(rms(a)).toBeGreaterThan(0.01);
+    expect(rms(a)).toBeGreaterThan(rms(b) * 0.5);
+    // Once its attack is over it sounds at the song's level (the same note, held).
+    const late = (x: Float32Array) => rms(x.subarray(2 * SR, 4 * SR));
+    expect(late(a) / late(b)).toBeGreaterThan(0.8);
+    expect(late(a) / late(b)).toBeLessThan(1.25);
+  });
 });

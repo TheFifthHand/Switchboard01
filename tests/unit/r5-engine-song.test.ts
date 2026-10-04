@@ -13,7 +13,7 @@ import type { SeqEvent } from '../../src/time/contracts';
 import { Sequencer, songLengthTicks, type NoteEvent } from '../../src/time/sequencer';
 import { makeClip, makeProject, notesOf, ofKind, runTo, sec, setClip } from './sequencer-fixtures';
 import { TempoMap } from '../../src/time/clock';
-import { BAR, BEAT, Rig, UNEDITED, barClip, clipId, expectedNotes, fixture, heldClip, pitchOf, plays, region, straight, withSong } from './r5-engine-rig';
+import { BAR, BEAT, Rig, UNEDITED, barClip, clipId, expectedChases, expectedNotes, fixture, heldClip, pitchOf, plays, region, straight, withSong } from './r5-engine-rig';
 
 /** t1: a 2-bar bar-note clip in slot 0 and a 1-bar one in slot 2; t4: a held 2-bar chord in slot 0. */
 function small(regions: (p: Project) => SongRegion[]): Project {
@@ -90,7 +90,7 @@ describe('regions on the timeline', () => {
     expect(r.launches('t1')).toEqual([[0, 0], [BAR, null], [3 * BAR, 0], [4 * BAR, null]]);
   });
 
-  it('plays from a bar: every region already under way joins in phase there; nothing before it is played late', () => {
+  it('plays from a bar: every region already under way joins in phase there; a held note under way sounds from there', () => {
     // Bar 5 (tick 1920) is the fourth bar of slot 1's region [2, 6): its 2-bar clip is in its second bar.
     const r = new Rig().playSong(5);
     expect(r.tick).toBe(5 * BAR);
@@ -98,8 +98,17 @@ describe('regions on the timeline', () => {
     r.finish();
     expect(r.notes('t1')).toEqual(UNEDITED.filter(([t]) => t >= 5 * BAR));
     expect(r.notes('t1')[0]).toEqual([5 * BAR, pitchOf(1, 1)]);
-    // The held chord of that region started before the start position: it is not played late.
-    expect(r.held('t4')).toEqual([[3072, 90, 3456]]);
+    // The held chord of that region started before the start position and sounds there: it is chased, from
+    // the start with what is left of it (as the song plays it there); nothing else from before is played.
+    expect(r.held('t4')).toEqual([[1920, 50, 2304], [3072, 90, 3456]]);
+    expect(r.chased('t4')).toEqual([[1920, 50]]);
+    expect(r.chased('t4')).toEqual(expectedChases(r.project, straight(5), 't4', 0, Infinity));
+    const chord = notesOf(r.out, 't4')[0];
+    expect(chord.velocity).toBe(0.8);
+    expect(chord.time).toBeCloseTo(0.05, 9);
+    expect(chord.duration).toBeCloseTo(2, 9);
+    // Drums never chase.
+    expect(r.chased('t1')).toEqual([]);
   });
 
   it('starting at or after the end ends at once, and an empty song ends at once', () => {
