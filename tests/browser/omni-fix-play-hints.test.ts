@@ -280,6 +280,12 @@ describe('the chip never covers a heading or a status line', () => {
           await settle();
           await chipPlaced();
           expect(document.querySelector('[data-testid="pads-playing"]')!.textContent).toContain('Your pads are playing');
+          // Its home is the Song header's free middle. Where that has no room (960 x 540 with the two-row transport, the
+          // song filling the rows) it waits off screen, unseen, rather than cover anything (the rulebook's rule).
+          if (!chip()!.hasAttribute('data-ready')) {
+            expect(getComputedStyle(chip()!).visibility, `${w} ${mode} arrange ${step}: waits unseen`).toBe('hidden');
+            continue;
+          }
           // The Song header's words too (the length, the keys): the chip finds room elsewhere.
           expect(coveredKeyText({ headers: true }), `${w} ${mode} arrange ${step}: covers`).toEqual([]);
           expect(coveredControls(), `${w} ${mode} arrange ${step}: covers`).toEqual([]);

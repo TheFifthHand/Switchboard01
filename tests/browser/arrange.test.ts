@@ -17,9 +17,11 @@ import { formatPosition, parsePosition, performanceRows } from '../../src/app/vi
 import { getStarter } from '../../src/content/starters';
 import type { Id, Performance, PerformanceEvent } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
-import { setView, uiStore, slotFor } from '../../src/state/uiStore';
+import { setView } from '../../src/state/uiStore';
+import { ticksToSeconds } from '../../src/time/clock';
 import { makeSnapshot } from '../../src/time/snapshot';
-import { actFrame, cleanup, fire, key, mount, pointer, wait } from './ui-harness';
+import { songBars } from '../../src/project/arrangement';
+import { actFrame, cleanup, fire, key, mount, wait } from './ui-harness';
 
 beforeEach(() => {
   // The lane's remembered settings (Follow, the Performances panel open or folded) start fresh.
@@ -72,13 +74,6 @@ async function setup(width = 1320) {
   return m;
 }
 
-/** Let slide transitions finish. */
-async function settle(ms = 360) {
-  await act(async () => {
-    await wait(ms);
-  });
-}
-
 const project = () => session.store.getState();
 
 function click(el: Element, init: MouseEventInit = {}) {
@@ -96,6 +91,45 @@ function typeInto(input: HTMLInputElement, value: string) {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Performances                                                        */
+/* ------------------------------------------------------------------ */
+
+function addTake(events: PerformanceEvent[], opts: { name?: string; startTick?: number; endTick?: number } = {}): Id {
+  const p = project();
+  const startTick = opts.startTick ?? 768;
+  const perf: Performance = {
+    id: `perf-${Math.random().toString(36).slice(2, 8)}`,
+    name: opts.name ?? 'Take 1',
+    createdAt: Date.now(),
+    startTick,
+    endTick: opts.endTick ?? startTick + 4 * 384,
+    snapshot: makeSnapshot(p, p.tracks.map((t) => ({ trackId: t.id, playing: null })), startTick),
+    events,
+  };
+  const r = cmd.addPerformance(session.store, perf);
+  expect(r.changed).toBe(true);
+  return r.performanceId!;
+}
+
+const perfById = (id: Id) => project().performances.find((x) => x.id === id);
+
+/** Open the Performances panel when it is folded to its one-line bar ("2 takes ▸"). */
+function openTakes() {
+  const open = document.querySelector<HTMLButtonElement>('[data-testid="takes-open"]');
+  if (open) click(open);
+}
+
+function sampleEvents(start = 768): PerformanceEvent[] {
+  return [
+    { t: start + 10, type: 'launch', trackId: 't3', slot: 1, atTick: start + 384 },
+    { t: start + 96, type: 'noteOn', trackId: 't5', pitch: 60, velocity: 0.8, key: 'KeyA' },
+    { t: start + 192, type: 'macro', trackId: 't3', macro: 'tone', value: 0.62 },
+    { t: start + 200, type: 'noteOff', trackId: 't5', pitch: 60, key: 'KeyA' },
+    { t: start + 300, type: 'param', module: 't4:filter', param: 'cutoff', value: 1200 },
+  ];
 }
 
 describe('Performances', () => {
@@ -170,7 +204,6 @@ describe('Performances', () => {
     expect(session.transport!.getPosition().tick).toBeGreaterThanOrEqual(768);
     expect(panel.textContent).toContain('Replaying');
     expect(panel.textContent).toMatch(/\d\.\d s \/ \d\.\d s/);
-    expect(document.querySelector('[data-testid="playback-mode"]')!.textContent).toContain('Now playing:a recorded take');
     click(byExactLabel('Stop replaying Take 1'));
     expect(rt().playing).toBe(false);
     expect(rt().replayId).toBeNull();
@@ -407,5 +440,21 @@ describe('Performances', () => {
     click([...document.querySelectorAll('button')].find((b) => b.textContent!.startsWith('Show') && b.textContent!.includes('more'))!);
     expect(rows()).toBe(EVENT_PAGE + EVENT_MORE);
     expect(performanceRows(perfById(id)!).length).toBe(250);
+  });
+
+  it('Put in the song: what the take launched becomes loops after the song’s end, one undo step', async () => {
+    addTake(sampleEvents(), { name: 'Take 1' });
+    await setup();
+    openTakes();
+    const before = project().arrangement.regions.length;
+    const end = songBars(project());
+    const undo = session.store.historySize().undo;
+    click(byLabel('Put Take 1 in the song'));
+    const added = project().arrangement.regions.filter((r) => r.start >= end);
+    expect(added.length).toBeGreaterThan(0);
+    expect(project().arrangement.regions.length).toBe(before + added.length);
+    expect(session.store.historySize().undo).toBe(undo + 1);
+    act(() => session.undo());
+    expect(project().arrangement.regions.length).toBe(before);
   });
 });

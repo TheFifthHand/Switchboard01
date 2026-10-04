@@ -202,17 +202,23 @@ export function previewSectionMove(
   return { regions: reg, sections: d || copy ? placeSection(sections, placed) : [...sections], section: placed };
 }
 
-/** Sections after section `id`'s edge moves `delta` bars (a label only: the music stays). At least one bar. */
+/**
+ * Sections after section `id`'s edge moves `delta` bars: a label only (the
+ * music stays), at least one bar long, and stopping at the neighbouring
+ * sections (sections never overlap), as resizeSection does.
+ */
 export function previewSectionResize(sections: readonly SongSection[], id: Id, edge: Edge, delta: number): { sections: SongSection[]; section: SongSection | null } {
-  const s = sections.find((x) => x.id === id);
+  const sorted = [...sections].sort((a, b) => a.start - b.start);
+  const i = sorted.findIndex((x) => x.id === id);
+  const s = sorted[i];
   if (!s) return { sections: [...sections], section: null };
   const end = regionEnd(s);
   let start = s.start;
   let stop = end;
-  if (edge === 'start') start = Math.max(0, Math.min(end - 1, s.start + Math.round(delta)));
-  else stop = Math.min(MAX_SONG_BARS, Math.max(s.start + 1, end + Math.round(delta)));
+  if (edge === 'start') start = Math.max(i > 0 ? regionEnd(sorted[i - 1]) : 0, Math.min(end - 1, s.start + Math.round(delta)));
+  else stop = Math.min(i + 1 < sorted.length ? sorted[i + 1].start : MAX_SONG_BARS, Math.max(s.start + 1, end + Math.round(delta)));
   const placed = { ...s, start, bars: stop - start };
-  return { sections: placeSection(sections, placed), section: placed };
+  return { sections: sorted.map((x) => (x.id === id ? placed : x)), section: placed };
 }
 
 /* ------------------------------------------------------------------ */

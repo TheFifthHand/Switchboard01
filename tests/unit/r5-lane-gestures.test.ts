@@ -179,13 +179,16 @@ describe('sections', () => {
     ]);
   });
 
-  it('resizing a section is a label change only', () => {
-    const pv = previewSectionResize(secs, 's1', 'end', 2);
-    expect(pv.sections.map((s) => [s.id, s.start, s.bars])).toEqual([
-      ['s1', 0, 10],
-      ['s2', 10, 6],
+  it('resizing a section is a label change only, stopping at its neighbours', () => {
+    expect(previewSectionResize(secs, 's1', 'end', 2).sections.map((s) => [s.id, s.start, s.bars])).toEqual([
+      ['s1', 0, 8],
+      ['s2', 8, 8],
     ]);
+    expect(previewSectionResize(secs, 's1', 'end', -3).section).toMatchObject({ start: 0, bars: 5 });
     expect(previewSectionResize(secs, 's1', 'end', -20).section?.bars).toBe(1);
+    expect(previewSectionResize(secs, 's2', 'end', 4).section).toMatchObject({ start: 8, bars: 12 });
+    expect(previewSectionResize(secs, 's2', 'start', -3).section).toMatchObject({ start: 8, bars: 8 });
+    expect(previewSectionResize(secs, 's2', 'start', 2).section).toMatchObject({ start: 10, bars: 6 });
   });
 });
 

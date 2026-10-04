@@ -1,7 +1,7 @@
 /**
  * Sections in real Chromium: a double-click renames one in place, a click
  * selects the loops that start in it, a drag moves it with its music (one
- * undo step), its edges resize the label only, and its menu duplicates it,
+ * undo step), its edges resize the label only (stopping at the next one), and its menu duplicates it,
  * deletes it (the label, or with its music) and switches its song moves (the
  * menu shows which are on). Hovering a stretch with no section offers
  * "+ Add section" there.
@@ -87,12 +87,20 @@ describe('sections', () => {
     expect(undoCount()).toBe(before + 1);
   });
 
-  it('its right edge resizes the label only', async () => {
+  it('its edges resize the label only, and stop at the next section', async () => {
     await open();
-    const r = sectionEl('S1').getBoundingClientRect();
-    await dragTo({ x: r.right - 2, y: r.top + r.height / 2 }, { x: barX(6), y: r.top + r.height / 2 });
-    expect(sections().find((s) => s.id === 'S1')).toMatchObject({ start: 0, bars: 6 });
+    const edgeAt = (id: string) => {
+      const r = sectionEl(id).getBoundingClientRect();
+      return { x: r.right - 2, y: r.top + r.height / 2 };
+    };
+    // Intro's end runs into Drop: it stops there.
+    await dragTo(edgeAt('S1'), { x: barX(6), y: edgeAt('S1').y });
+    expect(sections().find((s) => s.id === 'S1')).toMatchObject({ start: 0, bars: 4 });
+    // Drop's end has room: two bars longer; the music stays.
+    await dragTo(edgeAt('S2'), { x: barX(14), y: edgeAt('S2').y });
+    expect(sections().find((s) => s.id === 'S2')).toMatchObject({ start: 4, bars: 10 });
     expect(get('B')).toMatchObject({ start: 4, bars: 8 });
+    expect(get('E')).toMatchObject({ start: 12, bars: 4 });
   });
 
   it('its menu: Duplicate, Fade in (checked once on), Delete section and its music', async () => {

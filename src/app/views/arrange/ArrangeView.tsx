@@ -34,6 +34,7 @@ import styles from './SongView.module.css';
 export const BROWSER_AUTO_BARS = 32;
 
 const selectShort = (p: Project) => songBars(p) < BROWSER_AUTO_BARS;
+const selectHasTakes = (p: Project) => p.performances.length > 0;
 
 /** What a loop or scene picked up in the browser looks like while it is away from the rows. */
 function Carried() {
@@ -54,7 +55,13 @@ export function ArrangeView() {
   const [browserPref, setBrowserPref] = useState<boolean | null>(readBrowserOpen);
   const browserOpen = browserPref ?? short;
   const [openTake, setOpenTake] = useState<Id | null>(null);
-  const [takesOpen, setTakesOpen] = useState<boolean>(() => readTakesOpen() ?? false);
+  // The Performances panel open or folded: the person's choice while there are takes (remembered); with none, a look
+  // at how to record one lasts until the first take comes (or the last one goes).
+  const hasTakes = useProject(selectHasTakes);
+  const [takesPref, setTakesPref] = useState<boolean>(() => readTakesOpen() ?? false);
+  const [howOpen, setHowOpen] = useState(false);
+  useEffect(() => setHowOpen(false), [hasTakes]);
+  const takesOpen = hasTakes ? takesPref : howOpen;
   const [status, setStatus] = useState('');
   useEffect(() => setHandleNow(handle.current), []);
 
@@ -66,10 +73,17 @@ export function ArrangeView() {
     setBrowserPref(open);
     writeBrowserOpen(open);
   }, []);
-  const onTakesOpen = useCallback((open: boolean) => {
-    setTakesOpen(open);
-    writeTakesOpen(open);
-  }, []);
+  const onTakesOpen = useCallback(
+    (open: boolean) => {
+      if (!hasTakes) {
+        setHowOpen(open);
+        return;
+      }
+      setTakesPref(open);
+      writeTakesOpen(open);
+    },
+    [hasTakes],
+  );
 
   return (
     <div className={styles.view} data-take-open={openTake ? '' : undefined}>
