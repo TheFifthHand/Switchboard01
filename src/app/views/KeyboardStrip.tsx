@@ -6,7 +6,7 @@
  * - On, for a part with notes: a scale keyboard. Only the notes of the
  *   project's key, as one row of equal keys (no black keys), so every key is
  *   a different note and nothing needs snapping; as many as fit at about
- *   SCALE_KEY_MIN_PX a key, two to three octaves. The lowest key is the root
+ *   SCALE_KEY_MIN_PX a key, up to three octaves. The lowest key is the root
  *   at or below the octave's C (G3 for G Dorian at octave 4). The home row
  *   A–' plays the first 11 keys, Q–] keys 12–23.
  * - Off, or the Chromatic scale: the piano, two octaves (three on a wide
@@ -67,8 +67,13 @@ export const KEY_MAX_PX = 60;
 export const KIT_KEY_MAX_PX = 88;
 /** Height of the keys (the strip is 100 px). */
 const KEYS_HEIGHT = 90;
-/** Scale keyboard: as many keys as fit at this width (px), from two octaves of the scale to three (and the root above). */
+/**
+ * Scale keyboard: as many keys as fit at SCALE_KEY_MIN_PX, up to three octaves of the scale (and
+ * the root above); on a narrow strip two octaves while they fit at SCALE_KEY_NARROW_PX, else
+ * fewer keys of that width (at least one octave).
+ */
 const SCALE_KEY_MIN_PX = 44;
+const SCALE_KEY_NARROW_PX = 34;
 /** The widest a scale keyboard's key gets (px). */
 export const SCALE_KEY_MAX_PX = 64;
 
@@ -382,9 +387,9 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   // Assist on for a part with notes: only the key's notes, one key each (the Chromatic scale has all 12: the piano).
   const scaleBoard = !isDrums && assist && !chromatic;
   const perOctave = stepsPerOctave(scale);
+  const fit = (px: number) => Math.floor(keysBox.width / px);
   // Folded, no keys show: the computer keys play all three octaves.
-  const fitting = collapsed ? Infinity : Math.floor(keysBox.width / SCALE_KEY_MIN_PX);
-  const scaleCount = Math.max(2 * perOctave + 1, Math.min(3 * perOctave + 1, fitting));
+  const scaleCount = collapsed ? 3 * perOctave + 1 : Math.min(3 * perOctave + 1, Math.max(fit(SCALE_KEY_MIN_PX), Math.min(2 * perOctave + 1, Math.max(perOctave + 1, fit(SCALE_KEY_NARROW_PX)))));
   const notes = useMemo(() => (scaleBoard ? scaleKeyboardNotes(root, scale, baseNote, scaleCount) : null), [scaleBoard, root, scale, baseNote, scaleCount]);
   // Drum pads own the computer keys only while they are on screen with a kit selected (same layout, same table).
   const drumPadsOwnKeys = padMode === 'drums' && view === 'play' && isDrums;

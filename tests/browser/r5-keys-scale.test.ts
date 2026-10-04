@@ -18,7 +18,7 @@ import { session } from '../../src/app/instance';
 import { runtimeStore } from '../../src/app/runtime';
 import { isInScale, scaleKeyboardNotes, snapToScale } from '../../src/music/scales';
 import { setAssist, setKey } from '../../src/state/commands';
-import { selectTrack, setKeyboardOctave, uiStore } from '../../src/state/uiStore';
+import { selectTrack, setKeyboardOctave, setUiMode, uiStore } from '../../src/state/uiStore';
 import { button, described, openApp, press, project, setUp, tearDown, until } from './r4-play-helpers';
 import { centre, click, drag, mouse, settleFrames } from './r4-uikit-input';
 import { keyboard, recordPlayed, resetKeyboardFold, strip } from './r4-keys-helpers';
@@ -235,6 +235,14 @@ describe('pressing the keys', () => {
     } finally {
       rec.restore();
     }
+    // Advanced puts the key pickers and the arpeggiator beside the keys: fewer keys, still at least 34 px wide.
+    act(() => setUiMode('advanced'));
+    await settleFrames(3);
+    expect(keys().length).toBeGreaterThanOrEqual(8);
+    expect(keys().length).toBeLessThan(15);
+    for (const k of keys()) expect(k.getBoundingClientRect().width).toBeGreaterThanOrEqual(34);
+    expect(letters().slice(0, 8)).toEqual(['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K']);
+    expect(midis()).toEqual(scaleKeyboardNotes(7, 'dorian', 60, keys().length));
   });
 });
 
