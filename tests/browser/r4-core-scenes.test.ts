@@ -37,15 +37,15 @@ function project(): Project {
   }
   const t1 = p.tracks[0];
   for (let row = 0; row < 4; row++) t1.clips[row] = createClip(`r${row}`, 1, [0, 96, 192, 288].map((tick) => ({ tick, pitch: row, velocity: 0.8, duration: 24 })));
-  // No song: a scene the song plays cannot be deleted without its blocks.
-  p.arrangement = { ...p.arrangement, blocks: [] };
+  // No song: deleting a scene the song plays takes its loops with it.
+  p.arrangement = { ...p.arrangement, regions: [], sections: [] };
   return p;
 }
 
 let live: Session[] = [];
 beforeEach(() => {
   uiStore.setState({ ...defaultUiState() });
-  patchRuntime({ playing: false, paused: false, mode: 'live', stalled: null, songBlock: null, songBlockId: null, tracks: {} });
+  patchRuntime({ playing: false, paused: false, mode: 'live', stalled: null, songCursor: 0, tracks: {} });
 });
 afterEach(() => {
   for (const s of live) s.dispose();
@@ -148,19 +148,20 @@ describe('scene rows inserted, copied and deleted while the pads play', () => {
 });
 
 describe('scene rows inserted while the song plays', () => {
-  it('the song keeps its scenes: the same clips play on, the plan follows the rows', async () => {
+  it('the song keeps playing the same clips: its loops name clips, not rows', async () => {
     const p = project();
-    p.arrangement = { tailSeconds: 0, blocks: [0, 1, 2, 3].map((row) => ({ id: `b${row}`, sceneId: p.scenes[row].id, repeats: 2 })) };
+    // Each row's clip over two bars, in row order.
+    p.arrangement = { tailSeconds: 0, sections: [], regions: [0, 1, 2, 3].map((row) => ({ id: `r${row}`, trackId: 't1', clipId: p.tracks[0].clips[row]!.id, start: 2 * row, bars: 2, offset: 0 })) };
     const { s, heard } = await started(p);
-    await s.playSong(1);
-    await until(() => tick(s) > 2 * BAR + 40, 'block b1');
+    await s.playSong({ fromBar: 2 });
+    await until(() => tick(s) > 2 * BAR + 40, 'row 1’s loop');
     expect(s.accepted(cmd.insertScene(s.store, 0))).toBe(true);
     const editTick = tick(s);
-    await until(() => tick(s) > 4 * BAR + 40, 'block b2');
+    await until(() => tick(s) > 4 * BAR + 40, 'row 2’s loop');
     s.undo();
-    await until(() => tick(s) > 5 * BAR + 40, 'block b2, later');
+    await until(() => tick(s) > 5 * BAR + 40, 'row 2’s loop, later');
     s.stop();
-    // b1 (row 1, pitch 1) then b2 (row 2, pitch 2), whatever the row indices became.
+    // Row 1's clip (pitch 1) then row 2's (pitch 2), whatever the row indices became.
     const got = heard('t1', editTick + 40, 5 * BAR + 40);
     expect(got.filter((n) => n.tick < 4 * BAR).every((n) => n.pitch === 1)).toBe(true);
     expect(got.filter((n) => n.tick >= 4 * BAR).every((n) => n.pitch === 2)).toBe(true);
@@ -189,7 +190,7 @@ describe('chosen slots through scene edits, Undo and Redo (play review)', () => 
       // A copy of Groove goes below it: Groove's parts stay, those below move down.
       ['copy', () => s.accepted(cmd.duplicateScene(s.store, 1)), { ...start, t6: 3, t7: 4 }],
       // Groove deleted: its parts go to the row now there (Lift), the others stay on their clips.
-      ['delete', () => s.accepted(cmd.deleteScene(s.store, 1, { removeBlocks: true })), { ...start, t1: 1, t2: 1, t3: 1, t4: 1, t6: 1, t7: 2 }],
+      ['delete', () => s.accepted(cmd.deleteScene(s.store, 1)), { ...start, t1: 1, t2: 1, t3: 1, t4: 1, t6: 1, t7: 2 }],
     ];
     for (const [what, edit, after] of steps) {
       expect(edit(), what).toBe(true);
@@ -203,7 +204,7 @@ describe('chosen slots through scene edits, Undo and Redo (play review)', () => 
       expect(chosen(), `${what}, undone again`).toEqual(start);
     }
     // A part given another slot after the step keeps it through the Undo (on its clip).
-    expect(s.accepted(cmd.deleteScene(s.store, 1, { removeBlocks: true }))).toBe(true);
+    expect(s.accepted(cmd.deleteScene(s.store, 1))).toBe(true);
     selectSlot('t1', 2);
     s.undo();
     expect(uiStore.getState().selectedSlot.t1).toBe(3);

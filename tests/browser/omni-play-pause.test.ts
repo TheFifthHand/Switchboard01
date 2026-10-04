@@ -39,7 +39,7 @@ beforeEach(async () => {
   // The view is remembered in localStorage, which test files share: start on the Loops pads.
   setView('play');
   setPadMode('loops');
-  patchRuntime({ muteAll: false, stalled: null, playing: false, paused: false, mode: 'live', replayId: null, songBlock: null, recording: 'off', recordTarget: null, notice: null });
+  patchRuntime({ muteAll: false, stalled: null, playing: false, paused: false, mode: 'live', replayId: null, songCursor: 0, recording: 'off', recordTarget: null, notice: null });
 });
 
 afterEach(async () => {
@@ -129,20 +129,22 @@ describe('Pause', () => {
     expect(s.stats().held).toBe(0);
   });
 
-  it('in song mode Play continues the song from the same block and bar', async () => {
+  it('in song mode Play continues the song from the same bar and beat', async () => {
     const s = session();
-    await s.playSong(1);
-    await until(() => rt().songBlock === 1 && s.transport!.getPosition().tick > 0, 'the song');
-    const blockStart = s.sequencer!.getPosition(s.ctx!.currentTime).tick;
+    await s.playSong({ fromBar: 4 });
+    await until(() => s.transport!.getPosition().tick > 4 * 384, 'the song');
+    const start = s.sequencer!.getPosition(s.ctx!.currentTime).tick;
     await sleep(300);
     s.pause();
     const held = s.transport!.getPosition().tick;
-    expect(held).toBeGreaterThan(blockStart);
-    expect(rt()).toMatchObject({ playing: false, paused: true, mode: 'song', songBlock: 1 });
+    expect(held).toBeGreaterThan(start);
+    const bar = s.sequencer!.songBarAt(held)!;
+    expect(rt()).toMatchObject({ playing: false, paused: true, mode: 'song' });
     await s.play();
-    expect(rt()).toMatchObject({ playing: true, paused: false, mode: 'song', songBlock: 1 });
+    expect(rt()).toMatchObject({ playing: true, paused: false, mode: 'song' });
     expect(s.sequencer!.mode.kind).toBe('song');
     expect(s.transport!.getPosition().tick).toBeGreaterThanOrEqual(held - 1e-6);
+    expect(s.sequencer!.songBarAt(s.transport!.getPosition().tick)!).toBeGreaterThanOrEqual(bar - 1e-6);
   });
 
   it('is unavailable while a performance records, and says why; Stop ends the take', async () => {

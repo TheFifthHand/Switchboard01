@@ -34,7 +34,7 @@ function project(): Project {
   for (const t of p.tracks) t.clips = t.clips.map(() => null);
   p.tracks[0].clips[0] = createClip('beat', 1, Array.from({ length: 16 }, (_, i) => ({ tick: i * 24, pitch: i % 4 === 0 ? 0 : 2, velocity: 0.8, duration: 12 })));
   p.tracks[3].clips[0] = createClip('chords', 1, Array.from({ length: 8 }, (_, i) => ({ tick: i * 48, pitch: 60 + (i % 2) * 3, velocity: 0.7, duration: 24 })));
-  p.arrangement = { ...p.arrangement, blocks: [] };
+  p.arrangement = { ...p.arrangement, regions: [], sections: [] };
   return p;
 }
 
