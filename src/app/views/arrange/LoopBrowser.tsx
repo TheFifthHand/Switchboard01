@@ -275,7 +275,7 @@ export const LoopBrowser = memo(function LoopBrowser({ onCarry, playheadBar, onC
                 >
                   <ChipSketch trackId={part.trackId} slot={l.slot} bars={l.bars} kind={part.kind} />
                   <span className={styles.chipName}>{l.name}</span>
-                  <span className={styles.chipBars}>{l.bars}</span>
+                  <span className={styles.chipBars}>{barsText(l.bars)}</span>
                 </li>
               ))}
             </ul>

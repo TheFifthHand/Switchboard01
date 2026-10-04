@@ -4,8 +4,12 @@
  * rise, echo throw). A click selects the loops that start in it, a
  * double-click (or F2) renames it in place, its edges resize the label, a
  * drag moves it with its music (laneController); right-click, the ⋯ that
- * shows at its end under the pointer, or Shift+F10 opens its actions. Hovering a stretch of the song no section
- * covers offers "+ Add section" there.
+ * shows near its end under the pointer (clear of the edge grip), or
+ * Shift+F10 opens its actions. Hovering a stretch of the song no section
+ * covers, or the bars after the song, offers "+ Add section" there (just "+"
+ * where it is narrow); a new section opens for its name at once. Its name
+ * stays in sight at the view's left edge while the section starts left of
+ * it. Ctrl+A selects the sections with the loops (teal outline).
  *
  * The sections are one Tab stop: ← and → move between them.
  */
@@ -14,6 +18,7 @@ import { sectionGaps } from '../../../project/arrangement';
 import { MAX_SECTION_NAME, type Id, type SongMoveKind, type SongSection } from '../../../project/types';
 import { MoreIcon, isMenuKey } from '../ClipMenu';
 import { LaneIcon, type LaneIconName } from './laneIcons';
+import { useSelectedSections } from './laneStore';
 import { addSectionAt, renameSectionTo } from './songActions';
 import { sectionLabel } from './songModel';
 import styles from './SongView.module.css';
@@ -77,13 +82,23 @@ export interface SectionStripProps {
   onRename(id: Id): void;
 }
 
+/** Bars an "+ Add section" after the song (or its last section) offers. */
+export const AFTER_END_BARS = 8;
+
 export const SectionStrip = memo(function SectionStrip({ sections, songBars, dragged, newSection, renaming, onRenameDone, onMenu, onRename }: SectionStripProps) {
   const [tabId, setTabId] = useState<Id | null>(null);
+  const selected = useSelectedSections();
   // The section under the pointer shows a ⋯ at its end (its actions, as a right-click opens them).
   const [hovered, setHovered] = useState<Id | null>(null);
   const hoveredSection = !dragged && renaming === null ? sections.find((s) => s.id === hovered) : undefined;
   const tab = sections.find((s) => s.id === tabId)?.id ?? sections[0]?.id ?? null;
-  const gaps = dragged ? [] : sectionGaps(sections, songBars);
+  const lastEnd = sections.reduce((e, s) => Math.max(e, s.start + s.bars), 0);
+  const afterEnd = Math.max(songBars, lastEnd);
+  const gaps = dragged ? [] : [...sectionGaps(sections, songBars), [afterEnd, afterEnd + AFTER_END_BARS] as [number, number]];
+  const add = (a: number, b: number) => {
+    const r = addSectionAt(a, b - a);
+    if (r.changed && r.sectionId) onRename(r.sectionId);
+  };
   const onKeyDown = (e: KeyboardEvent<HTMLElement>, s: SongSection) => {
     if (isMenuKey(e)) {
       e.preventDefault();
@@ -117,6 +132,8 @@ export const SectionStrip = memo(function SectionStrip({ sections, songBars, dra
             aria-haspopup="menu"
             data-section-id={s.id}
             data-dragged={isDragged || undefined}
+            data-selected={selected.includes(s.id) || undefined}
+            aria-pressed={selected.includes(s.id) || undefined}
             style={{ '--s': s.start, '--b': s.bars } as CSSProperties}
             onFocus={() => setTabId(s.id)}
             onKeyDown={(e) => onKeyDown(e, s)}
@@ -173,10 +190,13 @@ export const SectionStrip = memo(function SectionStrip({ sections, songBars, dra
           data-section-gap=""
           style={{ '--s': a, '--b': b - a } as CSSProperties}
           aria-label={`Add a section over bars ${a + 1} to ${b}`}
+          title={`Add a section over bars ${a + 1} to ${b}`}
+          data-after-end={a >= afterEnd || undefined}
           tabIndex={-1}
-          onClick={() => addSectionAt(a, b - a)}
+          onClick={() => add(a, b)}
         >
-          + Add section
+          <span aria-hidden="true">+</span>
+          <span className={styles.addSectionText}> Add section</span>
         </button>
       ))}
     </div>

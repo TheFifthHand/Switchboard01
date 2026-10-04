@@ -10,7 +10,8 @@
 import { memo, useCallback, type CSSProperties, type KeyboardEvent } from 'react';
 import { Icon, Tooltip } from '../../../ui/components';
 import type { Clip, Id, Project, SongRegion } from '../../../project/types';
-import { session, useProject } from '../../instance';
+import { selectTrack } from '../../../state/uiStore';
+import { session, useProject, useUi } from '../../instance';
 import { RegionView } from './RegionView';
 import { partStatus, type RowView } from './songModel';
 import styles from './SongView.module.css';
@@ -50,14 +51,25 @@ function useRowKind(trackId: Id): 'notes' | 'drums' {
  */
 function PartHeader({ row, anySolo, tab, onFocusKey }: { row: RowView; anySolo: boolean; tab: 0 | 1 | null; onFocusKey(row: number, col: 0 | 1): void }) {
   const status = partStatus(row, anySolo);
+  // The part the keyboard strip plays (chosen here, in Play or in Shape): a teal mark and a keys icon.
+  const current = useUi((s) => s.selectedTrackId === row.id);
   return (
-    <div className={styles.partHead} data-part-head="" data-status={status === 'Muted' ? 'muted' : status === 'Solo' ? 'solo' : status ? 'quiet' : undefined}>
+    // A click on the header (not its keys) selects the part: the keyboard strip plays it.
+    <div className={styles.partHead} data-part-head="" data-status={status === 'Muted' ? 'muted' : status === 'Solo' ? 'solo' : status ? 'quiet' : undefined} data-current={current || undefined} onClick={(e) => !(e.target as Element).closest('button') && selectTrack(row.id)}>
       <span className={styles.partNum} aria-hidden="true">
         {row.number}
       </span>
       <span className={styles.partText}>
-        <span className={styles.partName} title={row.name}>
-          {row.name}
+        <span className={styles.partNameLine}>
+          <span className={styles.partName} title={row.name}>
+            {row.name}
+          </span>
+          {current && (
+            <span className={styles.partCurrent} title="The keyboard plays this part">
+              <Icon name="keys" size={11} />
+              <span className={styles.srOnly}>(the keyboard plays this part)</span>
+            </span>
+          )}
         </span>
         <span className={styles.partSound} title={row.sound}>
           {status ?? row.sound}

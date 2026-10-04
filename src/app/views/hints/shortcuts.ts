@@ -78,7 +78,7 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
   {
     id: 'song',
     title: 'Song',
-    where: 'With keyboard focus on a loop in the song (click one, or Tab to it).',
+    where: 'In the Song view, on what is selected (unless you are typing a name).',
     items: [
       { id: 'song-select', keys: ['↑ ↓', 'Ctrl+← →'], does: 'The loop on the part above or below; the previous or next loop on the same part.' },
       { id: 'song-move', keys: ['← →', 'Shift+← →'], does: 'Move the selected loops a bar (Shift: 4 bars).' },
@@ -86,8 +86,8 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
       { id: 'song-edit', keys: ['Ctrl+C', 'Ctrl+X', 'Ctrl+V'], does: 'Copy, cut, and paste at the playhead (on the same parts).' },
       { id: 'song-duplicate', keys: ['Ctrl+D'], does: 'Duplicate the selected loops right after them.' },
       { id: 'song-split', keys: ['Ctrl+E'], does: 'Split the selected loops at the playhead.' },
-      { id: 'song-delete', keys: ['Delete', 'Backspace'], does: 'Remove the selected loops from the song.' },
-      { id: 'song-all', keys: ['Ctrl+A'], does: 'Select every loop in the song.' },
+      { id: 'song-delete', keys: ['Delete', 'Backspace'], does: 'Remove the selected loops (and selected section names) from the song.' },
+      { id: 'song-all', keys: ['Ctrl+A'], does: 'Select every loop and section in the song.' },
       { id: 'song-home', keys: ['Enter', 'Home'], does: 'Playhead back to bar 1.' },
       { id: 'song-menu', keys: ['Shift+F10'], does: 'The loop’s actions (also a right-click).' },
       { id: 'song-mouse', keys: ['Alt+drag', 'Ctrl+drag'], does: 'Drop a copy of the loops you drag.' },

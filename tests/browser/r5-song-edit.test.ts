@@ -142,12 +142,18 @@ describe('keys', () => {
     expect(document.activeElement).toBe(regionEl('B'));
   });
 
-  it('Delete removes the selection and keeps keyboard focus in the song', async () => {
+  it('Delete removes the selection; then nothing is selected or looks it, focus stays in the song, and Delete again does nothing', async () => {
     await open();
+    const all = regions().length;
     await clickAt(on('A'));
     await press('Delete');
     expect(get('A')).toBeUndefined();
-    await waitFor(() => !!document.activeElement?.closest('[data-region-id]'), 'focus on a loop');
+    expect(document.querySelectorAll('[data-region-id][data-selected]').length).toBe(0);
+    // Focus is on the rows as a whole (in the song), not on a loop that would look chosen.
+    await waitFor(() => document.activeElement?.getAttribute('aria-label') === 'The song: a row of loops for each part', 'focus on the rows');
+    await press('Delete');
+    await press('Backspace');
+    expect(regions().length).toBe(all - 1);
   });
 
   it('Ctrl+D duplicates after the selection; Ctrl+C then Ctrl+V pastes at the playhead on the same part', async () => {

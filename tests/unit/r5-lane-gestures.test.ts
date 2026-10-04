@@ -22,7 +22,7 @@ import {
   sceneDrop,
   touches,
 } from '../../src/app/views/arrange/laneGestures';
-import { EMPTY_SELECTION, clickSelect, marqueeSelect, neighbour, pressSelect, pruneSelection, regionsInBox, selectAll } from '../../src/app/views/arrange/laneSelection';
+import { EMPTY_SELECTION, clickSelect, marqueeSelect, neighbour, pressSelect, pruneSelection, regionsInBox, selectAll, selectNone } from '../../src/app/views/arrange/laneSelection';
 import { loopKeyRange, rangeWords, sameRange } from '../../src/app/views/arrange/laneLoop';
 import { laneKey } from '../../src/app/views/arrange/laneKeys';
 import * as A from '../../src/project/arrangement';
@@ -244,6 +244,14 @@ describe('selection', () => {
     expect(s).toEqual({ ids: ['a'], focus: 'a' });
     const same = { ids: ['a'], focus: 'a' };
     expect(pruneSelection(same, new Set(['a']))).toBe(same);
+  });
+
+  it('Ctrl+A takes the section labels too; sections that are gone leave the selection', () => {
+    const all = selectAll(song, [{ id: 's1', name: 'Intro', start: 0, bars: 4 }]);
+    expect(all.sections).toEqual(['s1']);
+    expect(pruneSelection(all, new Set(['a']), null, new Set())).toEqual({ ids: ['a'], focus: 'a' });
+    expect(pruneSelection(all, new Set(song.map((r) => r.id)), null, new Set(['s1']))).toBe(all);
+    expect(selectNone(all)).toEqual({ ids: [], focus: all.focus });
   });
 
   it('the keyboard moves to the part above or below (nearest in time) and along a part', () => {

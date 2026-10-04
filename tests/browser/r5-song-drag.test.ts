@@ -14,6 +14,7 @@ import type { Project } from '../../src/project/types';
 import {
   barX,
   clickAt,
+  dragCursorNow,
   dragTo,
   dragView,
   drawnShape,
@@ -117,7 +118,7 @@ describe('moving a loop', () => {
     const far = { x: from.x + 2 * ppb(), y: rowY(project().tracks[4].id) };
     await dragTo(from, far, { release: false });
     expect(dragView()?.notAllowed).toBe(true);
-    expect(document.querySelector('[data-testid="lane-scroller"]')!.hasAttribute('data-not-allowed')).toBe(true);
+    expect(dragCursorNow()).toBe('not-allowed');
     await release(far);
     expect(get('B')).toMatchObject({ trackId: project().tracks[0].id, start: 14 });
   });

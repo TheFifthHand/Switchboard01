@@ -33,11 +33,11 @@ export const WALKTHROUGHS: readonly Walkthrough[] = [
     time: 'about three minutes',
     steps: [
       'Open Song. Each part has its own row, like the tracks in GarageBand; the ruler counts the bars.',
-      'Drag a scene from the Loops panel onto the rows: each of its parts gets a loop. Or drag one part’s loop onto its own row.',
+      'Press Add loops (top right) and drag a scene onto the rows: each of its parts gets a loop. Or drag one part’s loop onto its own row.',
       'Drag a loop’s right edge to make it play longer: it snaps to the bars and repeats to fill them.',
       'Drag a loop to move it; hold Alt (or Ctrl) as you let go to drop a copy. Double-click an empty spot to pick a loop for it.',
       'Click a bar number to move the playhead, then press Play (or Space). Drag along the bar numbers to loop part of the song.',
-      'Right-click a section (Intro, Drop …) for fades, a filter rise, Build up or Breakdown, each one Undo.',
+      'Right-click a section (Intro, Drop …) for fades, a filter rise, Build up or Breakdown, each one Undo. Shape the song… adds an intro or an ending.',
     ],
   },
   {
@@ -64,7 +64,7 @@ export const WHATS_NEW: readonly ReleaseNotes[] = [
   {
     version: '2.3.0',
     notes: [
-      'Song works like GarageBand: every part has its own row. Drag loops and scenes in from the Loops panel, move them along their row, and drag a loop’s right edge to make it repeat longer. Everything snaps to the bars.',
+      'Song works like GarageBand: every part has its own row. Press Add loops and drag loops and scenes in, move them along their row, and drag a loop’s right edge to make it repeat longer. Everything snaps to the bars.',
       'Click the ruler to move the playhead; drag along it to loop a stretch. Alt-drag copies a loop; right-click one for Split, Duplicate and more. Name parts of the song (Intro, Drop…) in the Sections strip.',
       'With Musical Assist on, the keyboard shows only the notes in your key, as even keys: every key plays its own note.',
       'The pads say what a click does (▶ Play / ■ Stop), the part buttons have words, and Pause sits next to the pads.',

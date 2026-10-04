@@ -45,6 +45,8 @@ export function TimelineRuler({ pxPerBar, bars, range, looping, dragging, headRe
         <div
           className={styles.rangeBand}
           data-range-band=""
+          // The "Try this" chip never covers it (a click on it switches the loop).
+          data-hint-avoid=""
           data-on={looping || dragging || undefined}
           data-dragging={dragging || undefined}
           style={{ '--s': range.fromBar, '--b': range.toBar - range.fromBar } as CSSProperties}

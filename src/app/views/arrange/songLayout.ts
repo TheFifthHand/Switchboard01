@@ -9,7 +9,9 @@
  * pointer").
  *
  * The scale (pixels per bar) comes from a fixed ladder of zoom steps; Fit
- * picks the largest step that shows the whole song. The timeline always runs
+ * picks the largest step that shows the whole song, and goes below the
+ * ladder (down to FIT_MIN_PX_PER_BAR) for a song too long for its smallest
+ * step. The timeline always runs
  * on past the song's end (END_ROOM_BARS, and at least the width of the view)
  * so a loop can be dropped or stretched after the last one.
  *
@@ -22,22 +24,24 @@ import { MAX_SONG_BARS } from '../../../project/types';
 export const ZOOM_STEPS = [4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 64, 80, 96, 128] as const;
 export const MIN_PX_PER_BAR = ZOOM_STEPS[0];
 export const MAX_PX_PER_BAR = ZOOM_STEPS[ZOOM_STEPS.length - 1];
+/** Fit's smallest scale: a very long song is shown whole at less than the ladder's smallest step. */
+export const FIT_MIN_PX_PER_BAR = 1;
 /** The scale of a song with nothing in it yet (about 24 bars on a 1366 px window). */
 export const DEFAULT_PX_PER_BAR = 32;
 /** Bars of free timeline kept after the song's end (to drop and stretch into). */
 export const END_ROOM_BARS = 16;
 
 /** Height of the ruler (bar numbers and the loop band) and of the sections strip, px. */
-export const RULER_H = 30;
-export const SECTIONS_H = 26;
+export const RULER_H = 32;
+export const SECTIONS_H = 32;
 /** Part rows are never shorter than this… */
 export const ROW_MIN_PX = 40;
 /** …nor taller than this (a tall window: about 1080 px and up). */
 export const ROW_MAX_PX = 84;
 /** Width of the sticky part headers at the left of the rows. */
-export const HEADER_W = 184;
+export const HEADER_W = 196;
 /** A narrower header for windows under 1280 px. */
-export const HEADER_W_NARROW = 160;
+export const HEADER_W_NARROW = 172;
 
 /** Width of a region's edge grip (px): a press this close to an edge drags the edge. */
 export const EDGE_GRIP_PX = 8;
@@ -87,12 +91,14 @@ export function timelineBars(songBars: number, viewBars: number): number {
 
 /**
  * The scale that shows the whole song in `viewport` px (with a bar of room
- * either side): the largest zoom step that fits, the smallest when none
- * does. An empty song gets the default scale.
+ * either side): the largest zoom step that fits; for a song too long for the
+ * smallest step, the scale that just fits (in quarter pixels, never under
+ * FIT_MIN_PX_PER_BAR). An empty song gets the default scale.
  */
 export function fitZoom(songBars: number, viewport: number): number {
   if (!(songBars > 0)) return DEFAULT_PX_PER_BAR;
   const want = Math.max(1, viewport) / (songBars + 2);
+  if (want < MIN_PX_PER_BAR) return Math.max(FIT_MIN_PX_PER_BAR, Math.floor(want * 4) / 4);
   let best: number = MIN_PX_PER_BAR;
   for (const s of ZOOM_STEPS) if (s <= want) best = s;
   return best;
@@ -139,16 +145,16 @@ export function zoomScroll(scrollLeft: number, pointerX: number, from: number, t
 /* Ruler and grid                                                      */
 /* ------------------------------------------------------------------ */
 
-const STEPS = [1, 2, 4, 8, 16, 32, 64] as const;
+const STEPS = [1, 2, 4, 8, 16, 32, 64, 128] as const;
 
 /** Bars between numbers on the ruler: numbers at least `minPx` apart. */
 export function labelStep(pxPerBar: number, minPx = 44): number {
-  return STEPS.find((s) => s * pxPerBar >= minPx) ?? 64;
+  return STEPS.find((s) => s * pxPerBar >= minPx) ?? 128;
 }
 
 /** Bars between the grid lines drawn on the rows: lines at least 6 px apart. */
 export function gridStep(pxPerBar: number): number {
-  return STEPS.find((s) => s * pxPerBar >= 6) ?? 64;
+  return STEPS.find((s) => s * pxPerBar >= 6) ?? 128;
 }
 
 export interface RulerMark {

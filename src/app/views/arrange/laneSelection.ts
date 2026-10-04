@@ -14,12 +14,18 @@
  * same part): see neighbour().
  */
 import { regionEnd } from '../../../project/arrangement';
-import type { Id, SongRegion } from '../../../project/types';
+import type { Id, SongRegion, SongSection } from '../../../project/types';
 
 export interface LaneSelection {
   ids: readonly Id[];
   /** The region keyboard focus is on (the roving Tab stop), or null. */
   focus: Id | null;
+  /**
+   * Sections selected with the loops (Ctrl+A takes the sections too, so
+   * Delete then clears the song, labels and all). Absent: none. Any click on
+   * a loop or an empty spot leaves them.
+   */
+  sections?: readonly Id[];
 }
 
 export const EMPTY_SELECTION: LaneSelection = { ids: [], focus: null };
@@ -52,15 +58,28 @@ export function marqueeSelect(base: LaneSelection, hits: readonly Id[], additive
   return { ids, focus };
 }
 
-export function selectAll(regions: readonly SongRegion[]): LaneSelection {
-  return { ids: regions.map((r) => r.id), focus: regions[0]?.id ?? null };
+/** Every loop, and every section label too. */
+export function selectAll(regions: readonly SongRegion[], sections: readonly SongSection[] = []): LaneSelection {
+  return { ids: regions.map((r) => r.id), focus: regions[0]?.id ?? null, sections: sections.map((s) => s.id) };
 }
 
-/** The selection without regions that no longer exist (the focus moves to a kept one, else to `fallback`). */
-export function pruneSelection(sel: LaneSelection, existing: ReadonlySet<Id>, fallback: Id | null = null): LaneSelection {
+/**
+ * The selection without regions (and sections) that no longer exist (the
+ * focus moves to a kept one, else to `fallback`). `existingSections` absent:
+ * the sections are kept as they are.
+ */
+export function pruneSelection(sel: LaneSelection, existing: ReadonlySet<Id>, fallback: Id | null = null, existingSections?: ReadonlySet<Id>): LaneSelection {
   const ids = sel.ids.filter((id) => existing.has(id));
   const focus = sel.focus && existing.has(sel.focus) ? sel.focus : (ids[0] ?? (fallback && existing.has(fallback) ? fallback : null));
-  return ids.length === sel.ids.length && focus === sel.focus ? sel : { ids, focus };
+  const before = sel.sections ?? [];
+  const sections = existingSections ? before.filter((id) => existingSections.has(id)) : before;
+  if (ids.length === sel.ids.length && focus === sel.focus && sections.length === before.length) return sel;
+  return sections.length ? { ids, focus, sections } : { ids, focus };
+}
+
+/** Nothing selected (keyboard focus stays where it was, for Tab). */
+export function selectNone(sel: LaneSelection): LaneSelection {
+  return sel.ids.length || sel.sections?.length ? { ids: [], focus: sel.focus } : sel;
 }
 
 

@@ -23,7 +23,7 @@ import type { Id, Project } from '../../../project/types';
 import { useStore } from '../../../state/store';
 import { useProject } from '../../instance';
 import { readBrowserOpen, readFollow, readTakesOpen, writeBrowserOpen, writeFollow, writeTakesOpen } from './laneSettings';
-import { carriedStore } from './laneStore';
+import { browserOpenStore, carriedStore } from './laneStore';
 import { LoopBrowser } from './LoopBrowser';
 import { PerformancesPanel } from './PerformancesPanel';
 import { SongHeader } from './SongHeader';
@@ -54,6 +54,10 @@ export function ArrangeView() {
   const short = useProject(selectShort);
   const [browserPref, setBrowserPref] = useState<boolean | null>(readBrowserOpen);
   const browserOpen = browserPref ?? short;
+  useEffect(() => {
+    browserOpenStore.setState(browserOpen);
+    return () => browserOpenStore.setState(false);
+  }, [browserOpen]);
   const [openTake, setOpenTake] = useState<Id | null>(null);
   // The Performances panel open or folded: the person's choice while there are takes (remembered); with none, a look
   // at how to record one lasts until the first take comes (or the last one goes).

@@ -2,8 +2,10 @@
  * Where the "Try this" chip sits, in the running app with its real styles
  * and fonts: at 1366 x 768 and 960 x 540 (200 % zoom on a 1920 x 1080
  * screen), Simple and Advanced, in every view and pad mode, it never covers
- * the transport, the pads or the keyboard, and covers no control at all; it
- * stays inside the window. When a control appears under it, it moves.
+ * the transport, the pads or the keyboard, and covers no control at all
+ * (where a view has no room for it, such as the Song view at 960 x 540 in
+ * Advanced, it waits unseen); it stays inside the window. When a control
+ * appears under it, it moves.
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -87,8 +89,9 @@ function overlaps(a: DOMRect, b: DOMRect): boolean {
   return a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
 }
 
-/** What the chip covers, in words, for the failure message. */
+/** What the chip covers, in words, for the failure message (nothing while it waits unseen for room, as a crowded view may have it). */
 function covered(): string[] {
+  if (!chip().hasAttribute('data-ready')) return [];
   const c = chip().getBoundingClientRect();
   const out: string[] = [];
   const region = (sel: string, name: string) => {

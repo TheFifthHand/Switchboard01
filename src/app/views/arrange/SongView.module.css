@@ -90,9 +90,21 @@
   outline: none;
   box-shadow: var(--focus-ring);
 }
+/* The hint chip's home: the header's free middle, as tall as its row (the chip keeps to it). */
 .headSpacer {
   flex: 1;
+  align-self: stretch;
   min-width: 0;
+}
+/* The song is paused: said in a word (the playhead is not amber then). */
+.pausedWord {
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-hi);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
 }
 .padsChip {
   display: inline-flex;
@@ -106,6 +118,11 @@
   color: var(--amber-ink);
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
+}
+.padsChip[data-paused] {
+  border-color: var(--line-strong);
+  background: var(--surface-hi);
+  color: var(--ink-2);
 }
 .loopKey svg {
   flex: none;
@@ -121,6 +138,8 @@
 
 .timeline {
   position: relative;
+  /* Its layers (sticky ruler, rows, overlay) stack among themselves only: the hint chip and toasts stay above. */
+  isolation: isolate;
   display: flex;
   flex: 1;
   min-width: 0;
@@ -196,7 +215,7 @@
   position: absolute;
   bottom: 0;
   left: calc(var(--s) * var(--ppb) * 1px);
-  height: 18px;
+  height: 16px;
   padding: 0 0 0 4px;
   border-left: 1px solid var(--ink-3);
   font: var(--fw-medium) var(--fs-xs) / 16px var(--font-mono);
@@ -208,9 +227,10 @@
   top: 2px;
   left: calc(var(--s) * var(--ppb) * 1px);
   width: calc(var(--b) * var(--ppb) * 1px);
-  height: 11px;
+  height: 14px;
   border-radius: 4px;
   background: rgba(35, 149, 142, 0.16);
+  container-type: inline-size;
   box-shadow: inset 0 0 0 1px rgba(35, 149, 142, 0.5);
   cursor: pointer;
   z-index: 1;
@@ -226,18 +246,29 @@
   align-items: center;
   gap: 3px;
   overflow: hidden;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: var(--fw-bold);
   line-height: 1;
   color: var(--teal-ink);
   white-space: nowrap;
   pointer-events: none;
 }
+/* A narrow band shows the loop sign only (never a cut "Bars 1⁷"); the tooltip and the Loop key say which bars. */
+@container (max-width: 84px) {
+  .rangeLabel > span {
+    display: none;
+  }
+}
+@container (max-width: 26px) {
+  .rangeLabel {
+    display: none;
+  }
+}
 .rangeEdge {
   position: absolute;
   top: -2px;
   width: 12px;
-  height: 15px;
+  height: 18px;
   cursor: ew-resize;
 }
 .rangeEdge[data-range-edge='start'] {
@@ -252,7 +283,7 @@
   top: 1px;
   left: 4px;
   width: 4px;
-  height: 13px;
+  height: 16px;
   border-radius: 2px;
   background: var(--teal);
 }
@@ -308,7 +339,8 @@
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
   cursor: grab;
-  overflow: hidden;
+  /* clip, not hidden: the name can stay in sight (sticky) at the view's left edge. */
+  overflow: clip;
   container-type: inline-size;
   touch-action: pan-x pan-y;
   user-select: none;
@@ -319,6 +351,12 @@
 }
 .section:focus-visible {
   box-shadow: var(--focus-ring);
+}
+.section[data-selected] {
+  border-color: var(--teal-key);
+  box-shadow:
+    0 0 0 1px var(--teal),
+    inset 0 0 0 1px var(--teal);
 }
 .section[data-dragged] {
   box-shadow: var(--shadow-float);
@@ -331,6 +369,8 @@
   background: var(--teal-wash);
 }
 .sectionName {
+  position: sticky;
+  left: calc(var(--head-w) + 8px);
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -353,7 +393,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 7px;
+  width: 9px;
   cursor: ew-resize;
 }
 .sectionEdge[data-section-edge='start'] {
@@ -362,15 +402,16 @@
 .sectionEdge[data-section-edge='end'] {
   right: 0;
 }
+/* The ⋯ sits clear of the end grip (the last 9 px stay the edge's). */
 .sectionMore {
   position: absolute;
-  top: 5px;
-  left: calc(var(--e) * var(--ppb) * 1px - 24px);
+  top: 6px;
+  left: calc(var(--e) * var(--ppb) * 1px - 34px);
   z-index: 2;
   display: grid;
   place-items: center;
   width: 20px;
-  height: calc(var(--sections-h) - 10px);
+  height: calc(var(--sections-h) - 12px);
   padding: 0;
   border: 1px solid var(--line-strong);
   border-radius: 4px;
@@ -385,7 +426,7 @@
 .sectionRename {
   width: 100%;
   min-width: 0;
-  height: 18px;
+  height: 20px;
   padding: 0 4px;
   border: 1px solid var(--teal);
   border-radius: 3px;
@@ -399,6 +440,8 @@
   bottom: 3px;
   left: calc(var(--s) * var(--ppb) * 1px + 1px);
   width: calc(var(--b) * var(--ppb) * 1px - 2px);
+  padding: 0 4px;
+  container-type: inline-size;
   border: 1px dashed var(--line-strong);
   border-radius: 5px;
   background: transparent;
@@ -414,6 +457,12 @@
 .addSection:focus-visible {
   opacity: 1;
   background: var(--surface-hi);
+}
+/* Narrow: just the "+" (its tooltip and name say the rest). */
+@container (max-width: 88px) {
+  .addSectionText {
+    display: none;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -450,6 +499,22 @@
   border-bottom: 1px solid var(--line-soft);
   box-shadow: inset 4px 0 0 hsl(var(--h) 38% 58%);
 }
+.partHead[data-current] {
+  box-shadow: inset 4px 0 0 var(--teal);
+  /* Opaque: the loops scroll under the header. */
+  background: linear-gradient(90deg, var(--teal-wash), transparent 60%), var(--surface-hi);
+}
+.partNameLine {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.partCurrent {
+  display: inline-flex;
+  flex: none;
+  color: var(--teal-ink);
+}
 .partNum {
   flex: none;
   display: grid;
@@ -468,18 +533,23 @@
   min-width: 0;
   line-height: 14px;
 }
-.partName {
+/* Names and sounds cut at a word where they must ("Hand…", never "Hand Percuss"), the whole name in the tooltip. */
+.partName,
+.partSound {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.partName {
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
   color: var(--ink);
 }
 .partSound {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: var(--fs-2xs);
   color: var(--ink-3);
 }
@@ -573,7 +643,8 @@
   border-radius: 6px;
   background: hsl(var(--h) 46% 87%);
   color: hsl(var(--h) 45% 22%);
-  overflow: hidden;
+  /* clip, not hidden: the name can stay in sight (sticky) at the view's left edge. */
+  overflow: clip;
   container-type: inline-size;
   cursor: grab;
   user-select: none;
@@ -582,6 +653,10 @@
 }
 .region:hover {
   border-color: hsl(var(--h) 36% 42%);
+}
+/* Redrawn by a drag's overlay meanwhile. */
+.region[data-hidden] {
+  visibility: hidden;
 }
 /* Where the clip starts again: thin notches. */
 .region[data-notches]::before {
@@ -596,16 +671,17 @@
   );
   background-position: calc(var(--o) * var(--ppb) * -1px - 1px) 0;
 }
-/* Begins in the middle of its clip: a darker band at the start. */
+/* Begins in the middle of its clip: a dark bar at its start edge, and a hatched band after it. */
 .region[data-offset]::after {
   content: '';
   position: absolute;
   top: 0;
   bottom: 0;
   left: 0;
-  width: 5px;
+  width: 12px;
   pointer-events: none;
-  background: repeating-linear-gradient(135deg, hsl(var(--h) 34% 38% / 0.6) 0 2px, transparent 2px 4px);
+  border-left: 3px solid hsl(var(--h) 40% 34%);
+  background: repeating-linear-gradient(135deg, hsl(var(--h) 34% 38% / 0.55) 0 2px, transparent 2px 5px);
 }
 .region[data-selected] {
   border-color: var(--teal-key);
@@ -649,10 +725,18 @@
   box-shadow: var(--focus-ring);
   z-index: 1;
 }
-/* The name sits above the playhead line (z-index 3 > 2), so the line never crosses it out. */
+/*
+ * The name sits above the playhead line (z-index 3 > 2), so the line never
+ * crosses it out, and stays in sight at the view's left edge (clear of the
+ * part headers) while the loop starts left of it.
+ */
 .regionName {
-  position: relative;
+  position: sticky;
+  left: var(--head-w);
   z-index: 3;
+  align-self: flex-start;
+  max-width: 100%;
+  box-sizing: border-box;
   pointer-events: none;
   flex: none;
   padding: 2px 6px 0 7px;
@@ -792,6 +876,9 @@
 .badge[data-below] {
   top: calc((var(--row) + 1) * var(--row-h) + 2px);
 }
+.badge[data-top] {
+  top: 4px;
+}
 .badge[data-align='end'] {
   transform: translateX(-100%);
 }
@@ -820,14 +907,19 @@
   background: var(--teal-wash);
   box-shadow: inset 0 0 0 2px var(--teal);
 }
-.rowLightText {
-  position: sticky;
-  left: 8px;
-  display: inline-block;
-  margin: 4px 8px;
-  font-size: var(--fs-2xs);
-  font-weight: var(--fw-semibold);
-  color: var(--coral-ink);
+/* A part's loop over another part's row: said at the pointer. */
+.notHere {
+  position: absolute;
+  left: calc(var(--px) * 1px + 14px);
+  top: calc(var(--py) * 1px - 26px);
+  z-index: 4;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--coral-key);
+  color: #fff;
+  font: var(--fw-semibold) var(--fs-xs) / 16px var(--font-ui);
+  white-space: nowrap;
+  pointer-events: none;
 }
 .plus {
   position: absolute;
@@ -837,12 +929,12 @@
   height: var(--row-h);
   display: none;
   place-items: center;
-  font-size: 15px;
-  font-weight: var(--fw-semibold);
-  color: var(--ink-3);
-  opacity: 0.55;
+  font-size: 16px;
+  font-weight: var(--fw-bold);
+  color: var(--ink-2);
+  border: 1px dashed var(--line-strong);
   border-radius: 4px;
-  background: rgba(38, 41, 45, 0.04);
+  background: rgba(38, 41, 45, 0.06);
 }
 .plus[data-on] {
   display: grid;
@@ -850,7 +942,8 @@
 .hoverMore {
   position: absolute;
   top: calc(var(--row) * var(--row-h) + 5px);
-  left: calc(var(--e) * var(--ppb) * 1px - 26px);
+  /* Clear of the end grip: the last 8 px stay the edge's. */
+  left: calc(var(--e) * var(--ppb) * 1px - 36px);
   width: 22px;
   height: 18px;
   padding: 0;
@@ -885,34 +978,6 @@
 .playhead[data-on] {
   background: var(--amber);
   box-shadow: 0 0 4px var(--amber-glow);
-}
-
-/* Drags say what they do with the pointer, wherever it is. */
-.scroller[data-drag='move'],
-.scroller[data-drag='move'] *,
-.scroller[data-drag='section'],
-.scroller[data-drag='section'] * {
-  cursor: grabbing !important;
-}
-.scroller[data-drag='start'],
-.scroller[data-drag='start'] *,
-.scroller[data-drag='end'],
-.scroller[data-drag='end'] *,
-.scroller[data-drag='rangeEdge'],
-.scroller[data-drag='rangeEdge'] *,
-.scroller[data-drag='ruler'],
-.scroller[data-drag='ruler'] * {
-  cursor: ew-resize !important;
-}
-.scroller[data-not-allowed],
-.scroller[data-not-allowed] * {
-  cursor: not-allowed !important;
-}
-:global(html[data-song-carry]) * {
-  cursor: grabbing !important;
-}
-:global(html[data-song-carry='no']) * {
-  cursor: not-allowed !important;
 }
 
 /* The empty song: one friendly line in the middle, and one button. */
@@ -955,6 +1020,12 @@
   align-items: flex-start;
   padding-top: 6px;
   padding-bottom: 6px;
+}
+.itemChevron {
+  display: inline-flex;
+  flex: none;
+  margin-left: -2px;
+  color: var(--ink-3);
 }
 .itemWhy {
   display: block;

@@ -15,19 +15,28 @@ import { EMPTY_SELECTION, type LaneSelection } from './laneSelection';
 
 export const selectionStore = createStore<LaneSelection>(EMPTY_SELECTION);
 
+const NO_IDS: readonly Id[] = [];
+const sameIds = (a: readonly Id[] = [], b: readonly Id[] = []) => a.length === b.length && a.every((id, i) => id === b[i]);
+
 export function setSelection(sel: LaneSelection): void {
   const cur = selectionStore.getState();
-  if (cur === sel || (cur.focus === sel.focus && cur.ids.length === sel.ids.length && cur.ids.every((id, i) => id === sel.ids[i]))) return;
+  if (cur === sel || (cur.focus === sel.focus && sameIds(cur.ids, sel.ids) && sameIds(cur.sections, sel.sections))) return;
   selectionStore.setState(sel);
 }
 
+/** Nothing selected, loops or sections (keyboard focus stays where it was, for Tab). */
 export function clearSelection(): void {
   const cur = selectionStore.getState();
-  if (cur.ids.length) setSelection({ ids: [], focus: cur.focus });
+  if (cur.ids.length || cur.sections?.length) setSelection({ ids: [], focus: cur.focus });
 }
 
 export function useSelected(id: Id): boolean {
   return useStore(selectionStore, (s) => s.ids.includes(id));
+}
+
+/** The sections selected (Ctrl+A selects them with the loops). */
+export function useSelectedSections(): readonly Id[] {
+  return useStore(selectionStore, (s) => s.sections ?? NO_IDS);
 }
 
 export function useSelectedIds(): readonly Id[] {
@@ -53,11 +62,14 @@ export interface DragView {
   /** Moved regions slide from where they were by this many bars (eased). */
   slide?: number;
   /** The badge by the dragged regions, in timeline px (x) and row index. */
-  badge?: { text: string; x: number; row: number; align: 'start' | 'end' };
+  /** `top`: at the top of the rows, under the sections strip (a section drag's). */
+  badge?: { text: string; x: number; row: number; align: 'start' | 'end'; top?: boolean };
   /** Marquee rectangle in timeline px (x) and rows px (y). */
   marquee?: { x0: number; y0: number; x1: number; y1: number };
   /** The pointer is off the region's row (or a loop over another part's row): the drop does not go there. */
   notAllowed?: boolean;
+  /** Where the pointer is (timeline px, rows px): "Not this part" shows there. */
+  pointer?: { x: number; y: number };
   touches?: readonly Touch[];
   /** The sections as a section drag would leave them. */
   sections?: readonly SongSection[];
@@ -97,3 +109,6 @@ export function usePxPerBar(): number {
 
 /** The region under the pointer (its ⋯ shows), or null. */
 export const hoverStore = createStore<Id | null>(null);
+
+/** The loop browser ("Add loops") is open: the "Try this" song steps word themselves by it. */
+export const browserOpenStore = createStore<boolean>(false);

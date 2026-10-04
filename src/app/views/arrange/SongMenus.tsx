@@ -13,7 +13,7 @@
  *   their length and a picture of their notes; choosing one places it there.
  */
 import { useState, type ReactNode } from 'react';
-import { ClipSketch } from '../../../ui/components';
+import { ClipSketch, Icon } from '../../../ui/components';
 import { regionEnd, sectionAt } from '../../../project/arrangement';
 import { SONG_MOVE_KINDS, TICKS_PER_BAR, type Id, type SongRegion, type SongSection } from '../../../project/types';
 import { shapeProblem, type ShapeKind } from '../../../state/commands';
@@ -26,12 +26,12 @@ import * as act from './songActions';
 import { barsText, partLoops, rangeText, sectionLabel } from './songModel';
 import styles from './SongView.module.css';
 
-/** A menu row with one of the lane's own icons (same look and keys as MenuItem). */
 /** Reasons longer than this wrap under the label (a hint on the right would be cut off). */
 const SHORT_REASON = 24;
 
-export function LaneMenuItem(props: { icon: LaneIconName; children: ReactNode; hint?: string; disabled?: boolean; disabledReason?: string; role?: 'menuitem' | 'menuitemcheckbox'; checked?: boolean; onSelect(): void }) {
-  const { icon, children, hint, disabled, disabledReason, role = 'menuitem', checked, onSelect } = props;
+/** A menu row with one of the lane's own icons (same look and keys as MenuItem); `submenu`: a chevron at its right end. */
+export function LaneMenuItem(props: { icon: LaneIconName; children: ReactNode; hint?: string; disabled?: boolean; disabledReason?: string; role?: 'menuitem' | 'menuitemcheckbox'; checked?: boolean; submenu?: boolean; onSelect(): void }) {
+  const { icon, children, hint, disabled, disabledReason, role = 'menuitem', checked, submenu, onSelect } = props;
   const reason = disabled && disabledReason ? disabledReason : null;
   const why = reason && reason.length > SHORT_REASON ? reason : null;
   const shown = why ? null : (reason ?? hint);
@@ -42,6 +42,7 @@ export function LaneMenuItem(props: { icon: LaneIconName; children: ReactNode; h
       tabIndex={-1}
       className={why ? `${menuStyles.item} ${styles.whyItem}` : menuStyles.item}
       aria-checked={role === 'menuitemcheckbox' ? !!checked : undefined}
+      aria-haspopup={submenu ? 'menu' : undefined}
       data-checked={checked || undefined}
       aria-disabled={disabled || undefined}
       onClick={() => {
@@ -56,6 +57,11 @@ export function LaneMenuItem(props: { icon: LaneIconName; children: ReactNode; h
         {why && <span className={styles.itemWhy}>{why}</span>}
       </span>
       {shown && <span className={menuStyles.itemHint}>{shown}</span>}
+      {submenu && (
+        <span className={styles.itemChevron} aria-hidden="true">
+          <Icon name="chevronRight" size={12} />
+        </span>
+      )}
     </button>
   );
 }
@@ -118,11 +124,15 @@ export function RegionMenu(props: {
           Back
         </MenuItem>
         <MenuSeparator />
-        {loops.map((l) => (
-          <MenuItem key={l.clipId} role="menuitemcheckbox" checked={l.clipId === region.clipId} hint={barsText(l.bars)} disabled={locked || l.clipId === region.clipId} disabledReason={reason} onSelect={run(() => act.swapLoopClip(region.id, l.clipId))}>
-            {l.name}
-          </MenuItem>
-        ))}
+        {loops.map((l) => {
+          const now = l.clipId === region.clipId;
+          // The loop it plays now is ticked (choosing it again changes nothing).
+          return (
+            <MenuItem key={l.clipId} icon={now ? 'check' : undefined} role="menuitemcheckbox" checked={now} hint={now ? `Playing · ${barsText(l.bars)}` : barsText(l.bars)} disabled={locked} disabledReason={reason} onSelect={run(() => !now && act.swapLoopClip(region.id, l.clipId))}>
+              {l.name}
+            </MenuItem>
+          );
+        })}
       </Popover>
     );
   }
@@ -159,9 +169,9 @@ export function RegionMenu(props: {
       </MenuItem>
       <MenuSeparator />
       {!many && (
-        <MenuItem icon="chevronRight" hint={loops.length > 1 ? `${loops.length} loops` : 'Only one'} disabled={locked || loops.length < 2} disabledReason={reason ?? 'This part has one loop'} onSelect={() => setView('swap')}>
+        <LaneMenuItem icon="layers" submenu hint={loops.length > 1 ? `${loops.length} loops` : undefined} disabled={locked || loops.length < 2} disabledReason={reason ?? 'Only one loop'} onSelect={() => setView('swap')}>
           Use another loop
-        </MenuItem>
+        </LaneMenuItem>
       )}
       {!many && (
         <MenuItem icon="pencil" hint="Double-click" onSelect={run(() => host.editNotes(region.id))}>
@@ -174,7 +184,11 @@ export function RegionMenu(props: {
         </MenuItem>
       )}
       {!many && !hasSection && (
-        <MenuItem icon="scene" disabled={locked} disabledReason={reason} onSelect={run(() => act.addSectionAt(region.start, region.bars))}>
+        <MenuItem icon="scene" disabled={locked} disabledReason={reason} onSelect={run(() => {
+            // The new section opens for its name at once.
+            const r = act.addSectionAt(region.start, region.bars);
+            if (r.changed && r.sectionId) host.renameSection(r.sectionId);
+          })}>
           Name these bars as a section
         </MenuItem>
       )}
