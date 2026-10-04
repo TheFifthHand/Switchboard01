@@ -75,11 +75,11 @@ describe('regions on the timeline', () => {
     expect(r.notes('t1')).toEqual([[0, pitchOf(0, 0)], [BAR, pitchOf(2, 0)], [2 * BAR, pitchOf(2, 0)]]);
     expect(r.launches('t1')).toEqual([[0, 0], [BAR, 2]]);
     expect(r.held('t4')).toEqual([[0, 30, BAR]]);
-    // The song is as long as its last region; a section after it makes it longer (silence there).
+    // The song is as long as its last region; a section label after it does not make it longer.
     expect(r.ends()).toEqual([3 * BAR]);
     const q = { ...p, arrangement: { ...p.arrangement, sections: [{ id: 's', name: 'Outro', start: 3, bars: 2 }] } };
-    expect(songLengthTicks(q)).toBe(5 * BAR);
-    expect(new Rig(q).playSong().finish().ends()).toEqual([5 * BAR]);
+    expect(songLengthTicks(q)).toBe(3 * BAR);
+    expect(new Rig(q).playSong().finish().ends()).toEqual([3 * BAR]);
   });
 
   it('silence between regions; a region whose clip is gone plays nothing', () => {

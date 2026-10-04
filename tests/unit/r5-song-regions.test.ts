@@ -219,7 +219,9 @@ describe('reading the song', () => {
   it('length, the region at a bar, and where in its clip it is', () => {
     const p = project();
     p.arrangement = { regions: [r('a', D, 'c-beat', 2, 6, 1)], sections: [{ id: 's', name: 'S', start: 0, bars: 10 }], tailSeconds: 3 };
-    expect(A.songBars(p)).toBe(10);
+    // The song ends with its music; the timeline reaches to the end of the last section.
+    expect(A.songBars(p)).toBe(8);
+    expect(A.timelineBars(p)).toBe(10);
     expect(A.regionAt(p.arrangement.regions, D, 2.5)?.id).toBe('a');
     expect(A.regionAt(p.arrangement.regions, D, 8)).toBeNull();
     expect(A.clipBarAt(p.arrangement.regions[0], 2, 2)).toBe(1);

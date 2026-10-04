@@ -14,7 +14,7 @@
  * the song layout, copied below), independently of the migration code.
  */
 import { describe, expect, it } from 'vitest';
-import { clipBarAt, mergeTouching, regionAt, songBars } from '../../src/project/arrangement';
+import { clipBarAt, mergeTouching, regionAt, songBars, timelineBars } from '../../src/project/arrangement';
 import { createClip, createProject } from '../../src/project/factory';
 import { migrateProject } from '../../src/project/migrate';
 import { PROJECT_VERSION, type ClipBars, type Project } from '../../src/project/types';
@@ -106,7 +106,10 @@ function upgrade(v3: unknown) {
 /** Proves, bar by bar and part by part, that the upgraded song plays what 2.2 played. */
 function expectSameMusic(old: OldProject, now: Project): void {
   const song = oldSong(old);
-  expect(songBars(now)).toBe(song.bars);
+  // The timeline keeps every block's bars (as sections); the song itself ends with its last loop
+  // (2.3: silence after the music is not part of the song).
+  expect(timelineBars(now)).toBe(song.bars);
+  expect(songBars(now)).toBeLessThanOrEqual(song.bars);
   for (const t of old.tracks) {
     const was: (string | null)[] = [];
     const is: (string | null)[] = [];

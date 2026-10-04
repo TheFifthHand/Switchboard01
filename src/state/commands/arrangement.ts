@@ -35,6 +35,7 @@ import {
   sceneRegions,
   sectionRegions,
   songBars,
+  timelineBars,
   sortRegions,
   sortSections,
   spanOf,
@@ -362,7 +363,7 @@ export function addSceneToSong(store: ProjectStore, row: number, start: number, 
  */
 export function fillSongFromScenes(store: ProjectStore): SongEditResult {
   const p = store.getState();
-  if (songBars(p) > 0) return refuse('invalid', 'The song already has music: a song is made from the scenes only when it is empty.');
+  if (p.arrangement.regions.length > 0) return refuse('invalid', 'The song already has music: a song is made from the scenes only when it is empty.');
   const regions: SongRegion[] = [];
   const sections: SongSection[] = [];
   let at = 0;
@@ -534,7 +535,7 @@ export function setRegionClip(store: ProjectStore, id: Id, clipId: Id): SongEdit
 export function insertBars(store: ProjectStore, at: number, bars: number): SongEditResult {
   const p = store.getState();
   if (!isInt(at) || at < 0 || !isInt(bars) || bars < 1) return refuse('invalid', 'Insert whole bars at a bar line.');
-  const end = songBars(p);
+  const end = timelineBars(p);
   if (at >= end) return refuse('empty', 'Nothing comes after that bar, so there is nothing to move.');
   if (end + bars > MAX_SONG_BARS) return refuse('limit', `There is no room for ${barsText(bars)} more: ${TOO_LONG}`);
   const te = insertTime(p, p.arrangement.regions, p.arrangement.sections, at, bars, newRegionId);
@@ -552,7 +553,7 @@ export function insertBars(store: ProjectStore, at: number, bars: number): SongE
 export function removeBars(store: ProjectStore, from: number, to: number): SongEditResult {
   const p = store.getState();
   if (!isInt(from) || !isInt(to) || from < 0 || to <= from) return refuse('invalid', 'Remove whole bars: pick where they start and end.');
-  if (from >= songBars(p)) return refuse('empty', 'There is nothing there to remove.');
+  if (from >= timelineBars(p)) return refuse('empty', 'There is nothing there to remove.');
   const te = removeTime(p, p.arrangement.regions, p.arrangement.sections, from, to, newRegionId);
   const r = commit(store, p, 'arrange:Remove bars', `Remove ${barsText(to - from)}`, te);
   return { ...r, ...gapChanges(p.arrangement.regions, from, to) };
@@ -655,7 +656,7 @@ export function duplicateSection(store: ProjectStore, id: Id): SongEditResult & 
   const s = findSection(p, id);
   if (!s) return NOT_FOUND('section');
   const end = regionEnd(s);
-  if (songBars(p) + s.bars > MAX_SONG_BARS) return refuse('limit', `There is no room to play ${s.name} twice: ${TOO_LONG}`);
+  if (timelineBars(p) + s.bars > MAX_SONG_BARS) return refuse('limit', `There is no room to play ${s.name} twice: ${TOO_LONG}`);
   const te = insertTime(p, p.arrangement.regions, p.arrangement.sections, end, s.bars, newRegionId);
   const copies: SongRegion[] = [];
   for (const r of te.regions) {
@@ -912,7 +913,7 @@ export function addIntro(store: ProjectStore): SongEditResult & { sectionId?: Id
   if (!range) return refuse('empty', 'The song has no music yet: add some loops first.');
   const clips = edgeClips(p, range[0], range[1], 'first');
   const bars = edgeBars(clips);
-  if (songBars(p) + bars > MAX_SONG_BARS) return refuse('limit', `There is no room for an intro: ${TOO_LONG}`);
+  if (timelineBars(p) + bars > MAX_SONG_BARS) return refuse('limit', `There is no room for an intro: ${TOO_LONG}`);
   const te = insertTime(p, p.arrangement.regions, p.arrangement.sections, 0, bars, newRegionId);
   const intro: SongRegion[] = clips.map((c) => ({ id: newRegionId(), trackId: c.trackId, clipId: c.clip.id, start: 0, bars, offset: 0 }));
   const shaped = clips.length > 1 ? shapePlan(p, intro, 0, bars, 'build').regions : intro;

@@ -46,10 +46,20 @@ export function clipBarsOf(p: Pick<Project, 'tracks'>, r: Pick<SongRegion, 'trac
   return regionClip(p, r)?.clip.bars ?? 1;
 }
 
-/** Song length in bars: where the last region or section ends (0 for an empty song). */
+/**
+ * Song length in bars: where the last region ends (0 when no loop is in the
+ * song). The song plays and exports to here; a section label past the music
+ * does not make it longer (see timelineBars).
+ */
 export function songBars(p: Pick<Project, 'arrangement'>): number {
   let end = 0;
   for (const r of p.arrangement.regions) end = Math.max(end, regionEnd(r));
+  return end;
+}
+
+/** How far the timeline is in use: where the last region or section ends (0 when there is neither). */
+export function timelineBars(p: Pick<Project, 'arrangement'>): number {
+  let end = songBars(p);
   for (const s of p.arrangement.sections) end = Math.max(end, regionEnd(s));
   return end;
 }
