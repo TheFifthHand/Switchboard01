@@ -296,14 +296,16 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     const choices = LAYOUTS.map((l, i) => ({ l, i })).filter(({ l }) => (go ? l.compact : !l.terse));
     let best: (Spot & { maxW: number; i: number }) | null = null;
     // The view's home first: the chip sits on it (over the home's own words), as wide as it needs, when that covers
-    // nothing else; a one-line home (a header row) takes a layout as low as its row only (a second line would hang
-    // over what is below it).
+    // nothing else. A one-line home (a header row) tries the layouts as low as its row first; a taller one only
+    // where its second line covers nothing either (drawn over what is below, never under it).
     const home = homeBox(el, vw, vh, area);
-    if (home) {
+    const homeTries = home?.oneLine ? [true, false] : [false];
+    for (const lineOnly of home ? homeTries : []) {
+      if (best || !home) break;
       for (const { l, i } of choices) {
         const maxW = Math.min(l.maxW, area.right - area.left);
         const size = sizeOf(el, i, maxW, vw);
-        if (home.oneLine && size.h > home.box.bottom - home.box.top + HOME_SLACK_PX) continue;
+        if (lineOnly && size.h > home.box.bottom - home.box.top + HOME_SLACK_PX) continue;
         const wanted = home.align === 'end' ? home.box.right - size.w : home.align === 'center' ? (home.box.left + home.box.right - size.w) / 2 : home.box.left;
         const x = Math.round(Math.max(area.left, Math.min(wanted, area.right - size.w)));
         // Centred on the home's line, never above the work area.

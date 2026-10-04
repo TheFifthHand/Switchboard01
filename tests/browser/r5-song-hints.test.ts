@@ -40,10 +40,11 @@ it('the song steps are done by the real gestures, one after another', async () =
   // The loop browser is shut (the House song is long): the step says where its key is.
   expect(document.querySelector('[data-testid="loops-toggle"]')!.getAttribute('aria-pressed')).not.toBe('true');
   expect(chip()!.textContent).toContain('Press Add loops (top right)');
-  // It sits in the header row.
+  // It sits in the header row, in one line.
   const head = document.querySelector('header[class*="head"]')!.getBoundingClientRect();
   const c = chip()!.getBoundingClientRect();
   expect(c.top).toBeLessThan(head.bottom);
+  expect(c.bottom).toBeLessThanOrEqual(head.bottom + 8);
 
   act(() => ppbStore.setState(16));
   await settle();
@@ -79,7 +80,7 @@ it('the song steps are done by the real gestures, one after another', async () =
   await waitFor(() => hint() === 'song-export', 'the export step');
 });
 
-it('with the header busy, the chip keeps to one line in it or goes elsewhere: never under the ruler', async () => {
+it('with the header busy, the chip is never under the ruler: drawn on top wherever it sits, and never over the loop band', async () => {
   await openSong(1366, 768);
   act(() => {
     setTipsEnabled(true);
@@ -98,11 +99,8 @@ it('with the header busy, the chip keeps to one line in it or goes elsewhere: ne
   const c = chip()!;
   if (!c.hasAttribute('data-ready')) return; // No room anywhere: it waits unseen (the rulebook's rule).
   const box = c.getBoundingClientRect();
-  const head = document.querySelector('header[class*="head"]')!.getBoundingClientRect();
-  if (box.top < head.bottom) {
-    // In the header: one line, inside its row.
-    expect(box.bottom).toBeLessThanOrEqual(head.bottom + 8);
-  }
+  const band = document.querySelector('[data-range-band]')!.getBoundingClientRect();
+  expect(box.bottom <= band.top || box.top >= band.bottom || box.right <= band.left || box.left >= band.right).toBe(true);
   // Whatever it sits over, it is drawn on top: every corner of its words is the chip's.
   const text = c.querySelector<HTMLElement>('[class*="text"]') ?? c;
   const t = text.getBoundingClientRect();

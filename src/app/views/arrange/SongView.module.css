@@ -90,8 +90,10 @@
   outline: none;
   box-shadow: var(--focus-ring);
 }
+/* The hint chip's home: the header's free middle, as tall as its row (the chip keeps to it). */
 .headSpacer {
   flex: 1;
+  align-self: stretch;
   min-width: 0;
 }
 /* The song is paused: said in a word (the playhead is not amber then). */
