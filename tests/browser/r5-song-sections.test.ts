@@ -14,6 +14,7 @@ import {
   barX,
   centre,
   clickAt,
+  cutOff,
   doubleClickAt,
   dragTo,
   menuItem,
@@ -106,6 +107,10 @@ describe('sections', () => {
   it('its menu: Duplicate, Fade in (checked once on), Delete section and its music', async () => {
     await open();
     await rightClickAt(centre(sectionEl('S1')));
+    // Only the drums play in the Intro: Build up is off, and says why in words that are not cut off.
+    expect(menuItem('Build up').getAttribute('aria-disabled')).toBe('true');
+    expect(menuItem('Build up').textContent).toContain('Only one part plays here');
+    expect(cutOff()).toEqual([]);
     await clickAt(centre(menuItem('Fade in')));
     expect(menuItem('Fade in').getAttribute('aria-checked')).toBe('true');
     expect(sections().find((s) => s.id === 'S1')?.moves?.map((m) => m.kind)).toEqual(['fadeIn']);

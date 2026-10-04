@@ -16,6 +16,7 @@ import { uiStore } from '../../src/state/uiStore';
 import {
   centre,
   clickAt,
+  cutOff,
   doubleClickAt,
   menuItem,
   mouse,
@@ -108,16 +109,19 @@ describe('the loop menu', () => {
     expect(document.querySelector('[role="menu"]')?.getAttribute('aria-label')).toContain('Actions for');
   });
 
-  it('Split at the playhead says where the playhead must be when it is outside', async () => {
+  it('Split at playhead says when the playhead is not in the loop; nothing in the menu is cut off', async () => {
     await open();
-    act(() => (session as unknown as { setSongCursor(b: number): void }).setSongCursor(20));
+    act(() => session.setSongCursor(20));
     await rightClickAt(on('A'));
-    const item = menuItem('Split at the playhead');
+    const item = menuItem('Split at playhead');
     expect(item.getAttribute('aria-disabled')).toBe('true');
+    expect(item.textContent).toContain('Playhead not in this loop');
+    expect(cutOff()).toEqual([]);
     await press('Escape');
-    act(() => (session as unknown as { setSongCursor(b: number): void }).setSongCursor(2));
+    act(() => session.setSongCursor(2));
     await rightClickAt(on('A'));
-    await clickAt(centre(menuItem('Split at the playhead')));
+    expect(cutOff()).toEqual([]);
+    await clickAt(centre(menuItem('Split at playhead')));
     expect(drums()[0]).toEqual([0, 2]);
   });
 });
@@ -157,14 +161,14 @@ describe('keys', () => {
     ]);
     await clickAt(on('A'));
     await press('c', 2);
-    act(() => (session as unknown as { setSongCursor(b: number): void }).setSongCursor(24));
+    act(() => session.setSongCursor(24));
     await press('v', 2);
     expect(drums()).toContainEqual([24, 8]);
   });
 
   it('Ctrl+E splits the selection at the playhead; Enter takes the playhead back to bar 1', async () => {
     await open();
-    act(() => (session as unknown as { setSongCursor(b: number): void }).setSongCursor(6));
+    act(() => session.setSongCursor(6));
     await clickAt(on('C'));
     await press('e', 2);
     expect(regions().filter((r) => r.trackId === project().tracks[2].id).map((r) => [r.start, r.bars])).toEqual([

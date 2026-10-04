@@ -387,9 +387,11 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
     };
     sc.addEventListener('scroll', onScroll, { passive: true });
     sc.addEventListener('wheel', onWheel, { passive: false });
+    sc.addEventListener('touchmove', controller.touchMove, { passive: false });
     return () => {
       sc.removeEventListener('scroll', onScroll);
       sc.removeEventListener('wheel', onWheel);
+      sc.removeEventListener('touchmove', controller.touchMove);
     };
   }, [controller, zoomTo]);
 

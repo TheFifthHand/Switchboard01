@@ -152,7 +152,7 @@
 .top {
   position: sticky;
   top: 0;
-  z-index: 4;
+  z-index: 6;
   display: grid;
   grid-template-columns: var(--head-w) calc(var(--bars) * var(--ppb) * 1px);
   grid-template-rows: var(--ruler-h) var(--sections-h);
@@ -544,7 +544,15 @@
   cursor: crosshair;
   touch-action: pan-x pan-y;
 }
+/* A part you do not hear: its loops faded (the header says why in words). The fade is on the parts of the
+   loop, not the loop itself, so its name still sits above the playhead line. */
 .row[data-quiet] .region {
+  border-color: hsl(var(--h) 32% 58% / 0.45);
+  background: hsl(var(--h) 46% 87% / 0.45);
+}
+.row[data-quiet] .region > *,
+.row[data-quiet] .region::before,
+.row[data-quiet] .region::after {
   opacity: 0.45;
 }
 
@@ -641,7 +649,11 @@
   box-shadow: var(--focus-ring);
   z-index: 1;
 }
+/* The name sits above the playhead line (z-index 3 > 2), so the line never crosses it out. */
 .regionName {
+  position: relative;
+  z-index: 3;
+  pointer-events: none;
   flex: none;
   padding: 2px 6px 0 7px;
   overflow: hidden;
@@ -716,7 +728,7 @@
   top: calc(var(--ruler-h) + var(--sections-h) + 1px);
   width: calc(var(--bars) * var(--ppb) * 1px);
   height: calc(var(--rows) * var(--row-h));
-  z-index: 2;
+  z-index: 4;
   pointer-events: none;
 }
 .ghostRow {
@@ -866,7 +878,7 @@
   width: 2px;
   margin-left: -1px;
   background: var(--ink-3);
-  z-index: 3;
+  z-index: 2;
   pointer-events: none;
   will-change: transform;
 }
@@ -936,6 +948,22 @@
 
 .sectionMenu {
   min-width: 260px;
+  max-width: min(320px, calc(100vw - 16px));
+}
+/* Why an item is off, when it takes a sentence: under its label, wrapped (doubled class: over the menu row's own padding). */
+.whyItem.whyItem {
+  align-items: flex-start;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.itemWhy {
+  display: block;
+  margin-top: 2px;
+  white-space: normal;
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  color: var(--ink-3);
 }
 .picker {
   min-width: 240px;

@@ -73,7 +73,7 @@ describe('the ruler', () => {
     await open();
     await clickAt({ x: barX(2) + 4, y: rulerY() });
     await act(async () => {
-      await (session as unknown as { playSong(o?: object): Promise<void> }).playSong();
+      await session.playSong();
     });
     await waitFor(() => (songPlayheadBar() ?? -1) >= 2, 'the song to play');
     await clickAt({ x: barX(30) + 4, y: rulerY() });
@@ -132,7 +132,7 @@ describe('playing', () => {
   it('the loop under the playhead gets an amber edge while the song plays', async () => {
     await open();
     await act(async () => {
-      await (session as unknown as { playSong(o?: object): Promise<void> }).playSong({ fromBar: 10 });
+      await session.playSong({ fromBar: 10 });
     });
     await waitFor(() => !!document.querySelector('[data-region-id="B"][data-playing]'), 'the playing mark');
     expect(document.querySelector('[data-region-id="D"]')!.hasAttribute('data-playing')).toBe(true);
@@ -144,7 +144,7 @@ describe('playing', () => {
     const viewBars = (sc.clientWidth - HEADER_W) / ppb();
     expect(sc.scrollLeft).toBe(0);
     await act(async () => {
-      await (session as unknown as { playSong(o?: object): Promise<void> }).playSong({ fromBar: Math.floor(viewBars) - 1 });
+      await session.playSong({ fromBar: Math.floor(viewBars) - 1 });
     });
     await waitFor(() => sc.scrollLeft > 0, 'a page turn', 12000);
     const head = (songPlayheadBar() ?? 0) * ppb();

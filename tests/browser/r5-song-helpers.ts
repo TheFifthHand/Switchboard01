@@ -43,7 +43,7 @@ export async function resetSong(): Promise<void> {
 export async function teardownSong(): Promise<void> {
   if (session.playing || session.paused) act(() => session.stop());
   act(() => {
-    (session as unknown as { setSongLoop(l: null): boolean }).setSongLoop(null);
+    session.setSongLoop(null);
   });
   cleanup();
   act(() => {
@@ -238,6 +238,13 @@ export function menuItem(text: string): HTMLElement {
   const el = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role^="menuitem"]')].find((x) => (x.querySelector('[class*="itemText"]')?.textContent ?? x.textContent ?? '').trim().startsWith(text));
   if (!el) throw new Error(`No menu item "${text}…" in ${[...document.querySelectorAll('[role="menu"] [role^="menuitem"]')].map((x) => x.textContent).join(' | ')}`);
   return el;
+}
+
+/** The words in the open menu that are cut off (an ellipsis): none, in a menu that reads well. */
+export function cutOff(): string[] {
+  const menu = document.querySelector('[role="menu"]');
+  if (!menu) throw new Error('No menu is open');
+  return [...menu.querySelectorAll<HTMLElement>('[class*="itemText"], [class*="itemHint"]')].filter((el) => el.scrollWidth > el.clientWidth + 1).map((el) => el.textContent ?? '');
 }
 
 export const centre = (el: Element, fx = 0.5, fy = 0.5): Pt => {

@@ -3,7 +3,7 @@
  * app: arrow keys, Escape, a press outside closes it).
  *
  * - Region menu (right-click, ⋯ on hover, Shift+F10): Play from here, Loop
- *   this, Duplicate, Split at the playhead / Split here, Delete, Use another
+ *   this, Duplicate, Split at playhead / Split here, Delete, Use another
  *   loop ▸, Edit notes, Make it 2× longer, Name these bars as a section.
  * - Section menu: Rename, Duplicate, Delete section (the label) / Delete
  *   section and its music, the song moves (checked when on), Build up /
@@ -27,15 +27,20 @@ import { barsText, partLoops, rangeText, sectionLabel } from './songModel';
 import styles from './SongView.module.css';
 
 /** A menu row with one of the lane's own icons (same look and keys as MenuItem). */
+/** Reasons longer than this wrap under the label (a hint on the right would be cut off). */
+const SHORT_REASON = 24;
+
 export function LaneMenuItem(props: { icon: LaneIconName; children: ReactNode; hint?: string; disabled?: boolean; disabledReason?: string; role?: 'menuitem' | 'menuitemcheckbox'; checked?: boolean; onSelect(): void }) {
   const { icon, children, hint, disabled, disabledReason, role = 'menuitem', checked, onSelect } = props;
-  const shown = disabled && disabledReason ? disabledReason : hint;
+  const reason = disabled && disabledReason ? disabledReason : null;
+  const why = reason && reason.length > SHORT_REASON ? reason : null;
+  const shown = why ? null : (reason ?? hint);
   return (
     <button
       type="button"
       role={role}
       tabIndex={-1}
-      className={menuStyles.item}
+      className={why ? `${menuStyles.item} ${styles.whyItem}` : menuStyles.item}
       aria-checked={role === 'menuitemcheckbox' ? !!checked : undefined}
       data-checked={checked || undefined}
       aria-disabled={disabled || undefined}
@@ -46,7 +51,10 @@ export function LaneMenuItem(props: { icon: LaneIconName; children: ReactNode; h
       <span className={menuStyles.itemIcon} aria-hidden="true">
         <LaneIcon name={icon} size={14} />
       </span>
-      <span className={menuStyles.itemText}>{children}</span>
+      <span className={menuStyles.itemText}>
+        {children}
+        {why && <span className={styles.itemWhy}>{why}</span>}
+      </span>
       {shown && <span className={menuStyles.itemHint}>{shown}</span>}
     </button>
   );
@@ -133,13 +141,13 @@ export function RegionMenu(props: {
       </MenuItem>
       <MenuItem
         icon="scissors"
-        hint={canSplitPlayhead ? `${MOD_KEY}E` : `Bar ${playhead + 1} is outside`}
+        hint={`${MOD_KEY}E`}
         keyShortcut={canSplitPlayhead ? `${MOD_KEY === '⌘' ? 'Meta' : 'Control'}+E` : undefined}
         disabled={locked || !canSplitPlayhead}
-        disabledReason={reason ?? `The playhead (bar ${playhead + 1}) is not inside`}
+        disabledReason={reason ?? (targets.length > 1 ? 'Playhead not in these loops' : 'Playhead not in this loop')}
         onSelect={run(() => act.splitLoops(targets, playhead))}
       >
-        Split at the playhead
+        Split at playhead
       </MenuItem>
       {clickedBar !== null && splitAt(clickedBar) && (
         <MenuItem icon="cut" hint={`Bar ${clickedBar + 1}`} disabled={locked} disabledReason={reason} onSelect={run(() => act.splitLoops([region.id], clickedBar))}>
@@ -229,7 +237,7 @@ export function SectionMenu(props: { section: SongSection; anchor: MenuAnchor; r
         const problem = problemOf(i);
         return (
           <LaneMenuItem key={s.kind} icon={s.icon} disabled={locked || !!problem} disabledReason={reason ?? problem ?? undefined} hint={undefined} onSelect={run(() => act.shapeSectionNow(live.id, s.kind))}>
-            <span title={problem ?? s.what}>{act.SHAPE_WORDS[s.kind]}</span>
+            <span title={problem ? undefined : s.what}>{act.SHAPE_WORDS[s.kind]}</span>
           </LaneMenuItem>
         );
       })}

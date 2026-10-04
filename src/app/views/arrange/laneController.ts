@@ -146,8 +146,13 @@ export class LaneController {
     if (this.a && e.pointerId === this.a.pointerId) this.cancel();
   };
   private readonly onKey = (e: KeyboardEvent) => this.key(e);
-  /** Once a finger has picked something up, the browser must not pan under it. */
-  private readonly onTouchMove = (e: TouchEvent) => {
+  /**
+   * Once a finger has picked something up, the browser must not pan under it. The timeline listens
+   * with this all the time (non-passive, on the scroller: a listener added after the touch began may
+   * come too late for the browser to wait for it); a finger's gesture also adds it on the window for
+   * as long as it lasts, for a loop carried in from the loop browser.
+   */
+  readonly touchMove = (e: TouchEvent) => {
     if (this.a && !this.a.touchWait && e.cancelable) e.preventDefault();
   };
   private readonly onScroll = () => {
@@ -254,7 +259,7 @@ export class LaneController {
       a.holdTimer = window.setTimeout(() => {
         if (this.a === a) a.touchWait = false;
       }, TOUCH_HOLD_MS);
-      window.addEventListener('touchmove', this.onTouchMove, { passive: false, capture: true });
+      window.addEventListener('touchmove', this.touchMove, { passive: false, capture: true });
     }
     try {
       captureOn.setPointerCapture(e.pointerId);
@@ -596,7 +601,7 @@ export class LaneController {
     window.removeEventListener('pointercancel', this.onCancel, true);
     window.removeEventListener('keydown', this.onKey, true);
     window.removeEventListener('keyup', this.onKey, true);
-    window.removeEventListener('touchmove', this.onTouchMove, true);
+    window.removeEventListener('touchmove', this.touchMove, true);
     window.clearTimeout(a.holdTimer);
     const sc = this.host.scroller();
     sc?.removeEventListener('scroll', this.onScroll);
