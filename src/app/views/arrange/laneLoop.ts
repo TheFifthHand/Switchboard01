@@ -39,8 +39,3 @@ export function rangeWords(r: BarRange): string {
   return r.toBar - r.fromBar <= 1 ? `Bar ${r.fromBar + 1}` : `Bars ${r.fromBar + 1}–${r.toBar}`;
 }
 
-/** The bar Play starts from when a loop is on: the cursor when it is inside the range, else the range's start. */
-export function playStartBar(cursor: number, loop: BarRange | null): number {
-  if (!loop) return cursor;
-  return cursor >= loop.fromBar && cursor < loop.toBar ? cursor : loop.fromBar;
-}

@@ -16,14 +16,12 @@ import {
   partLoops,
   partStatus,
   rangeText,
-  regionFace,
   regionLabel,
   rowViews,
   sameRows,
   sceneCardText,
   sceneCards,
   sectionLabel,
-  songSummary,
   startBadge,
   timesShort,
   timesWords,
@@ -75,17 +73,6 @@ describe('regions', () => {
     expect(notches({ bars: 8, offset: 1 }, 4)).toEqual([3, 7]);
     expect(notches({ bars: 5, offset: 1 }, 2)).toEqual([1, 3]);
   });
-
-  it('a region face carries its clip, words and notches', () => {
-    const p = project();
-    const f = regionFace(p, p.arrangement.regions[1]);
-    expect(f).toMatchObject({ clipName: 'Bounce', clipBars: 2, kind: 'notes', notches: [1, 3] });
-    expect(f.clip?.id).toBe('c-bounce');
-    expect(f.label).toContain('bars 5 to 9');
-    expect(regionFace(p, p.arrangement.regions[0]).kind).toBe('drums');
-    // A region whose clip went is still drawn sensibly until the song is tidied.
-    expect(regionFace(p, { ...p.arrangement.regions[0], clipId: 'gone' })).toMatchObject({ clip: null, clipBars: 1, clipName: 'Loop' });
-  });
 });
 
 describe('badges and lengths', () => {
@@ -110,7 +97,6 @@ describe('badges and lengths', () => {
     expect(rangeText(8, 16)).toBe('Bars 9–16');
     expect(rangeText(8, 9)).toBe('Bar 9');
     expect(sectionLabel({ name: 'Intro', start: 0, bars: 8 })).toBe('Intro, bars 1 to 8');
-    expect(songSummary(project())).toEqual({ regions: 2, bars: 24 });
   });
 });
 

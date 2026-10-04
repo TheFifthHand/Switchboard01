@@ -8,7 +8,7 @@
  * The selection belongs to the project open now: another project starts
  * with none, and regions that go away leave it (see pruneSelection).
  */
-import type { Id, SongRegion, SongSection } from '../../../project/types';
+import type { Id, SongSection } from '../../../project/types';
 import { createStore, useStore } from '../../../state/store';
 import type { BarRange, DragPreview, Touch } from './laneGestures';
 import { EMPTY_SELECTION, type LaneSelection } from './laneSelection';
@@ -34,10 +34,6 @@ export function useSelectedIds(): readonly Id[] {
   return useStore(selectionStore, (s) => s.ids);
 }
 
-/** The region that holds the lane's one Tab stop. */
-export function useFocusId(): Id | null {
-  return useStore(selectionStore, (s) => s.focus);
-}
 
 /**
  * The loop range (bars) as the ruler shows it: the runtime's loop while
@@ -91,9 +87,6 @@ export interface Carried {
 }
 
 export const carriedStore = createStore<Carried | null>(null);
-
-/** Regions as they are in the store now, by id (kept for the overlay's faces). */
-export type RegionsById = ReadonlyMap<Id, SongRegion>;
 
 /** The timeline's scale (pixels per bar), shared by the timeline and the header's zoom keys. */
 export const ppbStore = createStore<number>(32);

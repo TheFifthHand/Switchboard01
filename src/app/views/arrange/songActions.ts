@@ -17,7 +17,7 @@ import type { Id, SongMoveKind } from '../../../project/types';
 import { session } from '../../instance';
 import { notify } from '../../runtime';
 import { songCmd, type Edge, type RegionClipboard, type ShapeKind, type SongEditResult } from './songApi';
-import { clearSelection, selectionStore, setSelection } from './laneStore';
+import { clearSelection, setSelection } from './laneStore';
 import { barsText } from './songModel';
 
 const project = () => session.store.getState();
@@ -160,9 +160,6 @@ export function fillFromScenes(): SongEditResult | null {
 
 let clipboard: RegionClipboard | null = null;
 
-export function hasLoopClipboard(): boolean {
-  return !!clipboard?.items.length;
-}
 
 /** For tests: empty the loop clipboard. */
 export function clearLoopClipboard(): void {
@@ -254,10 +251,6 @@ export function shapeSectionNow(id: Id, kind: ShapeKind): SongEditResult | null 
   return run(songCmd.shapeSection(session.store, id, kind), { select: false, text: `${SHAPE_WORDS[kind]}: ${name}` });
 }
 
-/** The selection now (for menus and keys that act on it). */
-export function selectedIds(): readonly Id[] {
-  return selectionStore.getState().ids;
-}
 
 /** A performance take's launches put in the song after its end (each loop on its part's row, as long as it played). */
 export function takeToSong(takeId: Id, name: string): SongEditResult | null {

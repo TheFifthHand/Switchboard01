@@ -13,7 +13,7 @@
  * nearest in time) and Ctrl+← / Ctrl+→ (the previous or next loop on the
  * same part): see neighbour().
  */
-import { regionEnd, spanOf } from '../../../project/arrangement';
+import { regionEnd } from '../../../project/arrangement';
 import type { Id, SongRegion } from '../../../project/types';
 
 export interface LaneSelection {
@@ -63,10 +63,6 @@ export function pruneSelection(sel: LaneSelection, existing: ReadonlySet<Id>, fa
   return ids.length === sel.ids.length && focus === sel.focus ? sel : { ids, focus };
 }
 
-/** The bars a selection spans, [first start, last end), or null. */
-export function selectionSpan(regions: readonly SongRegion[], ids: readonly Id[]): [number, number] | null {
-  return spanOf(regions.filter((r) => ids.includes(r.id)));
-}
 
 /** A box on the timeline: bars [bar0, bar1) (fractional) over rows row0..row1 (inclusive). */
 export interface LaneBox {

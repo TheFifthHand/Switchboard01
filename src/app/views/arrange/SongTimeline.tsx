@@ -46,7 +46,7 @@ import { SectionStrip, type SectionStripProps } from './SectionStrip';
 import { songPlayheadBar, songRuntime, songSession, useSongPlaying, useSongRuntime } from './songApi';
 import * as act from './songActions';
 import { LoopPicker, RegionMenu, SectionMenu, type MenuHost } from './SongMenus';
-import { HEADER_W, HEADER_W_NARROW, RULER_H, SECTIONS_H, barAt, fitZoom, followScroll, gridStep, rowHeight, snapBar, timelineBars, xToBar, zoomScroll, zoomStep } from './songLayout';
+import { HEADER_W, HEADER_W_NARROW, RULER_H, SECTIONS_H, barAt, fitZoom, followScroll, gridStep, rowHeight, snapBar, timelineBars, zoomScroll, zoomStep } from './songLayout';
 import { rowViews, sameRows } from './songModel';
 import { TimelineRuler } from './TimelineRuler';
 import styles from './SongView.module.css';
@@ -752,23 +752,8 @@ function HoverMore({ menuFor, onToggle, buttonRef }: { menuFor: Id | null; onTog
   );
 }
 
-/** For tests: where a bar is on screen (client x of its line). */
-export function barClientX(timeline: HTMLElement, bar: number): number {
-  const origin = timeline.querySelector<HTMLElement>(`.${styles.origin}`);
-  const ppb = ppbStore.getState();
-  return (origin?.getBoundingClientRect().left ?? 0) + bar * ppb;
-}
 
-/** For tests and the header: the scale now. */
-export function pxPerBarNow(): number {
-  return ppbStore.getState();
-}
 
-/** The fractional bar at a client x on the timeline. */
-export function barAtClientX(timeline: HTMLElement, clientX: number): number {
-  const origin = timeline.querySelector<HTMLElement>(`.${styles.origin}`);
-  return xToBar(clientX - (origin?.getBoundingClientRect().left ?? 0), ppbStore.getState());
-}
 
 /** Clear a drag view left behind (tests). */
 export function resetLaneState(): void {

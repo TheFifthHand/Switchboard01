@@ -22,8 +22,8 @@ import {
   sceneDrop,
   touches,
 } from '../../src/app/views/arrange/laneGestures';
-import { EMPTY_SELECTION, clickSelect, marqueeSelect, neighbour, pressSelect, pruneSelection, regionsInBox, selectAll, selectionSpan } from '../../src/app/views/arrange/laneSelection';
-import { loopKeyRange, playStartBar, rangeWords, sameRange } from '../../src/app/views/arrange/laneLoop';
+import { EMPTY_SELECTION, clickSelect, marqueeSelect, neighbour, pressSelect, pruneSelection, regionsInBox, selectAll } from '../../src/app/views/arrange/laneSelection';
+import { loopKeyRange, rangeWords, sameRange } from '../../src/app/views/arrange/laneLoop';
 import { laneKey } from '../../src/app/views/arrange/laneKeys';
 import * as A from '../../src/project/arrangement';
 import { createClip, createProject } from '../../src/project/factory';
@@ -212,11 +212,6 @@ describe('the loop range', () => {
     expect(loopKeyRange({ selection: null, sections: [], cursorBar: 0, songBars: 0 })).toBeNull();
   });
 
-  it('Play starts inside the loop', () => {
-    expect(playStartBar(10, { fromBar: 8, toBar: 16 })).toBe(10);
-    expect(playStartBar(2, { fromBar: 8, toBar: 16 })).toBe(8);
-    expect(playStartBar(2, null)).toBe(2);
-  });
 });
 
 describe('selection', () => {
@@ -231,7 +226,6 @@ describe('selection', () => {
     expect(pressSelect(s, 'a', 'replace').ids).toEqual(['a', 'c']);
     expect(pressSelect(s, 'b', 'replace').ids).toEqual(['b']);
     expect(clickSelect(s, 'a', 'toggle').ids).toEqual(['c']);
-    expect(selectionSpan(song, ['b', 'c'])).toEqual([0, 16]);
   });
 
   it('a marquee selects what it touches, added with Shift', () => {

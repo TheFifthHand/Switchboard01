@@ -8,8 +8,8 @@
  * browser's scenes and loops. Bars are 0-based in the data and 1-based in
  * every word a person reads.
  */
-import { clipBarsOf, regionClip, regionEnd, rowBars, sectionRegions } from '../../../project/arrangement';
-import type { Clip, Id, Project, SongRegion, SongSection, Track } from '../../../project/types';
+import { rowBars } from '../../../project/arrangement';
+import type { Id, Project, SongRegion, SongSection, Track } from '../../../project/types';
 import { INSTRUMENT_LABEL, soundName } from '../../labels';
 
 /* ------------------------------------------------------------------ */
@@ -148,45 +148,6 @@ export function notches(r: Pick<SongRegion, 'bars' | 'offset'>, clipBars: number
   return out;
 }
 
-/** Everything a region's face needs (the same object while nothing it shows changed). */
-export interface RegionFace {
-  id: Id;
-  trackId: Id;
-  clipId: Id;
-  start: number;
-  bars: number;
-  offset: number;
-  clipBars: number;
-  clipName: string;
-  label: string;
-  /** Bars from the region's start where its clip repeats. */
-  notches: readonly number[];
-  /** The clip itself (its notes draw the sketch), or null when it is gone. */
-  clip: Clip | null;
-  kind: 'notes' | 'drums';
-}
-
-export function regionFace(p: Project, r: SongRegion): RegionFace {
-  const rc = regionClip(p, r);
-  const clipBars = rc?.clip.bars ?? 1;
-  const clipName = rc?.clip.name || 'Loop';
-  const partName = rc?.track.name || 'part';
-  return {
-    id: r.id,
-    trackId: r.trackId,
-    clipId: r.clipId,
-    start: r.start,
-    bars: r.bars,
-    offset: r.offset,
-    clipBars,
-    clipName,
-    label: regionLabel(clipName, partName, r, clipBars),
-    notches: notches(r, clipBars),
-    clip: rc?.clip ?? null,
-    kind: rc?.track.instrument.kind === 'drums' ? 'drums' : 'notes',
-  };
-}
-
 /* ------------------------------------------------------------------ */
 /* Drag badges                                                         */
 /* ------------------------------------------------------------------ */
@@ -220,10 +181,6 @@ export function rangeText(fromBar: number, toBar: number): string {
   return toBar - fromBar <= 1 ? `Bar ${fromBar + 1}` : `Bars ${fromBar + 1}–${toBar}`;
 }
 
-/** How many loops a section owns (those that start inside it). */
-export function sectionLoopCount(p: Pick<Project, 'arrangement'>, s: Pick<SongSection, 'start' | 'bars'>): number {
-  return sectionRegions(p.arrangement.regions, s).length;
-}
 
 /* ------------------------------------------------------------------ */
 /* The loop browser                                                    */
@@ -267,22 +224,3 @@ export function partLoops(p: Pick<Project, 'tracks'>, trackId: Id): LoopChip[] {
   return t.clips.flatMap((c, slot) => (c ? [{ trackId, clipId: c.id, slot, name: c.name || `Loop ${slot + 1}`, bars: c.bars }] : []));
 }
 
-/* ------------------------------------------------------------------ */
-/* What sounds where                                                   */
-/* ------------------------------------------------------------------ */
-
-/** The regions under song bar `bar` (fractional), one per part at most. */
-export function regionsAtBar(regions: readonly SongRegion[], bar: number): SongRegion[] {
-  return regions.filter((r) => r.start <= bar && bar < regionEnd(r));
-}
-
-/** Total loops in the song and how many bars it lasts, for the header and hints. */
-export function songSummary(p: Pick<Project, 'arrangement' | 'tracks'>): { regions: number; bars: number } {
-  let end = 0;
-  for (const r of p.arrangement.regions) end = Math.max(end, regionEnd(r));
-  for (const s of p.arrangement.sections) end = Math.max(end, regionEnd(s));
-  return { regions: p.arrangement.regions.length, bars: end };
-}
-
-/** A region's clip length (1 when the clip is gone), re-exported for the view's gestures. */
-export { clipBarsOf };

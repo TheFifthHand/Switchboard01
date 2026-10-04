@@ -33,7 +33,7 @@
  * edge or section up, and from then on the browser does not pan. A tap is a
  * click.
  */
-import { regionEnd, sectionAt, type Edge } from '../../../project/arrangement';
+import { regionEnd, type Edge } from '../../../project/arrangement';
 import { TOUCH_HOLD_MS, TOUCH_SLOP_PX } from '../../../ui/components';
 import type { Id, Project, SongRegion } from '../../../project/types';
 import {
@@ -614,7 +614,3 @@ export class LaneController {
   }
 }
 
-/** The section under the song cursor (for the Loop key). */
-export function sectionAtBar(p: Project, bar: number) {
-  return sectionAt(p.arrangement.sections, bar);
-}

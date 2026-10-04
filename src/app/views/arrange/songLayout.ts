@@ -80,10 +80,6 @@ export function timelineBars(songBars: number, viewBars: number): number {
   return Math.min(MAX_SONG_BARS, Math.max(Math.ceil(songBars) + END_ROOM_BARS, Math.ceil(viewBars)));
 }
 
-/** The bars in view: [first, last) (fractional), for a scroll position and a viewport width. */
-export function visibleBars(scrollLeft: number, viewport: number, pxPerBar: number): [number, number] {
-  return [xToBar(scrollLeft, pxPerBar), xToBar(scrollLeft + viewport, pxPerBar)];
-}
 
 /* ------------------------------------------------------------------ */
 /* Zoom                                                                */
