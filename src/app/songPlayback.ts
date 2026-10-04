@@ -25,6 +25,17 @@ export function songPlayheadBar(): number | null {
   return seq.songBarAt(t.audibleTick());
 }
 
+/**
+ * The song bar (fractional, 0-based) that transport tick `tick` plays while
+ * the song plays or is paused (e.g. where a queued change lands, counted on
+ * the song's timeline); null otherwise.
+ */
+export function songBarAt(tick: number): number | null {
+  const seq = session.sequencer;
+  if (!seq || seq.mode.kind !== 'song' || !(seq.playing || seq.paused)) return null;
+  return seq.songBarAt(tick);
+}
+
 /** The song plays or is paused (the transport is in song mode). */
 export function useSongPlaying(): boolean {
   return useRuntime((s) => s.mode === 'song' && (s.playing || s.paused));
