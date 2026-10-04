@@ -395,13 +395,15 @@ describe('what an edit tells its caller and the store’s listeners', () => {
     expect(s.apply('song:Tempo', (d) => void (d.bpm = before + 1), { gesture: 'other' })).toEqual({ changed: true });
   });
 
-  it('commands pass it on: a part cell clicked off and on again in one gesture', async () => {
+  it('commands pass it on: a loop dragged along and back again in one gesture', async () => {
     const cmd = await import('../../src/state/commands');
     const p = createProject({ now: 0 });
-    p.arrangement = { tailSeconds: 1, blocks: [{ id: 'blk', sceneId: p.scenes[0].id, repeats: 1 }] };
+    const clip = createClip('Beat', 1);
+    p.tracks[0].clips[0] = clip;
+    p.arrangement = { tailSeconds: 1, regions: [{ id: 'rg', trackId: 't1', clipId: clip.id, start: 2, bars: 4, offset: 0 }], sections: [] };
     const s = new ProjectStore(p);
-    expect(cmd.setBlockPart(s, 'blk', 't1', null, 'cell').noStep).toBeUndefined();
-    expect(cmd.setBlockPart(s, 'blk', 't1', undefined, 'cell')).toMatchObject({ changed: true, noStep: true });
+    expect(cmd.moveRegions(s, ['rg'], 3, { gesture: 'drag' }).noStep).toBeUndefined();
+    expect(cmd.moveRegions(s, ['rg'], -3, { gesture: 'drag' })).toMatchObject({ changed: true, noStep: true });
     expect(s.canUndo()).toBe(false);
   });
 

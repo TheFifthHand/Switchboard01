@@ -1,50 +1,193 @@
 /**
- * Song arrangement: an ordered list of scene blocks with repeat counts,
- * optional names, per-part changes and song moves (see ArrangementBlock).
+ * The song (schema v4), built like GarageBand's tracks area: loops placed on
+ * each part's row (regions, see SongRegion) and named sections over the
+ * timeline (SongSection). The placement rules are pure and live in
+ * project/arrangement.ts, so the Song view's drag preview, playback, export
+ * and these commands agree: what the lane draws is what plays.
  *
- * Every command is one undo step. Several blocks are addressed by id and
- * keep their song order; "gap" positions count insertion points in the
- * current list (0 = before the first block, n = after the last).
+ * Every command is one undo step labelled "arrange:<Words>", with `display`
+ * words that name the clip, part or section ("Move Four Floor", "Lengthen
+ * Bounce", "Delete 3 loops"). Bad input is refused with nothing changed and
+ * no undo step; an edit that would change nothing leaves no step either.
+ * A shared `gesture` id merges a drag's calls into one undo step; deltas are
+ * always relative to where things are now. Every command leaves the song
+ * valid: regions inside the song's range, in whole bars, never overlapping
+ * on a part, sections never overlapping (validateProject finds nothing to
+ * fix). Positions and lengths are whole bars (integers).
  */
+import {
+  carve,
+  clampMove,
+  clipBarAt,
+  clipBarsOf,
+  duplicateRegions as duplicatePure,
+  insertTime,
+  mergeTouching,
+  moveRegions as movePure,
+  placeRegions,
+  placeSection,
+  regionClip,
+  regionEnd,
+  removeRegions as removePure,
+  removeTime,
+  resizeRegions as resizePure,
+  rowBars,
+  sceneRegions,
+  sectionRegions,
+  songBars,
+  sortRegions,
+  sortSections,
+  spanOf,
+  splitRegions as splitPure,
+  swapRegionClip,
+  type Edge,
+  type NewId,
+} from '../../project/arrangement';
 import { uid } from '../../project/factory';
 import {
-  BLOCK_MOVE_KINDS,
-  MAX_BLOCK_LABEL,
-  MAX_BLOCK_REPEATS,
+  MAX_SECTION_NAME,
+  MAX_SONG_BARS,
+  SONG_MOVE_KINDS,
   TICKS_PER_BAR,
-  type ArrangementBlock,
-  type BlockMove,
-  type BlockMoveKind,
+  type Clip,
   type Id,
   type Project,
+  type SongMove,
+  type SongMoveKind,
+  type SongRegion,
+  type SongSection,
+  type Track,
   type TrackRole,
 } from '../../project/types';
 import { VALIDATION_LIMITS } from '../../project/validate';
-import { blockBars, blockPart, blockParts, sameMaterial, sceneRow } from '../../project/arrangement';
 import type { ProjectStore } from '../projectStore';
-import { NOT_FOUND, clamp, cleanName, isFiniteNumber, partName, refuse, run, type CommandResult } from './common';
+import { NOT_FOUND, clamp, cleanName, deepEqual, isFiniteNumber, partName, refuse, run, type CommandResult } from './common';
 
-export const DEFAULT_BLOCK_REPEATS = 2;
+export type { Edge } from '../../project/arrangement';
 
-/** A song move without its identity (what templates and setBlockMoves take). */
-export interface BlockMoveTemplate {
-  kind: BlockMoveKind;
-  parts?: Id[];
+/* ------------------------------------------------------------------ */
+/* Results and shared rules                                            */
+/* ------------------------------------------------------------------ */
+
+/** A loop to put on the song: one of the part's clips from bar `start` for `bars` bars (`offset`: bars into the clip, default 0). */
+export interface RegionDraft {
+  trackId: Id;
+  clipId: Id;
+  start: number;
+  bars: number;
+  offset?: number;
 }
 
-/** A block without its identity: what the clipboard holds and what duplicates copy. */
-export interface BlockTemplate {
-  sceneId: Id;
-  repeats: number;
-  label?: string;
-  parts?: Record<Id, Id | null>;
-  moves?: BlockMoveTemplate[];
+export interface SongEditResult extends CommandResult {
+  /** The regions the edit made or moved, as they landed (see each command). */
+  ids?: Id[];
+  /** Regions it landed on, or cut, that were cut short, started later or split. */
+  trimmed?: number;
+  /** Regions that disappeared (under what landed, or taken out). */
+  removed?: number;
 }
 
-const LIMIT_MESSAGE = `The song already has as many blocks as it can hold (${VALIDATION_LIMITS.maxBlocks}).`;
+const newRegionId: NewId = () => uid('rg');
+const newSectionId = (): Id => uid('sec');
 
-function clampRep(r: unknown, fallback = 1): number {
-  return isFiniteNumber(r) ? clamp(Math.round(r), 1, MAX_BLOCK_REPEATS) : fallback;
+const TOO_LONG = `A song can be at most ${MAX_SONG_BARS} bars long.`;
+const WHOLE_BARS = 'Loops and sections start on a bar line and last whole bars.';
+const REGION_LIMIT = `The song already holds as many loops as it can (${VALIDATION_LIMITS.maxRegions}).`;
+const SECTION_LIMIT = `The song already has as many sections as it can (${VALIDATION_LIMITS.maxSections}).`;
+
+function isInt(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v);
+}
+
+function mod(a: number, n: number): number {
+  return ((a % n) + n) % n;
+}
+
+/** "1 bar", "4 bars". */
+function barsText(n: number): string {
+  return `${n} ${n === 1 ? 'bar' : 'bars'}`;
+}
+
+/** The regions with these ids, in song order (unknown ids and repeats are ignored). */
+function pickRegions(p: Project, ids: readonly Id[]): SongRegion[] {
+  if (!Array.isArray(ids)) return [];
+  const want = new Set(ids);
+  return p.arrangement.regions.filter((r) => want.has(r.id));
+}
+
+function findSection(p: Project, id: Id): SongSection | undefined {
+  return p.arrangement.sections.find((s) => s.id === id);
+}
+
+/** A clip anywhere in the project, with its part (clip ids are unique in a project). */
+function findClip(p: Project, clipId: Id): { track: Track; clip: Clip } | null {
+  for (const track of p.tracks) {
+    const clip = track.clips.find((c) => c?.id === clipId);
+    if (clip) return { track, clip };
+  }
+  return null;
+}
+
+/** What Undo calls a region: its clip's name (its part's when the clip has none). */
+function regionWords(p: Project, r: Pick<SongRegion, 'trackId' | 'clipId'>): string {
+  return regionClip(p, r)?.clip.name || partName(p, r.trackId);
+}
+
+/** "Four Floor" for one region, "3 loops" for several. */
+function loopsWords(p: Project, regions: readonly Pick<SongRegion, 'trackId' | 'clipId'>[]): string {
+  return regions.length === 1 ? regionWords(p, regions[0]) : `${regions.length} loops`;
+}
+
+/** A section name as stored: one line without spaces at either end, at most MAX_SECTION_NAME characters; null when nothing is left. */
+function cleanSectionName(name: string): string | null {
+  return cleanName(name, MAX_SECTION_NAME)?.trimEnd() || null;
+}
+
+function sectionName(name: string, fallback = 'Section'): string {
+  return cleanSectionName(name) ?? fallback;
+}
+
+/** What taking bars [from, to) out does to the regions there: those inside go, those across an edge are cut. */
+function gapChanges(regions: readonly SongRegion[], from: number, to: number): { trimmed: number; removed: number } {
+  let trimmed = 0;
+  let removed = 0;
+  for (const r of regions) {
+    if (regionEnd(r) <= from || r.start >= to) continue;
+    if (r.start >= from && regionEnd(r) <= to) removed++;
+    else trimmed++;
+  }
+  return { trimmed, removed };
+}
+
+interface SongChange {
+  regions?: SongRegion[];
+  sections?: SongSection[];
+  tailSeconds?: number;
+}
+
+/**
+ * Write a song change as one undo step (only the parts that differ): refused
+ * beyond the song's limits; nothing (and no step) when nothing would change.
+ */
+function commit(store: ProjectStore, p: Project, label: string, display: string, change: SongChange, gesture?: string): CommandResult {
+  const a = p.arrangement;
+  const regions = change.regions && !deepEqual(change.regions, a.regions) ? change.regions : null;
+  const sections = change.sections && !deepEqual(change.sections, a.sections) ? change.sections : null;
+  const tail = change.tailSeconds !== undefined && change.tailSeconds !== a.tailSeconds ? change.tailSeconds : null;
+  if (regions && regions.length > VALIDATION_LIMITS.maxRegions && regions.length > a.regions.length) return refuse('limit', REGION_LIMIT);
+  if (sections && sections.length > VALIDATION_LIMITS.maxSections && sections.length > a.sections.length) return refuse('limit', SECTION_LIMIT);
+  if (!regions && !sections && tail === null) return { changed: false };
+  return run(
+    store,
+    label,
+    (d) => {
+      if (regions) d.arrangement.regions = regions;
+      if (sections) d.arrangement.sections = sections;
+      if (tail !== null) d.arrangement.tailSeconds = tail;
+    },
+    gesture,
+    { display },
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -52,29 +195,30 @@ function clampRep(r: unknown, fallback = 1): number {
 /* ------------------------------------------------------------------ */
 
 /** What the song moves are called in menus and undo steps. */
-export const BLOCK_MOVE_NAMES: Readonly<Record<BlockMoveKind, string>> = {
+export const SONG_MOVE_NAMES: Readonly<Record<SongMoveKind, string>> = {
   fadeIn: 'Fade in',
   fadeOut: 'Fade out',
   filterRise: 'Filter rise',
   echoThrow: 'Echo throw',
 };
 
-/** Moves that act at a block's start; the others act across it or toward its end. */
-function startMove(kind: BlockMoveKind): boolean {
-  return kind === 'fadeIn';
+/** A song move without its identity (what setSectionMoves takes). */
+export interface SongMoveTemplate {
+  kind: SongMoveKind;
+  parts?: Id[];
 }
 
 /**
  * Moves cleaned for `p`: known kinds, one of each (the first wins), `parts`
  * limited to existing parts without repeats (fades never carry parts; an
  * empty list is left out: every melodic part). Ids are kept when `keepIds`
- * and present, else new.
+ * and given, else new.
  */
-function cleanMoves(p: Project, moves: readonly (BlockMoveTemplate & { id?: Id })[] | undefined, keepIds: boolean): BlockMove[] {
-  const out: BlockMove[] = [];
+function cleanMoves(p: Project, moves: readonly (SongMoveTemplate & { id?: Id })[] | undefined, keepIds: boolean): SongMove[] {
+  const out: SongMove[] = [];
   for (const m of moves ?? []) {
-    if (!m || !BLOCK_MOVE_KINDS.includes(m.kind) || out.some((x) => x.kind === m.kind)) continue;
-    const move: BlockMove = { id: keepIds && typeof m.id === 'string' ? m.id : uid('mv'), kind: m.kind };
+    if (!m || !SONG_MOVE_KINDS.includes(m.kind) || out.some((x) => x.kind === m.kind)) continue;
+    const move: SongMove = { id: keepIds && typeof m.id === 'string' ? m.id : uid('mv'), kind: m.kind };
     if (m.kind !== 'fadeIn' && m.kind !== 'fadeOut' && Array.isArray(m.parts)) {
       const parts = m.parts.filter((t, i, a) => typeof t === 'string' && p.tracks.some((x) => x.id === t) && a.indexOf(t) === i);
       if (parts.length) move.parts = parts;
@@ -84,398 +228,461 @@ function cleanMoves(p: Project, moves: readonly (BlockMoveTemplate & { id?: Id }
   return out;
 }
 
-function templateMoves(moves: readonly BlockMove[] | undefined): BlockMoveTemplate[] | undefined {
+/** Copies of moves with new ids (a copied section carries its own). */
+function copyMoves(moves: readonly SongMove[] | undefined): SongMove[] | undefined {
   if (!moves?.length) return undefined;
-  return moves.map((m) => (m.parts ? { kind: m.kind, parts: [...m.parts] } : { kind: m.kind }));
+  return moves.map((m) => (m.parts ? { id: uid('mv'), kind: m.kind, parts: [...m.parts] } : { id: uid('mv'), kind: m.kind }));
 }
 
-/** Deep copy of a block's musical content (no id). */
-export function blockTemplate(b: ArrangementBlock): BlockTemplate {
-  const t: BlockTemplate = { sceneId: b.sceneId, repeats: b.repeats };
-  if (b.label) t.label = b.label;
-  if (b.parts && Object.keys(b.parts).length) t.parts = { ...b.parts };
-  const moves = templateMoves(b.moves);
-  if (moves) t.moves = moves;
-  return t;
-}
-
-/** A new block (fresh ids) from a template, with part changes and moves that no longer apply removed. */
-function fromTemplate(p: Project, t: BlockTemplate): ArrangementBlock {
-  const block: ArrangementBlock = { id: uid('blk'), sceneId: t.sceneId, repeats: clampRep(t.repeats) };
-  const label = t.label ? cleanName(t.label, MAX_BLOCK_LABEL) : null;
-  if (label) block.label = label;
-  if (t.parts) {
-    const parts: Record<Id, Id | null> = {};
-    for (const [trackId, v] of Object.entries(t.parts)) {
-      if (!p.tracks.some((x) => x.id === trackId)) continue;
-      if (v !== null && (v === t.sceneId || !p.scenes.some((s) => s.id === v))) continue;
-      parts[trackId] = v;
-    }
-    if (Object.keys(parts).length) block.parts = parts;
-  }
-  const moves = cleanMoves(p, t.moves, false);
-  if (moves.length) block.moves = moves;
-  return block;
-}
-
-/** Detached copies of moves (same ids). */
-function copyMoves(moves: readonly BlockMove[]): BlockMove[] {
-  return moves.map((m) => (m.parts ? { ...m, parts: [...m.parts] } : { ...m }));
-}
-
-/** A block's moves that happen at its start (fade in) and those across it or toward its end (the rest). */
-function movesByEnd(moves: readonly BlockMove[] | undefined): { start: BlockMove[]; end: BlockMove[] } {
-  return { start: copyMoves((moves ?? []).filter((m) => startMove(m.kind))), end: copyMoves((moves ?? []).filter((m) => !startMove(m.kind))) };
-}
-
-/**
- * Share a block's moves out over the blocks that replace it (a song helper):
- * a move at the start (fade in) goes to the first, the others (fade out,
- * filter rise, echo throw) to the last, so each still happens where it did.
- * Ids are kept, so no move is doubled.
- */
-function shareMoves<T extends { moves?: BlockMove[] }>(moves: readonly BlockMove[] | undefined, pieces: T[]): T[] {
-  if (!moves?.length || !pieces.length) return pieces;
-  const { start, end } = movesByEnd(moves);
-  return pieces.map((x, i) => {
-    const mine = [...(i === 0 ? start : []), ...(i === pieces.length - 1 ? end : [])];
-    const out = { ...x };
-    if (mine.length) out.moves = mine;
-    else delete out.moves;
-    return out;
-  });
-}
-
-function clampGap(gap: number | undefined, n: number): number {
-  return gap === undefined || !Number.isFinite(gap) ? n : clamp(Math.round(gap), 0, n);
-}
-
-/** Ids that exist, in song order (duplicates and unknown ids dropped). */
-function inSongOrder(p: Project, ids: readonly Id[]): Id[] {
-  const want = new Set(ids);
-  return p.arrangement.blocks.filter((b) => want.has(b.id)).map((b) => b.id);
-}
-
-/* ------------------------------------------------------------------ */
-/* Add, remove, move, duplicate                                        */
-/* ------------------------------------------------------------------ */
-
-/** Add a block for a scene at `index` (default: the end). */
-export function addBlock(store: ProjectStore, sceneId: Id, index?: number, repeats = DEFAULT_BLOCK_REPEATS, gesture?: string): CommandResult & { blockId?: Id } {
-  const p = store.getState();
-  if (!p.scenes.some((s) => s.id === sceneId)) return NOT_FOUND('scene');
-  if (p.arrangement.blocks.length >= VALIDATION_LIMITS.maxBlocks) return refuse('limit', LIMIT_MESSAGE);
-  const at = clampGap(index, p.arrangement.blocks.length);
-  const block: ArrangementBlock = { id: uid('blk'), sceneId, repeats: clampRep(repeats, DEFAULT_BLOCK_REPEATS) };
-  // A shared gesture id makes several additions (e.g. "Add all scenes") one undo step.
-  const r = run(store, 'arrange:Add block', (d) => {
-    d.arrangement.blocks.splice(at, 0, block);
-  }, gesture);
-  return { ...r, blockId: block.id };
-}
-
-/**
- * Insert copies of `templates` as a group at insertion point `gap` (default:
- * the end). Templates whose scene no longer exists are skipped.
- */
-export function insertBlocks(store: ProjectStore, templates: readonly BlockTemplate[], gap?: number, label = 'arrange:Paste blocks'): CommandResult & { blockIds?: Id[]; skipped?: number } {
-  const p = store.getState();
-  const usable = templates.filter((t) => p.scenes.some((s) => s.id === t.sceneId));
-  const skipped = templates.length - usable.length;
-  if (!usable.length) return { ...refuse('empty', templates.length ? 'Those blocks played scenes that no longer exist.' : 'Nothing to add.'), skipped };
-  if (p.arrangement.blocks.length + usable.length > VALIDATION_LIMITS.maxBlocks) return refuse('limit', LIMIT_MESSAGE);
-  const at = clampGap(gap, p.arrangement.blocks.length);
-  const blocks = usable.map((t) => fromTemplate(p, t));
-  const r = run(store, label, (d) => {
-    d.arrangement.blocks.splice(at, 0, ...blocks);
-  });
-  return { ...r, blockIds: blocks.map((b) => b.id), skipped };
-}
-
-/**
- * Copies of the given blocks (in song order), inserted together at `gap`
- * (default: right after the last of them).
- */
-export function duplicateBlocks(store: ProjectStore, ids: readonly Id[], gap?: number): CommandResult & { blockIds?: Id[] } {
-  const p = store.getState();
-  const order = inSongOrder(p, ids);
-  if (!order.length) return NOT_FOUND('block');
-  const list = p.arrangement.blocks;
-  const last = list.findIndex((b) => b.id === order[order.length - 1]);
-  const templates = order.map((id) => blockTemplate(list.find((b) => b.id === id)!));
-  return insertBlocks(store, templates, gap ?? last + 1, order.length === 1 ? 'arrange:Duplicate block' : 'arrange:Duplicate blocks');
-}
-
-export function removeBlock(store: ProjectStore, blockId: Id): CommandResult {
-  if (!store.getState().arrangement.blocks.some((b) => b.id === blockId)) return NOT_FOUND('block');
-  return run(store, 'arrange:Remove block', (d) => {
-    d.arrangement.blocks = d.arrangement.blocks.filter((b) => b.id !== blockId);
-  });
-}
-
-/** Remove several blocks in one step (`opts.cut`: the step is called Cut, as the clipboard's Cut is). */
-export function removeBlocks(store: ProjectStore, ids: readonly Id[], opts: { cut?: boolean } = {}): CommandResult & { removed?: number } {
-  const order = inSongOrder(store.getState(), ids);
-  if (!order.length) return NOT_FOUND('block');
-  const gone = new Set(order);
-  const what = order.length === 1 ? 'block' : 'blocks';
-  const r = run(store, `arrange:${opts.cut ? 'Cut' : 'Remove'} ${what}`, (d) => {
-    d.arrangement.blocks = d.arrangement.blocks.filter((b) => !gone.has(b.id));
-  });
-  return { ...r, removed: order.length };
-}
-
-/** Move a block from one position to another (drag to reorder). */
-export function moveBlock(store: ProjectStore, fromIndex: number, toIndex: number): CommandResult {
-  const n = store.getState().arrangement.blocks.length;
-  if (!Number.isInteger(fromIndex) || fromIndex < 0 || fromIndex >= n || !Number.isInteger(toIndex)) return refuse('invalid', 'Unknown block position.');
-  const to = clamp(toIndex, 0, n - 1);
-  if (to === fromIndex) return { changed: false };
-  return run(store, 'arrange:Move block', (d) => {
-    const [b] = d.arrangement.blocks.splice(fromIndex, 1);
-    d.arrangement.blocks.splice(to, 0, b);
-  });
-}
-
-/**
- * The song order after moving `ids` (kept in their song order, side by side)
- * to insertion point `gap` of the current list. Pure; used by the command and
- * by the lane to preview a drag.
- */
-export function orderAfterMove<T extends { id: Id }>(list: readonly T[], ids: readonly Id[], gap: number): T[] {
-  const moving = new Set(ids);
-  const g = clampGap(gap, list.length);
-  const before = list.slice(0, g).filter((b) => !moving.has(b.id));
-  const after = list.slice(g).filter((b) => !moving.has(b.id));
-  return [...before, ...list.filter((b) => moving.has(b.id)), ...after];
-}
-
-/** Move several blocks together to insertion point `gap` (one undo step). */
-export function moveBlocks(store: ProjectStore, ids: readonly Id[], gap: number): CommandResult {
-  const p = store.getState();
-  const order = inSongOrder(p, ids);
-  if (!order.length) return NOT_FOUND('block');
-  if (!Number.isFinite(gap)) return refuse('invalid', 'Unknown block position.');
-  const next = orderAfterMove(p.arrangement.blocks, order, gap);
-  if (next.every((b, i) => b === p.arrangement.blocks[i])) return { changed: false };
-  const nextIds = next.map((b) => b.id);
-  return run(store, order.length === 1 ? 'arrange:Move block' : 'arrange:Move blocks', (d) => {
-    const byId = new Map(d.arrangement.blocks.map((b) => [b.id, b]));
-    d.arrangement.blocks = nextIds.map((id) => byId.get(id)!);
-  });
-}
-
-/* ------------------------------------------------------------------ */
-/* Length: repeats, split, join                                        */
-/* ------------------------------------------------------------------ */
-
-/** Repeats 1–MAX_BLOCK_REPEATS. A shared gesture id (an edge drag) makes one undo step. */
-export function setBlockRepeats(store: ProjectStore, blockId: Id, repeats: number, gesture?: string): CommandResult {
-  if (!store.getState().arrangement.blocks.some((b) => b.id === blockId)) return NOT_FOUND('block');
-  if (!isFiniteNumber(repeats)) return refuse('invalid', 'How many times a block plays must be a number.');
-  const v = clampRep(repeats);
-  return run(store, 'arrange:Change length', (d) => {
-    const b = d.arrangement.blocks.find((x) => x.id === blockId);
-    if (b) b.repeats = v;
-  }, gesture);
-}
-
-/**
- * Split a block after pass `afterPass` (1 ≤ afterPass < repeats): the block
- * keeps the first passes and a new block with the same material follows it.
- */
-export function splitBlock(store: ProjectStore, blockId: Id, afterPass: number): CommandResult & { blockId?: Id } {
-  const p = store.getState();
-  const i = p.arrangement.blocks.findIndex((b) => b.id === blockId);
-  if (i < 0) return NOT_FOUND('block');
-  const b = p.arrangement.blocks[i];
-  if (!Number.isInteger(afterPass) || afterPass < 1 || afterPass >= b.repeats) return refuse('invalid', b.repeats < 2 ? 'A block that plays once cannot be split.' : 'Split between two times the block plays.');
-  if (p.arrangement.blocks.length >= VALIDATION_LIMITS.maxBlocks) return refuse('limit', LIMIT_MESSAGE);
-  // The fade in stays on the first half; the moves toward the end go with the second.
-  const { start, end } = movesByEnd(b.moves);
-  const second = fromTemplate(p, { ...blockTemplate(b), moves: undefined, repeats: b.repeats - afterPass });
-  if (end.length) second.moves = end;
-  const r = run(store, 'arrange:Split block', (d) => {
-    const x = d.arrangement.blocks.find((y) => y.id === blockId)!;
-    x.repeats = afterPass;
-    if (start.length) x.moves = start;
-    else delete x.moves;
-    d.arrangement.blocks.splice(i + 1, 0, second);
-  });
-  return { ...r, blockId: second.id };
-}
-
-/** Why a block cannot be joined with the next one (a few words and the full reason), or null when it can. */
-export function joinProblemDetail(p: Project, blockId: Id): { short: string; text: string } | null {
-  const list = p.arrangement.blocks;
-  const i = list.findIndex((b) => b.id === blockId);
-  if (i < 0) return { short: 'Gone', text: 'That block no longer exists.' };
-  const next = list[i + 1];
-  if (!next) return { short: 'Last block', text: 'There is no block after this one.' };
-  if (!sameMaterial(list[i], next)) return { short: 'Not the same', text: 'Only neighbours that play the same scene with the same parts can be joined.' };
-  if (list[i].repeats + next.repeats > MAX_BLOCK_REPEATS) return { short: `Over ${MAX_BLOCK_REPEATS} times`, text: `Together they would play more than ${MAX_BLOCK_REPEATS} times, the most one block holds.` };
-  return null;
-}
-
-/** Why a block cannot be joined with the next one, or null when it can. */
-export function joinProblem(p: Project, blockId: Id): string | null {
-  return joinProblemDetail(p, blockId)?.text ?? null;
-}
-
-/**
- * Join a block with the next one (same scene and parts): one block with both
- * blocks' passes. The joined block starts like the first (its fade in) and
- * ends like the second (its fade out, filter rise, echo throw).
- */
-export function joinWithNext(store: ProjectStore, blockId: Id): CommandResult {
-  const p = store.getState();
-  const problem = joinProblem(p, blockId);
-  if (problem) return refuse(p.arrangement.blocks.some((b) => b.id === blockId) ? 'invalid' : 'not-found', problem);
-  const i = p.arrangement.blocks.findIndex((b) => b.id === blockId);
-  const moves = [...movesByEnd(p.arrangement.blocks[i].moves).start, ...movesByEnd(p.arrangement.blocks[i + 1].moves).end];
-  return run(store, 'arrange:Join blocks', (d) => {
-    const at = d.arrangement.blocks.findIndex((x) => x.id === blockId);
-    const [next] = d.arrangement.blocks.splice(at + 1, 1);
-    const x = d.arrangement.blocks[at];
-    x.repeats += next.repeats;
-    if (moves.length) x.moves = moves;
-    else delete x.moves;
-  });
-}
-
-/* ------------------------------------------------------------------ */
-/* Scene, name, parts                                                  */
-/* ------------------------------------------------------------------ */
-
-/** Point a block at a different scene (part changes that now equal the scene are dropped). */
-export function setBlockScene(store: ProjectStore, blockId: Id, sceneId: Id): CommandResult {
-  const p = store.getState();
-  if (!p.arrangement.blocks.some((b) => b.id === blockId)) return NOT_FOUND('block');
-  if (!p.scenes.some((s) => s.id === sceneId)) return NOT_FOUND('scene');
-  return run(store, 'arrange:Change block scene', (d) => {
-    const b = d.arrangement.blocks.find((x) => x.id === blockId);
-    if (!b) return;
-    b.sceneId = sceneId;
-    if (b.parts) {
-      for (const k of Object.keys(b.parts)) if (b.parts[k] === sceneId) delete b.parts[k];
-      if (!Object.keys(b.parts).length) delete b.parts;
-    }
-  });
-}
-
-/** Name a block ("" or only spaces removes the name: the block shows its scene name again). */
-export function renameBlock(store: ProjectStore, blockId: Id, label: string): CommandResult {
-  const b = store.getState().arrangement.blocks.find((x) => x.id === blockId);
-  if (!b) return NOT_FOUND('block');
-  const v = cleanName(label, MAX_BLOCK_LABEL);
-  if ((v ?? undefined) === b.label) return { changed: false };
-  return run(store, 'arrange:Rename block', (d) => {
-    const x = d.arrangement.blocks.find((y) => y.id === blockId);
-    if (!x) return;
-    if (v) x.label = v;
-    else delete x.label;
-  });
-}
-
-/**
- * What one part plays in one block: a scene id (that scene's clip for this
- * part), null (silent here), or undefined (follow the block's scene again).
- */
-export function setBlockPart(store: ProjectStore, blockId: Id, trackId: Id, choice: Id | null | undefined, gesture?: string): CommandResult {
-  const p = store.getState();
-  const b = p.arrangement.blocks.find((x) => x.id === blockId);
-  if (!b) return NOT_FOUND('block');
-  if (!p.tracks.some((t) => t.id === trackId)) return NOT_FOUND('part');
-  if (typeof choice === 'string' && !p.scenes.some((s) => s.id === choice)) return NOT_FOUND('scene');
-  const v = choice === b.sceneId ? undefined : choice;
-  const cur = b.parts && Object.prototype.hasOwnProperty.call(b.parts, trackId) ? b.parts[trackId] : undefined;
-  if (cur === v) return { changed: false };
-  return run(store, 'arrange:Change part in block', (d) => {
-    const x = d.arrangement.blocks.find((y) => y.id === blockId);
-    if (!x) return;
-    const parts = { ...(x.parts ?? {}) };
-    if (v === undefined) delete parts[trackId];
-    else parts[trackId] = v;
-    if (Object.keys(parts).length) x.parts = parts;
-    else delete x.parts;
-  }, gesture);
-}
-
-/**
- * How layering a scene into a block treats the parts the block already plays:
- * - 'fill' (the default): only parts that are silent in the block (its scene
- *   has no clip for them, or what they were set to has none) take the
- *   layered scene's clip; parts that play something, and parts switched Off
- *   on purpose, keep what they do;
- * - 'replace': every part with a clip in the layered scene plays it here.
- */
-export type LayerMode = 'fill' | 'replace';
-
-/**
- * The parts layering scene `sceneId` into block `b` changes, in track order
- * (pure; the lane previews exactly this). Empty for the block's own scene.
- */
-export function layerChanges(p: Project, b: ArrangementBlock, sceneId: Id, mode: LayerMode = 'fill'): Id[] {
-  const row = p.scenes.findIndex((s) => s.id === sceneId);
-  if (row < 0 || sceneId === b.sceneId) return [];
-  const ownRow = p.scenes.findIndex((s) => s.id === b.sceneId);
-  const out: Id[] = [];
-  for (const t of p.tracks) {
-    if (!t.clips[row]) continue;
-    const has = !!b.parts && Object.prototype.hasOwnProperty.call(b.parts, t.id);
-    const cur = has ? b.parts![t.id] : undefined;
-    if (cur === sceneId) continue;
-    if (mode === 'fill') {
-      // Off on purpose stays off; a part that plays something keeps it.
-      if (cur === null) continue;
-      const curRow = cur === undefined ? ownRow : p.scenes.findIndex((s) => s.id === cur);
-      const sounds = curRow >= 0 ? !!t.clips[curRow] : cur !== undefined && ownRow >= 0 && !!t.clips[ownRow];
-      if (sounds) continue;
-    }
-    out.push(t.id);
-  }
+/** Section `s` carrying `moves` (none: the field is left out). */
+function withMoves(s: SongSection, moves: SongMove[] | undefined): SongSection {
+  const out: SongSection = { id: s.id, name: s.name, start: s.start, bars: s.bars };
+  if (moves?.length) out.moves = moves;
   return out;
 }
 
 /**
- * Layer a scene onto a block (one undo step): in 'fill' mode (the default)
- * the parts that are silent in the block play that scene's clips; in
- * 'replace' mode every part with a clip in that scene plays it here. Other
- * parts keep what they play. Returns how many parts changed.
+ * Set a section's song moves (one undo step): at most one of each kind (the
+ * first wins), parts limited to existing parts. An empty list removes them.
+ * Moves already on the section keep their ids.
  */
-export function layerScene(store: ProjectStore, blockId: Id, sceneId: Id, mode: LayerMode = 'fill'): CommandResult & { parts?: number } {
+export function setSectionMoves(store: ProjectStore, id: Id, moves: readonly (SongMoveTemplate & { id?: Id })[]): CommandResult {
   const p = store.getState();
-  const b = p.arrangement.blocks.find((x) => x.id === blockId);
-  if (!b) return NOT_FOUND('block');
-  const row = p.scenes.findIndex((s) => s.id === sceneId);
-  if (row < 0) return NOT_FOUND('scene');
-  if (sceneId === b.sceneId) return { ...refuse('empty', 'This block already plays that scene.'), parts: 0 };
-  const changes = layerChanges(p, b, sceneId, mode);
-  if (!changes.length) {
-    const more = mode === 'fill' && layerChanges(p, b, sceneId, 'replace').length > 0;
-    return { ...refuse('empty', more ? 'Nothing to fill: every part that scene has a clip for already plays in this block. Replace the parts to use its clips instead.' : 'That scene adds nothing new to this block.'), parts: 0 };
-  }
-  const next: Record<Id, Id | null> = { ...(b.parts ?? {}) };
-  for (const id of changes) next[id] = sceneId;
-  const parts = changes.length;
-  const r = run(store, mode === 'replace' ? 'arrange:Replace parts with a scene' : 'arrange:Layer scene', (d) => {
-    const x = d.arrangement.blocks.find((y) => y.id === blockId);
-    if (!x) return;
-    if (Object.keys(next).length) x.parts = next;
-    else delete x.parts;
-  });
-  return { ...r, parts };
+  const s = findSection(p, id);
+  if (!s) return NOT_FOUND('section');
+  if (!Array.isArray(moves)) return refuse('invalid', 'The song moves could not be read.');
+  if (moves.some((m) => !m || !SONG_MOVE_KINDS.includes(m.kind))) return refuse('invalid', 'That is not a song move.');
+  const own = new Map((s.moves ?? []).map((m) => [m.kind, m.id]));
+  const next = cleanMoves(p, moves.map((m) => ({ ...m, id: own.get(m.kind) })), true);
+  return commit(store, p, 'arrange:Change song moves', `Change song moves in ${s.name}`, { sections: p.arrangement.sections.map((x) => (x.id === id ? withMoves(x, next) : x)) });
 }
 
-/** Every part follows the block's scene again. */
-export function resetBlockParts(store: ProjectStore, blockId: Id): CommandResult {
-  const b = store.getState().arrangement.blocks.find((x) => x.id === blockId);
-  if (!b) return NOT_FOUND('block');
-  if (!b.parts) return { changed: false };
-  return run(store, 'arrange:Reset parts in block', (d) => {
-    const x = d.arrangement.blocks.find((y) => y.id === blockId);
-    if (x) delete x.parts;
+/**
+ * Add a move of `kind` to a section, or remove it when the section has one
+ * (one undo step, "Add Fade in" / "Remove Fade in"). `parts` (filter rise,
+ * echo throw) lists the parts it acts on; left out: every melodic part.
+ */
+export function toggleSectionMove(store: ProjectStore, id: Id, kind: SongMoveKind, parts?: readonly Id[]): CommandResult & { on?: boolean } {
+  const p = store.getState();
+  const s = findSection(p, id);
+  if (!s) return NOT_FOUND('section');
+  if (!SONG_MOVE_KINDS.includes(kind)) return refuse('invalid', 'That is not a song move.');
+  const has = (s.moves ?? []).some((m) => m.kind === kind);
+  const next = has ? (s.moves ?? []).filter((m) => m.kind !== kind) : [...(s.moves ?? []), ...cleanMoves(p, [{ kind, ...(parts ? { parts: [...parts] } : {}) }], false)];
+  const r = commit(store, p, 'arrange:Change song moves', `${has ? 'Remove' : 'Add'} ${SONG_MOVE_NAMES[kind]}`, { sections: p.arrangement.sections.map((x) => (x.id === id ? withMoves(x, next) : x)) });
+  return { ...r, on: !has };
+}
+
+/* ------------------------------------------------------------------ */
+/* Placing loops                                                       */
+/* ------------------------------------------------------------------ */
+
+/** A region from a draft, or why it cannot be placed. */
+function regionFromDraft(p: Project, dr: RegionDraft): SongRegion | CommandResult {
+  if (!dr || typeof dr !== 'object') return refuse('invalid', 'The loop could not be read.');
+  if (!p.tracks.some((t) => t.id === dr.trackId)) return NOT_FOUND('part');
+  const rc = regionClip(p, dr);
+  if (!rc) return NOT_FOUND('clip');
+  const offset = dr.offset ?? 0;
+  if (!isInt(dr.start) || dr.start < 0 || !isInt(dr.bars) || dr.bars < 1 || !isInt(offset)) return refuse('invalid', WHOLE_BARS);
+  if (dr.start + dr.bars > MAX_SONG_BARS) return refuse('limit', TOO_LONG);
+  return { id: newRegionId(), trackId: dr.trackId, clipId: dr.clipId, start: dr.start, bars: dr.bars, offset: mod(offset, rc.clip.bars) };
+}
+
+/** Regions put on the song as they are, the later winning (pure; shared by the adding commands). */
+function landRegions(p: Project, placed: readonly SongRegion[]): { regions: SongRegion[]; ids: Id[]; trimmed: number; removed: number } {
+  const res = placeRegions(p, p.arrangement.regions, placed, { newId: newRegionId });
+  const here = new Set(res.regions.map((r) => r.id));
+  return { regions: res.regions, ids: placed.map((r) => r.id).filter((id) => here.has(id)), trimmed: res.trimmed, removed: res.removed };
+}
+
+/**
+ * Put loops on the song (one undo step). Each plays one of its part's clips
+ * from `start` for `bars` bars, `offset` bars into the clip (default 0;
+ * wrapped into the clip). Like a drop in GarageBand, they win: the regions
+ * already where they land are cut short, start later, split or go (`trimmed`,
+ * `removed`); among the drafts a later one wins over an earlier one. `ids`:
+ * the new regions. Refused (nothing changes) when a part or clip is gone, a
+ * position is not whole bars, or the song would pass MAX_SONG_BARS.
+ */
+export function addRegions(store: ProjectStore, drafts: readonly RegionDraft[], opts: { display?: string } = {}): SongEditResult {
+  const p = store.getState();
+  if (!Array.isArray(drafts) || !drafts.length) return refuse('empty', 'Nothing to add to the song.');
+  const placed: SongRegion[] = [];
+  for (const dr of drafts) {
+    const r = regionFromDraft(p, dr);
+    if ('changed' in r) return r;
+    placed.push(r);
+  }
+  const res = landRegions(p, placed);
+  const r = commit(store, p, 'arrange:Add loops', opts.display ?? `Add ${loopsWords(p, placed)}`, { regions: res.regions });
+  return { ...r, ids: res.ids, trimmed: res.trimmed, removed: res.removed };
+}
+
+/** Put one clip on the song from bar `start` for `bars` bars (default: the clip's length). One undo step, "Add Four Floor". */
+export function addClipToSong(store: ProjectStore, trackId: Id, clipId: Id, start: number, bars?: number): SongEditResult {
+  const p = store.getState();
+  if (!p.tracks.some((t) => t.id === trackId)) return NOT_FOUND('part');
+  const rc = regionClip(p, { trackId, clipId });
+  if (!rc) return NOT_FOUND('clip');
+  return addRegions(store, [{ trackId, clipId, start, bars: bars ?? rc.clip.bars }], { display: `Add ${rc.clip.name}` });
+}
+
+/**
+ * Put a scene row on the song from bar `start`: a region for every part that
+ * has a clip in that row, all `bars` long (default: the scene's length, its
+ * longest clip), each clip from its start. With `section` (the default), a
+ * section named after the scene labels those bars too, when no section
+ * overlaps them already (`sectionId`). One undo step, "Add Groove".
+ */
+export function addSceneToSong(store: ProjectStore, row: number, start: number, opts: { bars?: number; section?: boolean } = {}): SongEditResult & { sectionId?: Id } {
+  const p = store.getState();
+  const scene = isInt(row) ? p.scenes[row] : undefined;
+  if (!scene) return NOT_FOUND('scene');
+  const bars = opts.bars ?? rowBars(p, row);
+  if (!isInt(start) || start < 0 || !isInt(bars) || bars < 1) return refuse('invalid', WHOLE_BARS);
+  if (start + bars > MAX_SONG_BARS) return refuse('limit', TOO_LONG);
+  const placed = sceneRegions(p, row, start, newRegionId, bars);
+  if (!placed.length) return refuse('empty', `${scene.name} has no clips yet: make some in Play first.`);
+  const res = landRegions(p, placed);
+  let sections = p.arrangement.sections;
+  let sectionId: Id | undefined;
+  if (opts.section !== false && !sections.some((s) => s.start < start + bars && regionEnd(s) > start)) {
+    sectionId = newSectionId();
+    sections = sortSections([...sections, { id: sectionId, name: sectionName(scene.name), start, bars }]);
+  }
+  const r = commit(store, p, 'arrange:Add scene to song', `Add ${scene.name}`, { regions: res.regions, sections });
+  return { ...r, ids: res.ids, trimmed: res.trimmed, removed: res.removed, ...(r.changed && sectionId ? { sectionId } : {}) };
+}
+
+/**
+ * "Make a song from my scenes": only for an empty song. Every scene row that
+ * has clips, in order, each played twice its length, with a section named
+ * after each scene. One undo step; `ids`: the new regions.
+ */
+export function fillSongFromScenes(store: ProjectStore): SongEditResult {
+  const p = store.getState();
+  if (songBars(p) > 0) return refuse('invalid', 'The song already has music: a song is made from the scenes only when it is empty.');
+  const regions: SongRegion[] = [];
+  const sections: SongSection[] = [];
+  let at = 0;
+  p.scenes.forEach((scene, row) => {
+    if (!p.tracks.some((t) => t.clips[row])) return;
+    const bars = 2 * rowBars(p, row);
+    if (at + bars > MAX_SONG_BARS) return;
+    regions.push(...sceneRegions(p, row, at, newRegionId, bars));
+    sections.push({ id: newSectionId(), name: sectionName(scene.name), start: at, bars });
+    at += bars;
   });
+  if (!regions.length) return refuse('empty', 'Your scenes have no clips yet: make some in Play first.');
+  const r = commit(store, p, 'arrange:Make a song from scenes', 'Make a song from my scenes', { regions: sortRegions(p, regions), sections });
+  return { ...r, ids: regions.map((x) => x.id) };
+}
+
+/* ------------------------------------------------------------------ */
+/* Editing loops                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Move regions `ids` `delta` bars along their rows (limited to the song's
+ * range); with `copy`, copies (new ids) land there and the originals stay.
+ * What they land on is carved (see placeRegions). `ids` in the result: the
+ * moved regions (or the copies). One undo step, "Move Four Floor" / "Copy 3
+ * loops"; a drag passes the same `gesture` on every call (after a copy, it
+ * moves the copies by their ids).
+ */
+export function moveRegions(store: ProjectStore, ids: readonly Id[], delta: number, opts: { copy?: boolean; gesture?: string } = {}): SongEditResult {
+  const p = store.getState();
+  const picked = pickRegions(p, ids);
+  if (!picked.length) return NOT_FOUND('loop');
+  if (!isInt(delta)) return refuse('invalid', 'Loops move by whole bars.');
+  const pickedIds = picked.map((r) => r.id);
+  const d = clampMove(p.arrangement.regions, pickedIds, delta);
+  if (d === 0) return { changed: false, ids: opts.copy ? [] : pickedIds };
+  const res = movePure(p, p.arrangement.regions, pickedIds, d, { copy: opts.copy, newId: newRegionId });
+  const verb = opts.copy ? 'Copy' : 'Move';
+  const r = commit(store, p, `arrange:${verb} loops`, `${verb} ${loopsWords(p, picked)}`, { regions: res.regions }, opts.gesture);
+  return { ...r, ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed };
+}
+
+/**
+ * Drag one edge of regions `ids` by `delta` bars (each kept at least one bar
+ * long and inside the song). The end edge changes the length (the clip
+ * repeats to fill it); the start edge keeps the music where it is in time (the
+ * region starts earlier or later in its clip). Neighbours it grows over are
+ * carved. `ids`: the resized regions. One undo step, "Lengthen Bounce" /
+ * "Shorten 2 loops".
+ */
+export function resizeRegions(store: ProjectStore, ids: readonly Id[], edge: Edge, delta: number, gesture?: string): SongEditResult {
+  const p = store.getState();
+  const picked = pickRegions(p, ids);
+  if (!picked.length) return NOT_FOUND('loop');
+  if (edge !== 'start' && edge !== 'end') return refuse('invalid', 'Drag the start or the end of a loop.');
+  if (!isInt(delta)) return refuse('invalid', 'Loops change length by whole bars.');
+  const pickedIds = picked.map((r) => r.id);
+  if (delta === 0) return { changed: false, ids: pickedIds };
+  const res = resizePure(p, p.arrangement.regions, pickedIds, edge, delta, newRegionId);
+  const longer = edge === 'end' ? delta > 0 : delta < 0;
+  const r = commit(store, p, 'arrange:Resize loops', `${longer ? 'Lengthen' : 'Shorten'} ${loopsWords(p, picked)}`, { regions: res.regions }, gesture);
+  return { ...r, ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed };
+}
+
+/** Cut regions `ids` in two at bar `atBar` (those that cross it). `ids` in the result: the new right pieces. One undo step. */
+export function splitRegions(store: ProjectStore, ids: readonly Id[], atBar: number): SongEditResult {
+  const p = store.getState();
+  const picked = pickRegions(p, ids);
+  if (!picked.length) return NOT_FOUND('loop');
+  if (!isInt(atBar)) return refuse('invalid', 'Loops split on a bar line.');
+  const crossing = picked.filter((r) => r.start < atBar && atBar < regionEnd(r));
+  if (!crossing.length) return refuse('invalid', 'Split inside a loop: pick a bar between its start and its end.');
+  const res = splitPure(p, p.arrangement.regions, crossing.map((r) => r.id), atBar, newRegionId);
+  const r = commit(store, p, 'arrange:Split loops', `Split ${loopsWords(p, crossing)}`, { regions: res.regions });
+  return { ...r, ids: res.made.map((x) => x.id) };
+}
+
+/** Take regions `ids` out of the song (one undo step, "Delete Four Floor"; `cut`: the step says Cut, as the clipboard's Cut does). */
+export function removeRegions(store: ProjectStore, ids: readonly Id[], opts: { cut?: boolean } = {}): SongEditResult {
+  const p = store.getState();
+  const picked = pickRegions(p, ids);
+  if (!picked.length) return NOT_FOUND('loop');
+  const verb = opts.cut ? 'Cut' : 'Delete';
+  const r = commit(store, p, `arrange:${verb} loops`, `${verb} ${loopsWords(p, picked)}`, { regions: removePure(p.arrangement.regions, picked.map((x) => x.id)) });
+  return { ...r, removed: r.changed ? picked.length : 0 };
+}
+
+/**
+ * Copy regions `ids` right after themselves (GarageBand's Duplicate): the
+ * copies keep their places relative to each other and start where the
+ * selection ends. Refused when there is no room before MAX_SONG_BARS.
+ * `ids` in the result: the copies.
+ */
+export function duplicateRegions(store: ProjectStore, ids: readonly Id[]): SongEditResult {
+  const p = store.getState();
+  const picked = pickRegions(p, ids);
+  if (!picked.length) return NOT_FOUND('loop');
+  const span = spanOf(picked)!;
+  if (span[1] + (span[1] - span[0]) > MAX_SONG_BARS) return refuse('limit', `There is no room after ${loopsWords(p, picked)}: ${TOO_LONG}`);
+  const res = duplicatePure(p, p.arrangement.regions, picked.map((x) => x.id), newRegionId);
+  const r = commit(store, p, 'arrange:Duplicate loops', `Duplicate ${loopsWords(p, picked)}`, { regions: res.regions });
+  return { ...r, ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed };
+}
+
+/** Copied loops (UI state): each item's part, clip, length, offset and `at`, bars after the first item's start. */
+export interface RegionClipboard {
+  items: { trackId: Id; clipId: Id; at: number; bars: number; offset: number }[];
+}
+
+/** Regions `ids` as clipboard items (pure), or null when none exists. */
+export function copyRegions(p: Project, ids: readonly Id[]): RegionClipboard | null {
+  const picked = pickRegions(p, ids);
+  if (!picked.length) return null;
+  const first = spanOf(picked)![0];
+  return { items: picked.map((r) => ({ trackId: r.trackId, clipId: r.clipId, at: r.start - first, bars: r.bars, offset: r.offset })) };
+}
+
+/**
+ * Paste copied loops with the first one at bar `atBar` (the others keep
+ * their distances). A loop whose clip moved to another part since lands on
+ * that part's row; one whose clip is gone is skipped (`skipped`). They win
+ * where they land. `ids` in the result: the pasted regions. One undo step.
+ */
+export function pasteRegions(store: ProjectStore, clip: RegionClipboard, atBar: number): SongEditResult & { skipped?: number } {
+  const p = store.getState();
+  if (!clip || !Array.isArray(clip.items) || !clip.items.length) return refuse('empty', 'Nothing to paste.');
+  if (!isInt(atBar) || atBar < 0) return refuse('invalid', WHOLE_BARS);
+  const placed: SongRegion[] = [];
+  let skipped = 0;
+  for (const it of clip.items) {
+    if (!it || !isInt(it.at) || it.at < 0 || !isInt(it.bars) || it.bars < 1 || !isInt(it.offset)) return refuse('invalid', 'The copied loops could not be read.');
+    const where = findClip(p, it.clipId);
+    if (!where) {
+      skipped++;
+      continue;
+    }
+    const start = atBar + it.at;
+    if (start + it.bars > MAX_SONG_BARS) return refuse('limit', `There is no room to paste there: ${TOO_LONG}`);
+    placed.push({ id: newRegionId(), trackId: where.track.id, clipId: it.clipId, start, bars: it.bars, offset: mod(it.offset, where.clip.bars) });
+  }
+  if (!placed.length) return { ...refuse('empty', 'The copied loops played clips that have been deleted since.'), skipped };
+  const res = landRegions(p, placed);
+  const r = commit(store, p, 'arrange:Paste loops', `Paste ${loopsWords(p, placed)}`, { regions: res.regions });
+  return { ...r, ids: res.ids, trimmed: res.trimmed, removed: res.removed, skipped };
+}
+
+/** Region `id` plays another of its part's clips instead, from that clip's start (one undo step). */
+export function setRegionClip(store: ProjectStore, id: Id, clipId: Id): SongEditResult {
+  const p = store.getState();
+  const region = p.arrangement.regions.find((r) => r.id === id);
+  if (!region) return NOT_FOUND('loop');
+  const rc = regionClip(p, { trackId: region.trackId, clipId });
+  if (!rc) return refuse('invalid', `That clip is not one of ${partName(p, region.trackId)}’s: a loop plays a clip of its own part.`);
+  if (clipId === region.clipId) return { changed: false, ids: [id] };
+  const r = commit(store, p, 'arrange:Change loop clip', `Play ${rc.clip.name} instead of ${regionWords(p, region)}`, { regions: swapRegionClip(p.arrangement.regions, id, clipId) });
+  return { ...r, ids: [id] };
+}
+
+/* ------------------------------------------------------------------ */
+/* Time: insert and remove bars                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Insert `bars` empty bars at bar `at`: everything from there on moves later
+ * (a loop crossing `at` is split there, `trimmed`; a section crossing it
+ * grows). Refused when the song would pass MAX_SONG_BARS, or when nothing
+ * comes after `at`. One undo step.
+ */
+export function insertBars(store: ProjectStore, at: number, bars: number): SongEditResult {
+  const p = store.getState();
+  if (!isInt(at) || at < 0 || !isInt(bars) || bars < 1) return refuse('invalid', 'Insert whole bars at a bar line.');
+  const end = songBars(p);
+  if (at >= end) return refuse('empty', 'Nothing comes after that bar, so there is nothing to move.');
+  if (end + bars > MAX_SONG_BARS) return refuse('limit', `There is no room for ${barsText(bars)} more: ${TOO_LONG}`);
+  const te = insertTime(p, p.arrangement.regions, p.arrangement.sections, at, bars, newRegionId);
+  const split = p.arrangement.regions.filter((r) => r.start < at && at < regionEnd(r)).length;
+  const r = commit(store, p, 'arrange:Insert bars', `Insert ${barsText(bars)}`, te);
+  return { ...r, trimmed: split };
+}
+
+/**
+ * Take bars [from, to) out of the song: what lay there goes and everything
+ * after moves earlier to close the gap (a loop crossing it keeps its parts on
+ * either side, joined when they play on as one; sections shrink or go).
+ * `removed`: loops that went; `trimmed`: loops that were cut. One undo step.
+ */
+export function removeBars(store: ProjectStore, from: number, to: number): SongEditResult {
+  const p = store.getState();
+  if (!isInt(from) || !isInt(to) || from < 0 || to <= from) return refuse('invalid', 'Remove whole bars: pick where they start and end.');
+  if (from >= songBars(p)) return refuse('empty', 'There is nothing there to remove.');
+  const te = removeTime(p, p.arrangement.regions, p.arrangement.sections, from, to, newRegionId);
+  const r = commit(store, p, 'arrange:Remove bars', `Remove ${barsText(to - from)}`, te);
+  return { ...r, ...gapChanges(p.arrangement.regions, from, to) };
+}
+
+/* ------------------------------------------------------------------ */
+/* Sections                                                            */
+/* ------------------------------------------------------------------ */
+
+/** "Section N" with the first N (from the number of sections + 1) no section is called. */
+function newSectionName(p: Project): string {
+  const taken = new Set(p.arrangement.sections.map((s) => s.name.toLowerCase()));
+  for (let n = p.arrangement.sections.length + 1; ; n++) if (!taken.has(`section ${n}`)) return `Section ${n}`;
+}
+
+/**
+ * Add a section over bars [start, start + bars) named `name` (default
+ * "Section N"). Sections it overlaps are cut short, start later or go (see
+ * placeSection). One undo step; `sectionId`: the new section.
+ */
+export function addSection(store: ProjectStore, start: number, bars: number, name?: string): SongEditResult & { sectionId?: Id } {
+  const p = store.getState();
+  if (!isInt(start) || start < 0 || !isInt(bars) || bars < 1) return refuse('invalid', WHOLE_BARS);
+  if (start + bars > MAX_SONG_BARS) return refuse('limit', TOO_LONG);
+  const given = name !== undefined ? cleanSectionName(name) : null;
+  const s: SongSection = { id: newSectionId(), name: given ?? newSectionName(p), start, bars };
+  const r = commit(store, p, 'arrange:Add section', `Add ${s.name}`, { sections: placeSection(p.arrangement.sections, s) });
+  return { ...r, ...(r.changed ? { sectionId: s.id } : {}) };
+}
+
+/** Rename a section (one undo step). An empty name is refused. */
+export function renameSection(store: ProjectStore, id: Id, name: string): CommandResult {
+  const p = store.getState();
+  const s = findSection(p, id);
+  if (!s) return NOT_FOUND('section');
+  const v = cleanSectionName(name);
+  if (!v) return refuse('invalid', 'A section needs a name.');
+  return commit(store, p, 'arrange:Rename section', `Rename ${s.name} to ${v}`, { sections: p.arrangement.sections.map((x) => (x.id === id ? { ...x, name: v } : x)) });
+}
+
+/**
+ * Drag one edge of a section by `delta` bars. A section is a label: this
+ * never moves music. It stays at least one bar long and stops at its
+ * neighbours (sections never overlap). One undo step per `gesture`.
+ */
+export function resizeSection(store: ProjectStore, id: Id, edge: Edge, delta: number, gesture?: string): CommandResult {
+  const p = store.getState();
+  const sorted = sortSections(p.arrangement.sections);
+  const i = sorted.findIndex((s) => s.id === id);
+  if (i < 0) return NOT_FOUND('section');
+  if (edge !== 'start' && edge !== 'end') return refuse('invalid', 'Drag the start or the end of a section.');
+  if (!isInt(delta)) return refuse('invalid', 'Sections change length by whole bars.');
+  const s = sorted[i];
+  const end = regionEnd(s);
+  let start = s.start;
+  let stop = end;
+  if (edge === 'end') stop = clamp(end + delta, s.start + 1, i + 1 < sorted.length ? sorted[i + 1].start : MAX_SONG_BARS);
+  else start = clamp(s.start + delta, i > 0 ? regionEnd(sorted[i - 1]) : 0, end - 1);
+  if (start === s.start && stop === end) return { changed: false };
+  const longer = stop - start > s.bars;
+  return commit(store, p, 'arrange:Resize section', `${longer ? 'Lengthen' : 'Shorten'} ${s.name}`, { sections: p.arrangement.sections.map((x) => (x.id === id ? { ...x, start, bars: stop - start } : x)) }, gesture);
+}
+
+/**
+ * Move a section `delta` bars, with the regions that start inside it (as
+ * moveRegions moves them: they win where they land); with `copy`, a copy of
+ * the section (its name and moves) and of those regions lands there instead.
+ * Sections it lands on are cut short, start later or go. Limited to the
+ * song's range. `sectionId`: the moved section or the copy; `ids`: the
+ * moved or copied regions. One undo step per `gesture`.
+ */
+export function moveSection(store: ProjectStore, id: Id, delta: number, opts: { copy?: boolean; gesture?: string } = {}): SongEditResult & { sectionId?: Id } {
+  const p = store.getState();
+  const s = findSection(p, id);
+  if (!s) return NOT_FOUND('section');
+  if (!isInt(delta)) return refuse('invalid', 'Sections move by whole bars.');
+  const owned = sectionRegions(p.arrangement.regions, s);
+  const span = spanOf([s, ...owned])!;
+  const d = clamp(delta, -span[0], MAX_SONG_BARS - span[1]);
+  if (d === 0) return opts.copy ? { changed: false } : { changed: false, sectionId: id, ids: owned.map((r) => r.id) };
+  const res = owned.length
+    ? movePure(p, p.arrangement.regions, owned.map((r) => r.id), d, { copy: opts.copy, newId: newRegionId })
+    : { regions: p.arrangement.regions, moved: [] as SongRegion[], trimmed: 0, removed: 0 };
+  const landed: SongSection = opts.copy ? withMoves({ ...s, id: newSectionId() }, copyMoves(s.moves)) : s;
+  const sections = placeSection(p.arrangement.sections, { ...landed, start: s.start + d });
+  const verb = opts.copy ? 'Copy' : 'Move';
+  const r = commit(store, p, `arrange:${verb} section`, `${verb} ${s.name}`, { regions: res.regions, sections }, opts.gesture);
+  return { ...r, sectionId: landed.id, ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed };
+}
+
+/**
+ * Play a section twice: its length is inserted right after it (insertTime)
+ * and a copy of the section (its name and moves) fills those bars with a
+ * copy of what plays in it: the part of every region that lies inside the
+ * section, in the same phase, so the copy sounds like the section.
+ * `sectionId`: the copy; `ids`: the copied regions. One undo step.
+ */
+export function duplicateSection(store: ProjectStore, id: Id): SongEditResult & { sectionId?: Id } {
+  const p = store.getState();
+  const s = findSection(p, id);
+  if (!s) return NOT_FOUND('section');
+  const end = regionEnd(s);
+  if (songBars(p) + s.bars > MAX_SONG_BARS) return refuse('limit', `There is no room to play ${s.name} twice: ${TOO_LONG}`);
+  const te = insertTime(p, p.arrangement.regions, p.arrangement.sections, end, s.bars, newRegionId);
+  const copies: SongRegion[] = [];
+  for (const r of te.regions) {
+    if (regionEnd(r) <= s.start || r.start >= end) continue;
+    const from = Math.max(r.start, s.start);
+    copies.push({ ...r, id: newRegionId(), start: from + s.bars, bars: Math.min(regionEnd(r), end) - from, offset: clipBarAt(r, clipBarsOf(p, r), from) });
+  }
+  const regions = placeRegions(p, te.regions, copies, { newId: newRegionId }).regions;
+  const copy = withMoves({ id: newSectionId(), name: s.name, start: end, bars: s.bars }, copyMoves(s.moves));
+  const r = commit(store, p, 'arrange:Duplicate section', `Duplicate ${s.name}`, { regions, sections: placeSection(te.sections, copy) });
+  return { ...r, ids: copies.map((x) => x.id), ...(r.changed ? { sectionId: copy.id } : {}) };
+}
+
+/**
+ * Delete a section. Without `withMusic` only the label (and its moves) goes;
+ * the music stays. With it, its bars are taken out of the song (removeTime):
+ * the loops there go and everything after moves earlier (`removed`: loops
+ * that went, `trimmed`: loops cut at its edges). One undo step.
+ */
+export function removeSection(store: ProjectStore, id: Id, opts: { withMusic?: boolean } = {}): SongEditResult {
+  const p = store.getState();
+  const s = findSection(p, id);
+  if (!s) return NOT_FOUND('section');
+  if (!opts.withMusic) return commit(store, p, 'arrange:Delete section', `Delete ${s.name}`, { sections: p.arrangement.sections.filter((x) => x.id !== id) });
+  const te = removeTime(p, p.arrangement.regions, p.arrangement.sections, s.start, regionEnd(s), newRegionId);
+  const r = commit(store, p, 'arrange:Delete section with its music', `Delete ${s.name} and its music`, te);
+  return { ...r, ...gapChanges(p.arrangement.regions, s.start, regionEnd(s)) };
 }
 
 /* ------------------------------------------------------------------ */
@@ -492,33 +699,23 @@ export function resetBlockParts(store: ProjectStore, blockId: Id): CommandResult
  */
 export const BUILD_ORDER: readonly TrackRole[] = ['texture', 'pad', 'chords', 'lead', 'sampler', 'percussion', 'bass', 'drums'];
 
-/** The parts a breakdown switches off (where they sound). */
+/** The parts a breakdown takes out of a section. */
 export const BREAKDOWN_ROLES: readonly TrackRole[] = ['drums', 'percussion', 'bass'];
 
 /**
- * - 'build': the block is split into its passes and parts come in one at a
- *   time (pass i plays the first ceil((i+1)·k/n) of its k sounding parts);
- * - 'strip': the reverse: every part first, then they drop out one at a time
- *   (the last pass keeps at least one);
- * - 'breakdown': the drums, percussion and bass that sound in the block are
- *   switched off.
+ * - 'build': parts come in one at a time across the section, in BUILD_ORDER;
+ * - 'strip': the reverse: every part first, then they drop out one at a time;
+ * - 'breakdown': the drums, percussion and bass leave the section.
  */
 export type ShapeKind = 'build' | 'strip' | 'breakdown';
 
-export interface ShapeProblem {
-  /** A few words (the menu item's hint). */
-  short: string;
-  /** The full reason. */
-  text: string;
-}
-
-/** The parts that sound in a block (a clip plays), in build order. */
-export function soundingInBuildOrder(p: Project, b: ArrangementBlock): Id[] {
+/** The parts that play somewhere in bars [from, to) of `regions`, in build order (pure). */
+export function soundingInBuildOrder(p: Project, regions: readonly SongRegion[], from: number, to: number): Id[] {
   const rank = (role: TrackRole) => {
     const i = BUILD_ORDER.indexOf(role);
     return i < 0 ? BUILD_ORDER.length : i;
   };
-  const sounding = new Set(blockParts(p, b).filter((x) => x.clip !== null).map((x) => x.trackId));
+  const sounding = new Set(regions.filter((r) => r.start < to && regionEnd(r) > from).map((r) => r.trackId));
   return p.tracks
     .map((t, i) => ({ id: t.id, rank: rank(t.role), i }))
     .filter((t) => sounding.has(t.id))
@@ -526,446 +723,137 @@ export function soundingInBuildOrder(p: Project, b: ArrangementBlock): Id[] {
     .map((t) => t.id);
 }
 
-/**
- * Which parts play in each pass (pure): for 'build', pass i (0-based) plays
- * the first ceil((i+1)·k/n) of the k parts in `order`; for 'strip', the same
- * sets in reverse pass order.
- */
-export function shapePasses(order: readonly Id[], passes: number, kind: 'build' | 'strip'): Id[][] {
-  const n = Math.max(1, Math.round(passes));
-  const k = order.length;
-  const build = Array.from({ length: n }, (_, i) => order.slice(0, Math.ceil(((i + 1) * k) / n)));
-  return kind === 'build' ? build : build.reverse();
-}
-
-function breakdownParts(p: Project, b: ArrangementBlock): { off: Id[]; left: number } {
-  const roles = new Set<TrackRole>(BREAKDOWN_ROLES);
-  const sounding = blockParts(p, b).filter((x) => x.clip !== null);
-  const off = sounding.filter((x) => roles.has(p.tracks.find((t) => t.id === x.trackId)?.role ?? 'lead')).map((x) => x.trackId);
-  return { off, left: sounding.length - off.length };
-}
-
-/**
- * Blocks that play `parts` of block `b` for `passes` of its passes: the pass
- * keeps its length in bars (when the parts left are shorter, it plays more
- * often, so the song's timing does not change), split into blocks of at most
- * MAX_BLOCK_REPEATS passes. Null when the parts left cannot fill those bars
- * exactly (a 3-bar clip in a 4-bar pass): whole passes only, and the song
- * must keep its length.
- */
-function shapedBlocks(p: Project, b: ArrangementBlock, parts: Record<Id, Id | null>, passes: number, passBars: number): Omit<ArrangementBlock, 'id'>[] | null {
-  const draft: ArrangementBlock = { id: b.id, sceneId: b.sceneId, repeats: 1, parts };
-  const bars = blockBars(p, draft);
-  const total = passes * passBars;
-  if (total % bars !== 0) return null;
-  let repeats = total / bars;
-  const out: Omit<ArrangementBlock, 'id'>[] = [];
-  while (repeats > 0) {
-    const r = Math.min(MAX_BLOCK_REPEATS, repeats);
-    const x: Omit<ArrangementBlock, 'id'> = { sceneId: b.sceneId, repeats: r };
-    if (Object.keys(parts).length) x.parts = { ...parts };
-    out.push(x);
-    repeats -= r;
-  }
+/** Bars in [lo, hi) where region `r`'s clip starts again. */
+function clipStarts(r: SongRegion, cb: number, lo: number, hi: number): number[] {
+  const out: number[] = [];
+  for (let b = lo + mod(-clipBarAt(r, cb, lo), cb); b < hi; b += cb) out.push(b);
   return out;
 }
 
-/* Helper labels: "Lift · build 1/4" ... "Lift · build 4/4", "Lift · breakdown". */
-const HELPER_WORDS: Record<ShapeKind, string> = { build: 'build', strip: 'strip', breakdown: 'breakdown' };
-const HELPER_SUFFIX = / · (?:build|strip|breakdown)(?: \d+\/\d+)?$/;
-const COUNTER = / \d+\/\d+$/;
-
-/** A block's name as shown in the lane: its label, else its scene's name. */
-export function blockDisplayName(p: Project, b: ArrangementBlock): string {
-  return b.label || p.scenes.find((s) => s.id === b.sceneId)?.name || 'Block';
+/** The candidate nearest `target`; a tie goes to the later one when `later`, else to the earlier. */
+function nearest(candidates: readonly number[], target: number, later: boolean): number {
+  let best = candidates[0];
+  for (const c of candidates) {
+    const d = Math.abs(c - target);
+    const bd = Math.abs(best - target);
+    if (d < bd || (d === bd && (later ? c > best : c < best))) best = c;
+  }
+  return best;
 }
 
-/** Labels for `n` blocks a helper made from a block named `name` (an earlier helper's suffix is replaced). */
-export function helperLabels(name: string, kind: ShapeKind, n: number): string[] {
-  const base = name.replace(HELPER_SUFFIX, '') || name;
-  return Array.from({ length: n }, (_, i) => {
-    const suffix = ` · ${HELPER_WORDS[kind]}${n > 1 ? ` ${i + 1}/${n}` : ''}`;
-    return `${base.slice(0, MAX_BLOCK_LABEL - suffix.length).trimEnd()}${suffix}`;
-  });
+interface ShapePlan {
+  regions: SongRegion[];
+  /** The parts whose regions were cut. */
+  parts: Id[];
+  trimmed: number;
+  removed: number;
 }
 
 /**
- * The blocks that belong together with `label` (song order): those whose name
- * (label, else scene name) is the same, counting a song helper's numbered
- * blocks as one ("Lift · build 2/4" finds "Lift · build 1/4" to "4/4"). Pure;
- * the lane uses it to select a section as one.
+ * What a song helper does to bars [from, to) of `regions` (pure; L = to −
+ * from, k parts playing there in build order). Build: part i comes in near
+ * bar from + i·L/k, where its clip starts (the bars before are cut from its
+ * regions, so each starts later by whole clip lengths and stays in phase).
+ * Strip: part i drops out near bar to − i·L/k, where its clip has just
+ * played through (the bars after are cut up to `to`; music after it stays).
+ * Breakdown: the drums, percussion and bass are cut out of the bars.
  */
-export function blocksWithLabel(p: Project, label: string): Id[] {
-  const group = (name: string) => name.replace(COUNTER, '');
-  const want = group(cleanName(label, MAX_BLOCK_LABEL) ?? '');
-  if (!want) return [];
-  return p.arrangement.blocks.filter((b) => group(blockDisplayName(p, b)) === want).map((b) => b.id);
+function shapePlan(p: Project, regions: readonly SongRegion[], from: number, to: number, kind: ShapeKind): ShapePlan {
+  const L = to - from;
+  const order = soundingInBuildOrder(p, regions, from, to);
+  const beat = new Set<TrackRole>(BREAKDOWN_ROLES);
+  const k = order.length;
+  const cut = new Set<Id>();
+  let trimmed = 0;
+  let removed = 0;
+  const out: SongRegion[] = [];
+  for (const r of regions) {
+    const i = order.indexOf(r.trackId);
+    const s0 = Math.max(r.start, from);
+    const e0 = Math.min(regionEnd(r), to);
+    let gap: [number, number] | null = null;
+    if (i >= 0 && s0 < e0) {
+      const cb = clipBarsOf(p, r);
+      if (kind === 'breakdown') {
+        if (beat.has(p.tracks.find((t) => t.id === r.trackId)!.role)) gap = [s0, e0];
+      } else if (kind === 'build') {
+        const target = from + Math.round((i * L) / k);
+        if (target >= e0) gap = [s0, e0];
+        else if (target > s0) {
+          const c = nearest([s0, ...clipStarts(r, cb, s0 + 1, e0)], target, true);
+          if (c > s0) gap = [s0, c];
+        }
+      } else {
+        const target = to - Math.round((i * L) / k);
+        if (target <= s0) gap = [s0, e0];
+        else if (target < e0) {
+          const c = nearest([...clipStarts(r, cb, s0 + 1, e0), e0], target, false);
+          if (c < e0) gap = [c, e0];
+        }
+      }
+    }
+    if (!gap) {
+      out.push(r);
+      continue;
+    }
+    cut.add(r.trackId);
+    const pieces = carve(r, gap[0], gap[1], clipBarsOf(p, r), newRegionId);
+    if (pieces.length) trimmed++;
+    else removed++;
+    out.push(...pieces);
+  }
+  return { regions: sortRegions(p, out), parts: order.filter((id) => cut.has(id)), trimmed, removed };
 }
 
-/**
- * What a song helper makes of block `b` (pure): the blocks that replace it
- * (without ids) and how many parts it shapes; `uneven` names the first part
- * set that cannot fill its passes exactly (the helper is then refused, so the
- * song never changes length behind the user's back).
- */
-function shapePlan(p: Project, b: ArrangementBlock, kind: ShapeKind): { shaped: Omit<ArrangementBlock, 'id'>[]; parts: number; uneven: { clipBars: number; passBars: number } | null } {
-  const plan = shapePlanParts(p, b, kind);
-  if (plan.uneven || !plan.shaped.length) return plan;
-  // Named after the block, numbered, so a build-up reads as one section; the block's moves keep their place.
-  const labels = helperLabels(blockDisplayName(p, b), kind, plan.shaped.length);
-  const shaped = shareMoves(b.moves, plan.shaped.map((x, i) => ({ ...x, label: labels[i] })));
-  return { ...plan, shaped };
-}
-
-function shapePlanParts(p: Project, b: ArrangementBlock, kind: ShapeKind): { shaped: Omit<ArrangementBlock, 'id'>[]; parts: number; uneven: { clipBars: number; passBars: number } | null } {
-  const passBars = blockBars(p, b);
-  const base = { ...(b.parts ?? {}) };
-  const uneven = (parts: Record<Id, Id | null>) => ({ clipBars: blockBars(p, { id: b.id, sceneId: b.sceneId, repeats: 1, parts }), passBars });
+/** Why a song helper would do nothing to bars [from, to) of `regions`, in plain words, or null. */
+function shapeProblemFor(p: Project, regions: readonly SongRegion[], from: number, to: number, kind: ShapeKind): string | null {
+  const order = soundingInBuildOrder(p, regions, from, to);
+  if (!order.length) return 'No part plays here.';
   if (kind === 'breakdown') {
-    const { off } = breakdownParts(p, b);
-    for (const t of off) base[t] = null;
-    const shaped = shapedBlocks(p, b, base, clampRep(b.repeats), passBars);
-    return shaped ? { shaped, parts: off.length, uneven: null } : { shaped: [], parts: off.length, uneven: uneven(base) };
+    const roles = new Set<TrackRole>(BREAKDOWN_ROLES);
+    const beat = order.filter((id) => roles.has(p.tracks.find((t) => t.id === id)!.role));
+    if (!beat.length) return 'No drums, percussion or bass play here.';
+    if (beat.length === order.length) return 'Only drums, percussion and bass play here: a breakdown would leave silence.';
+    return null;
   }
-  const order = soundingInBuildOrder(p, b);
-  const sets = shapePasses(order, clampRep(b.repeats), kind);
-  // Neighbouring passes with the same parts are one block.
-  const runs: { set: Id[]; passes: number }[] = [];
-  for (const s of sets) {
-    const last = runs[runs.length - 1];
-    if (last && last.set.length === s.length) last.passes += 1;
-    else runs.push({ set: s, passes: 1 });
-  }
-  const shaped: Omit<ArrangementBlock, 'id'>[] = [];
-  for (const run of runs) {
-    const x = { ...base };
-    for (const t of order) if (!run.set.includes(t)) x[t] = null;
-    const made = shapedBlocks(p, b, x, run.passes, passBars);
-    if (!made) return { shaped: [], parts: order.length, uneven: uneven(x) };
-    shaped.push(...made);
-  }
-  return { shaped, parts: order.length, uneven: null };
-}
-
-/** Why a song helper cannot shape a block (a few words and the full reason), or null when it can. */
-export function shapeProblem(p: Project, blockId: Id, kind: ShapeKind): ShapeProblem | null {
-  const b = p.arrangement.blocks.find((x) => x.id === blockId);
-  if (!b) return { short: 'Gone', text: 'That block no longer exists.' };
-  return shapeProblemFor(p, b, kind);
-}
-
-function shapeProblemFor(p: Project, b: ArrangementBlock, kind: ShapeKind): ShapeProblem | null {
-  if (sceneRow(p, b.sceneId) < 0) return { short: 'Scene missing', text: 'The scene this block played was deleted.' };
-  if (kind === 'breakdown') {
-    const { off, left } = breakdownParts(p, b);
-    if (!off.length) return { short: 'No beat or bass', text: 'No drums, percussion or bass play in this block.' };
-    if (!left) return { short: 'Nothing left', text: 'Only drums, percussion and bass play here: a breakdown would leave silence.' };
-  } else {
-    const k = soundingInBuildOrder(p, b).length;
-    if (clampRep(b.repeats) < 2) return { short: 'Plays once', text: 'The block plays once: make it play at least 2 times first.' };
-    if (k === 0) return { short: 'Nothing plays', text: 'No part plays in this block.' };
-    if (k === 1) return { short: 'One part', text: `Only one part plays in this block: there is nothing to ${kind === 'build' ? 'bring in' : 'drop out'} one at a time.` };
-  }
-  const { uneven } = shapePlan(p, b, kind);
-  if (uneven) {
-    const lengths = `Its clips have different lengths (${uneven.clipBars} and ${uneven.passBars} bars)`;
-    const text =
-      kind === 'breakdown'
-        ? `${lengths}: without the drums and bass the rest would not fill the block exactly, and the song would change length.`
-        : `${lengths}, so the repeats would not line up and the song would change length.`;
-    return { short: 'Uneven clips', text };
+  if (order.length === 1) return `Only one part plays here: there is nothing to ${kind === 'build' ? 'bring in' : 'drop out'} one at a time.`;
+  if (!shapePlan(p, regions, from, to, kind).parts.length) {
+    return `The clips here are as long as the section, so the parts cannot ${kind === 'build' ? 'come in' : 'drop out'} one at a time: make the section longer first.`;
   }
   return null;
 }
 
+/** Why `kind` would do nothing to section `id`, in plain words, or null when it can shape it. */
+export function shapeProblem(p: Project, id: Id, kind: ShapeKind): string | null {
+  const s = findSection(p, id);
+  if (!s) return 'That section no longer exists.';
+  return shapeProblemFor(p, p.arrangement.regions, s.start, regionEnd(s), kind);
+}
+
+const SHAPE_WORDS: Record<ShapeKind, string> = { build: 'Build up', strip: 'Strip down', breakdown: 'Breakdown' };
+
 /**
- * Shape a block with a song helper (one undo step). Build up and strip down
- * split the block into its passes, switch parts off pass by pass (parts that
- * are silent in the block stay silent) and join neighbouring passes that end
- * up with the same parts again; breakdown switches off the block's sounding
- * drums, percussion and bass. The first resulting block keeps the block's id.
- * Every change is a per-part change, so it shows in the part cells and plays
- * at once. The song keeps its length exactly: when the parts left could not
- * fill a pass (uneven clip lengths), the helper is refused. The new blocks are
- * named after the block and numbered ("Lift · build 1/4" to "4/4",
- * "Lift · breakdown"); its fade in stays on the first, its other moves go to
- * the last.
+ * Shape a section with a song helper (one undo step, "Build up Drop", "Strip
+ * down Outro", "Breakdown in Break"): build up (parts come in one at a time),
+ * strip down (they drop out one at a time) or breakdown (drums, percussion
+ * and bass leave). Only regions are cut, at clip boundaries, so everything
+ * stays in phase and the song keeps its length. Refused, saying why
+ * (shapeProblem), when it would do nothing. `ids`: the regions now playing in
+ * the section.
  */
-export function shapeBlock(store: ProjectStore, blockId: Id, kind: ShapeKind): CommandResult & { blockIds?: Id[]; parts?: number } {
+export function shapeSection(store: ProjectStore, id: Id, kind: ShapeKind): SongEditResult {
   const p = store.getState();
-  const i = p.arrangement.blocks.findIndex((b) => b.id === blockId);
-  if (i < 0) return NOT_FOUND('block');
-  const problem = shapeProblem(p, blockId, kind);
-  if (problem) return refuse('invalid', problem.text);
-  const b = p.arrangement.blocks[i];
-  const { shaped, parts } = shapePlan(p, b, kind);
-  if (p.arrangement.blocks.length - 1 + shaped.length > VALIDATION_LIMITS.maxBlocks) return refuse('limit', LIMIT_MESSAGE);
-  const out: ArrangementBlock[] = shaped.map((x, j) => ({ ...x, id: j === 0 ? b.id : uid('blk') }));
-  const label = kind === 'build' ? 'arrange:Build up' : kind === 'strip' ? 'arrange:Strip down' : 'arrange:Breakdown';
-  const r = run(store, label, (d) => {
-    const at = d.arrangement.blocks.findIndex((x) => x.id === blockId);
-    if (at >= 0) d.arrangement.blocks.splice(at, 1, ...out);
-  });
-  return { ...r, blockIds: out.map((x) => x.id), parts };
-}
-
-/** Effect tail appended to exports, 0–10 seconds. */
-export function setTailSeconds(store: ProjectStore, seconds: number, gesture?: string): CommandResult {
-  if (!isFiniteNumber(seconds)) return refuse('invalid', 'The tail length must be a number.');
-  const v = clamp(seconds, 0, 10);
-  return run(store, 'arrange:Change tail length', (d) => {
-    d.arrangement.tailSeconds = v;
-  }, gesture);
-}
-
-/* ------------------------------------------------------------------ */
-/* Parts across several blocks                                         */
-/* ------------------------------------------------------------------ */
-
-/** "Drums off", "Drums back", "Drums plays Lift": what a part choice does, for undo steps and messages. */
-function partChoiceWords(p: Project, trackId: Id, choice: Id | null | undefined): string {
-  const name = partName(p, trackId);
-  if (choice === null) return `${name} off`;
-  if (choice === undefined) return `${name} back`;
-  return `${name} plays ${p.scenes.find((s) => s.id === choice)?.name ?? 'another scene'}`;
-}
-
-/**
- * What one part plays in several blocks at once (one undo step; Undo says
- * "Drums off in 4 blocks"): a scene id, null (silent) or undefined (follow
- * each block's scene). Blocks where nothing changes are left as they are.
- * Returns how many blocks changed.
- */
-export function setBlocksPart(store: ProjectStore, blockIds: readonly Id[], trackId: Id, choice: Id | null | undefined, gesture?: string): CommandResult & { blocks?: number } {
-  const p = store.getState();
-  const order = inSongOrder(p, blockIds);
-  if (!order.length) return NOT_FOUND('block');
-  if (!p.tracks.some((t) => t.id === trackId)) return NOT_FOUND('part');
-  if (typeof choice === 'string' && !p.scenes.some((s) => s.id === choice)) return NOT_FOUND('scene');
-  const changes = new Map<Id, Id | null | undefined>();
-  for (const id of order) {
-    const b = p.arrangement.blocks.find((x) => x.id === id)!;
-    const v = choice === b.sceneId ? undefined : choice;
-    const cur = b.parts && Object.prototype.hasOwnProperty.call(b.parts, trackId) ? b.parts[trackId] : undefined;
-    if (cur !== v) changes.set(id, v);
-  }
-  if (!changes.size) return { changed: false, blocks: 0 };
-  const where = changes.size === 1 ? `in ${blockDisplayName(p, p.arrangement.blocks.find((b) => changes.has(b.id))!)}` : `in ${changes.size} blocks`;
-  const r = run(store, 'arrange:Change part in blocks', (d) => {
-    for (const x of d.arrangement.blocks) {
-      if (!changes.has(x.id)) continue;
-      const v = changes.get(x.id);
-      const parts = { ...(x.parts ?? {}) };
-      if (v === undefined) delete parts[trackId];
-      else parts[trackId] = v;
-      if (Object.keys(parts).length) x.parts = parts;
-      else delete x.parts;
-    }
-  }, gesture, { display: `${partChoiceWords(p, trackId, choice)} ${where}` });
-  return { ...r, blocks: changes.size };
-}
-
-/**
- * Switch a part off in every block of the song where it plays (`on` false),
- * or bring it back everywhere it was switched off (`on` true; clips layered
- * in from other scenes stay). One undo step ("Drums off everywhere").
- */
-export function setPartEverywhere(store: ProjectStore, trackId: Id, on: boolean): CommandResult & { blocks?: number } {
-  const p = store.getState();
-  const track = p.tracks.find((t) => t.id === trackId);
-  if (!track) return NOT_FOUND('part');
-  if (!p.arrangement.blocks.length) return refuse('empty', 'The song has no blocks yet.');
-  const isOff = (b: ArrangementBlock) => !!b.parts && Object.prototype.hasOwnProperty.call(b.parts, trackId) && b.parts[trackId] === null;
-  const plays = (b: ArrangementBlock) => sceneRow(p, b.sceneId) >= 0 && blockPart(p, b, track).clip !== null;
-  const touched = p.arrangement.blocks.filter((b) => (on ? isOff(b) : plays(b))).map((b) => b.id);
-  if (!touched.length) return { changed: false, blocks: 0 };
-  const set = new Set(touched);
-  const name = partName(p, trackId);
-  const r = run(store, 'arrange:Change part everywhere', (d) => {
-    for (const x of d.arrangement.blocks) {
-      if (!set.has(x.id)) continue;
-      const parts = { ...(x.parts ?? {}) };
-      if (on) delete parts[trackId];
-      else parts[trackId] = null;
-      if (Object.keys(parts).length) x.parts = parts;
-      else delete x.parts;
-    }
-  }, undefined, { display: on ? `${name} back on everywhere` : `${name} off everywhere` });
-  return { ...r, blocks: touched.length };
-}
-
-/* ------------------------------------------------------------------ */
-/* A recorded take as song blocks                                      */
-/* ------------------------------------------------------------------ */
-
-export interface TakeBlocksPlan {
-  /** The blocks, in order. */
-  blocks: BlockTemplate[];
-  /** Some stretch did not fill whole passes of its scene (it was rounded, or left out when under half a pass). */
-  rounded: boolean;
-  /** What a block cannot hold and was left out: played notes, and knob, macro, mute, tempo, swing and volume moves. */
-  ignored: { notes: number; knobs: number };
-  /**
-   * Scenes the take launched that have been deleted since (their names as the
-   * take knew them): what played them was left out (a stretch of such a scene
-   * makes no block; a part playing one counts as off).
-   */
-  deletedScenes: string[];
-}
-
-const KNOB_EVENTS = new Set(['macro', 'param', 'mute', 'tempo', 'swing', 'master']);
-
-/**
- * How a recorded take becomes song blocks (pure). The take's scene launches,
- * pad launches and Stop All mark stretches; each stretch becomes a block of
- * the scene launched last (before the first launch, the row most parts were
- * playing), and a part that plays something else there becomes a part change:
- * another row's clip layered in, or switched off. Neighbouring stretches with
- * the same material are one block. A stretch plays whole passes of its
- * block, rounded from the take's timing (shorter than half a pass: left out),
- * and silence is left out. The take's snapshot gives only the timing and which
- * scene (by id) was launched; the blocks play the project's clips as they are
- * now. A scene deleted since is left out and named in `deletedScenes`. Null
- * when there is no such take.
- */
-export function takeToBlocks(p: Project, takeId: Id): TakeBlocksPlan | null {
-  const perf = p.performances.find((x) => x.id === takeId);
-  if (!perf) return null;
-  const snap = perf.snapshot;
-  const start = perf.startTick;
-  const end = perf.endTick;
-  const ignored = { notes: 0, knobs: 0 };
-  for (const e of perf.events) {
-    if (e.t < start || e.t >= end) continue;
-    if (e.type === 'noteOn') ignored.notes++;
-    else if (KNOB_EVENTS.has(e.type)) ignored.knobs++;
-  }
-
-  // The scene of a row of the take, as the project has it now (by id: rows may have moved since).
-  // A scene deleted since is left out and reported, never guessed by position.
-  const deleted = new Set<string>();
-  const sceneOfRow = (row: number): Id | null => {
-    const s = snap.scenes[row];
-    if (!s) return null;
-    if (p.scenes.some((x) => x.id === s.id)) return s.id;
-    deleted.add(s.name);
-    return null;
-  };
-  const playing = new Map<Id, number | null>(snap.tracks.map((t) => [t.id, null]));
-  for (const e of snap.launcher) if (playing.has(e.trackId)) playing.set(e.trackId, e.playing ? e.playing.slot : null);
-  const rowCount = (row: number) => [...playing.values()].filter((v) => v === row).length;
-  // Before any scene launch, the take's "scene" is the row most parts play (the first such row on a tie).
-  let mainRow: number | null = null;
-  for (let row = 0; row < snap.scenes.length; row++) if (rowCount(row) > 0 && (mainRow === null || rowCount(row) > rowCount(mainRow))) mainRow = row;
-
-  type Stretch = { from: number; to: number; template: BlockTemplate | null };
-  const stretches: Stretch[] = [];
-  const templateNow = (): BlockTemplate | null => {
-    if (mainRow === null) return null;
-    const sceneId = sceneOfRow(mainRow);
-    if (!sceneId) return null;
-    const row = sceneRow(p, sceneId);
-    const parts: Record<Id, Id | null> = {};
-    let sounds = false;
-    for (const t of p.tracks) {
-      const slot = playing.get(t.id) ?? null;
-      const plays = slot === null ? null : sceneOfRow(slot);
-      if (plays === sceneId) {
-        if (t.clips[row]) sounds = true;
-      } else if (plays) {
-        // Another row's clip: layered in.
-        parts[t.id] = plays;
-        if (t.clips[sceneRow(p, plays)]) sounds = true;
-      } else if (t.clips[row]) {
-        // Stopped (or playing a scene deleted since) while the scene has a clip for it: off here.
-        parts[t.id] = null;
-      }
-    }
-    if (!sounds) return null;
-    return Object.keys(parts).length ? { sceneId, repeats: 1, parts } : { sceneId, repeats: 1 };
-  };
-
-  const changes = perf.events
-    .map((e, i) => ({ e, i }))
-    .filter(({ e }) => (e.type === 'launch' || e.type === 'scene' || e.type === 'stopAll') && e.atTick >= start && e.atTick < end)
-    .sort((a, b) => ((a.e as { atTick: number }).atTick - (b.e as { atTick: number }).atTick) || a.i - b.i);
-  let from = start;
-  let k = 0;
-  while (from < end) {
-    // Everything that lands at `from` applies before the stretch starts.
-    while (k < changes.length && (changes[k].e as { atTick: number }).atTick <= from) {
-      const e = changes[k].e;
-      if (e.type === 'scene') {
-        mainRow = e.row;
-        for (const t of snap.tracks) playing.set(t.id, t.clips[e.row] ? e.row : null);
-      } else if (e.type === 'stopAll') {
-        for (const id of playing.keys()) playing.set(id, null);
-      } else if (e.type === 'launch' && playing.has(e.trackId)) {
-        playing.set(e.trackId, e.slot);
-      }
-      k++;
-    }
-    const to = k < changes.length ? Math.min(end, (changes[k].e as { atTick: number }).atTick) : end;
-    stretches.push({ from, to, template: templateNow() });
-    from = to;
-  }
-
-  // Neighbours with the same material are one stretch.
-  const same = (a: BlockTemplate | null, b: BlockTemplate | null) =>
-    a === b || (!!a && !!b && sameMaterial({ id: '', sceneId: a.sceneId, repeats: 1, parts: a.parts }, { id: '', sceneId: b.sceneId, repeats: 1, parts: b.parts }));
-  const merged: Stretch[] = [];
-  for (const st of stretches) {
-    const last = merged[merged.length - 1];
-    if (last && same(last.template, st.template)) last.to = st.to;
-    else merged.push({ ...st });
-  }
-
-  const blocks: BlockTemplate[] = [];
-  let rounded = false;
-  for (const st of merged) {
-    if (!st.template) {
-      // Silence (nothing playing) has no block; the song simply goes on.
-      continue;
-    }
-    const bars = (st.to - st.from) / TICKS_PER_BAR;
-    const pass = blockBars(p, { id: '', sceneId: st.template.sceneId, repeats: 1, parts: st.template.parts });
-    let passes = Math.round(bars / pass);
-    if (Math.abs(passes * pass - bars) > 1e-6) rounded = true;
-    while (passes > 0) {
-      const r = Math.min(MAX_BLOCK_REPEATS, passes);
-      blocks.push({ ...st.template, ...(st.template.parts ? { parts: { ...st.template.parts } } : {}), repeats: r });
-      passes -= r;
-    }
-  }
-  return { blocks, rounded, ignored, deletedScenes: [...deleted] };
-}
-
-/**
- * "Make song blocks" from a recorded take (see takeToBlocks), in one undo
- * step: 'append' adds them after the song, 'replace' makes them the song.
- * Returns the new blocks' ids, whether timing was rounded and what was left
- * out, so the message can say so.
- */
-export function makeSongFromTake(
-  store: ProjectStore,
-  takeId: Id,
-  opts: { mode: 'append' | 'replace' },
-): CommandResult & { blockIds?: Id[]; rounded?: boolean; ignored?: { notes: number; knobs: number }; deletedScenes?: string[] } {
-  const p = store.getState();
-  const plan = takeToBlocks(p, takeId);
-  if (!plan) return NOT_FOUND('performance');
-  if (!plan.blocks.length) {
-    const why = plan.deletedScenes.length ? `the scenes it played (${plan.deletedScenes.join(', ')}) were deleted` : 'nothing played long enough to fill a pass';
-    return { ...refuse('empty', `This take makes no song blocks: ${why}.`), rounded: plan.rounded, ignored: plan.ignored, deletedScenes: plan.deletedScenes };
-  }
-  const replace = opts.mode === 'replace';
-  if ((replace ? 0 : p.arrangement.blocks.length) + plan.blocks.length > VALIDATION_LIMITS.maxBlocks) return refuse('limit', LIMIT_MESSAGE);
-  const blocks = plan.blocks.map((t) => fromTemplate(p, t));
-  const r = run(store, 'arrange:Make song blocks', (d) => {
-    if (replace) d.arrangement.blocks = blocks;
-    else d.arrangement.blocks.push(...blocks);
-  });
-  return { ...r, blockIds: blocks.map((b) => b.id), rounded: plan.rounded, ignored: plan.ignored, deletedScenes: plan.deletedScenes };
+  const s = findSection(p, id);
+  if (!s) return NOT_FOUND('section');
+  if (!Object.prototype.hasOwnProperty.call(SHAPE_WORDS, kind)) return refuse('invalid', 'That is not a song helper.');
+  const problem = shapeProblem(p, id, kind);
+  if (problem) return refuse('invalid', problem);
+  const end = regionEnd(s);
+  const plan = shapePlan(p, p.arrangement.regions, s.start, end, kind);
+  const display = kind === 'breakdown' ? `Breakdown in ${s.name}` : `${SHAPE_WORDS[kind]} ${s.name}`;
+  const r = commit(store, p, `arrange:${SHAPE_WORDS[kind]}`, display, { regions: plan.regions });
+  const ids = plan.regions.filter((x) => x.start < end && regionEnd(x) > s.start).map((x) => x.id);
+  return { ...r, ids, trimmed: plan.trimmed, removed: plan.removed };
 }
 
 /* ------------------------------------------------------------------ */
@@ -975,103 +863,201 @@ export function makeSongFromTake(
 /** Seconds of echo tail an added ending makes sure of (when the tail was off). */
 export const ENDING_TAIL_SECONDS = 2;
 
-/** A new block of `sceneId` shaped by a helper (build or strip), with one pass per part (2 to 4). */
-function shapedSceneBlocks(p: Project, sceneId: Id, kind: 'build' | 'strip'): { blocks: ArrangementBlock[] } | { problem: string } {
-  const probe: ArrangementBlock = { id: uid('blk'), sceneId, repeats: MAX_BLOCK_REPEATS };
-  const k = soundingInBuildOrder(p, probe).length;
-  const block: ArrangementBlock = { ...probe, repeats: clamp(k, 2, 4) };
-  const problem = shapeProblemFor(p, block, kind);
-  if (problem) return { problem: problem.text };
-  const { shaped } = shapePlan(p, block, kind);
-  return { blocks: shaped.map((x, j) => ({ ...x, id: j === 0 ? block.id : uid('blk') })) };
+/** Where an intro or ending takes its clips from: the first (last) section with music, else the song's first (last) 8 bars. */
+function edgeRange(p: Project, which: 'first' | 'last'): [number, number] | null {
+  const regions = p.arrangement.regions;
+  const span = spanOf(regions);
+  if (!span) return null;
+  const sections = sortSections(p.arrangement.sections).filter((s) => regions.some((r) => r.start < regionEnd(s) && regionEnd(r) > s.start));
+  const s = which === 'first' ? sections[0] : sections[sections.length - 1];
+  if (s) return [s.start, regionEnd(s)];
+  return which === 'first' ? [span[0], Math.min(span[1], span[0] + 8)] : [Math.max(span[0], span[1] - 8), span[1]];
+}
+
+/** For every part playing in bars [from, to), the clip of its first (or last) region there, in track order. */
+function edgeClips(p: Project, from: number, to: number, which: 'first' | 'last'): { trackId: Id; clip: Clip }[] {
+  const out: { trackId: Id; clip: Clip }[] = [];
+  for (const t of p.tracks) {
+    const rs = p.arrangement.regions.filter((r) => r.trackId === t.id && r.start < to && regionEnd(r) > from);
+    const r = which === 'first' ? rs[0] : rs[rs.length - 1];
+    const rc = r ? regionClip(p, r) : null;
+    if (rc) out.push({ trackId: t.id, clip: rc.clip });
+  }
+  return out;
 }
 
 /**
- * "Add an intro": a Build up of the scene the song starts with (the first
- * scene when the song is empty), inserted at the start, its parts coming in
- * one at a time. One undo step.
+ * Length of an intro or ending, 4 to 8 bars: whole passes of its longest
+ * clip, one pass per part as 2.2's helpers had it (2 to 4 passes), fewer when
+ * that would pass 8 bars and more when it would be under 4.
  */
-export function addIntro(store: ProjectStore): CommandResult & { blockIds?: Id[] } {
-  const p = store.getState();
-  const sceneId = p.arrangement.blocks[0]?.sceneId ?? p.scenes[0]?.id;
-  if (!sceneId) return NOT_FOUND('scene');
-  const made = shapedSceneBlocks(p, sceneId, 'build');
-  if ('problem' in made) return refuse('invalid', made.problem);
-  if (p.arrangement.blocks.length + made.blocks.length > VALIDATION_LIMITS.maxBlocks) return refuse('limit', LIMIT_MESSAGE);
-  const r = run(store, 'arrange:Add an intro', (d) => {
-    d.arrangement.blocks.splice(0, 0, ...made.blocks);
-  });
-  return { ...r, blockIds: made.blocks.map((b) => b.id) };
+function edgeBars(clips: readonly { clip: Clip }[]): number {
+  const pass = Math.max(1, ...clips.map((c) => c.clip.bars));
+  let n = clamp(clips.length, 2, 4);
+  while (n > 1 && n * pass > 8) n--;
+  while (n * pass < 4) n++;
+  return n * pass;
 }
 
 /**
- * "Add an ending": a Strip down of the scene the song ends with (the last
- * scene when the song is empty), appended, its parts dropping out one at a
- * time; an Echo tail of 0 s becomes ENDING_TAIL_SECONDS so the end rings out.
- * One undo step.
+ * "Add an intro": 4 to 8 bars before the song made from the clips its first
+ * section plays (each from its start), the parts coming in one at a time in
+ * build order (the quieter ones first, the drums last), under a section
+ * named Intro. The song moves later to make room. One undo step;
+ * `sectionId`: the Intro, `ids`: its regions.
  */
-export function addEnding(store: ProjectStore): CommandResult & { blockIds?: Id[] } {
+export function addIntro(store: ProjectStore): SongEditResult & { sectionId?: Id } {
   const p = store.getState();
-  const sceneId = p.arrangement.blocks[p.arrangement.blocks.length - 1]?.sceneId ?? p.scenes[p.scenes.length - 1]?.id;
-  if (!sceneId) return NOT_FOUND('scene');
-  const made = shapedSceneBlocks(p, sceneId, 'strip');
-  if ('problem' in made) return refuse('invalid', made.problem);
-  if (p.arrangement.blocks.length + made.blocks.length > VALIDATION_LIMITS.maxBlocks) return refuse('limit', LIMIT_MESSAGE);
-  const r = run(store, 'arrange:Add an ending', (d) => {
-    d.arrangement.blocks.push(...made.blocks);
-    if (d.arrangement.tailSeconds === 0) d.arrangement.tailSeconds = ENDING_TAIL_SECONDS;
-  });
-  return { ...r, blockIds: made.blocks.map((b) => b.id) };
+  const range = edgeRange(p, 'first');
+  if (!range) return refuse('empty', 'The song has no music yet: add some loops first.');
+  const clips = edgeClips(p, range[0], range[1], 'first');
+  const bars = edgeBars(clips);
+  if (songBars(p) + bars > MAX_SONG_BARS) return refuse('limit', `There is no room for an intro: ${TOO_LONG}`);
+  const te = insertTime(p, p.arrangement.regions, p.arrangement.sections, 0, bars, newRegionId);
+  const intro: SongRegion[] = clips.map((c) => ({ id: newRegionId(), trackId: c.trackId, clipId: c.clip.id, start: 0, bars, offset: 0 }));
+  const shaped = clips.length > 1 ? shapePlan(p, intro, 0, bars, 'build').regions : intro;
+  const section: SongSection = { id: newSectionId(), name: 'Intro', start: 0, bars };
+  const r = commit(store, p, 'arrange:Add an intro', 'Add an intro', { regions: sortRegions(p, [...te.regions, ...shaped]), sections: placeSection(te.sections, section) });
+  return { ...r, ids: shaped.map((x) => x.id), ...(r.changed ? { sectionId: section.id } : {}) };
+}
+
+/**
+ * "Add an ending": 4 to 8 bars after the song made from the clips its last
+ * section plays, the parts dropping out one at a time (the drums first),
+ * under a section named Ending that fades out. An export tail of 0 s becomes
+ * ENDING_TAIL_SECONDS so the end rings out. One undo step; `sectionId`: the
+ * Ending, `ids`: its regions.
+ */
+export function addEnding(store: ProjectStore): SongEditResult & { sectionId?: Id } {
+  const p = store.getState();
+  const range = edgeRange(p, 'last');
+  if (!range) return refuse('empty', 'The song has no music yet: add some loops first.');
+  const clips = edgeClips(p, range[0], range[1], 'last');
+  const bars = edgeBars(clips);
+  const start = songBars(p);
+  if (start + bars > MAX_SONG_BARS) return refuse('limit', `There is no room for an ending: ${TOO_LONG}`);
+  const ending: SongRegion[] = clips.map((c) => ({ id: newRegionId(), trackId: c.trackId, clipId: c.clip.id, start, bars, offset: 0 }));
+  const shaped = clips.length > 1 ? shapePlan(p, ending, start, start + bars, 'strip').regions : ending;
+  const section: SongSection = { id: newSectionId(), name: 'Ending', start, bars, moves: [{ id: uid('mv'), kind: 'fadeOut' }] };
+  const change: SongChange = { regions: sortRegions(p, [...p.arrangement.regions, ...shaped]), sections: placeSection(p.arrangement.sections, section) };
+  if (p.arrangement.tailSeconds === 0) change.tailSeconds = ENDING_TAIL_SECONDS;
+  const r = commit(store, p, 'arrange:Add an ending', 'Add an ending', change);
+  return { ...r, ids: shaped.map((x) => x.id), ...(r.changed ? { sectionId: section.id } : {}) };
+}
+
+/** Effect tail appended to exports, 0–10 seconds. A shared gesture id (a drag) makes one undo step. */
+export function setTailSeconds(store: ProjectStore, seconds: number, gesture?: string): CommandResult {
+  if (!isFiniteNumber(seconds)) return refuse('invalid', 'The tail length must be a number.');
+  return commit(store, store.getState(), 'arrange:Change tail length', 'Change tail length', { tailSeconds: clamp(seconds, 0, 10) }, gesture);
 }
 
 /* ------------------------------------------------------------------ */
-/* Song moves                                                          */
+/* A recorded take as song loops                                       */
 /* ------------------------------------------------------------------ */
 
-/**
- * Set a block's song moves (one undo step): at most one of each kind (the
- * first wins), parts limited to existing parts. An empty list removes them.
- * Moves already on the block keep their ids.
- */
-export function setBlockMoves(store: ProjectStore, blockId: Id, moves: readonly (BlockMoveTemplate & { id?: Id })[]): CommandResult {
-  const p = store.getState();
-  const b = p.arrangement.blocks.find((x) => x.id === blockId);
-  if (!b) return NOT_FOUND('block');
-  if (!Array.isArray(moves)) return refuse('invalid', 'The song moves could not be read.');
-  const unknown = moves.find((m) => !m || !BLOCK_MOVE_KINDS.includes(m.kind));
-  if (unknown) return refuse('invalid', 'That is not a song move.');
-  const own = new Map((b.moves ?? []).map((m) => [m.kind, m.id]));
-  const next = cleanMoves(p, moves.map((m) => ({ ...m, id: own.get(m.kind) })), true);
-  const same = (b.moves ?? []).length === next.length && next.every((m, i) => {
-    const o = b.moves![i];
-    return o.id === m.id && o.kind === m.kind && JSON.stringify(o.parts ?? null) === JSON.stringify(m.parts ?? null);
-  });
-  if (same) return { changed: false };
-  return run(store, 'arrange:Change song moves', (d) => {
-    const x = d.arrangement.blocks.find((y) => y.id === blockId);
-    if (!x) return;
-    if (next.length) x.moves = next;
-    else delete x.moves;
-  });
+export interface TakeRegionsPlan {
+  /** Regions from bar 0 (the take's start), in time order, without ids. */
+  regions: Omit<SongRegion, 'id'>[];
+  /** The take's length in whole bars. */
+  bars: number;
+  /** A launch, or the take's start, fell between bar lines (rounded to the nearest). */
+  rounded: boolean;
+  /** Stretches whose clip has been deleted since (left out). */
+  missing: number;
 }
 
 /**
- * Add a move of `kind` to a block, or remove it when the block has one (one
- * undo step, "Add Fade in" / "Remove Fade in"). `parts` (filter rise, echo
- * throw) lists the parts it acts on; left out: every melodic part.
+ * What a recorded take played, as song regions (pure): what each part played
+ * when the take began, and each later launch (a pad, a scene, Stop All),
+ * plays until that part's next launch or stop, in whole bars from the take's
+ * start. A launch starts its clip from the top; what was already playing
+ * when the take began carries on in its phase. Clips are found by id (rows
+ * may have moved since, or the clip moved to another part); a clip deleted
+ * since is left out (`missing`). Touching regions that play on as one are
+ * joined. Null when there is no such take.
  */
-export function toggleBlockMove(store: ProjectStore, blockId: Id, kind: BlockMoveKind, parts?: readonly Id[]): CommandResult & { on?: boolean } {
+export function takeToRegions(p: Project, takeId: Id): TakeRegionsPlan | null {
+  const perf = p.performances.find((x) => x.id === takeId);
+  if (!perf) return null;
+  const snap = perf.snapshot;
+  const start = perf.startTick;
+  const total = Math.max(0, Math.round((perf.endTick - start) / TICKS_PER_BAR));
+  let rounded = false;
+  const barOf = (tick: number): number => {
+    const exact = (tick - start) / TICKS_PER_BAR;
+    if (Math.abs(exact - Math.round(exact)) > 1e-6) rounded = true;
+    return clamp(Math.round(exact), 0, total);
+  };
+  // What each part of the take plays now: its clip (by id), since which bar, from which bar of the clip.
+  const now = new Map<Id, { clipId: Id | null; since: number; offset: number }>();
+  for (const t of snap.tracks) now.set(t.id, { clipId: null, since: 0, offset: 0 });
+  for (const e of snap.launcher) {
+    const t = snap.tracks.find((x) => x.id === e.trackId);
+    const clip = e.playing && t ? t.clips[e.playing.slot] : null;
+    if (!t || !clip || !e.playing) continue;
+    const phase = (start - e.playing.startTick) / TICKS_PER_BAR;
+    if (Math.abs(phase - Math.round(phase)) > 1e-6) rounded = true;
+    now.set(t.id, { clipId: clip.id, since: 0, offset: mod(Math.round(phase), clip.bars) });
+  }
+  const stretches: Omit<SongRegion, 'id'>[] = [];
+  const play = (trackId: Id, clipId: Id | null, bar: number) => {
+    const cur = now.get(trackId);
+    if (!cur) return;
+    if (cur.clipId && bar > cur.since) stretches.push({ trackId, clipId: cur.clipId, start: cur.since, bars: bar - cur.since, offset: cur.offset });
+    now.set(trackId, { clipId, since: bar, offset: 0 });
+  };
+  const changes = perf.events
+    .map((e, i) => ({ e, i }))
+    .filter(({ e }) => (e.type === 'launch' || e.type === 'scene' || e.type === 'stopAll') && e.atTick >= start && e.atTick < perf.endTick)
+    .sort((a, b) => (a.e as { atTick: number }).atTick - (b.e as { atTick: number }).atTick || a.i - b.i);
+  for (const { e } of changes) {
+    if (e.type === 'launch') {
+      const t = snap.tracks.find((x) => x.id === e.trackId);
+      play(e.trackId, (t && e.slot !== null ? t.clips[e.slot]?.id : null) ?? null, barOf(e.atTick));
+    } else if (e.type === 'scene') {
+      const bar = barOf(e.atTick);
+      for (const t of snap.tracks) play(t.id, t.clips[e.row]?.id ?? null, bar);
+    } else if (e.type === 'stopAll') {
+      const bar = barOf(e.atTick);
+      for (const t of snap.tracks) play(t.id, null, bar);
+    }
+  }
+  for (const t of snap.tracks) play(t.id, null, total);
+
+  let missing = 0;
+  const regions: SongRegion[] = [];
+  for (const st of stretches) {
+    const where = findClip(p, st.clipId);
+    if (!where) {
+      missing++;
+      continue;
+    }
+    regions.push({ ...st, id: `take${regions.length}`, trackId: where.track.id, offset: mod(st.offset, where.clip.bars) });
+  }
+  const joined = mergeTouching(p, regions).map(({ id: _id, ...r }) => r);
+  return { regions: joined, bars: total, rounded, missing };
+}
+
+/**
+ * "Make song from a take" (one undo step): what the take played becomes
+ * regions from bar `at` (default: the song's end), winning where they land
+ * (see takeToRegions). `ids`: the new regions; `rounded` and `missing` let
+ * the message say what was rounded or left out.
+ */
+export function songFromTake(store: ProjectStore, takeId: Id, opts: { at?: number } = {}): SongEditResult & { rounded?: boolean; missing?: number } {
   const p = store.getState();
-  const b = p.arrangement.blocks.find((x) => x.id === blockId);
-  if (!b) return NOT_FOUND('block');
-  if (!BLOCK_MOVE_KINDS.includes(kind)) return refuse('invalid', 'That is not a song move.');
-  const has = (b.moves ?? []).some((m) => m.kind === kind);
-  const next = has ? (b.moves ?? []).filter((m) => m.kind !== kind) : [...(b.moves ?? []), ...cleanMoves(p, [{ kind, ...(parts ? { parts: [...parts] } : {}) }], false)];
-  const r = run(store, 'arrange:Change song moves', (d) => {
-    const x = d.arrangement.blocks.find((y) => y.id === blockId);
-    if (!x) return;
-    if (next.length) x.moves = next;
-    else delete x.moves;
-  }, undefined, { display: `${has ? 'Remove' : 'Add'} ${BLOCK_MOVE_NAMES[kind]}` });
-  return { ...r, on: !has };
+  const perf = p.performances.find((x) => x.id === takeId);
+  const plan = takeToRegions(p, takeId);
+  if (!perf || !plan) return NOT_FOUND('take');
+  const at = opts.at ?? songBars(p);
+  if (!isInt(at) || at < 0) return refuse('invalid', WHOLE_BARS);
+  if (!plan.regions.length) {
+    const why = plan.missing ? 'the clips it played have been deleted since' : 'nothing played in it for a whole bar';
+    return { ...refuse('empty', `This take makes no song: ${why}.`), rounded: plan.rounded, missing: plan.missing };
+  }
+  const end = Math.max(...plan.regions.map((r) => r.start + r.bars));
+  if (at + end > MAX_SONG_BARS) return refuse('limit', `There is no room for this take there: ${TOO_LONG}`);
+  const res = landRegions(p, plan.regions.map((r) => ({ ...r, id: newRegionId(), start: r.start + at })));
+  const r = commit(store, p, 'arrange:Make song from a take', `Make song from ${perf.name}`, { regions: res.regions });
+  return { ...r, ids: res.ids, trimmed: res.trimmed, removed: res.removed, rounded: plan.rounded, missing: plan.missing };
 }

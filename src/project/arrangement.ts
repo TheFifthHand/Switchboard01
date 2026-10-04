@@ -338,18 +338,20 @@ export function removeTime(p: Pick<Project, 'tracks'>, regions: readonly SongReg
     if (before + after < 1) continue;
     secs.push({ ...s, start: s.start < a ? s.start : Math.max(s.start, b) - n, bars: before + after });
   }
-  return { regions: mergeTouching(p, out), sections: sortSections(secs) };
+  // Only the pieces that meet where the gap was are joined: regions the user split elsewhere stay apart.
+  return { regions: mergeTouching(p, out, a), sections: sortSections(secs) };
 }
 
 /**
  * Two regions of a part that touch and play on as one (same clip, the second
  * carrying on in the clip where the first ends) are joined into one: the
- * pieces a gap removal leaves on either side of it come back together.
+ * pieces a gap removal leaves on either side of it come back together. With
+ * `at`, only regions that meet at that bar are joined.
  */
-export function mergeTouching(p: Pick<Project, 'tracks'>, regions: readonly SongRegion[]): SongRegion[] {
+export function mergeTouching(p: Pick<Project, 'tracks'>, regions: readonly SongRegion[], at?: number): SongRegion[] {
   const out: SongRegion[] = [];
   for (const r of sortRegions(p, regions)) {
-    const i = out.findIndex((q) => q.trackId === r.trackId && regionEnd(q) === r.start && q.clipId === r.clipId);
+    const i = at !== undefined && r.start !== at ? -1 : out.findIndex((q) => q.trackId === r.trackId && regionEnd(q) === r.start && q.clipId === r.clipId);
     if (i >= 0) {
       const q = out[i];
       if (mod(q.offset + q.bars, clipBarsOf(p, q)) === r.offset) {

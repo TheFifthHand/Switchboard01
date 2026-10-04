@@ -3,11 +3,14 @@ import { BUILTIN_DURATIONS } from '../../src/audio/instruments/builtinSamples';
 import { BUILTIN_SAMPLES, KITS, SYNTH_PRESETS } from '../../src/content/catalog';
 import { clip, drums, line, midi, parseGrid, seq, stabs, strum } from '../../src/content/starters/dsl';
 import { BLANK_STARTER, JUMP_IN_SCENE_ROW, JUMP_IN_STARTER_ID, STARTERS, getStarter } from '../../src/content/starters/index';
+import { clipBarAt, regionAt, songBars } from '../../src/project/arrangement';
 import { ROLE_DEFAULT_SOUND, moduleId } from '../../src/project/factory';
 import { MACRO_IDS, TICKS_PER_BAR, TICKS_PER_BEAT, TICKS_PER_STEP, type Clip, type Project, type ScaleId, type Track, type TrackRole } from '../../src/project/types';
 import { validateProject } from '../../src/project/validate';
 import type { SeqEvent } from '../../src/time/contracts';
 import { Sequencer } from '../../src/time/sequencer';
+// Every starter as 2.2 built it (version 3, a song of blocks; notes left out): see r5-song-migrate.test.ts.
+import SONGS_2_2 from './fixtures/v3-songs-2.2.json';
 
 /* Independent reference data (deliberately not imported from the code under test). */
 
@@ -82,7 +85,8 @@ const rowSignature = (p: Project, row: number): string =>
 
 /** The project with every random id and timestamp removed; ids that link things are replaced by indices. */
 function musicalContent(p: Project) {
-  const sceneIndex = new Map(p.scenes.map((s, i) => [s.id, i]));
+  // A loop's clip by its row (clip ids are random).
+  const clipRow = (trackId: string, clipId: string) => p.tracks.find((t) => t.id === trackId)!.clips.findIndex((c) => c?.id === clipId);
   return {
     name: p.name,
     starterId: p.starterId,
@@ -100,7 +104,21 @@ function musicalContent(p: Project) {
       clips: t.clips.map((c) => (c ? { name: c.name, bars: c.bars, notes: c.notes.map(({ id: _id, ...n }) => n) } : null)),
     })),
     patch: { modules: p.patch.modules, connections: p.patch.connections.map(({ id: _id, ...c }) => c) },
-    arrangement: { blocks: p.arrangement.blocks.map((b) => ({ scene: sceneIndex.get(b.sceneId), repeats: b.repeats })), tailSeconds: p.arrangement.tailSeconds },
+    arrangement: {
+      regions: p.arrangement.regions.map(({ id: _id, clipId, ...r }) => ({ ...r, row: clipRow(r.trackId, clipId) })),
+      sections: p.arrangement.sections.map(({ id: _id, moves, ...x }) => ({ ...x, moves: moves?.map(({ id: _m, ...m }) => m) })),
+      tailSeconds: p.arrangement.tailSeconds,
+    },
+  };
+}
+
+/** A song by what it plays, independent of ids: each loop's part, clip name, bars and offset, and each section. */
+function songSketch(p: Project) {
+  const clipName = (trackId: string, clipId: string) => p.tracks.find((t) => t.id === trackId)!.clips.find((c) => c?.id === clipId)!.name;
+  return {
+    regions: p.arrangement.regions.map((r) => `${r.trackId}:${clipName(r.trackId, r.clipId)}@${r.start}+${r.bars}~${r.offset}`),
+    sections: p.arrangement.sections.map((x) => `${x.name}@${x.start}+${x.bars}`),
+    tailSeconds: p.arrangement.tailSeconds,
   };
 }
 
@@ -426,26 +444,50 @@ describe.each(STARTERS.map((s) => [s.name, s] as const))('%s starter', (_name, s
     expect(byRole(project, 'bass').macros.space).toBeLessThanOrEqual(0.05);
   });
 
-  it('arranges a song from its scenes', () => {
-    const { blocks, tailSeconds } = project.arrangement;
-    expect(blocks.length).toBeGreaterThanOrEqual(4);
-    const sceneIds = new Set(project.scenes.map((s) => s.id));
-    for (const b of blocks) {
-      expect(sceneIds.has(b.sceneId)).toBe(true);
-      expect(b.repeats).toBeGreaterThanOrEqual(1);
-      expect(b.repeats).toBeLessThanOrEqual(8);
+  it('arranges a song from its scenes: a section per scene played, over loops of that scene’s clips', () => {
+    const { regions, sections, tailSeconds } = project.arrangement;
+    expect(sections.length).toBeGreaterThanOrEqual(4);
+    const names = project.scenes.map((s) => s.name);
+    const sceneBars = (row: number) => Math.max(...project.tracks.map((t) => t.clips[row]?.bars ?? 0));
+    // Sections follow each other from bar 0, each a scene played 1 to 8 times its length.
+    let at = 0;
+    for (const sec of sections) {
+      const row = names.indexOf(sec.name);
+      expect(row).toBeGreaterThanOrEqual(0);
+      expect(sec.start).toBe(at);
+      const times = sec.bars / sceneBars(row);
+      expect(Number.isInteger(times) && times >= 1 && times <= 8).toBe(true);
+      at += sec.bars;
+    }
+    // Every bar of every part plays that section's scene: its clip from the section's start, or nothing when the row has none.
+    for (const sec of sections) {
+      const row = names.indexOf(sec.name);
+      for (const t of project.tracks) {
+        for (let bar = sec.start; bar < sec.start + sec.bars; bar++) {
+          const r = regionAt(regions, t.id, bar);
+          const c = t.clips[row];
+          expect(r ? `${r.clipId}@${clipBarAt(r, c?.bars ?? 1, bar)}` : null, `${t.name} bar ${bar}`).toBe(c ? `${c.id}@${(bar - sec.start) % c.bars}` : null);
+        }
+      }
     }
     // Every scene is used, and the song starts with the intro.
-    expect(new Set(blocks.map((b) => b.sceneId)).size).toBe(4);
-    expect(blocks[0].sceneId).toBe(project.scenes[INTRO].id);
+    expect(new Set(sections.map((x) => x.name)).size).toBe(4);
+    expect(sections[0].name).toBe(project.scenes[INTRO].name);
     expect(tailSeconds).toBeGreaterThanOrEqual(3);
     expect(tailSeconds).toBeLessThanOrEqual(5);
     // A song of roughly one to four minutes.
-    const sceneBars = (row: number) => Math.max(...project.tracks.map((t) => t.clips[row]?.bars ?? 0));
-    const bars = blocks.reduce((sum, b) => sum + sceneBars(project.scenes.findIndex((s) => s.id === b.sceneId)) * b.repeats, 0);
-    const seconds = (bars * 4 * 60) / project.bpm;
+    expect(songBars(project)).toBe(at);
+    const seconds = (songBars(project) * 4 * 60) / project.bpm;
     expect(seconds).toBeGreaterThan(60);
     expect(seconds).toBeLessThan(240);
+  });
+
+  it('plays the song it played in 2.2 (the 2.2 build, upgraded, has the same loops and sections)', () => {
+    const v3 = (SONGS_2_2 as Record<string, unknown>)[starter.id];
+    const r = validateProject(JSON.parse(JSON.stringify(v3)));
+    if (!r.ok) throw new Error(r.errors.join(' '));
+    expect(r.warnings).toEqual([]);
+    expect(songSketch(project)).toEqual(songSketch(r.project));
   });
 
   it('builds the same music every time, with fresh ids', () => {
@@ -567,7 +609,7 @@ describe('Blank project', () => {
       const sound = inst.kind === 'drums' ? inst.kitId : inst.kind === 'sampler' ? inst.sampleId : inst.presetId;
       expect(sound).toBe(ROLE_DEFAULT_SOUND[t.role]);
     }
-    expect(blank.arrangement.blocks).toEqual([]);
+    expect(blank.arrangement).toEqual({ regions: [], sections: [], tailSeconds: 3 });
     const result = validateProject(JSON.parse(JSON.stringify(blank)));
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.warnings).toEqual([]);

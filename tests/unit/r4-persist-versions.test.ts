@@ -29,6 +29,7 @@ import { uniqueName } from '../../src/persistence/names';
 import { formatClock, projectShape, songLine } from '../../src/persistence/summary';
 import { MAX_UNNAMED_VERSIONS, reasonBefore, restoredName, versionLabel, versionsToThin } from '../../src/persistence/versions';
 import { getStarter } from '../../src/content/starters';
+import { songBars } from '../../src/project/arrangement';
 import { createProject } from '../../src/project/factory';
 import type { Project, SampleMeta } from '../../src/project/types';
 import { ProjectStore } from '../../src/state/projectStore';
@@ -329,14 +330,20 @@ describe('names and row facts', () => {
     await saveProject(house);
     const [row] = await listProjects();
     const shape = projectShape(house);
-    expect(row).toMatchObject({ sceneCount: house.scenes.length, blockCount: house.arrangement.blocks.length, songSeconds: shape.songSeconds });
+    // The row's song facts: it has music (the loops count), and how long it plays.
+    expect(row).toMatchObject({ sceneCount: house.scenes.length, blockCount: house.arrangement.regions.length, songSeconds: shape.songSeconds });
+    expect(shape).toMatchObject({ regions: house.arrangement.regions.length, sections: house.arrangement.sections.length, songBars: songBars(house) });
+    expect(shape.songSeconds).toBeCloseTo((songBars(house) * 4 * 60) / house.bpm, 9);
     expect(shape.songSeconds).toBeGreaterThan(60);
     expect(formatClock(139.4)).toBe('2:19');
     expect(formatClock(7)).toBe('0:07');
     expect(formatClock(3725)).toBe('1:02:05');
-    expect(songLine({ blocks: 6, songSeconds: 139 })).toBe('6 blocks · 2:19');
-    expect(songLine({ blocks: 0, songSeconds: 0 })).toBe('No song yet');
+    expect(songLine({ regions: 30, sections: 6, songSeconds: 139 })).toBe('6 sections · 2:19');
+    expect(songLine({ regions: 2, sections: 1, songSeconds: 16 })).toBe('1 section · 0:16');
+    expect(songLine({ regions: 2, sections: 0, songSeconds: 31 })).toBe('Song · 0:31');
+    expect(songLine({ regions: 0, sections: 2, songSeconds: 20 })).toBe('No song yet');
     // A damaged stored project still lists.
-    expect(projectShape({ bogus: true } as unknown as Project)).toMatchObject({ blocks: 0, songSeconds: 0 });
+    expect(projectShape({ bogus: true } as unknown as Project)).toMatchObject({ regions: 0, blocks: 0, songSeconds: 0 });
+    expect(projectShape({ bpm: 120, arrangement: { regions: 'x', sections: [{ start: 2, bars: 6 }, null] } } as unknown as Project)).toMatchObject({ regions: 0, sections: 1, songBars: 8, songSeconds: 16 });
   });
 });

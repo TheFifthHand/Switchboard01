@@ -12,11 +12,12 @@
  *
  * Someone coming back from SWITCHBOARD / 01 (the app's name before 2.0) is
  * told once, on this card, that it is now Omni Song and their projects are
- * still here.
+ * still here. A quiet last line names the version that opened.
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Button } from '../../ui/components';
 import { session, useProject } from '../instance';
+import { APP_VERSION } from './HelpDialog';
 import styles from './Welcome.module.css';
 
 /** Remembered (localStorage) once the "now called Omni Song" line has been shown. */
@@ -195,6 +196,9 @@ export function Welcome({ lastProject, warnings = [], storageError, onClose, onL
           </p>
         )}
         <p className={styles.fine}>Everything runs on this device. No account, no uploads.</p>
+        <p className={styles.version} data-testid="welcome-version">
+          Version {APP_VERSION}
+        </p>
       </div>
     </div>
   );
