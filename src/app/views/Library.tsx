@@ -14,7 +14,7 @@
  *   much browser storage is used.
  * - Versions… opens the project's version history in its row: when each
  *   version was kept, its name or why it was kept, a one-line summary
- *   ("6 blocks · 2:19"), Restore as a copy and Delete; Save version… keeps
+ *   ("6 sections · 2:19"), Restore as a copy and Delete; Save version… keeps
  *   the project as it is now, optionally named (named versions are kept
  *   until deleted).
  * - Import / export of the portable project file (.omnisong.zip; files from

@@ -24,13 +24,13 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { unzipSync } from 'fflate';
 import { openFresh, pageErrors } from './helpers';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const DIST = join(ROOT, process.env.E2E_DIST ?? 'dist');
+const DIST = resolve(ROOT, process.env.E2E_DIST ?? 'dist');
 const SERVE = join(ROOT, 'launcher', 'serve.mjs');
 /** The 2.2.0 release (npm run package at 2.2.0), when this machine has it. */
 const RELEASE_22 = join(ROOT, 'release', 'omni-song-2.2.0.zip');

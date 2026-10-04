@@ -54,7 +54,7 @@ export interface VersionRecord {
   name?: string;
   /** 'auto' (taken while editing), 'manual' (saved by the user) or 'before:<edit>' (before a bulk edit). */
   reason: string;
-  /** One line about the state, e.g. "6 blocks · 2:19". */
+  /** One line about the state, e.g. "6 sections · 2:19". */
   summary: string;
   data: Project;
 }

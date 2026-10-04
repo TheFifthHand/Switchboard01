@@ -71,21 +71,29 @@ test('a stalled (throttled) tab stops coherently and offers Play', async ({ page
   expect(pageErrors(page)).toEqual([]);
 });
 
-test('Play after a stall restarts the song from its block, and a stalled take replay frees the keys', async ({ page }) => {
+test('Play after a stall plays the song on from the bar where it stopped, and a stalled take replay frees the keys', async ({ page }) => {
   await openFresh(page);
   await jumpIn(page);
   const state = () => page.evaluate(() => {
     const s = (window as any).__switchboard.runtime.getState();
-    return { playing: s.playing, mode: s.mode, songBlock: s.songBlock, replayId: s.replayId, held: Object.values(s.held).flat().length };
+    return { playing: s.playing, mode: s.mode, replayId: s.replayId, held: Object.values(s.held).flat().length };
   });
+  /** The bar under the song's playhead (0-based), or null. */
+  const songBar = () =>
+    page.evaluate(() => {
+      const sb = (window as any).__switchboard.session;
+      return sb.sequencer?.songBarAt(sb.transport.getPosition().tick) ?? null;
+    });
 
-  // The song: Play plays the arrangement again from the block that was playing, not the live pads.
-  await page.evaluate(() => (window as any).__switchboard.session.playSong(1));
+  // The song: Play plays the song on from where it stalled, not the live pads.
+  await page.evaluate(() => (window as any).__switchboard.session.playSong({ fromBar: 8 }));
   await expect.poll(async () => (await state()).mode).toBe('song');
+  await expect.poll(async () => (await songBar()) ?? -1).toBeGreaterThanOrEqual(8);
   await stallHidden(page);
   await expect(page.getByRole('alert')).toContainText('Playback stopped');
   await playAgain(page).click();
-  await expect.poll(state).toMatchObject({ playing: true, mode: 'song', songBlock: 1 });
+  await expect.poll(state).toMatchObject({ playing: true, mode: 'song' });
+  expect(await songBar()).toBeGreaterThanOrEqual(8);
 
   // A take: record a short one, replay it, stall.
   await page.getByRole('button', { name: 'Stop', exact: true }).click();

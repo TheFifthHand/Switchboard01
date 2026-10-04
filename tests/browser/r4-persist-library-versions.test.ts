@@ -1,7 +1,7 @@
 /**
  * The Library's version history in real Chromium with real IndexedDB and
  * real input (trusted clicks and keys): Versions… opens the list (time,
- * name or reason, "blocks · length"), Save version… with a name, Restore
+ * name or reason, "sections · length"), Save version… with a name, Restore
  * as a copy (a new project in My projects, Open it), Delete with a
  * confirmation, Escape closes the panel; the rows' song facts and the
  * storage-use line; no layout overflow at 1366 × 768. Also the Blank
@@ -98,9 +98,10 @@ describe('Versions in My projects', () => {
     session.store.replace(song, { resetHistory: true });
     const other = getStarter('techno')!.build();
     await saveProject(other);
-    // Earlier today: an automatic version, a named one, and one kept before a bulk edit.
-    await library.saveVersion({ ...song, bpm: 118, updatedAt: song.updatedAt - 3000 }, { reason: 'auto', now: Math.min(Date.now() - 60_000, at(9, 15)) });
-    await library.saveVersion({ ...song, bpm: 120, updatedAt: song.updatedAt - 2000 }, { name: 'Before mixing', now: Math.min(Date.now() - 40_000, at(10, 42)) });
+    // Earlier today: an automatic version, a named one, and one kept before a bulk edit, minutes apart
+    // (Restore buttons are named by the minute, so two in the same minute could not be told apart).
+    await library.saveVersion({ ...song, bpm: 118, updatedAt: song.updatedAt - 3000 }, { reason: 'auto', now: Math.min(Date.now() - 360_000, at(9, 15)) });
+    await library.saveVersion({ ...song, bpm: 120, updatedAt: song.updatedAt - 2000 }, { name: 'Before mixing', now: Math.min(Date.now() - 180_000, at(10, 42)) });
     await library.saveVersion({ ...song, bpm: 122, updatedAt: song.updatedAt - 1000 }, { reason: reasonBefore('Variation'), now: Date.now() - 20_000 });
     return song;
   }
@@ -128,7 +129,7 @@ describe('Versions in My projects', () => {
     expect(items()[2]).toContain('Autosaved while editing');
     for (const text of items()) {
       expect(text).toMatch(/Today \d\d:\d\d/);
-      expect(text).toMatch(/\d+ blocks · \d+:\d\d/);
+      expect(text).toMatch(/(\d+ sections?|Song) · \d+:\d\d/);
     }
 
     // Nothing spills out sideways at 1366 × 768.
