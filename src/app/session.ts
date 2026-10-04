@@ -202,7 +202,7 @@ const SKIP_NOTICE_EVERY_MS = 60_000;
  * SNAPSHOT_BEFORE_EVERY_MS here; persistence thins further). Matched on the
  * undo step's words.
  */
-const BULK_EDIT = /^(Variation|Subtle variation|Bold variation|Clear|Delete clip|Delete scene|Replace|Build up|Strip down|Breakdown|Make a song|Remove bars|Delete section and its music|Change kit|Change sound|Change recording|Import|Move the song)/;
+const BULK_EDIT = /^(Variation|Subtle variation|Bold variation|Clear|Delete clip|Delete scene|Replace|Build up|Strip down|Breakdown|Make a song from my scenes|Make song from|Remove bars|Delete .* and its music|Change kit|Change sound|Change recording|Import|Move the song)/;
 const SNAPSHOT_BEFORE_EVERY_MS = 2 * 60 * 1000;
 /** Shortest note Record Notes keeps (ticks; a 64th note): a tap is still a note you can see and hear. */
 const MIN_RECORDED_TICKS = 6;

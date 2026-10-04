@@ -1,11 +1,13 @@
 /**
  * Variable scene count (PLAY-10, capability-08): the sequencer launches any of
- * the project's rows (1 to 8), the song plan places blocks of every row, and
- * a performance recorded with another number of scenes replays its own.
+ * the project's rows (1 to 8), the song takes loops of every row, and a
+ * performance recorded with another number of scenes replays its own.
  */
 import { describe, expect, it } from 'vitest';
 import { MAX_SCENES, type Performance, type Project } from '../../src/project/types';
 import { uid } from '../../src/project/factory';
+import { ProjectStore } from '../../src/state/projectStore';
+import { addSceneToSong } from '../../src/state/commands/arrangement';
 import { Sequencer } from '../../src/time/sequencer';
 import { makeSnapshot } from '../../src/time/snapshot';
 import { makeClip, makeProject, notesOf, ofKind, runTo, sec } from './sequencer-fixtures';
@@ -43,6 +45,16 @@ describe('8 scenes', () => {
     const ev = runTo(seq, 0, sec(8 * 384) + 1);
     expect(notesOf(ev, 't1').map((n) => n.pitch)).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
     expect(ofKind(ev, 'end')).toHaveLength(1);
+  });
+
+  it('the song takes loops of every row, in any order', () => {
+    const p = rowsProject(MAX_SCENES);
+    const store = new ProjectStore(p);
+    for (let i = 0; i < MAX_SCENES; i++) expect(addSceneToSong(store, MAX_SCENES - 1 - i, i).changed).toBe(true);
+    const song = store.getState().arrangement;
+    const rowOf = (clipId: string) => p.tracks[0].clips.findIndex((c) => c?.id === clipId);
+    expect(song.regions.map((r) => [rowOf(r.clipId), r.start, r.bars])).toEqual([7, 6, 5, 4, 3, 2, 1, 0].map((row, i) => [row, i, 1]));
+    expect(song.sections.map((s) => s.name)).toEqual(['Scene 8', 'Scene 7', 'Scene 6', 'Scene 5', 'Scene 4', 'Scene 3', 'Scene 2', 'Scene 1']);
   });
 
   it('a take recorded with 3 scenes replays its own rows in a project that has 8 now', () => {

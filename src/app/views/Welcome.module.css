@@ -122,3 +122,10 @@
   font-size: 11px;
   color: var(--ink-3);
 }
+/* Which version opened: quiet, under the fine print. */
+.version {
+  margin: -6px 0 0;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
