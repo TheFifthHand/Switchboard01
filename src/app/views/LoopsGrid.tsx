@@ -2,18 +2,23 @@
  * Loops mode: eight part columns x one clip row per scene (1 to 8; the rows
  * scroll under sticky part headers when they do not fit, and "Add scene"
  * under the last row adds one). A pad starts or stops a clip for its part
- * (at the next bar); the side buttons launch a whole row as a scene. State is
- * shown with light AND text: Ready, Next bar (with a beat countdown), Playing,
- * Stopping, Paused, Rec; an empty pad is a quiet "+" (Add clip). A clip pad
- * shows a small picture of its notes; the playing pad (and the playing scene)
- * shows how far it is through its loop, drawn by one animation-frame loop
- * that reads the audio clock (no React state per frame).
+ * (at the next bar), and says which on hover and keyboard focus ("▶ Play",
+ * "■ Stop" in its corner); tapping the playing pad never starts it again. The
+ * side buttons play a whole row as a scene ("▶ Play row"), or stop it while
+ * it plays ("■ Stop row"). State is shown with light AND text: Ready, Next bar
+ * (with a beat countdown), Playing, Stops at bar N, Paused, Rec; an empty pad
+ * is a quiet "+" (Add clip). A clip pad shows a small picture of its notes;
+ * the playing pad (and the playing scene) shows how far it is through its
+ * loop, drawn by one animation-frame loop that reads the audio clock (no
+ * React state per frame). Above the scenes: "❚❚ Pause" (paused: "▶ Continue")
+ * while the transport runs, and Stop all.
  *
  * Each column header has the part's name and sound, a play/stop key for the
- * part, labelled Mute and Solo toggles and a level meter; a muted part's
- * column dims and says Muted, and with any solo on the others say Not soloed
- * (a soloed part keeps its meter and shows a Solo tag). M mutes the selected
- * part; Solo has no key (S plays a note).
+ * part in words ("▶ Play", "■ Stop", "✕ Cancel"), labelled Mute and Solo
+ * toggles and a level meter; a muted part's column dims and says Muted, and
+ * with any solo on the others say Not soloed (a soloed part keeps its meter
+ * and shows a Solo tag). M mutes the selected part; Solo has no key (S plays
+ * a note).
  *
  * Keyboard: the pads (with the scene buttons) are one Tab stop, the part
  * headers another (roving tabindex); arrow keys move inside, Home / End go to
@@ -60,15 +65,16 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { createPortal, flushSync } from 'react-dom';
-import { Button, ClipSketch, DRUM_KEYS, Icon, IconButton, Meter, NOTE_KEYS, OCTAVE_KEYS, Pad, Tooltip, useRafLoop, type PadState } from '../../ui/components';
-import { TAP_SLOP_PX } from '../../ui/components/Pad';
+import { Button, ClipSketch, DRUM_KEYS, Icon, Meter, NOTE_KEYS, OCTAVE_KEYS, Pad, Tooltip, useRafLoop, type IconName, type PadState } from '../../ui/components';
+import { TAP_SLOP_PX, type PadAction } from '../../ui/components/Pad';
 import { MOTION, boxOf, flip, offsetBox, prefersReducedMotion, scaledBox, stopMotion, type Box } from '../../ui/motion';
 import { BEATS_PER_BAR, MAX_SCENES, PPQ, TICKS_PER_BAR, TICKS_PER_BEAT, TICKS_PER_STEP, type Clip, type Id, type Project, type Scene } from '../../project/types';
 import { clipDropProblem, insertScene } from '../../state/commands';
 import { selectSlot, selectTrack, slotFor, uiStore } from '../../state/uiStore';
 import type { ClipPhase } from '../../time/contracts';
 import { session, useProject, useUi } from '../instance';
-import { notify, useRuntime, type TrackRuntime } from '../runtime';
+import { notify, runtimeStore, useRuntime, type RuntimeState, type TrackRuntime } from '../runtime';
+import { PAUSE_UNAVAILABLE_MESSAGE } from '../session';
 import { barsLabel, soundName } from '../labels';
 import '../selection';
 import {
@@ -86,7 +92,9 @@ import {
   useEditLocked,
   type MenuAnchor,
 } from './ClipMenu';
-import { useRovingPads } from './DrumPads';
+import { useReplaying, useRovingPads } from './DrumPads';
+import { songTimelineBar } from './arrange/songPlan';
+import { keysFor } from './hints/shortcuts';
 import { TrackMenu } from './TrackMenu';
 import { SceneMenu } from './SceneMenu';
 import { SoundBrowser } from './SoundBrowser';
@@ -118,14 +126,28 @@ function sameColumns(a: ColumnSummary[], b: ColumnSummary[]): boolean {
 
 type Transport = 'playing' | 'paused' | 'stopped';
 
-function padState(clip: Clip | null, slot: number, rt: TrackRuntime | undefined, transport: Transport, recording: boolean): { state: PadState; caption?: string; paused?: boolean } {
+/** The bar (from 1, as the transport counts it) that begins at `tick`; while the song plays, on the song's timeline. */
+function barNumber(tick: number, song: boolean): number {
+  const bars = (song ? songTimelineBar(tick) : null) ?? tick / TICKS_PER_BAR;
+  return Math.floor(bars + 1e-9) + 1;
+}
+
+function padState(
+  clip: Clip | null,
+  slot: number,
+  rt: TrackRuntime | undefined,
+  transport: Transport,
+  recording: boolean,
+  song: boolean,
+): { state: PadState; caption?: string; paused?: boolean } {
   if (!clip) return { state: 'empty' };
   if (recording) return { state: 'recording' };
   const playingSlot = rt?.playingSlot ?? null;
   const queued = rt?.queued ?? null;
   if (transport === 'stopped') return playingSlot === slot ? { state: 'queued', caption: 'Starts on Play' } : { state: 'ready' };
   if (playingSlot === slot) {
-    if (queued && queued.slot !== slot) return { state: 'stopping', caption: queued.slot === null ? 'Stops next bar' : 'Ends next bar' };
+    // It plays until the bar line where the part stops or another of its clips takes over.
+    if (queued && queued.slot !== slot) return { state: 'stopping', caption: `Stops at bar ${barNumber(queued.atTick, song)}` };
     if (transport === 'paused') return { state: 'queued', caption: 'Paused', paused: true };
     return { state: 'playing' };
   }
@@ -138,11 +160,54 @@ function usePadLook(trackId: Id, slot: number, clip: Clip | null) {
   const rt = useRuntime((s) => s.tracks[trackId]);
   const transport = useRuntime((s): Transport => (s.playing ? 'playing' : s.paused ? 'paused' : 'stopped'));
   const recording = useRuntime((s) => s.recording === 'notes' && s.recordTarget?.trackId === trackId && s.recordTarget.slot === slot);
-  return padState(clip, slot, rt, transport, recording);
+  const song = useRuntime((s) => s.mode === 'song');
+  return { ...padState(clip, slot, rt, transport, recording, song), transport };
+}
+type PadLook = ReturnType<typeof usePadLook>;
+
+/**
+ * What tapping a clip pad does now, shown in its corner on hover and keyboard focus: ▶ Play (a
+ * clip that waits, one that is about to stop, the one holding at a pause), ■ Stop (the playing
+ * one). Nothing on a clip that already starts at the next bar (a tap leaves it so), while notes
+ * record into it, or while a performance replays (the pads are paused then).
+ */
+const PLAY_ACTION: PadAction = { icon: 'play', text: 'Play' };
+const STOP_ACTION: PadAction = { icon: 'stop', text: 'Stop' };
+function padAction(look: PadLook, replaying: boolean): PadAction | null {
+  if (replaying) return null;
+  switch (look.state) {
+    case 'playing':
+      return STOP_ACTION;
+    case 'ready':
+    case 'stopping':
+      return PLAY_ACTION;
+    case 'queued':
+      return look.transport === 'playing' ? null : PLAY_ACTION;
+    default:
+      return null;
+  }
 }
 
-/** What a clip pad does when tapped, and how to reach its actions without playing it (its tooltip and description). */
-const PAD_TIP = 'Tap to start this clip, in time with the others; tap it again to stop it.';
+/** What tapping a clip pad does now, in words (its tooltip and description). */
+function padTip(look: PadLook, replaying: boolean): string {
+  if (replaying) return 'Replaying a performance: the pads are paused until it stops.';
+  const { state, transport } = look;
+  switch (state) {
+    case 'playing':
+      return 'Playing. Tap to stop it at the next bar; the other parts carry on.';
+    case 'stopping':
+      return `${look.caption}. Tap to keep it playing: it starts again from its beginning at that bar.`;
+    case 'queued':
+      if (look.paused) return 'Paused here. Tap to carry on from the pause, in time.';
+      if (transport === 'stopped') return 'Starts when you press Play. Tap to start playing now.';
+      return transport === 'paused' ? 'Starts at the next bar after the pause. Tap to carry on playing.' : 'Starts at the next bar, in time with the others.';
+    case 'recording':
+      return 'Recording notes into this clip.';
+    default:
+      if (transport === 'paused') return 'Tap to play this clip from the next bar; playback carries on from the pause.';
+      return transport === 'stopped' ? 'Tap to start playing, with this clip.' : 'Tap to play this clip from the next bar, in time with the others. Tap it again to stop it.';
+  }
+}
 const EMPTY_PAD_TIP = 'Tap to add a clip here: a new one, or paste a copied clip.';
 const PAD_ACTIONS_HINT = 'Right-click or Shift+F10 for actions without playing it (on a focused pad the . key works too). Drag it onto another pad to move it.';
 /** Keys on a focused pad (see onGridKey). */
@@ -1327,6 +1392,7 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
   const clip = col.clips[slot];
   const selected = useUi((s) => s.selectedTrackId === trackId && slotFor(s, trackId) === slot);
   const look = usePadLook(trackId, slot, clip);
+  const replaying = useReplaying();
   const { state, paused } = look;
   // A queued pad counts down the beats to its start (re-rendered once a beat, only while queued).
   const counting = state === 'queued' && !look.caption;
@@ -1397,7 +1463,7 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
       onContextMenu={(e) => onContextMenuOpen(e, (a) => open(a, document.getElementById(id)))}
     >
       {/* Always wrapped (an empty pad has a tip too), so the pad never remounts and keeps focus when a clip lands on it. */}
-      <Tooltip tip={clip ? PAD_TIP : EMPTY_PAD_TIP} hint={clip ? PAD_ACTIONS_HINT : undefined}>
+      <Tooltip tip={clip ? padTip(look, replaying) : EMPTY_PAD_TIP} hint={clip ? PAD_ACTIONS_HINT : undefined}>
         <Pad
           state={state}
           selected={selected}
@@ -1411,6 +1477,7 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
           cornerKey={selected && !move}
           shortcuts={clip ? CLIP_PAD_SHORTCUTS : PAD_SHORTCUTS}
           sketch={clip ? <PadSketch clip={clip} drums={col.drums} /> : undefined}
+          action={!clip ? undefined : move ? null : padAction(look, replaying)}
           onPress={onPress}
           ariaLabel={move && drop ? `${label} ${moveSpoken}` : label}
           id={id}
@@ -1508,6 +1575,7 @@ function LiftedPad({ ui, liftRef, labelRef }: { ui: Extract<DragUi, { kind: 'pad
         labelSize="lg"
         activateOn="release"
         sketch={<PadSketch clip={clip} drums={session.store.getState().tracks.find((t) => t.id === ui.from.trackId)?.instrument.kind === 'drums'} />}
+        action={null}
         onPress={() => {}}
       />
       <LiftLabel labelRef={labelRef} />
@@ -1562,9 +1630,13 @@ function DragLayer(props: { gestures: GridGestures; liftRef: (el: HTMLDivElement
 /* ------------------------------------------------------------------ */
 
 /**
- * The part's play/stop key: ▶ starts its selected clip (the one its pad ring
- * marks, see selection.ts) at the next bar, ■ stops it at the next bar (or
- * cancels a queued start). Stopped, ■ takes an armed clip off the next Play.
+ * The part's play/stop key, in words: "▶ Play" starts its selected clip (the
+ * one its pad ring marks, see selection.ts) at the next bar, "■ Stop" stops
+ * the part at the next bar (dimmed once it is stopping), "✕ Cancel" calls off
+ * a start still waiting for the bar line. Stopped, "■ Skip" takes an armed
+ * clip off the next Play. A part that plays never shows ▶, so this key never
+ * starts a playing clip again. Where the column is too narrow for the word,
+ * only the icon shows (same name); see .partPlay.
  */
 function PartPlayButton({ col, id }: { col: ColumnSummary; id: string }) {
   const transport = useRuntime((s): Transport => (s.playing ? 'playing' : s.paused ? 'paused' : 'stopped'));
@@ -1576,60 +1648,64 @@ function PartPlayButton({ col, id }: { col: ColumnSummary; id: string }) {
   const first = col.clips.findIndex((c) => !!c);
   const target = chosen ?? (first < 0 ? 0 : first);
   const clip = col.clips[target] ?? null;
+  let key: { kind: string; icon: IconName; word: string; label: string; tip: string; disabled: boolean; onClick(): void };
   if (playingSlot !== null || (queued && queued.slot !== null)) {
     const stopping = playingSlot !== null && queued !== null && queued.slot === null;
     const queuedOnly = playingSlot === null;
-    const label =
-      transport === 'stopped'
-        ? `Skip ${col.name} when Play starts`
-        : queuedOnly
-          ? `Cancel the start of ${col.name}`
-          : stopping
-            ? `${col.name} stops at the next bar`
-            : `Stop ${col.name} at the next bar`;
-    return (
-      <IconButton
-        id={id}
-        icon="stop"
-        label={label}
-        tip={
-          transport === 'stopped'
-            ? 'Its lit clip will not start when you press Play.'
-            : queuedOnly
-              ? `${col.name} is waiting to start at the next bar. This cancels only that start.`
-              : 'Stops only this part; the others carry on.'
-        }
-        size="sm"
-        variant="secondary"
-        disabled={stopping}
-        onClick={() => session.stopTrack(col.id)}
-        className={styles.partPlay}
-      />
-    );
-  }
-  return (
-    <IconButton
-      id={id}
-      icon="play"
-      label={clip ? `Play ${col.name}: ${clip.name}` : first < 0 ? `${col.name} has no clips` : `${col.name}: the selected pad is empty`}
-      tip={
-        clip
-          ? `Starts ${clip.name} at the next bar (the clip selected on this part).`
-          : first < 0
-            ? 'Add a clip first: press an empty pad.'
-            : `Select one of ${col.name}'s clips first: this plays the selected one.`
-      }
-      size="sm"
-      variant="secondary"
-      disabled={!clip}
-      onClick={() => {
+    const stop = () => session.stopTrack(col.id);
+    if (transport === 'stopped') {
+      key = { kind: 'skip', icon: 'stop', word: 'Skip', label: `Skip ${col.name} when Play starts`, tip: 'Its lit clip will not start when you press Play.', disabled: false, onClick: stop };
+    } else if (queuedOnly) {
+      key = {
+        kind: 'cancel',
+        icon: 'close',
+        word: 'Cancel',
+        label: `Cancel the start of ${col.name}`,
+        tip: `${col.name} is waiting to start at the next bar. This cancels only that start.`,
+        disabled: false,
+        onClick: stop,
+      };
+    } else {
+      key = {
+        kind: 'stop',
+        icon: 'stop',
+        word: 'Stop',
+        label: stopping ? `${col.name} stops at the next bar` : `Stop ${col.name} at the next bar`,
+        tip: stopping ? 'Its pad says the bar where it stops; tap the pad to keep it playing.' : 'Stops only this part, at the next bar; the others carry on.',
+        disabled: stopping,
+        onClick: stop,
+      };
+    }
+  } else {
+    key = {
+      kind: 'play',
+      icon: 'play',
+      word: 'Play',
+      label: clip ? `Play ${col.name}: ${clip.name}` : first < 0 ? `${col.name} has no clips` : `${col.name}: the selected pad is empty`,
+      tip: !clip
+        ? first < 0
+          ? 'Add a clip first: press an empty pad.'
+          : `Select one of ${col.name}'s clips first: this plays the selected one.`
+        : transport === 'stopped'
+          ? `Starts playing, with ${clip.name} (the clip selected on this part).`
+          : transport === 'paused'
+            ? `Plays ${clip.name} from the next bar (the clip selected on this part); playback carries on from the pause.`
+            : `Starts ${clip.name} at the next bar (the clip selected on this part).`,
+      disabled: !clip,
+      onClick: () => {
         if (!clip) return;
         selectTrack(col.id);
         selectSlot(col.id, target);
         void session.pressClip(col.id, target);
-      }}
-      className={styles.partPlay}
-    />
+      },
+    };
+  }
+  return (
+    <Tooltip name={key.label} tip={key.tip}>
+      <Button id={id} size="sm" variant="secondary" icon={key.icon} aria-label={key.label} disabled={key.disabled} onClick={key.onClick} className={styles.partPlay} data-part-key={key.kind}>
+        {key.word}
+      </Button>
+    </Tooltip>
   );
 }
 
@@ -1762,6 +1838,40 @@ function TrackHeader(props: { col: ColumnSummary; index: number; anySolo: boolea
 /* Scenes                                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Pause where the pads are: while the transport plays, "❚❚ Pause" beside Stop
+ * all; paused, "▶ Continue". The same command as the transport's Play / Pause
+ * key (and Space): the bar, the beat and every clip's place in its loop hold,
+ * and Continue carries on from exactly there. Stopped, it is not shown (the
+ * pads and scenes start playback). Unavailable while a performance records,
+ * as on the transport.
+ */
+function PauseKey() {
+  const playing = useRuntime((s) => s.playing);
+  const paused = useRuntime((s) => s.paused);
+  const take = useRuntime((s) => s.recording === 'performance');
+  if (!playing && !paused) return null;
+  const blocked = playing && take;
+  return (
+    <Tooltip
+      tip={blocked ? PAUSE_UNAVAILABLE_MESSAGE : playing ? 'Pause: everything holds where it is. Continue carries on from exactly here, in time.' : 'Continue from where you paused, in time.'}
+      detail={`${keysFor('play')} also plays and pauses.`}
+    >
+      <button
+        type="button"
+        className={styles.stopAll}
+        data-pause-key={playing ? 'pause' : 'continue'}
+        aria-disabled={blocked || undefined}
+        aria-keyshortcuts="Space"
+        onClick={() => (blocked ? notify(PAUSE_UNAVAILABLE_MESSAGE, 'warn') : void session.togglePlay())}
+      >
+        <Icon name={playing ? 'pause' : 'play'} size={12} />
+        <span>{playing ? 'Pause' : 'Continue'}</span>
+      </button>
+    </Tooltip>
+  );
+}
+
 /** How many parts a scene row plays, in the words Arrange's scene cards use ("4 parts"). */
 export function scenePartsText(n: number): string {
   return n === 0 ? 'no clips' : n === 1 ? '1 part' : `${n} parts`;
@@ -1771,6 +1881,38 @@ export function scenePartsText(n: number): string {
 function scenePartsTip(n: number, of: number): string {
   if (n === 0) return `none of the ${of} parts has a clip in this row, so every part stops.`;
   return `${n} of ${of} parts ${n === 1 ? 'has a clip' : 'have clips'} in this row and start; the others stop.`;
+}
+
+/**
+ * The clip each part of the row plays, or null unless the row plays as a
+ * scene: every part with a clip in the row plays it, and the other parts
+ * play nothing (true while a pause holds them too).
+ */
+function rowPlays(tracks: Readonly<Record<Id, TrackRuntime>>, columns: readonly ColumnSummary[], row: number): ColumnSummary[] | null {
+  const on: ColumnSummary[] = [];
+  for (const c of columns) {
+    const playing = tracks[c.id]?.playingSlot ?? null;
+    if (c.clips[row] ? playing !== row : playing !== null) return null;
+    if (playing === row) on.push(c);
+  }
+  return on.length ? on : null;
+}
+
+/**
+ * What the scene button does now. 'stop': the row plays as a scene with no
+ * change waiting, so ■ stops its parts at the next bar (they are all the
+ * parts that play: the same as Stop all). 'continue': paused while the row
+ * held, so ▶ carries on in time (a launch would start its clips again from
+ * their beginnings). 'play': ▶ plays the row from the next bar.
+ */
+type SceneAction = 'play' | 'stop' | 'continue';
+const SCENE_ACTION_NAME: Record<SceneAction, string> = { play: 'Play row', stop: 'Stop row', continue: 'Continue row' };
+function sceneAction(s: RuntimeState, columns: readonly ColumnSummary[], row: number): SceneAction {
+  if (!s.playing && !s.paused) return 'play';
+  const on = rowPlays(s.tracks, columns, row);
+  // A change waiting for the bar line (a stop, another clip): ▶ plays the row again.
+  if (!on || on.some((c) => (s.tracks[c.id]?.queued ?? null) !== null)) return 'play';
+  return s.playing ? 'stop' : 'continue';
 }
 
 function SceneButton(props: {
@@ -1786,19 +1928,8 @@ function SceneButton(props: {
   const { row, rows, scene, columns, onMenu, menuOpen, onPointerDownScene, consumeClick } = props;
   const btnRef = useRef<HTMLButtonElement>(null);
   const cellRef = useRef<HTMLDivElement>(null);
-  const lit = useRuntime((s) => {
-    if (!s.playing) return false;
-    let any = false;
-    for (const c of columns) {
-      const has = !!c.clips[row];
-      const rt = s.tracks[c.id];
-      const on = rt?.playingSlot === row;
-      if (has && !on) return false;
-      if (!has && rt?.playingSlot != null) return false;
-      if (on) any = true;
-    }
-    return any;
-  });
+  const lit = useRuntime((s) => s.playing && rowPlays(s.tracks, columns, row) !== null);
+  const action = useRuntime((s) => sceneAction(s, columns, row));
   const count = columns.filter((c) => c.clips[row]).length;
   const open = (anchor: MenuAnchor, returnFocus: HTMLElement | null, extra: Partial<MenuBase> = {}) => onMenu({ kind: 'scene', row, anchor, returnFocus, ...extra });
   const focusPad = (column: number) => document.getElementById(padId(columns[Math.max(0, Math.min(columns.length - 1, column))].id, row))?.focus();
@@ -1835,7 +1966,14 @@ function SceneButton(props: {
   return (
     <div ref={cellRef} className={styles.sceneCell} data-scene-row={row} onContextMenu={(e) => onContextMenuOpen(e, (a) => open(a, btnRef.current))}>
       <Tooltip
-        tip={`Play the ${scene.name} scene: ${scenePartsTip(count, columns.length)}`}
+        name={SCENE_ACTION_NAME[action]}
+        tip={
+          action === 'stop'
+            ? 'Every part of this row stops at the next bar (the transport keeps running).'
+            : action === 'continue'
+              ? 'This row is paused here: carry on from the pause, in time.'
+              : `Play the ${scene.name} row: ${scenePartsTip(count, columns.length)}`
+        }
         detail="Scenes switch on the next bar. Drag the scene (or Alt+Up / Alt+Down) to reorder the rows; the clips move with it. Right-click, Shift+F10 or F2 for its menu: rename, insert, duplicate, delete."
       >
         <button
@@ -1849,14 +1987,20 @@ function SceneButton(props: {
           onPointerDown={(e) => onPointerDownScene(e, row)}
           onClick={() => {
             if (consumeClick()) return;
-            void session.launchScene(row);
+            // Read now (not from the render): the bar line may have passed since.
+            const rs = runtimeStore.getState();
+            const now = sceneAction(rs, columns, row);
+            if (now === 'stop') for (const c of rowPlays(rs.tracks, columns, row) ?? []) session.stopTrack(c.id);
+            else if (now === 'continue') void session.play();
+            else void session.launchScene(row);
           }}
           onKeyDown={onKey}
-          aria-label={`Launch scene ${scene.name}${lit ? ' (playing)' : ''}`}
+          data-scene-action={action}
+          aria-label={`${SCENE_ACTION_NAME[action]} ${scene.name}${lit ? (action === 'stop' ? ' (playing)' : ' (stopping)') : action === 'continue' ? ' (paused)' : ''}`}
           aria-keyshortcuts="F2 Shift+F10 Alt+ArrowUp Alt+ArrowDown"
         >
           <span className={styles.sceneIcon} aria-hidden>
-            <Icon name="play" size={12} />
+            <Icon name={action === 'stop' ? 'stop' : 'play'} size={12} />
           </span>
           <span className={styles.sceneName}>{scene.name}</span>
           <span className={styles.sceneCount}>{scenePartsText(count)}</span>
@@ -2420,6 +2564,7 @@ export function LoopsGrid() {
             ))}
             <div className={styles.sceneHeader}>
               <span className={styles.sceneHeaderText}>Scenes</span>
+              <PauseKey />
               <Tooltip tip="Stop every part at the next bar (the transport keeps running).">
                 <button type="button" className={styles.stopAll} onClick={() => session.stopAllClips()} aria-label="Stop all parts at the next bar">
                   <Icon name="stop" size={12} />
