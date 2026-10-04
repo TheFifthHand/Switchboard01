@@ -166,7 +166,7 @@ describe('Sequencer: live launcher', () => {
     }
   });
 
-  it('playingAt tells which clip (and loop start) a track played at an earlier tick, across switches and restarts', () => {
+  it('playingAt tells which clip (and loop start) a track played at an earlier tick, across switches', () => {
     let p = makeProject();
     p = setClip(p, 't4', 0, makeClip(1, [[0, 60]], 'A'));
     p = setClip(p, 't4', 1, makeClip(1, [[0, 62]], 'B'));
@@ -178,17 +178,17 @@ describe('Sequencer: live launcher', () => {
     runTo(seq, 0, 2.5); // tick 96
     seq.launchClip('t4', 1, 2.5); // at 384
     runTo(seq, 2.5, 4.5); // tick 480
-    seq.launchClip('t4', 1, 4.5); // restart at 768
+    seq.launchClip('t4', 1, 4.5); // already playing: it plays on, in phase
     runTo(seq, 4.5, 6.1); // past 768
     expect(seq.playingAt('t4', 100)).toEqual({ slot: 0, startTick: 0 });
     expect(seq.playingAt('t4', 383)).toEqual({ slot: 0, startTick: 0 });
     expect(seq.playingAt('t4', 384)).toEqual({ slot: 1, startTick: 384 });
     expect(seq.playingAt('t4', 767)).toEqual({ slot: 1, startTick: 384 });
-    expect(seq.playingAt('t4', 800)).toEqual({ slot: 1, startTick: 768 });
+    expect(seq.playingAt('t4', 800)).toEqual({ slot: 1, startTick: 384 });
     expect(seq.playingAt('t9', 800)).toBeNull();
   });
 
-  it('launching the playing slot with nothing queued restarts it at the next bar', () => {
+  it('launching the playing slot again does not restart it: it plays on in phase, nothing is queued', () => {
     let p = makeProject();
     const A = makeClip(2, [[0, 60, 24], [384, 62, 24]], 'A');
     p = setClip(p, 't4', 0, A);
@@ -197,13 +197,14 @@ describe('Sequencer: live launcher', () => {
     seq.start(0);
     const e1 = runTo(seq, 0, 0.5);
     expect(seq.launchClip('t4', 0, 0.5).atTick).toBe(384);
+    expect(seq.getTrackState('t4').queued).toBeNull();
     const e2 = runTo(seq, 0.5, 4.5);
-    expect(ofKind(e2, 'launch')).toMatchObject([{ tick: 384, slot: 0, clipId: A.id }]);
-    // Restarted from the top at 384: pitch 60 there, not A's second bar.
+    expect(ofKind(e2, 'launch')).toEqual([]);
+    // A's second bar at 384, not its first again.
     expect(notesOf([...e1, ...e2], 't4').map((n) => [n.tick, n.pitch])).toEqual([
       [0, 60],
-      [384, 60],
-      [768, 62],
+      [384, 62],
+      [768, 60],
     ]);
   });
 

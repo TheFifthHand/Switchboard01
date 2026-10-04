@@ -1265,7 +1265,10 @@ export class Sequencer {
    * Stopped: arm (or disarm) the clip for the next Play. Playing: queue the
    * change for the next bar. Paused: queue it for the next bar after the
    * pause point, so it happens there after Resume (`atTime` is then where
-   * that bar would have been without the pause).
+   * that bar would have been without the pause). The clip the part plays
+   * (heard at that point) launched again plays on in phase: a stop or switch
+   * queued for the part is called off and its loop is not restarted (in the
+   * song, it also holds against a song change on that bar line).
    */
   private request(track: Track, slot: number | null, time: number): LaunchResult {
     const t = Number.isFinite(time) ? time : 0;
@@ -1279,6 +1282,20 @@ export class Sequencer {
     const nowTick = ps ? ps.tick : this.clock.tickAt(t);
     const at = nextBarTick(nowTick);
     const result: LaunchResult = { trackId: track.id, slot, atTick: at, atTime: this.clock.timeAt(at) };
+    const heard = slot !== null ? this.playingAt(track.id, nowTick) : null;
+    if (heard && heard.slot === slot && track.clips[slot]) {
+      // Live requests from that bar on are called off, also one applied ahead already (the driver
+      // regenerates from it, and the rewind must not bring it back).
+      const later = (tr: Transition): boolean => tr.source === 'live' && tr.atTick >= at;
+      rt.pending = rt.pending.filter((tr) => !later(tr));
+      for (const h of rt.history) h.due = h.due.filter((tr) => !later(tr));
+      // A song (or take) change on that bar line: the pad keeps the clip, in phase, there.
+      const other = (tr: Transition): boolean => tr.source !== 'live' && tr.atTick === at;
+      if (rt.pending.some(other) || rt.history.some((h) => h.due.some(other))) {
+        this.insertTransition(rt, { atTick: at, slot, row: null, source: 'live', seq: ++this.transitionSeq, requestTick: nowTick, loopStart: heard.startTick });
+      }
+      return result;
+    }
     const queued = rt.pending.find((tr) => tr.source === 'live' && tr.atTick === at);
     if (queued && queued.slot === slot) return result;
     // One queued request per track: the newest replaces later live requests.
