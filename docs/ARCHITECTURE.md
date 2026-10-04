@@ -19,11 +19,13 @@ download.
 
 Rules:
 
-- `src/project`, `src/music`, `src/content`, `src/time/clock.ts`, `src/time/sequencer.ts`,
-  `src/time/moves.ts`, `src/time/recordWindow.ts`, `src/time/songLoop.ts`, `src/audio/spectrum.ts`
-  and view helpers such as `arrange/songLayout.ts`, `songModel.ts`, `songDrag.ts`, `steps/model.ts`
-  and Shape's `macroAssign`, `cardKnob`, `squeeze`, `paramState`, `drumMix` and `bigKnobReach` are
-  **pure TypeScript**: no DOM, no Web Audio, no React. They run in Node unit tests.
+- `src/project` (including the song's timeline rules, `arrangement.ts`), `src/music`,
+  `src/content`, `src/time/clock.ts`, `src/time/sequencer.ts`, `src/time/moves.ts`,
+  `src/time/recordWindow.ts`, `src/time/songLoop.ts`, `src/audio/spectrum.ts` and view helpers such
+  as the Song view's `arrange/songLayout.ts`, `songModel.ts`, `laneSelection.ts`,
+  `laneGestures.ts`, `laneLoop.ts` and `laneKeys.ts`, `steps/model.ts` and Shape's `macroAssign`,
+  `cardKnob`, `squeeze`, `paramState`, `drumMix` and `bigKnobReach` are **pure TypeScript**: no
+  DOM, no Web Audio, no React. They run in Node unit tests.
 - `src/audio` never imports React, stores, or UI. It is driven by `setProject()` and timed calls.
 - Audio nodes, class instances and functions never enter the Project. The Project is JSON.
 - The **audio clock is the timing authority**. Notes, song moves and audition stops are scheduled
@@ -34,8 +36,11 @@ Rules:
 
 ## Spine files (shared contracts — change only deliberately)
 
-- `src/project/types.ts` — the Project schema (**v3**, `PROJECT_VERSION = 3`, schema id
+- `src/project/types.ts` — the Project schema (**v4**, `PROJECT_VERSION = 4`, schema id
   `switchboard01.project`). Ticks: PPQ 96, step 24, bar 384.
+- `src/project/arrangement.ts` — the song timeline's rules (placing, carving, moving, resizing,
+  splitting, time inserted or removed, sections, tidying). Every reader and writer of the song uses
+  them.
 - `src/project/params.ts` — parameter registry (ranges, defaults, units, curves, tips, `short`
   labels, `negate` for controls that read as a cut such as Gate Depth) + helpers.
 - `src/project/modules.ts` — patch module catalogue: ports (audio / mod), `PATCH_LIMITS`.
@@ -74,12 +79,21 @@ Rules:
   param is controlled by its macro. `Track.macroHome` (v3, optional) holds the positions the sound
   or starter was designed with: where double-click returns a big knob (`macroHomeFor`). Pump is a
   tempo-synchronized ducking envelope — not an audio sidechain.
-- Arrangement: ordered blocks `{sceneId, repeats, label?, parts?, moves?}`; `parts` changes single
-  parts in that block only (another scene's clip, or `null` = silent). `moves` (v3) holds at most
-  one **song move** of each kind: `fadeIn`, `fadeOut` (the song gain across the block),
-  `filterRise` (Tone of the listed parts, default every melodic part, from 0.15 to its own value),
-  `echoThrow` (Echo to 0.85 over the block's last beat, back a bar later). One pass = the longest
-  clip the block plays (`blockBars`); song length = Σ pass × repeats.
+- **Arrangement (v4): the song is an absolute timeline of whole bars**, `{ regions, sections,
+  tailSeconds }`, like GarageBand's Tracks area (see Song commands and Song playback below).
+  - `SongRegion {id, trackId, clipId, start, bars, offset}`: a loop on a part's row. It plays its
+    clip (by id, one of its own part's clips) from bar `start` for `bars` bars, the clip repeating
+    to fill it; `offset` (0 ≤ offset < the clip's bars) is how far into the clip it begins. A part's
+    regions never overlap; silence between them is allowed.
+  - `SongSection {id, name, start, bars, moves?}`: a named label over a bar range (Intro, Drop …,
+    at most `MAX_SECTION_NAME` 40 characters). Sections never overlap and own no regions; moving or
+    copying "a section" moves the regions that start inside it.
+  - Song moves live on sections (`SongMove {id, kind, parts?}`, at most one of each kind):
+    `fadeIn`, `fadeOut` (the song gain across the section), `filterRise` (Tone of the listed parts,
+    default every melodic part, from 0.15 to its own value), `echoThrow` (Echo to 0.85 over the
+    section's last beat, back a bar later).
+  - Song length (`songBars`) = the end of the last region or section, at most `MAX_SONG_BARS`
+    (512). `tailSeconds` (0–10) is the export tail's default.
 - Performances: a snapshot of the musical state + timestamped events (launch, scene, notes, macro,
   param, mute, tempo, swing, master). During a take the store is locked to an allow-list: only the
   edits the take records (knob/param moves, macros, mutes, tempo, swing, master volume) go through;
@@ -100,12 +114,32 @@ Rules:
   - Chord pads use `NoteSource 'chord'`: they skip Musical Assist (the chord is already in the key,
     or, in pentatonic and blues keys, in its parent scale) but are recorded and arpeggiated.
   - MIDI pitch bend is not recorded into performance takes: a replay plays its notes unbent.
-- Musical Assist snaps melodic notes into the key; drums, sampler parts (recordings keep their
-  pitch), chord pads and previews play as pressed.
-- Schema migration: v1→v2 adds neutral mastering; **v2→v3 changes nothing** (every v3 addition is
-  optional or a wider range). The bump exists so older builds refuse v3 projects (which may hold 5–8
-  scenes, 5–8-bar clips, per-clip recordings, song moves and macro homes) with "This project was made
-  with a newer version of Omni Song." instead of silently dropping data.
+- Musical Assist snaps melodic notes into the key in the session (`snapToScale` in `noteOn`); drums,
+  sampler parts (recordings keep their pitch), chord pads and previews play as pressed. Since 2.3
+  the on-screen keyboard under Assist offers only in-key notes (the scale keyboard), so the snap
+  matters for MIDI keyboards; no two on-screen keys play the same note.
+- Schema migration (`src/project/migrate.ts`, one step per version, on a copy; validation runs
+  after): v1→v2 adds neutral mastering; **v2→v3 changes nothing** (every v3 addition is optional or
+  a wider range; the bump makes older builds refuse v3 projects with "This project was made with a
+  newer version of Omni Song." instead of silently dropping data); **v3→v4 turns the song's blocks
+  into regions and sections** (`songFromBlocks`) that play exactly as before:
+  - blocks are laid out in order from bar 0; a block whose scene is missing is skipped (no gap);
+  - a block lasts (the longest clip it actually played, at least 1 bar; per-part changes and
+    layered clips count) × repeats (1–16);
+  - each block becomes a section (id = the block's id; named by its label, else its scene) carrying
+    its moves;
+  - each part that played something in it (the scene row's clip, a layered scene's clip; nothing
+    when switched off or empty) gets a region `<block id>:<part id>` over the whole block from the
+    clip's start;
+  - touching regions of a part that play on in phase are then joined (`mergeTouching`).
+  It is deterministic; a song longer than 512 bars is cut there by validation, which says so. The
+  starters' `[row, repeats]` songs are laid out by the same function (`content/starters/dsl.ts`).
+- Validation (`validate.ts`) checks and repairs the song in plain words ("Fixed 2 overlapping loops
+  in the song."): regions with unique ids on an existing part and one of its clips, in whole bars
+  inside the song, offsets inside the clip, never overlapping (`tidyRegions`), in time order;
+  sections named, in whole bars, never overlapping (`tidySections`), moves of known kinds, one per
+  kind, on parts that exist. Limits: `maxRegions` 4000, `maxSections` 256. A valid song comes back
+  exactly as it went in.
 
 ## State, commands, undo
 
@@ -122,7 +156,8 @@ Rules:
   press) pass a gesture id so they are one undo step. A gesture that comes back to where it started
   leaves no step; `apply()` then returns `noStep: true`, so a message about it offers no Undo.
 - `lastChange()` says what the latest change was (an edit, an undo or a redo of which step, or a
-  change outside the history), for listeners that keep state per step (the song loop).
+  change outside the history), for listeners that keep state per step (versions before bulk edits,
+  each part's selected clip across scene-row edits).
 - An undo group (`beginGroup(label)` / `endGroup()`) merges every recorded edit into one step; a
   Record Notes pass uses it, and so do Reset big knobs and a diagonal in-key note drag (skipped
   while Record Notes has its own group open). `endGroup()` drops a group step whose edits ended
@@ -130,8 +165,10 @@ Rules:
 - Commands return `{changed, reason?, message?}`; invalid input changes nothing. `session.accepted(r)`
   shows refusals as a toast.
 - UI-only state (selected part and slot per part, view, pad mode, octaves, tips, Steps grid and
-  Follow, chord pads, keyboard folded per view, the lane's zoom and scroll per project) lives in
-  `uiStore`, never in the Project. Some of it is remembered in `localStorage`.
+  Follow, chord pads, keyboard folded per view) lives in `uiStore`, never in the Project. Some of it
+  is remembered in `localStorage`. The Song view keeps its own (`arrange/laneStore.ts`,
+  `laneSettings.ts`; see Views). `uiStore.laneView` / `setLaneView` are left over from 2.2 and
+  unused.
 
 ### Note, clip and music commands (round 4)
 
@@ -155,10 +192,10 @@ Rules:
   (the view's session-kept original) each press varies the original. One press stays strictly within
   ±30 % of the notes it varies (`VARIATION_MAX_COUNT_CHANGE`; clips of 3 notes or fewer keep their
   count). Variation originals live in the Play view for the session and are never saved.
-- Scenes: `insertScene`, `duplicateScene`, `deleteScene` (asks first when blocks use it;
-  `removeBlocks` takes them too), `captureScene`, `sceneFromBlock`. Clips: lengths 1–8,
-  `repeatClipToBars`, `setClipNotes`. Arrangement: block moves, `setBlocksPart` across a selection,
-  `setPartEverywhere`, `makeSongFromTake`, `addIntro` / `addEnding` (`ENDING_TAIL_SECONDS` = 2).
+- Scenes: `insertScene`, `duplicateScene`, `deleteScene(store, row)` (its clips' song regions
+  leave in the same step; the result's `regions` counts them, and `sceneUse(p, id).regions` is what
+  the delete confirmation says first), `captureScene`. Clips: lengths 1–8, `repeatClipToBars`,
+  `setClipNotes`. The song commands are below.
 - Sound: `snapshotTrackSound` / `restoreTrackSound` (instrument, big knobs and maps, effect
   settings), `copyEffectChain` / `pasteEffectChain`, `macroReach` (what a big knob can still move),
   clip-recording commands (`setClipSampleRegion`, `importRecordingAsClip`).
@@ -170,6 +207,59 @@ Rules:
   `resolveProgression` (anchored on the key's root or its relative major/minor; pentatonic, blues
   and chromatic keys use their parent scale), `voiceLeadLoop` (triads move at most 7 semitones per
   change).
+
+### Song commands (`src/state/commands/arrangement.ts`, schema v4)
+
+The rules are pure (`src/project/arrangement.ts`): **placed wins** — `placeRegions` lets a placed,
+moved, resized or pasted region carve its part's regions where it lands (`carve`: cut short, start
+later in phase, split in two, or removed); `moveRegions`, `resizeRegions` ('end' changes the length,
+the clip repeating to fill it; 'start' keeps the music in time, changing `offset`), `splitRegions`,
+`duplicateRegions` (right after the selection), `insertTime` / `removeTime` (a region crossing the
+point is split, or joined again when its pieces play on as one, `mergeTouching(at)`), `sceneRegions`
+(a scene row as regions, as long as the row), `placeSection`, `sectionRegions` (the regions that
+start inside a section), `tidyRegions` / `tidySections`. They return new arrays, so the Song view's
+drag preview, the commands, playback and export use one set of rules: what the lane draws is what
+plays.
+
+Commands, each one undo step labelled `arrange:<Words>` with `display` words that name the clip,
+part or section ("Move Four Floor", "Lengthen Bounce", "Delete 3 loops", "Build up Drop"); a
+`gesture` id merges a drag into one step; bad input is refused with nothing changed and no step,
+and an edit that changes nothing leaves none. Ids come from `uid('rg')` and `uid('sec')`. Results
+(`SongEditResult`) carry `ids` (what was made, moved or copied), `trimmed` and `removed`.
+- Loops: `addRegions(drafts)`, `addClipToSong(trackId, clipId, start, bars?)`,
+  `addSceneToSong(row, start, {bars?, section?})` (also a section named after the scene where none
+  overlaps), `fillSongFromScenes()` (an empty song only: every scene row with clips, in order, each
+  twice its length, with a section each: "Make a song from my scenes"), `moveRegions(ids, delta,
+  {copy?, gesture?})`, `resizeRegions(ids, edge, delta, gesture?)`, `splitRegions(ids, atBar)`,
+  `removeRegions(ids, {cut?})`, `duplicateRegions(ids)`, `copyRegions(p, ids)` (pure, a
+  `RegionClipboard`) / `pasteRegions(clip, atBar)` (a clip deleted since is skipped, one moved to
+  another part follows it), `setRegionClip(id, clipId)` (same part only).
+- Time: `insertBars(at, bars)`, `removeBars(from, to)`.
+- Sections: `addSection(start, bars, name?)` ("Section N"), `renameSection`,
+  `resizeSection(id, edge, delta)` (the label only; it stops at its neighbours), `moveSection(id,
+  delta, {copy?})` (with the regions that start in it, which win where they land),
+  `duplicateSection(id)` (its length inserted after it and filled with what plays in it, in phase),
+  `removeSection(id, {withMusic?})` (with music: `removeTime` over its bars),
+  `toggleSectionMove(id, kind, parts?)`, `setSectionMoves`.
+- Helpers: `shapeSection(id, 'build' | 'strip' | 'breakdown')` cuts only regions inside the section,
+  at clip boundaries, so everything stays in phase and the song keeps its length (build: part *i*
+  of *k*, in `BUILD_ORDER` texture, pad, chords, lead, sampler, percussion, bass, drums, comes in
+  near `from + i·L/k` where its clip starts; strip: the reverse; breakdown: `BREAKDOWN_ROLES` drums,
+  percussion, bass leave). `shapeProblem(p, id, kind)` says in plain words why one would do nothing.
+  `addIntro()` / `addEnding()` (4–8 bars from the first / last section's clips, built up / stripped
+  down; the ending carries a fade-out and lifts a 0 s tail to `ENDING_TAIL_SECONDS` = 2) and
+  `setTailSeconds` exist and are tested, but the 2.3 Song view offers no control for them (nor for
+  `insertBars` / `removeBars` directly).
+- Takes: `takeToRegions(p, takeId)` (pure: each launch plays until the part's next launch or stop,
+  in whole bars from the take's start; what played when the take began carries on in its phase;
+  clips found by id; `rounded`, `missing`) and `songFromTake(takeId, {at?})` (placed from the song's
+  end by default).
+- **The song follows the clips** (`common.ts`: every command's `run()` calls `keepSongWithClips`, in
+  the same undo step): deleting a clip, clearing a part or deleting a scene row takes their regions
+  out; a new clip length keeps the regions' bars and wraps their offsets; a clip moved to another
+  part takes its regions to that row (they win there; a swap swaps them); a clip pasted over one the
+  song plays takes over its regions; copies never add regions. Scene rows moved, inserted or copied
+  change nothing (regions name clips by id).
 
 ## Audio engine
 
@@ -257,13 +347,14 @@ Rules:
   an export's `holdAhead` and takes the larger margin.
 - **Skip vs stop.** A note whose start passed more than 10 ms ago (`LATE_TOLERANCE`) is dropped,
   never played late; note-offs still run. A visible tab whose audio runs and falls behind **skips**
-  to the present (`Sequencer.skipTo`: launches, song blocks and loop phases carry on in time); a
+  to the present (`Sequencer.skipTo`: launches, song passes and loop phases carry on in time); a
   `'skipped'` event fires only when notes were dropped, a performance take carries on, and the
   session shows `SKIP_NOTICE` at most once a minute. Only a **hidden tab or a suspended audio
   device** stops playback (`STALL_THRESHOLD` 0.25 s), coherently and without a backlog;
   `STALL_MESSAGE` says "… Press Play to continue." and the banner's Play calls
-  `session.resumeAfterStall()`, which restarts what was playing (song from its block, a replay from
-  its start, else the live pads).
+  `session.resumeAfterStall()`, which restarts what was playing (the song from the bar where the
+  music stopped, into the loop when that bar lies before the loop's end; the `stalled` event carries
+  `songBar`; a replay from its start, else the live pads).
 - **Sound edits while playing:** `transport.revoice(trackIds)` re-voices a part's not-yet-started
   notes after an instrument, drum voice, kit, preset, sampler or recording change (a kit change
   renders the new voices in short tasks first); pump, mappings and the metronome `invalidate()`.
@@ -275,9 +366,12 @@ Rules:
   allocating; the Loops progress bars, the Steps playhead and the queued countdown use them.
 - **Record window** (`src/time/recordWindow.ts`): Record Notes keeps notes played up to an eighth
   note early (`RECORD_EARLY_TICKS` = 48) and puts them on the downbeat, keeping their held length;
-  `runtime.recordStartsAtTick` is set while waiting. Recording into a clip the playing song block
-  does not play still records where its loop would be (`runtime.recordTargetAudible` false, one
-  notice).
+  `runtime.recordStartsAtTick` is set while waiting. **In the song**, Record Notes writes each note
+  into the clip of the selected part's region under the playhead, in phase with that region, and
+  follows the song from region to region (`runtime.recordTarget` follows; nothing is launched or
+  reselected). Where the part has no region nothing is recorded, `runtime.recordTargetAudible` turns
+  false and one notice says so; starting with no region under the playhead does not start ("Nothing
+  to record into: …").
 - **Song moves** (`src/time/moves.ts`): fades become song-gain ramps, Filter rise and Echo throw
   become Tone and Echo macro ramps, all as sequencer events. Seek, pause/resume, loops, edits and
   regenerations resume mid-ramp at the value reached there; offline renders get the same moves, so
@@ -285,147 +379,115 @@ Rules:
   ramp from `t`; the transport sets a fade's start value 5 ms before its time (`MOVE_GLIDE`).
 - Export while playing: while an export prepares and renders, live playback is scheduled 2 s ahead
   (`RealtimeTransport.holdAhead`). Edits, launches, Pause and Stop still act at once.
-- Pause / Resume: Pause records the musical position (tick, each playing clip's phase, queued
-  launches, song block, replay position), releases held notes and stops scheduling; Play restarts
-  the sequencer at that tick with the same launcher state (`relocateSlots` / `relocateSongRows`), so
-  playback continues in time with no backlog. Stop returns to bar 1 with the previously playing
-  clips armed. Pause is unavailable while a performance take records; during Record Notes it ends
-  the pass first.
+- Pause / Resume: Pause holds the musical position (the tick, each playing clip's phase, queued
+  launches, the song's passes, the replay position), releases held notes and stops scheduling;
+  Resume plays the paused tick `START_OFFSET` from now with the same state, so playback continues in
+  time with no backlog. `RealtimeTransport.cue(opts)` holds paused at a new start position (a ruler
+  click while the song is paused). Stop returns to bar 1 with the previously playing clips armed
+  (in song mode the session puts the song cursor back where that playback started). Pause is
+  unavailable while a performance take records; during Record Notes it ends the pass first.
 - `RealtimeTransport` emits `arpNote` when the audio clock reaches an arpeggiator note that was not
   cancelled; Record Notes records those (at their real grid tick and gate) on arp parts.
-- Scene rows inserted, copied or deleted remap the playing and queued slots, the song plan and each
-  part's chosen slot (as a scene move does); undo and redo bring the chosen slots back.
+- Scene rows inserted, copied or deleted remap the playing and queued slots (`relocateSlots`) and
+  each part's chosen slot (as a scene move does); undo and redo bring the chosen slots back. Song
+  transitions name their clip by id and resolve its slot when applied, so the song needs no remap.
+- **Launching the clip a part plays** keeps it playing in phase (`Sequencer.request`): a stop or
+  switch queued for the part is called off (also one the look-ahead had already applied), "Play row"
+  on a row that partly plays leaves what already plays it alone, and in the song a pad of the
+  playing clip holds it over the song's change on that bar line. The runtime then shows no queued
+  change.
 
 ## Song playback
 
-- Song playback is what the Arrange lane shows. `start()` lays out every block's part choices as
-  'song' transitions (a layered part plays the other scene's slot, an off part stops at the block
-  start); `playSong(i, {fromBar})` starts at that lane bar, the block containing it in phase;
-  `playSong()` (neither given) starts at the song loop's first block, else at the first block.
-  `Session.togglePlay({ song })` (Space / the transport's Play; `song` in Arrange): Pause while
-  playing; otherwise a pause continues whatever was paused (pads, song or replay); a start plays the
-  song (from the loop's first block when a loop is set), or the pads when no block can play.
-- Edits while a song plays or is paused (undo/redo included): when `songSignature()` changes, the
+The song plays its regions on an **absolute song timeline** (schema v4); the model for this section
+is the timing notes in `src/time/contracts.ts` and the header of `src/time/sequencer.ts`.
+
+- **Passes.** The transport tick keeps running; `SongPass {at, from, to}` maps it onto the song: a
+  pass plays song ticks [from, to) from transport tick `at` on. The first pass starts at the start
+  bar (`PlayMode {kind: 'song', fromBar}`; transport tick = song tick there). Without a loop it runs
+  to the song's end, which sends 'end'. With a loop, a new pass of [loop.fromBar, loop.toBar)
+  follows each time the playhead reaches the loop's end, so beats, swing and the arpeggiator run on
+  through every seam with nothing doubled or restarted. Passes are laid lazily (`extendSong`, a bar
+  ahead of the generation cursor) and old ones pruned (`pruneSong`), so a long loop never grows the
+  plan.
+- **Regions → transitions.** Each part's regions become 'song' transitions in its launcher: at a
+  region's (mapped) start the part plays the region's clip with a loop start chosen so the clip's
+  phase is `offset` at `start` (`Transition.loopStart`, one canonical value per phase); at its end it
+  stops, unless the part's next region starts there. Two touching regions that carry on in the
+  same clip play as one (a held note rings on); one that starts its clip again relaunches it. A part
+  switches clips exactly on the region boundary: the old note is cut there and two clips never
+  sound at once. A part with no region is silent. Transitions carry the clip **id**; the slot is
+  resolved when applied, so scene reorders and clip moves need no song bookkeeping. Song changes
+  sort before a pad launch at the same tick (the pad wins): a pad tapped during the song wins until
+  the song next changes that part.
+- **Live edits** (`Session.followSongEdits`): when a project change touches what the song plays
+  (`songPlayChanged(p, prev)`, compared structurally: a region's part, clip, place, length or
+  offset, a clip's slot or length, or the song's length; renames and sounds do not count), the
   session calls `transport.replanSong()` → `Sequencer.replanSong(now + 10 ms)` in the edit's own
-  task, so no reader (the lane playhead, the song plan store, the next transport action) ever sees
-  a plan the edit made stale. It is cheap: for a lane drop while the House starter's song plays
-  (headless Chromium), the replan's own work in the drop task is 0.8 ms median (2.5 ms p90), 2.8 ms
-  (8.9 ms p90) at 4× CPU slowdown, against a drop frame of ~20 ms (~90 ms at 4×) that is React's
-  commit and layout. Running it after the next paint instead was measured and dropped: it saved
-  about that much in the drop frame but made the frame after it longer (a second React commit for
-  the new plan: +3 ms median, +29 ms at 4×). The **edit point**
-  is the playhead at that time (the pause point while paused), rounded up to a whole tick; nothing
-  before it changes. The anchor is the plan block under the playhead. It **has started** when its
-  start lies before the playhead's floor (the start, pause or resume point; right after Resume the
-  playhead waits there) or its time has passed. The rules, in order:
-  1. Anchor not started yet (right after Play, or paused/resumed on its first tick): it starts as
-     edited; deleted, the first block that followed it and still exists starts in its place.
-  2. The anchor (found by id) still covers the playhead at its new length: it keeps its start;
-     parts whose clip in it changed (its scene, a part switched off or on, a layered part, the clip
-     in that slot) switch **at the edit point**, in phase with the block start. A part switched off
-     stops there (its sounding notes are cut); one switched on joins mid-loop, and its notes that
-     would have started before the edit point are not played late.
-  3. Otherwise, where the playhead lies on the edited lane: the new order laid out from the
-     anchor's start or, deleted, from the start of the nearest block before it still in the song
-     (with none, from the anchor's start beginning with the block that followed it). If the block
-     there plays the same clip on every part as what sounds now (a split while a later pass plays,
-     a join while the second block plays, undoing either, a deleted block whose neighbour plays the
-     same), playback continues in that block: no switch, every clip keeps its loop phase, the lane
-     playhead does not move.
-  3b. Otherwise, when the block there plays the anchor's scene and this edit made or changed it (new,
-     or another length or other part choices than in the plan played: Build up, Strip down,
-     Breakdown on the playing block, or undoing / redoing one), playback continues in that block from
-     its start on the lane (a pass line of the block that played, so every later block stays on the
-     phrase grid); its parts that differ from what sounds switch at the edit point, in phase with that
-     start. The lane playhead does not jump back and nothing plays a pass late or is skipped.
-  4. Otherwise the anchor (shortened below the playhead, or deleted) sounds on to the **next bar
-     line**: shortened, with its changed parts switched at the edit point; deleted, as it was. There
-     the block after it takes over (for a deleted block: the first block that followed it and still
-     exists, at its place in the new order), or the song ends.
-  Everything after the anchor follows the project (order, scenes, parts, repeats, lengths, the end);
-  the end never lies behind the playhead (nor before the next bar line once the anchor has started).
-  Song transitions from the edit point on are replaced in `pending` and in `history` (a rewind
-  cannot bring stale ones back), then the transport invalidates. An Undo is an edit like any other:
-  the part switches back at its edit point, in phase (undone in the same moment, the switch never
-  happens). A note an edit already cut stays cut (its voice's release is scheduled), so a held chord
-  comes back with its next start. Song transitions sort before a pad launch at the same tick (the
-  pad wins); pad launches stay on the next bar line. Scene reorders are followed first by
-  `relocateSongRows`. In song mode the session leaves a clip that left its part (deleted, or dragged
-  to another part) to the replan: its slot is empty, so the part is silent at once, and the replan
-  makes that a switch (Undo switches it back on); no live stop is queued and the slot is not
-  relocated to "stopped".
-- **Song loop** (`runtime.songLoop`, set only through `Session.setSongLoop`; runtime only, never
-  saved, not in undo history): the blocks from `fromBlockId` to `toBlockId`, inclusive, either way
-  round, in the current order. After the loop's last block the plan goes on with its first block,
-  again and again: one pass is kept as a template (`SongState.cycle`) and laid out a bar ahead of
-  the generation cursor (`extendSong`), with the blocks' own ids and every pass starting its clips at
-  its own start, as the song plays them there; entries that played more than `HISTORY_TICKS` ago are
-  dropped (`pruneSong`), so a long loop never grows the plan. No 'end' while it loops.
-  - Play song with a loop: from its first block. From a block or bar before the loop's end it plays
-    into the loop; after it, to the song's end (the loop never engages).
-  - Set or changed while playing or paused (`Sequencer.setSongLoop`): the block the lane shows at
-    the playhead lies in the loop → it plays on and loops at the loop's end; outside → playback
-    continues at the loop's first block at the next bar line (`jumpAt`; at once when that block has
-    not sounded yet; while paused, after Resume). Setting never changes the block under the
-    playhead. Cleared: the song plays on to its end; a waiting jump is dropped. Resume after a
-    stall restarts inside the loop (at its first block when the music stopped outside it).
-  - Edits never jump. A replan wraps after the loop's last block (for the block that follows and
-    for the playhead's place on the edited lane, rules 2–4 above); a waiting jump is kept.
-  - The session keeps the loop valid on every project change, before the replan
-    (`songLoopAfterEdit`, src/time/songLoop.ts): both end blocks still there → unchanged (blocks
-    moved between them join it); the loop's last block itself changed (another length or other
-    parts) and new blocks of its scene follow right after it (Split, Build up, Strip down,
-    Breakdown, undoing a join, or redoing any of them) → those join it, the last of them becomes the
-    loop's last block (a block of the same scene pasted or duplicated after an unchanged last block
-    stays outside); an end block joined into the block before it → that block; otherwise a deleted
-    end block shrinks the loop to the first (last) block of its old span still there; nothing left,
-    or another project → cleared.
-  - Undo and redo (`SongLoopHistory`, src/time/songLoop.ts): an edit that changed the loop is
-    remembered by its undo step id (`ProjectStore.lastChange()` tells the store's listeners whether
-    a change was an edit, an undo or a redo, and of which step). Undoing that step brings the loop
-    back as it was before the edit (an end block deleted, the loop shrunk or cleared: the old loop
-    returns with its blocks), redoing it as it was after, as long as the loop was not changed since
-    and its end blocks are in the song; otherwise the rules above apply. An undo or redo that
-    changed the loop by those rules (undoing the step that made a block the loop ends on) is
-    remembered the same way, so redoing that step restores the loop.
-  - Runtime `songLooping` (`Sequencer.songLoopingAt`): true exactly while the block the lane shows
-    at the playhead is one of the loop's blocks the plan repeats (also paused there); false while
-    the song plays towards the loop or a jump to it waits, when it plays on to its end (no loop,
-    cleared, or started after the loop), and when the song is not on. The session updates it on
-    start, block events, replans after edits, loop changes, pause, resume, stop and stalls.
-  - Every pass sends its 'block' events (runtime `songBlock`/`songBlockId` follow); the lane maps a
-    repeat by its id, so the lane playhead and the readout go back to the loop's start.
-    `songTimelineBar` reads the sequencer's live plan (`songLaneTickAt`), never a stale copy.
-    Replay and live pads ignore the loop; exports render the song through, or (Export "Loop
-    (blocks a–b)") the loop's blocks once: render source `songRange` plays the song from block a to
-    the end of block b (every part as the song plays it there), then the tail.
+  task, undo and redo included. The **edit
+  point** is the playhead at that time (the pause point while paused), rounded up to a whole tick;
+  nothing before it changes and the playhead never moves (time is absolute). What each part played
+  just before the edit point is compared with the new regions there: a part whose music changed
+  switches at the edit point, in phase with its region (notes sounding across it end there; a part
+  joining mid-loop does not play what it missed); everything later follows the new regions; an edit
+  that changes nothing heard (a split under the playhead, an edit behind it) changes nothing and
+  regenerates nothing. Two edits at one pause point both apply. A song cut shorter than the
+  playhead ends at the next bar line, once. Replan plus regeneration on a 4000-region song: about
+  1.7 ms median (engine slice report). Section moves edited while the song plays are re-sent from
+  now by a regeneration (`movesChanged` in the session), not a replan.
+- **Song loop** (`runtime.songLoop: SongLoop {fromBar, toBar}`, whole bars, half-open; set only
+  through `Session.setSongLoop`, which returns false for a bad range; runtime only, never saved, not
+  in undo, never moved by edits; `cleanSongLoop` in `src/time/songLoop.ts`).
+  `Sequencer.setSongLoop(loop, time)`: with the playhead inside the new loop the pass playing runs
+  on to the loop's end, then loops; outside it, playback continues at the loop's start at the next
+  bar line (at once when nothing of that bar has sounded yet: right after Play, or paused on a bar
+  line); cleared, the pass playing runs on to the song's end. A start before the loop's end plays
+  into the loop; a start after it plays to the song's end. Replay and the live pads ignore it.
+  `runtime.songLooping` (`Sequencer.songLoopingAt`) is true while the playhead is inside the loop
+  and will repeat it (also paused there); the session syncs it on start, pause, resume, loop
+  changes, edits and every beat (so it can be up to a beat late after a jump).
+- **Song moves** come from sections (`src/time/moves.ts`, `sectionMoveSegments` /
+  `timelineSegments` over `SectionSpan`s mapped through the passes): a section's moves act wherever
+  a pass plays it (every pass of a loop). Targets rest (song gain 1, a big knob at the part's own
+  value) where a pass or section starts and where a section ends with more song after it; a pass
+  that starts inside a fade begins at the value the fade has there; a fade-out that ends the song
+  stays faded through the export tail.
+- **Session API** (the Song view codes against it):
+  - `playSong({fromBar?})` plays from `fromBar`, else from `runtime.songCursor` (from the loop's
+    start when a loop is on and the cursor lies outside it; from bar 0 when the cursor is at or past
+    the end outside a loop: `songPlayFrom`); restarts there when the song already plays; an empty
+    song says "The song is empty. Drag a scene or a loop onto its rows first."
+  - `seekSong(bar)`: playing, a restart at that bar (the usual 50 ms start offset, so every bar line
+    stays on the transport's beat grid); paused, it stays paused there (`transport.cue`); stopped,
+    it sets the cursor. A seek also becomes where Stop returns to.
+  - `setSongCursor(bar)` (whole bars, ≥ 0) and `setSongLoop(loop | null)`.
+  - `togglePlay({song})` (Space and the transport's Play; `song` in the Song view): Pause while
+    playing; a pause continues whatever was paused (pads, song or replay); otherwise it plays the
+    song, or the pads when the song is empty.
+  - **Stop in song mode puts the cursor back where that playback started** (or the last seek);
+    Pause keeps the position.
+  - Runtime: `songCursor`, `songLoop`, `songLooping` (the 2.2 `songBlock` / `songBlockId` are gone).
+- **`src/app/songPlayback.ts`** reads the song's position for views: `songPlayheadBar()` (the
+  fractional song bar heard now, output delay taken off, while the song plays or is paused; null
+  otherwise; cheap enough for every animation frame), `songBarAt(tick)` (the song bar a transport
+  tick plays: the Loops pads count "Stops at bar N" with it) and `useSongPlaying()` (song mode
+  playing or paused). The transport readout shows the song's bar and beat heard, or, stopped in the
+  Song view, the cursor.
 - An 'end' is always handed out where the driver gets it: never before the resume point or before
   the floor of a rewind, so the transport stops even if the end came to lie behind music already
   handed out.
-- A tempo change never takes effect before the start or resume point (the playhead waits there). A
-  transition that leaves the same pad playing still ends what another clip sounds on that part (a
-  clip replaced in its pad just after a block start, re-applied by a rewind).
-- Right after an edit made just before a block (or loop pass) starts, the playhead lies a moment
-  before the block the edit point found; `songBlockAt` and the lane count it as that block's start.
-- `Sequencer.songPlan()` (absolute ticks; blocks before the playing one laid out in the current
-  order; a deleted block has index -1 while it sounds on to the next bar line) feeds
-  `views/arrange/songPlan.ts`. `songLaneTick(plan, lane, tick)` (pure, in the sequencer module) and
-  `songTimelineBar(tick)` map the playhead onto the lane for the lane playhead and the transport
-  readout: the lane start of the plan block playing plus the distance into it, never past that
-  block's lane length (a block shortened below the playhead: the playhead waits at its end); while a
-  deleted block sounds on, the playhead waits where the block taking over starts (the end of the
-  block before it), or at the end of the song. Between edits it only moves forward.
-  `Sequencer.songBlockAt(tick)` is the block the lane shows there (the block taking over while a
-  deleted one sounds on); the session's runtime `songBlock`/`songBlockId` follow it after every
-  edit, since a block continued after a split or join gets no 'block' event.
+- A tempo change never takes effect before the start or resume point (the playhead waits there).
 
 ## Offline rendering and export
 
 - `renderOffline()` (src/render/offline.ts) drives the same Sequencer + AudioEngine on an
   `OfflineAudioContext`, in chunks via `suspend()` for progress and cancellation. At the end of the
-  music it calls `transportStopped()` like the live transport, then renders the tail. Sources: the
-  song, part of it (`songRange`), a performance, a scene or the launcher state. The Export dialog
-  offers the song first when it is opened in Arrange or while the song plays or is paused.
+  music it calls `transportStopped()` like the live transport, then renders the tail. Sources:
+  `{kind: 'song'}` (bar 1 to the song's end), `{kind: 'songRange', fromBar, toBar}` (the loop range
+  once), a performance, a scene or the launcher state; plus the tail. The song plays through the
+  same sequencer code path as live playback (same regions, passes and moves), so an export equals
+  playback. The Export dialog offers "Song (32 bars)" and "Loop (bars 9–16)", and chooses the song
+  when it is opened in the Song view or while the song plays or is paused.
 - **Aligned exports** (`RenderRequest.align`, which session exports always set): the start offset
   and the engine's output latency are cut from the start and rendered extra at the end, so musical
   time 0 is sample 0 and the file is exactly the music plus the tail (`RenderPlan.fileSeconds`); a
@@ -462,8 +524,9 @@ Rules:
   project saves. If storage is full the project still opens with the edits, flagged unsaved.
 - **Versions** (`versions.ts`): kept automatically after about ten minutes of active editing, before
   bulk edits (the session calls `snapshotBefore` before Variation, Clear, Delete clip or scene,
-  Replace, Build up / Strip down / Breakdown, Make song blocks, Make a scene from a block, a kit,
-  sound or recording change, an import or Move the song: at most once per kind of edit every 2
+  Replace, Build up / Strip down / Breakdown, Make a song from my scenes, Make song from a take,
+  Remove bars, Delete a section and its music, a kit, sound or recording change, an import or Move
+  the song (`BULK_EDIT`, matched on the undo words): at most once per kind of edit every 2
   minutes in the session, every 3 minutes per project in persistence, never for undo or redo) and on
   request (Save version…, optionally named). **Thinning** runs before a new version is written:
   named versions stay until deleted; unnamed ones keep everything from the last hour, then the
@@ -479,6 +542,9 @@ Rules:
 - Project bundle: a zip (`.omnisong.zip`; `.sb01.zip` still imports) with `project.json` +
   `samples/<id>.<ext>`; validated and migrated on import. Bundles are the portable backup; browser
   storage is working storage.
+- Lists read the song from its loops and sections (`summary.ts` `projectShape`): the length is
+  `songBars`; a version's line reads "4 sections · 2:19", "Song · 0:31" (no sections) or "No song
+  yet". `ProjectSummary.blockCount` keeps its name and now holds the number of loops.
 
 ## App layer (`src/app/`)
 
@@ -491,8 +557,29 @@ Rules:
   a frame before the engine is built; the parts in use warm up first.
 - `selection.ts`: one selected clip per part (see OMNI_UX). Registered on first import (PlayView
   imports it; the app loads PlayView eagerly).
-- `runtime.ts`: what the audio side is doing now (`playing`, `tracks`, `recording`,
-  `recordStartsAtTick`, `recordTargetAudible`, `starterReplaced`, `stalled`, …) and `notify()`.
+- `runtime.ts`: what the audio side is doing now (`playing`, `paused`, `mode`, `tracks`,
+  `recording`, `recordTarget`, `recordStartsAtTick`, `recordTargetAudible`, `songCursor`,
+  `songLoop`, `songLooping`, `starterReplaced`, `stalled`, …), `offlineStore` and `notify()`.
+- `songPlayback.ts`: the song's position for views (see Song playback).
+- `pwa.ts` + `public/sw-takeover.js`: **a new version opens by itself unless a page is in use.**
+  The build (`vite.config.ts`, generateSW with `registerType: 'prompt'`, unchanged sw.js name,
+  manifest, start_url/scope and no manifest id) imports `sw-takeover.js?v=<hash>` into the
+  generated service worker and keeps it out of the precache; a small plugin writes `<meta
+  name="omni-song-version" content="X.Y.Z">` into index.html.
+  - Installing over an earlier version, the worker asks every window `"omni:busy?"` over a
+    MessageChannel (700 ms). `pwa.ts` answers from load on, before boot finishes: "busy" once a key
+    or the pointer was pressed in the page, while it plays or is paused, records, counts in or
+    exports (`session.exporting`); else "idle". No window busy: `skipWaiting()`. A page that loads
+    while a version waits posts `OMNI_TAKE_OVER_IF_IDLE`, which runs the same check.
+  - Activating, it lists the windows the earlier version controlled, `clients.claim()`s, and asks
+    them again (2 s). A window that does not answer (2.2 and older cannot) is navigated to its own
+    URL; the navigation is deliberately not awaited inside `waitUntil` (the page's request waits for
+    the activation, so awaiting it deadlocks).
+  - In the page, `controllerchange` over an earlier controller reloads when this page asked for the
+    update or is not in use; otherwise `offlineStore` becomes `'update-ready'` and the More menu
+    offers Update (`OfflineStatus`: unavailable while playing or recording, saves first). The
+    registration's `onNeedReload` does nothing, so a busy page is never reloaded by itself. The
+    workbox `SKIP_WAITING` path is unchanged.
 - `App.tsx`: banners (audio, stall, another tab), the shell's own toasts (start toasts wait until
   the quick guide is closed), global keys (?, Ctrl+S), drop-to-import, the leave warning (not for
   Record Notes) and the document title. The title and the leave guard are leaf components with
@@ -515,7 +602,8 @@ Rules:
   of the banners under it, kept current on wrap, banners and scroll); below an open menu
   (`body[data-popover-open]`, counted by Popover); action keys hidden under `body[data-modal-open]`
   (set by Dialog). `placeClearOfControls`: when a control (a button, tab, field, a field's frame,
-  a song block `[data-block-id]`; nothing wider than 60 % of the window) lies under the centred
+  a loop in the Song view, which is `role="button"`; the `[data-block-id]` selector is a 2.2
+  leftover; nothing wider than 60 % of the window) lies under the centred
   stack (at most 520 px wide), it hit-tests a coarse grid of the band once and takes the nearest
   spot that covers none, trying narrower stacks (440, then 360 px) and measuring the height each
   width really takes; with none it stays centred. Placed each time the stack changes and again
@@ -526,9 +614,15 @@ Rules:
 - Knob sizes sm/md/lg/xl (`--knob-dial-*`), `macroRange`, clickable value key (`--knob-value-h`
   sets its line height; style it there, not through the slider). Fader `formatShort`, typed entry
   through `valueInput.ts` (honours `ParamSpec.negate`). NumberField `blurOnCommit`, `dragStep`. Pad
-  `sketch` (ClipSketch) and `--loop-progress`. MiniKeyboard `noteNames` ('legend' | 'above' |
-  'none'), `fit`, `variant: 'kit'` with `kitLayout`. Type tokens `--fs-*`, `--fw-*`, `--type-*` and
-  the role classes; `--teal-key` for white-on-teal badges.
+  `sketch` (ClipSketch), `--loop-progress` and `action` (`{icon, text}`: the ▶ Play / ■ Stop key in
+  its corner on hover and focus; `null` keeps the same layout with nothing to say). ClipSketch
+  `span` / `offset` draw a clip repeated over a longer stretch from a point inside it (a song
+  loop). MiniKeyboard `noteNames` ('legend' | 'above' | 'none'), `fit`, `variant: 'kit'` with
+  `kitLayout`, and `notes` (a scale keyboard: one equal key per listed note, its own hit test,
+  releasing a held key when the notes change). Every note key is `role="button"` named by its note
+  (not a Tab stop); a click with no pointer press plays it for 300 ms. Black keys are centred on
+  the line between their white keys (60 % wide, `BLACK_KEY_HEIGHT` 0.55). Type tokens `--fs-*`,
+  `--fw-*`, `--type-*` and the role classes; `--teal-key` for white-on-teal badges.
 
 ## Views (`src/app/views/`)
 
@@ -539,7 +633,15 @@ Rules:
   re-renders a queued pad only when its number changes. Column meters read `readMetersShared`.
   `Popover` (in ClipMenu) counts `data-popover-open` and consumes an outside press (pointer only).
 - **Keyboard and pads:** `KeyboardStrip` writes `--keyboard-h` and folds per view
-  (`keyboardCollapsedFor`); one kit key table shared with the Drums pads (`kitKeyLabels`). Chord
+  (`keyboardCollapsedFor`); one kit key table shared with the Drums pads (`kitKeyLabels`). With
+  Musical Assist on, a melodic or sampler part and a scale other than Chromatic it shows the **scale
+  keyboard**: `scaleKeyboardNotes(root, scale, from, count)` (`src/music/scales.ts`, from
+  `rootAtOrBelow`) gives as many in-key notes as fit at 44 px (two octaves down to 34 px on a narrow
+  strip, at least one octave, at most three plus the root, never past MIDI 127), and a local
+  `useScaleComputerKeys` hook (`SCALE_KEYS`: A–' keys 1–11, Q–] keys 12–23, by physical position;
+  Z / X octaves; the same safety rules as `useComputerKeyboard`) plays them; it releases a held key
+  when its layout changes. Off, or Chromatic: the piano. MIDI still plays every key, moved into the
+  key by the session under Assist. Chord
   pads count shared notes so a note sounds once until every pad holding it is released (the counts
   reset when the app releases every note). `ProgressionDialog` previews by running
   `createProgressionClip` on a scratch `ProjectStore`.
@@ -567,11 +669,38 @@ Rules:
   part's recording; `sampleDetail.ts` decodes close-up waveforms; `clipAudition.ts` plays a clip's
   own recording through `engine.scheduleNote` via the part's chain and the limiter (the session's
   preview cannot pass a recording yet).
-- **Arrange:** `PartNames` (one Tab stop, arrows inside), `ScenePalette` (cards drag from anywhere:
-  their keys carry `data-drag-ok`; audition: the stop is queued for the pass's end bar on the audio
-  clock, by a module-level watcher that outlives the view), `songDrag.Dwell` (the insertion slot
-  opens after a 250 ms rest, its direction from the last `NET_DIR_PX` = 12 px of travel across),
-  `LANE_EXTRA_MAX_PX`, lane glides timed from the current time (not the frame's start).
+- **Song** (`arrange/`; the view value stays `'arrange'`): `ArrangeView` lays out `SongHeader`
+  (length, Loop, zoom, Follow, Loops), `SongTimeline` and `LoopBrowser` above `PerformancesPanel`.
+  - Pure rules (Node-tested): `songLayout` (bars ↔ pixels, snapping, the 4–128 px-per-bar zoom
+    ladder and Fit, ruler marks, Follow's page turn, row heights 40–84 px, the 8 px edge grip),
+    `songModel` (part hues away from amber, teal and coral; words: lengths, "plays 4×", badges,
+    region and section names, scene cards and loop chips), `laneSelection` (click, Shift/Ctrl,
+    marquee, keyboard neighbours), `laneGestures` (drag previews worked out with
+    `project/arrangement.ts` on a draft: move, copy, resize, browser drops, section moves, the loop
+    range, the snapped-together touches), `laneLoop` (the Loop key's range), `laneKeys` (key → action).
+  - `LaneController` (a plain class) owns every pointer gesture on the timeline and drags in from
+    the loop browser: it reads geometry cached when the gesture began (no layout reads while the
+    pointer moves), publishes to the drag store only when the shown result changes (a new bar, the
+    copy key, leaving the row), writes nothing to the project until the drop (one command, one undo
+    step), cancels on Esc, and follows the touch rule (a 250 ms rest picks up; a non-passive
+    touchmove guard on the scroller keeps the page from panning under a carried loop).
+  - Small stores outside React (`laneStore`: selection, the loop range shown on the ruler, the drag
+    view, the carried item, zoom, hover) are subscribed per region, so selecting one region
+    re-renders that one and a drag re-renders only `DragOverlay`, which hides the regions a drop
+    would change with one `<style>` rule by id and draws them as they would end up. Geometry is CSS
+    custom properties (`--ppb`, `--row-h`, and `--s`, `--b`, `--cb`, `--o` per region), so a zoom
+    re-renders nothing but the ruler. The lane's slice measured 60 fps (p95 16.8 ms, 0 frames over
+    20 ms) dragging with 150 regions on screen at 1366 × 768, and 0 DOM mutations to other regions.
+  - The playhead line is moved from `songPlayheadBar()` in a frame loop that also marks the regions
+    under it (`data-playing`) and the one Record Notes writes into (`data-recording`) with attribute
+    writes, never React state per frame, and turns Follow's page.
+  - `songActions` runs each command through the session (selection of what it made, toasts for key
+    and menu edits, the loop clipboard, the take lock); `laneSettings` remembers Follow, the
+    browser and Performances panels and each project's zoom (`localStorage`
+    `switchboard01.songLane`, the 30 most recent projects); `SongMenus` holds the loop and section
+    menus and the loop picker.
+  - `LoopBrowser` audition: the stop is queued for the pass's end bar on the audio clock, by a
+    module-level watcher that outlives the view.
 - **Mix:** `loudnessMatch.ts` (fresh readings and iterating Match; watches from app load),
   `mixMeters` reads `readMetersShared`; the mastering panel mounts in a transition after the strips'
   first frame. Export uses `renderWavWithReport`.
@@ -583,18 +712,45 @@ Rules:
   Steps keep their words and detection together in `hints/steps.ts`; Help's shortcuts and
   walkthroughs are pure data in `hints/shortcuts.ts` and `hints/guides.ts`.
 
+## Release package and launchers
+
+- `npm run package` builds, then `scripts/package-release.mjs` writes
+  `release/omni-song-<version>.zip`: `app/` (the production build), `Start Omni Song.bat`,
+  `START HERE.txt`, `launcher/`, `ASSETS.md` and `source/`.
+- The launchers (`launcher/serve.mjs`; `launcher/serve.ps1` behind the .bat, same wording) serve only
+  the app folder, on 127.0.0.1 only, and stay on port 4173, because the browser keeps projects and
+  the offline copy per address.
+- **Version check.** When Omni Song already answers on the port, the version its page names (the
+  `omni-song-version` meta; a page from 2.2 or earlier names none and counts as "an older version";
+  SWITCHBOARD / 01 is told apart by its title) decides (`decide`): the same version is opened and
+  the launcher exits; any other version is named (`waitMessage`: "Another copy of Omni Song
+  (version 2.2.0) is running in another window … This is version 2.3.0. Close the other small black
+  Omni Song window …") and the launcher checks the port about once a second, then starts this
+  version on the same port once that copy has stopped ("The other copy has stopped."). If this
+  same version starts meanwhile (a second double-click), the waiting launcher opens it and exits;
+  Ctrl+C stops a waiting launcher. The Windows title names the version ("Omni Song 2.3.0", "…
+  - waiting"). Another program on the port: it says what that means for saved projects, then uses
+  the next free port (or stops, with `--strict-port`). `serve.mjs` exports its checks (`appIn`,
+  `versionIn`, `pageInfo`, `decide`, `waitMessage`) and starts nothing when imported.
+
 ## Testing
 
 - `npm test` — Vitest (Node): timing math, sequencer events (clip phase, skips, record window, song
-  moves, 8 scenes), graph validation, commands/undo (note, scene, arrangement, sound commands), music
-  theory (spelling, chords, progressions, key moves), variation bounds, WAV encoding and dither,
-  validation/migration (v1→v2→v3), persistence (locks, rescue, versions, read-only), bundles, DSP
-  sanity, spectrum bands, view logic (`r4-*-model`, `r4-shape-logic`, `r4-shell-steps`).
+  moves, 8 scenes, song regions, loops and live edits with seeded fuzzes), graph validation,
+  commands/undo (note, scene, song, sound commands; a song fuzz of random edits with undo and redo),
+  music theory (spelling, chords, progressions, key moves, scale keyboards), variation bounds, WAV
+  encoding and dither, validation/migration (v1→v2→v3→v4, every 2.2 starter song checked bar by
+  bar), persistence (locks, rescue, versions, read-only), bundles, launchers, DSP sanity, spectrum
+  bands, view logic (`r4-*-model`, `r4-shape-logic`, `r4-shell-steps`, `r5-lane-*`).
 - `npm run test:browser` — Vitest in real Chromium: components and the whole app with real CDP
   mouse, keyboard and touch input at 1366 × 768, 1920 × 1080 and 960 × 540 at 2×; offline renders
   through the real engine (latency, true peak, returns, ramps, levels).
 - `npm run test:e2e` — Playwright + Chromium against the production build: journeys, persistence
-  across profiles and reloads, two tabs, offline mode, stalls under CPU slowdown, resource
+  across profiles and reloads, two tabs, offline mode, a new version taking over
+  (`r5-update-takeover`: idle pages, a busy page, refresh, pages that cannot answer, and the real
+  2.2.0 release when `release/omni-song-2.2.0.zip` is present), stalls under CPU slowdown, resource
   stability, keyboard-only use and axe-core.
+- The PowerShell launcher test (`r5-update-launcher-ps1`) runs only where PowerShell is found
+  (`pwsh` on PATH, or `OMNI_PWSH=<path>`); elsewhere it reports its tests as skipped.
 - `window.__switchboard` exposes test hooks (render fixtures, engine stats, `audiblePosition`) in
   every build; it contains no network or storage side effects of its own.
