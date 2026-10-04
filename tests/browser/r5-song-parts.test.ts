@@ -3,8 +3,9 @@
  * sound; its Mute and Solo keys change the part (what the song plays) and the
  * row says so in words. With touch (real CDP touch input, touch emulation on):
  * a swipe scrolls the song and moves nothing; a finger that rests first picks
- * a loop up and moves it in whole bars (the song does not pan under it); a tap
- * selects a loop, and a tap on the ruler moves the playhead.
+ * a loop up and moves it in whole bars (the song does not pan under it); on
+ * the ruler a rest, then a drag, sets the loop range; a tap selects a loop,
+ * and a tap on the ruler moves the playhead.
  */
 import { act } from 'react';
 import { cdp } from 'vitest/browser';
@@ -131,6 +132,26 @@ describe('with a finger', () => {
     await settle(150);
     expect(regions().find((r) => r.id === 'A')!.start).toBe(13);
     expect(undoCount()).toBe(undo + 1);
+  });
+
+  it('on the ruler: a swipe scrolls and sets nothing; a rest, then a drag, sets the loop range', async () => {
+    await openSong(1366, 768, song);
+    act(() => ppbStore.setState(32));
+    await settle(200);
+    const sc = scroller();
+    const y = document.querySelector('[data-ruler]')!.getBoundingClientRect().bottom - 8;
+    const view = sc.getBoundingClientRect();
+    await finger({ x: view.right - 60, y }, { x: view.right - 360, y }, 0);
+    await settle(300);
+    expect(sc.scrollLeft).toBeGreaterThan(150);
+    expect(rt().songLoop).toBeNull();
+    sc.scrollLeft = 0;
+    await settle(150);
+    // Rest on bar 3, then drag to bar 7: bars 3–6 loop.
+    await finger({ x: barX(2) + 4, y }, { x: barX(6) + 4, y }, TOUCH_HOLD_MS + 80);
+    expect(sc.scrollLeft).toBeLessThanOrEqual(1);
+    expect(rt().songLoop).toEqual({ fromBar: 2, toBar: 6 });
+    expect(rt().playing).toBe(false);
   });
 
   it('a tap selects a loop; a tap on the ruler moves the playhead there', async () => {
