@@ -142,20 +142,38 @@ tests follow loops, not blocks (`0d7f5ef`); relaunching the playing clip shows n
 absolute `E2E_DIST`, the versions test keeps its versions minutes apart, and summaries say sections
 (`9229b1d`); version 2.3.0 with What's new and START HERE (`1089b52`).
 
-**Not done, or worth knowing** (from the slice reports and the docs check):
-- The Song view has no control for **Add an intro / Add an ending** or for inserting and removing
-  bars on their own: the commands (`addIntro`, `addEnding`, `insertBars`, `removeBars`) exist and are
-  tested, but 2.2's "Shape the song…" went with the block lane. The Echo tail field left the Song
-  header; the Export dialog keeps it for each export.
+**Reviews and fix rounds.** Two independent reviews ran on the merged build (`09d8b1f`):
+- A GarageBand user's review with real mouse and keyboard (1 blocker, 6 major, 13 minor, polish).
+  Fixed in the lane fix round (`a1a5e30`) and a shell fix round (`facfcbb`): deleting every loop
+  leaves an empty song (Ctrl+A selects loops and sections; the song now ends with its last loop,
+  `songBars` vs `timelineBars`, `3cc3e69`); Song shortcuts act on the selection after any click;
+  Delete stops after one press; the hint chip stays readable; Ctrl+drag copies exactly what it drags;
+  no pick-up or drop hitches (168 loops: longest frame 16.7 ms, was up to 200 ms); bigger hit areas;
+  sticky names; zoom around the playhead; Stop brings the cursor into view; paused reads as paused;
+  **Shape the song…** (Add an intro / Add an ending) is back; "Loops" became **Add loops**; a click on
+  a part's header or loop makes it the part the keys play, and the keyboard strip names it ("Keys
+  play Bass"); in Song, Play/Space plays the song even when paused pads were waiting; scene buttons
+  say Play row / Stop row on hover; the Drums and Notes tabs go straight to a part's pads.
+- A playback-correctness review (160 random songs, about 19,000 live edits, 600 loop/tempo/swing
+  runs, 40 exports, 379,075 migrated notes, all matching). Fixed in the engine fix round (`b5ba28d`):
+  **note chase** (a held synth or bass note sounds from wherever playback enters: Play, a seek, each
+  loop pass, Resume, a loop-range export; never drums or samplers; not under a 16th), exact loop
+  seams in whole ticks, a song shortened under a sounding note releases it at the new end on the
+  audio clock, notes freed from a removed seam sound again from that bar line, exact-instant pause
+  and loop boundaries, pad state read at the playhead. Spine fix round (`5a72a08`): truthful repair
+  words; a refused song edit names no loops.
+
+**Not done, or worth knowing:**
+- No control inserts or removes bars on their own (`insertBars`, `removeBars` exist and are tested;
+  sections' Duplicate and Delete-with-music use them).
 - "Back to Song" after a double-click into a loop's notes is a 20 s toast, not a key in the Steps
   header.
 - Ctrl+T also splits, but browsers keep it for a new tab, so Help lists Ctrl+E.
 - On non-US keyboard layouts the scale keyboard's I, [ and ] keys show their US legends.
-- Two words in Play files lag behind the engine: the scene menu still says "Launch scene" (its
-  button says "Play row"), and a stopping pad's tooltip says a tap "starts again from its
-  beginning", while since the integration it plays on in phase.
+- Paused clip pads keep the amber "queued" look (they say "Paused" in words).
 - A seek while the song plays restarts the transport at that bar (the usual 50 ms start offset);
   runtime `songLooping` can be up to a beat late after a jump.
+- Toasts that arrive while the Song header is full sit over part of it until they time out.
 - Touch was tried with CDP touch events, not on a real tablet; the Windows launcher's version check
   ran under PowerShell 7 on Linux only.
 

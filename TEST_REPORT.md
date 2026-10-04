@@ -1,8 +1,9 @@
-# TEST REPORT — Omni Song 2.2
+# TEST REPORT — Omni Song 2.3
 
-_Formerly SWITCHBOARD / 01. Test results and evidence for the 2.2 build: 2.1 (2.0 plus the song
-timeline) and the round-4 upgrade built on it. Every requirement of the original brief and of the
-2.0, 2.1 and 2.2 additions is listed with its evidence in
+_Formerly SWITCHBOARD / 01. Test results and evidence for the 2.3 build: the GarageBand-style song
+(regions on a row per part, schema v4), the in-key keyboard, clearer pad play/stop/pause, and a new
+download that always opens the new version, on top of 2.2. Every requirement of the original brief
+and of the 2.0–2.3 additions is listed with its evidence in
 [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)._
 
 ## How to reproduce
@@ -18,6 +19,22 @@ npm run package                       # build, then release/omni-song-<version>.
 ```
 
 ## Results
+
+### 2.3 (round 5, `r5-int`)
+
+| Suite | Files | Tests | Result |
+|-------|-------|-------|--------|
+| Typecheck (`tsc --noEmit`, app + tests) | — | — | clean |
+| Unit (`tests/unit`, Node) | 93 | 1510 | **1508 passed, 2 skipped**; the 2 skipped need PowerShell and were run separately with `OMNI_PWSH` (PowerShell 7.4.6): the 3 launcher test files, **13/13 passed** |
+| Browser (`tests/browser`, real Chromium) | 187 | 1674 | **1664 passed, 10 failed** in the full run (20.4 min). 9 of the 10 were in 3 files that pass alone: `omni-fix-play-hints` 12/12, `r5-pads-pad-action` 4/4, `r5-shell-fix` 10/10 (load-related layout/timing). The 10th, `presets` › "Tone makes every preset audibly darker or brighter", timed out at 60 s; the 2.2.0 source times out the same way on this machine today, and with a longer budget it passes. The test renders two takes of every preset, so it now has a 4-minute budget; the full suite was not run again after that |
+| End-to-end (`e2e`, production build) | 21 | 57 | **56 passed**, one worker, 12.3 min. `resilience` › "three minutes of playback" failed its first check: the audio clock advanced 169.6 s (re-run: 169.0 s) where the test wants more than 170 s of audio time in about 170.5 s of wall time. The 2.2.0 build gives 165.4 s on the same machine at the same time: this container's audio clock runs slow, not a 2.3 change. The test's drift, voice, handle and ceiling checks come after that line and did not run in those attempts; they passed in this round's earlier run of the same spec (5/5) |
+| Launcher smoke test (2.2.0 + 2.3.0 zips, PowerShell 7 on Linux) | — | — | passed (`evidence/launcher-smoke.txt`): with the 2.2 launcher still running, 2.3 names it as an older version, waits, and starts at the same address once it is closed; loopback only; traversal refused; a second 2.3 start reuses the running copy; the page and Welcome card say 2.3.0; Jump In plays; a loop dragged 4 bars with the mouse and undone |
+
+Independent reviews of this round (reports kept with the build notes, not in the repo): a GarageBand
+user's mouse-and-keyboard review of the Song view, keyboard and pads (1 blocker, 6 major, 13 minor,
+all fixed and re-tested), and a playback-correctness review (160 random songs, about 19,000 live
+edits, 600 loop/tempo/swing runs, 40 exports and 379,075 migrated notes matched exactly; 1 major —
+note chase — and 7 minor findings, all fixed with tests).
 
 ### 2.2 (round 4, `r4-int`)
 
@@ -238,7 +255,7 @@ render bit-identically (cable undo test).
 
 | Size | Files |
 |------|-------|
-| 1366 × 768 | `01-welcome`, `02-play-loops`, `03-play-queued`, `04-play-drums`, `04-play-notes`, `04-play-steps`, `05-shape-cables`, `06-arrange`, `07-play-cables-drawer`, `08-shape-cable-panel`, `09-shape-sampler`, `13-sound-browser`, `14-project-library`, `16-shape-simple`, `17-mix`, `18-mix-mastering-warm`, `22-arrange-song-playing` (Drums off in block 2), `23-arrange-drag` (a block mid-drag, the others making room), `24-play-pad-drag` (a pad mid-drag over a swap) |
+| 1366 × 768 | `01-welcome`, `02-play-loops`, `03-play-queued`, `04-play-drums`, `04-play-notes`, `04-play-steps`, `05-shape-cables`, `06-song`, `07-play-cables-drawer`, `08-shape-cable-panel`, `09-shape-sampler`, `13-sound-browser`, `14-project-library`, `16-shape-simple`, `17-mix`, `18-mix-mastering-warm`, `22-song-playing` (the song playing, the playhead and the loops under it), `23-song-drag` (a loop mid-drag with its "Bar N" badge; what it would cover shown removed before the drop), `24-play-pad-drag` (a pad mid-drag over a swap) |
 | 1920 × 1080 | `10-play`, `11-steps`, `12-shape`, `15-shape-cable-panel` |
 | 200 % zoom (960 × 540 CSS px at 2×) | `20-welcome-zoom200`, `21-play-zoom200` |
 
