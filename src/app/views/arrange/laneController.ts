@@ -5,9 +5,11 @@
  * The timeline hands every primary-button press to `press()`; what was
  * pressed decides the gesture:
  *
- * - a region's body: select it, and once the pointer travels, move it (and
- *   every selected region) along its row in whole bars; Alt or Ctrl (⌘)
- *   copies;
+ * - a region's body: select it (and its part, for the keyboard strip), and
+ *   once the pointer travels, move it (and every selected region) along its
+ *   row in whole bars; Alt or Ctrl (⌘) copies. A Ctrl press changes the
+ *   selection only once it is known what it was: a click adds or removes the
+ *   region, a drag copies exactly what an Alt drag would;
  * - a region's edge grip: lengthen or shorten it (right), trim or extend its
  *   start (left);
  * - an empty spot on a row: a marquee that selects what it touches (a click
@@ -26,7 +28,10 @@
  *
  * Pointer moves are cheap: positions come from the geometry cached when the
  * gesture began (no layout reads), and the overlay is told only when what it
- * shows changes (a new bar, the copy key, leaving the row).
+ * shows changes (a new bar, the copy key, leaving the row). Picking up and
+ * dropping restyle nothing but the dragged regions: the drag's cursor is on
+ * one transparent sheet over the page (dragCursor), never a rule over the
+ * whole timeline.
  *
  * Touch follows the app's rule (ui/components/touchDrag.ts): a finger swipe
  * scrolls the song; a finger that rests TOUCH_HOLD_MS first picks the loop,
@@ -36,6 +41,7 @@
 import { regionEnd, type Edge } from '../../../project/arrangement';
 import { TOUCH_HOLD_MS, TOUCH_SLOP_PX } from '../../../ui/components';
 import type { Id, Project, SongRegion } from '../../../project/types';
+import { selectTrack } from '../../../state/uiStore';
 import {
   DRAG_SLOP_PX,
   barsMoved,
@@ -58,6 +64,31 @@ import { carriedStore, dragStore, rangeStore, selectionStore, setSelection, type
 import { addLoop, addScene, moveLoops, moveSectionBy, resizeLoops, resizeSectionBy } from './songActions';
 import { barAt, edgeAt, rowAt, rulerBarAt, xToBar } from './songLayout';
 import { lengthBadge, moveBadge, startBadge } from './songModel';
+
+/**
+ * The drag's cursor (grabbing, ↔, not allowed), shown by one transparent
+ * sheet over the whole page while a drag runs (null: gone). The pointer is
+ * captured by the timeline, so the sheet takes no events; changing its
+ * cursor restyles that one element, not the hundreds under it.
+ */
+let shield: HTMLDivElement | null = null;
+export function dragCursor(cursor: string | null): void {
+  if (!cursor) {
+    if (shield) shield.style.display = 'none';
+    return;
+  }
+  if (!shield || !shield.isConnected) {
+    shield = document.createElement('div');
+    shield.setAttribute('aria-hidden', 'true');
+    shield.dataset.songDragShield = '';
+    shield.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:transparent;display:none';
+    document.body.appendChild(shield);
+  }
+  if (shield.style.cursor !== cursor) shield.style.cursor = cursor;
+  shield.style.display = 'block';
+}
+
+const CURSOR: Record<string, string> = { move: 'grabbing', section: 'grabbing', carry: 'grabbing', start: 'ew-resize', end: 'ew-resize', rangeEdge: 'ew-resize', ruler: 'ew-resize', marquee: 'default' };
 
 /** What the timeline gives the controller. */
 export interface LaneHost {
@@ -88,7 +119,17 @@ export interface LaneHost {
 export type Carry = { kind: 'scene'; row: number; name: string; bars: number } | { kind: 'loop'; trackId: Id; clipId: Id; name: string; bars: number; hue: number };
 
 type Gesture =
-  | { kind: 'region'; edge: 'move' | 'start' | 'end'; anchor: SongRegion; ids: Id[]; rowTop: number; toggleOnClick: boolean; additive: boolean }
+  | {
+      kind: 'region';
+      edge: 'move' | 'start' | 'end';
+      anchor: SongRegion;
+      ids: Id[];
+      rowTop: number;
+      toggleOnClick: boolean;
+      additive: boolean;
+      /** A Ctrl press on a loop that was not selected: a drag selects it alone first (as an Alt drag would). */
+      pickOnDrag: boolean;
+    }
   | { kind: 'marquee'; base: LaneSelection; additive: boolean }
   | { kind: 'ruler'; bar0: number; onBand: boolean }
   | { kind: 'rangeEdge'; edge: 'start' | 'end'; range: BarRange }
@@ -127,6 +168,8 @@ interface Active {
    * must not scroll the song away).
    */
   armed: boolean;
+  /** A finger (no cursor to show). */
+  touch: boolean;
   /** A finger that has not rested long enough yet: moving now makes it a swipe (the browser scrolls). */
   touchWait: boolean;
   holdTimer: number;
@@ -194,10 +237,15 @@ export class LaneController {
       const edge = edgeAt(e.clientX - rect.left, rect.width) ?? 'move';
       const sel = selectionStore.getState();
       const was = sel.ids.includes(id);
-      const next = add ? (was ? { ...sel, focus: id } : clickSelect(sel, id, 'toggle')) : pressSelect(sel, id, 'replace');
+      // Shift adds or removes at once; Ctrl (⌘) waits to see a click (add or remove) or a drag (copy, as Alt).
+      const ctrl = !e.shiftKey && (e.ctrlKey || e.metaKey);
+      const next = ctrl ? sel : e.shiftKey ? (was ? { ...sel, focus: id } : clickSelect(sel, id, 'toggle')) : pressSelect(sel, id, 'replace');
       setSelection(next);
+      // The part of the loop pressed is the part the keyboard strip plays.
+      selectTrack(r.trackId);
       const row = this.host.tracks().indexOf(r.trackId);
-      g = { kind: 'region', edge, anchor: r, ids: next.ids.includes(id) ? [...next.ids] : [id], rowTop: row * this.host.rowH(), toggleOnClick: add && was, additive: add };
+      const ids = ctrl ? (was ? [...sel.ids] : [id]) : next.ids.includes(id) ? [...next.ids] : [id];
+      g = { kind: 'region', edge, anchor: r, ids, rowTop: row * this.host.rowH(), toggleOnClick: (add && was) || ctrl, additive: add, pickOnDrag: ctrl && !was };
     } else if (t.closest('[data-range-edge]')) {
       const range = rangeStore.getState();
       if (!range) return false;
@@ -251,6 +299,7 @@ export class LaneController {
       last: null,
       captured: null,
       armed: g.kind !== 'carry',
+      touch: e.pointerType === 'touch',
       touchWait: e.pointerType === 'touch',
       holdTimer: 0,
     };
@@ -324,7 +373,8 @@ export class LaneController {
       if (Math.hypot(e.clientX - a.x0, e.clientY - a.y0) < DRAG_SLOP_PX) return;
       a.started = true;
       this.host.busy(true);
-      this.host.scroller()?.setAttribute('data-drag', a.g.kind === 'region' ? a.g.edge : a.g.kind);
+      if (a.g.kind === 'region' && a.g.pickOnDrag) setSelection({ ids: [a.g.anchor.id], focus: a.g.anchor.id });
+      if (!a.touch) dragCursor(CURSOR[a.g.kind === 'region' ? a.g.edge : a.g.kind]);
     }
     e.preventDefault();
     if (!a.armed && e.clientX > a.box.left + AUTOSCROLL_EDGE_PX * 2 && e.clientX < a.box.right - AUTOSCROLL_EDGE_PX * 2 && this.overRows(e.clientX, e.clientY)) a.armed = true;
@@ -356,16 +406,17 @@ export class LaneController {
         a.last = { delta: pv.delta, copy: isMove && copy };
         const row = this.host.tracks().indexOf(g.anchor.trackId);
         let badge: DragView['badge'];
+        const n = g.ids.length;
         if (isMove) {
           const start = g.anchor.start + pv.delta;
-          badge = { text: moveBadge(start, copy), x: start * ppb, row, align: 'start' };
+          badge = { text: moveBadge(start, copy, n), x: start * ppb, row, align: 'start' };
         } else {
           const m = pv.moved.find((r) => r.id === g.anchor.id) ?? g.anchor;
           const clipBars = p.tracks.find((t) => t.id === m.trackId)?.clips.find((c) => c?.id === m.clipId)?.bars ?? 1;
-          badge = g.edge === 'end' ? { text: lengthBadge(m.bars, clipBars), x: regionEnd(m) * ppb, row, align: 'end' } : { text: startBadge(m.start), x: m.start * ppb, row, align: 'start' };
+          badge = g.edge === 'end' ? { text: lengthBadge(m.bars, clipBars, n), x: regionEnd(m) * ppb, row, align: 'end' } : { text: startBadge(m.start, n), x: m.start * ppb, row, align: 'start' };
         }
         this.publish({ kind: isMove ? 'move' : g.edge, preview: pv, slide: isMove ? pv.delta : undefined, badge, notAllowed: off, touches: pv.touches });
-        this.host.scroller()?.toggleAttribute('data-not-allowed', off);
+        if (!a.touch) dragCursor(off ? 'not-allowed' : CURSOR[g.edge]);
         return;
       }
       case 'marquee': {
@@ -402,7 +453,8 @@ export class LaneController {
           const pv = previewSectionMove(p, regions, sections, g.id, delta, copy);
           const d = pv.section ? pv.section.start - (sections.find((s) => s.id === g.id)?.start ?? 0) : 0;
           a.last = { delta: d, copy };
-          this.publish({ kind: 'section', preview: pv.regions, slide: pv.regions.delta, sections: pv.sections, section: pv.section, touches: [] });
+          const at = pv.section?.start ?? 0;
+          this.publish({ kind: 'section', preview: pv.regions, slide: pv.regions.delta, sections: pv.sections, section: pv.section, touches: [], badge: pv.section ? { text: moveBadge(at, copy), x: at * ppb, row: 0, align: 'start', top: true } : undefined });
         } else {
           const key = `${delta}`;
           if (key === a.key) return;
@@ -411,7 +463,13 @@ export class LaneController {
           const before = sections.find((s) => s.id === g.id);
           const d = pv.section && before ? (g.edge === 'start' ? pv.section.start - before.start : regionEnd(pv.section) - regionEnd(before)) : 0;
           a.last = { delta: d, copy: false };
-          this.publish({ kind: 'section', sections: pv.sections, section: pv.section });
+          const s = pv.section;
+          this.publish({
+            kind: 'section',
+            sections: pv.sections,
+            section: s,
+            badge: s ? (g.edge === 'end' ? { text: `${s.bars} ${s.bars === 1 ? 'bar' : 'bars'}`, x: regionEnd(s) * ppb, row: 0, align: 'end', top: true } : { text: startBadge(s.start), x: s.start * ppb, row: 0, align: 'start', top: true }) : undefined,
+          });
         }
         return;
       }
@@ -423,8 +481,10 @@ export class LaneController {
         const tracks = this.host.tracks();
         const ok = over && (item.kind === 'scene' || tracks[row] === item.trackId);
         carriedStore.setState({ x: a.cx, y: a.cy, text: item.kind === 'scene' ? `${item.name} · ${item.bars} bars` : item.name, hue: item.kind === 'loop' ? item.hue : undefined, overRows: over });
-        document.documentElement.dataset.songCarry = !over ? 'away' : ok ? 'ok' : 'no';
-        const key = `${over}|${bar}|${ok}|${row}`;
+        if (!a.touch) dragCursor(over && !ok ? 'not-allowed' : 'grabbing');
+        // "Not this part" follows the pointer over another part's row (in steps of a few px).
+        const at = over && !ok ? `${Math.round(this.tx(a.cx) / 6)}|${Math.round(this.ty(a.cy) / 6)}` : '';
+        const key = `${over}|${bar}|${ok}|${row}|${at}`;
         if (key === a.key) return;
         a.key = key;
         a.last = { delta: 0, copy: false, drop: { bar, ok } };
@@ -433,7 +493,7 @@ export class LaneController {
           return;
         }
         if (!ok) {
-          this.publish({ kind: 'drop', ownRow: item.kind === 'loop' ? item.trackId : undefined, notAllowed: true });
+          this.publish({ kind: 'drop', ownRow: item.kind === 'loop' ? item.trackId : undefined, notAllowed: true, pointer: { x: this.tx(a.cx), y: this.ty(a.cy) } });
           return;
         }
         const placed = item.kind === 'scene' ? sceneDrop(p, item.row, bar) : loopDrop(p, item.trackId, item.clipId, bar);
@@ -605,9 +665,7 @@ export class LaneController {
     window.clearTimeout(a.holdTimer);
     const sc = this.host.scroller();
     sc?.removeEventListener('scroll', this.onScroll);
-    sc?.removeAttribute('data-drag');
-    sc?.removeAttribute('data-not-allowed');
-    delete document.documentElement.dataset.songCarry;
+    dragCursor(null);
     try {
       if (a.captured?.hasPointerCapture(a.pointerId)) a.captured.releasePointerCapture(a.pointerId);
     } catch {

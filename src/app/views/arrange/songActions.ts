@@ -15,7 +15,7 @@
 import { regionEnd } from '../../../project/arrangement';
 import type { Id, SongMoveKind } from '../../../project/types';
 import { session } from '../../instance';
-import { notify } from '../../runtime';
+import { notify, runtimeStore } from '../../runtime';
 import * as songCmd from '../../../state/commands';
 import type { Edge, RegionClipboard, ShapeKind, SongEditResult } from '../../../state/commands';
 import { clearSelection, setSelection } from './laneStore';
@@ -75,15 +75,16 @@ function run(r: SongEditResult, opts: { select?: boolean; text?: string } = {}):
 export function moveLoops(ids: readonly Id[], delta: number, opts: { copy?: boolean; say?: boolean } = {}): SongEditResult | null {
   if (!ids.length || lockedNow()) return null;
   if (!delta && !opts.copy) return null;
-  const words = loopsWords(ids);
+  // The words only when they are said (a drop says nothing: it is drawn).
+  const words = opts.say ? loopsWords(ids) : '';
   const r = songCmd.moveRegions(session.store, ids, delta, { copy: opts.copy });
-  const first = r.ids?.length ? regions().find((x) => x.id === r.ids![0]) : null;
+  const first = opts.say && r.ids?.length ? regions().find((x) => x.id === r.ids![0]) : null;
   return run(r, { text: opts.say ? `${opts.copy ? 'Copied' : 'Moved'} ${words}${first ? ` to bar ${first.start + 1}` : ''}` : undefined });
 }
 
 export function resizeLoops(ids: readonly Id[], edge: Edge, delta: number, opts: { say?: boolean } = {}): SongEditResult | null {
   if (!ids.length || !delta || lockedNow()) return null;
-  const words = loopsWords(ids);
+  const words = opts.say ? loopsWords(ids) : '';
   const r = songCmd.resizeRegions(session.store, ids, edge, delta);
   const one = ids.length === 1 ? regions().find((x) => x.id === ids[0]) : null;
   const text = edge === 'end' ? (one ? `${words} now lasts ${barsText(one.bars)}` : `${delta > 0 ? 'Lengthened' : 'Shortened'} ${words}`) : one ? `${words} now starts at bar ${one.start + 1}` : `Trimmed ${words}`;
@@ -113,7 +114,7 @@ export function duplicateLoops(ids: readonly Id[]): SongEditResult | null {
   return run(songCmd.duplicateRegions(session.store, ids), { text: `Duplicated ${words}` });
 }
 
-/** Split the loops `ids` that cross bar `at` (both halves stay selected). */
+/** Split the loops `ids` that cross bar `at`: the right-hand pieces are selected (the next Split, Delete or drag acts on them). */
 export function splitLoops(ids: readonly Id[], at: number): SongEditResult | null {
   if (lockedNow()) return null;
   const crossing = ids.filter((id) => {
@@ -127,7 +128,7 @@ export function splitLoops(ids: readonly Id[], at: number): SongEditResult | nul
   const words = loopsWords(crossing);
   const r = songCmd.splitRegions(session.store, crossing, at);
   if (!session.accepted(r)) return r;
-  select([...crossing, ...(r.ids ?? [])]);
+  select(r.ids);
   said(`Split ${words} at bar ${at + 1}`, r);
   return r;
 }
@@ -144,10 +145,16 @@ export function addLoop(trackId: Id, clipId: Id, bar: number): SongEditResult | 
   return run(songCmd.addClipToSong(session.store, trackId, clipId, bar));
 }
 
-/** A scene's loops placed from `bar` (with a section named after it where there is none). */
+/**
+ * A scene's loops placed from `bar` (with a section named after it where
+ * there is none). Nothing is left selected: the next press on one of its
+ * loops (to stretch or move it) acts on that loop alone.
+ */
 export function addScene(row: number, bar: number): SongEditResult | null {
   if (lockedNow()) return null;
-  return run(songCmd.addSceneToSong(session.store, row, bar));
+  const r = run(songCmd.addSceneToSong(session.store, row, bar), { select: false });
+  if (r.changed) clearSelection();
+  return r;
 }
 
 export function fillFromScenes(): SongEditResult | null {
@@ -176,6 +183,36 @@ export function copyLoops(ids: readonly Id[]): boolean {
   return true;
 }
 
+/**
+ * Delete what is selected: the loops `ids` and the section labels
+ * `sectionIds` (their music stays unless it is selected too), as one undo
+ * step ("Delete 30 loops and 6 sections").
+ */
+export function deleteSelection(ids: readonly Id[], sectionIds: readonly Id[] = []): boolean {
+  if ((!ids.length && !sectionIds.length) || lockedNow()) return false;
+  const p = project();
+  const loops = ids.filter((id) => p.arrangement.regions.some((r) => r.id === id));
+  const labels = sectionIds.filter((id) => p.arrangement.sections.some((s) => s.id === id));
+  if (!labels.length) return !!deleteLoops(loops)?.changed;
+  const loopWords = loops.length ? loopsWords(loops) : '';
+  const labelWords = labels.length === 1 ? `the section ${sectionName(labels[0])}` : `${labels.length} sections`;
+  const words = loopWords ? `${loopWords} and ${labelWords}` : labelWords;
+  // One undo step for both (a Record Notes pass already groups every edit it makes).
+  const group = runtimeStore.getState().recording !== 'notes';
+  if (group) session.store.beginGroup(`arrange:Delete ${words}`);
+  let changed = false;
+  try {
+    if (loops.length) changed = session.accepted(songCmd.removeRegions(session.store, loops)) || changed;
+    for (const id of labels) changed = session.accepted(songCmd.removeSection(session.store, id, { withMusic: false })) || changed;
+  } finally {
+    if (group) session.store.endGroup();
+  }
+  if (!changed) return false;
+  clearSelection();
+  notify(`Deleted ${words}`, 'info', 'undo');
+  return true;
+}
+
 export function cutLoops(ids: readonly Id[]): SongEditResult | null {
   if (!ids.length || lockedNow()) return null;
   const c = songCmd.copyRegions(project(), ids);
@@ -201,6 +238,7 @@ export function pasteLoops(atBar: number): SongEditResult | null {
 
 const sectionName = (id: Id) => project().arrangement.sections.find((s) => s.id === id)?.name ?? 'section';
 
+/** A section over bars [start, start + bars) (`sectionId`: the new one, so it can be named at once). */
 export function addSectionAt(start: number, bars: number): SongEditResult & { sectionId?: Id } {
   if (lockedNow()) return { changed: false };
   const r = songCmd.addSection(session.store, start, bars);
@@ -252,6 +290,17 @@ export function shapeSectionNow(id: Id, kind: ShapeKind): SongEditResult | null 
   return run(songCmd.shapeSection(session.store, id, kind), { select: false, text: `${SHAPE_WORDS[kind]}: ${name}` });
 }
 
+
+/** "Add an intro" / "Add an ending" (Shape the song…): the new bars are selected. */
+export function addIntroNow(): SongEditResult | null {
+  if (lockedNow()) return null;
+  return run(songCmd.addIntro(session.store), { text: 'Added an intro' });
+}
+
+export function addEndingNow(): SongEditResult | null {
+  if (lockedNow()) return null;
+  return run(songCmd.addEnding(session.store), { text: 'Added an ending' });
+}
 
 /** A performance take's launches put in the song after its end (each loop on its part's row, as long as it played). */
 export function takeToSong(takeId: Id, name: string): SongEditResult | null {

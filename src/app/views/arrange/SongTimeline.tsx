@@ -15,32 +15,41 @@
  * the loop picker open here.
  *
  * The playhead is one line through the ruler, the sections and the rows:
- * amber while the song plays (or is paused), neutral when stopped, where
- * Play will start (the song cursor). A frame loop moves it from
+ * amber while the song plays, neutral while it is paused or stopped (where
+ * Play will start, the song cursor). A frame loop moves it from
  * songPlayheadBar() (never React state per frame), marks the regions under
  * it, and, with Follow on, turns the page when it reaches the right edge
- * (not while a drag runs or for a moment after the person scrolled).
+ * (not while a drag runs or for a moment after the person scrolled). When
+ * the song stops and the playhead goes back, the view goes back with it.
  *
  * Wheel and trackpad scroll the timeline sideways (Shift+wheel too);
- * Ctrl+wheel zooms around the pointer. The zoom is remembered per project.
+ * Ctrl+wheel zooms around the pointer, − and + around the playhead (else the
+ * selection, else the middle). The zoom is remembered per project; the
+ * view, the selection and the scroll are kept while another view is open.
+ *
+ * The keys (laneKeys) act on the selection whenever the Song view is open
+ * and nothing that takes keys of its own has focus (a field, a menu, a
+ * dialog, the takes panel): after a marquee, a click on an empty spot, the
+ * ruler or a section, or a Cut, as much as after a click on a loop.
  */
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type Ref } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type Ref } from 'react';
 import { Button, useElementSize, useRafLoop } from '../../../ui/components';
-import { regionEnd, songBars as projectSongBars } from '../../../project/arrangement';
+import { regionEnd, songBars as projectSongBars, timelineBars as projectTimelineBars } from '../../../project/arrangement';
 import type { Id, Project } from '../../../project/types';
 import { selectSlot, selectTrack, setPadMode, setView } from '../../../state/uiStore';
 import { useStore } from '../../../state/store';
 import { session, useProject } from '../../instance';
-import { runtimeStore, useRuntime } from '../../runtime';
+import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { songPlayheadBar, useSongPlaying } from '../../songPlayback';
 import { MoreIcon, anchorFromContextEvent, anchorFromElement, isEchoOfKeyboardMenu, noteKeyboardMenu, useToastsIfAny, type MenuAnchor } from '../ClipMenu';
+import { rangeText } from './songModel';
 import { isMac } from '../hints/shortcuts';
 import { DragOverlay } from './DragOverlay';
 import { LaneController, type Carry, type LaneHost } from './laneController';
 import type { BarRange } from './laneGestures';
 import { laneKey } from './laneKeys';
 import { sameRange } from './laneLoop';
-import { neighbour, pruneSelection, selectAll } from './laneSelection';
+import { neighbour, pruneSelection, selectAll, selectNone } from './laneSelection';
 import { dragStore, hoverStore, ppbStore, rangeStore, selectionStore, setSelection, usePxPerBar, useRange, type DragView } from './laneStore';
 import { readZoom, writeZoom } from './laneSettings';
 import { PartRow, partKeysNav } from './PartRow';
@@ -74,10 +83,22 @@ type Menu =
   | { kind: 'picker'; trackId: Id; bar: number; anchor: MenuAnchor; returnFocus: HTMLElement | null };
 
 const selectSongBars = (p: Project) => projectSongBars(p);
+/** How far the timeline is in use: the loops and the section labels (a label past the music still shows). */
+const selectExtent = (p: Project) => projectTimelineBars(p);
 const selectHasRegions = (p: Project) => p.arrangement.regions.length > 0;
 const selectSections = (p: Project) => p.arrangement.sections;
 const selectProjectId = (p: Project) => p.id;
 const selectHasScenes = (p: Project) => p.tracks.some((t) => t.clips.some((c) => c !== null));
+
+/**
+ * What the Song view keeps while another view is open (it unmounts): the
+ * project it showed, where it was scrolled to, and a loop to put keyboard
+ * focus back on (Back to Song after Edit notes).
+ */
+const kept: { projectId: string | null; left: number; top: number; focus: Id | null } = { projectId: null, left: 0, top: 0, focus: null };
+
+/** Elements that take the lane's keys for themselves while they have focus. */
+const OWN_KEYS = 'input, textarea, select, [contenteditable="true"], [role="menu"], [role="dialog"], [role="listbox"], [role="slider"], [role="spinbutton"], [role="combobox"], [role="tablist"], [data-own-keys]';
 
 /** The bar Play would start from, or the playhead while the song plays or is paused (whole bars). */
 export function currentBar(): number {
@@ -97,6 +118,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   const tracks = useMemo(() => rows.map((r) => r.id), [rows]);
   const anySolo = rows.some((r) => r.solo);
   const songBars = useProject(selectSongBars);
+  const extent = useProject(selectExtent);
   const hasRegions = useProject(selectHasRegions);
   const hasScenes = useProject(selectHasScenes);
   const sections = useProject(selectSections);
@@ -106,12 +128,12 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   const looping = useRuntime((s) => !!s.songLoop);
   const cursor = useRuntime((s) => s.songCursor);
   const songOn = useSongPlaying();
-  // Only whether a drag runs (the empty note steps aside); what it shows is the overlay's, the ruler's and the strip's.
-  const dragging = useStore(dragStore, (d) => d !== null);
+  // Amber only while the song really plays: paused, the line is neutral (the header says Paused).
+  const songPlaying = useRuntime((s) => s.mode === 'song' && s.playing && !s.paused);
   const size = useElementSize(scrollerRef);
   const headW = size.width && size.width < 980 ? HEADER_W_NARROW : HEADER_W;
   const viewW = Math.max(0, size.width - headW);
-  const bars = timelineBars(songBars, viewW / Math.max(1, ppb));
+  const bars = timelineBars(extent, viewW / Math.max(1, ppb));
   const rowH = rowHeight(size.height - RULER_H - SECTIONS_H - 14, rows.length);
   const toasts = useToastsIfAny();
   const [menu, setMenu] = useState<Menu | null>(null);
@@ -119,12 +141,34 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   const [headTab, setHeadTab] = useState<{ row: number; col: 0 | 1 }>({ row: 0, col: 0 });
 
   // Live values for the controller and the frame loop (no re-render needed to read them).
-  const live = useRef({ ppb, rowH, headW, tracks, follow, busy: false, userScrollAt: -Infinity, viewW, bars });
-  live.current = { ...live.current, ppb, rowH, headW, tracks, follow, viewW, bars };
+  const live = useRef({ ppb, rowH, headW, tracks, follow, busy: false, userScrollAt: -Infinity, viewW, bars, songPlaying });
+  live.current = { ...live.current, ppb, rowH, headW, tracks, follow, viewW, bars, songPlaying };
+  const rowsRef = useRef<HTMLDivElement>(null);
 
   /* ---------------------------------------------------------------- */
   /* Zoom                                                             */
   /* ---------------------------------------------------------------- */
+
+  /**
+   * Where − and + zoom around (px from the timeline's visible left edge): the
+   * playhead when it is in view, else the selected loops when they are, else
+   * the middle of the view.
+   */
+  function zoomAnchor(sc: HTMLElement): number {
+    const l = live.current;
+    const view = Math.max(0, sc.clientWidth - l.headW);
+    const inView = (x: number) => x >= 0 && x <= view;
+    const head = (songPlayheadBar() ?? runtimeStore.getState().songCursor) * l.ppb - sc.scrollLeft;
+    if (inView(head)) return head;
+    const ids = selectionStore.getState().ids;
+    const picked = session.store.getState().arrangement.regions.filter((r) => ids.includes(r.id));
+    if (picked.length) {
+      const a = Math.min(...picked.map((r) => r.start)) * l.ppb - sc.scrollLeft;
+      const b = Math.max(...picked.map((r) => regionEnd(r))) * l.ppb - sc.scrollLeft;
+      if (b > 0 && a < view) return Math.max(0, Math.min(view, (Math.max(0, a) + Math.min(view, b)) / 2));
+    }
+    return view / 2;
+  }
 
   const pendingScroll = useRef<number | null>(null);
   const zoomTo = useCallback(
@@ -132,7 +176,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
       const sc = scrollerRef.current;
       const cur = ppbStore.getState();
       if (!sc || next === cur) return;
-      const px = pointerX ?? Math.max(0, (sc.clientWidth - live.current.headW) / 2);
+      const px = pointerX ?? zoomAnchor(sc);
       // Several steps before the view has drawn the first (a fast wheel): go on from where the last one left it.
       pendingScroll.current = zoomScroll(pendingScroll.current ?? sc.scrollLeft, px, cur, next);
       ppbStore.setState(next);
@@ -148,18 +192,43 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
     }
   }, [ppb]);
 
-  // A project opens: its remembered zoom, else the scale that shows the whole song; nothing selected.
+  // A project opens: its remembered zoom, else the scale that shows the whole song; nothing selected. Back from
+  // another view with the same project: as it was (zoom, scroll, selection), keyboard focus back on its loop.
   const fittedFor = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (!size.width || fittedFor.current === projectId) return;
     fittedFor.current = projectId;
+    const sc = scrollerRef.current;
+    if (kept.projectId === projectId) {
+      if (sc) {
+        sc.scrollLeft = kept.left;
+        sc.scrollTop = kept.top;
+      }
+      const back = kept.focus;
+      kept.focus = null;
+      if (back) focusRegion(back, false);
+      return;
+    }
+    kept.projectId = projectId;
+    kept.focus = null;
     const remembered = readZoom(projectId);
     const p = session.store.getState();
-    ppbStore.setState(remembered ?? fitZoom(projectSongBars(p), size.width - headW));
-    if (scrollerRef.current) scrollerRef.current.scrollLeft = 0;
+    ppbStore.setState(remembered ?? fitZoom(projectTimelineBars(p), size.width - headW));
+    if (sc) sc.scrollLeft = 0;
     setSelection({ ids: [], focus: p.arrangement.regions[0]?.id ?? null });
     rangeStore.setState(runtimeStore.getState().songLoop ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, size.width, headW]);
+  // Where the view was scrolled to, for coming back.
+  useEffect(() => {
+    const sc = scrollerRef.current;
+    return () => {
+      if (sc) {
+        kept.left = sc.scrollLeft;
+        kept.top = sc.scrollTop;
+      }
+    };
+  }, []);
 
   /* ---------------------------------------------------------------- */
   /* Selection follows the song                                       */
@@ -168,14 +237,44 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   useEffect(
     () =>
       session.store.subscribe((p, prev) => {
-        if (p.arrangement.regions === prev.arrangement.regions) return;
+        if (p.arrangement.regions === prev.arrangement.regions && p.arrangement.sections === prev.arrangement.sections) return;
         const ids = new Set(p.arrangement.regions.map((r) => r.id));
         const sel = selectionStore.getState();
-        const next = pruneSelection(sel, ids, p.arrangement.regions[0]?.id ?? null);
+        const next = pruneSelection(sel, ids, p.arrangement.regions[0]?.id ?? null, new Set(p.arrangement.sections.map((s) => s.id)));
         if (next !== sel) setSelection(next);
         else if (!sel.focus && p.arrangement.regions.length) setSelection({ ...sel, focus: p.arrangement.regions[0].id });
       }),
     [],
+  );
+
+  // Play started at the loop's start rather than at the playhead the person put outside it: show the loop and say
+  // why, once for each loop range (with a way to switch the loop off).
+  const toldLoop = useRef<string | null>(null);
+  useEffect(
+    () =>
+      runtimeStore.subscribe((s, prev) => {
+        const started = s.mode === 'song' && s.playing && !s.paused && !(prev.mode === 'song' && (prev.playing || prev.paused));
+        if (!started || !s.songLoop) return;
+        const loop = s.songLoop;
+        const from = prev.songCursor;
+        if (from >= loop.fromBar && from < loop.toBar) return;
+        const key = `${loop.fromBar}|${loop.toBar}`;
+        if (toldLoop.current === key) return;
+        toldLoop.current = key;
+        const sc = scrollerRef.current;
+        const l = live.current;
+        if (sc) {
+          const x = loop.fromBar * l.ppb;
+          if (x < sc.scrollLeft || x > sc.scrollLeft + sc.clientWidth - l.headW - 24) {
+            ignoreScroll.current = true;
+            sc.scrollLeft = Math.max(0, x - (sc.clientWidth - l.headW) * 0.05);
+          }
+        }
+        const message = `Looping ${rangeText(loop.fromBar, loop.toBar).toLowerCase()}: Play starts at the loop.`;
+        if (toasts) toasts.show({ id: 'song-loop-start', tone: 'info', message, action: { label: 'Loop off', onAction: () => session.setSongLoop(null) }, duration: 8000 });
+        else notify(message);
+      }),
+    [toasts],
   );
 
   // The range on the ruler is the runtime's loop while looping is on (kept while it is off).
@@ -247,6 +346,9 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
       if (!t || slot < 0) return;
       selectTrack(t.id);
       selectSlot(t.id, slot);
+      // Back in Song, the loop is selected and has keyboard focus again.
+      setSelection({ ids: [id], focus: id });
+      kept.focus = id;
       setPadMode('steps');
       setView('play');
       const message = `Editing the notes of ${t.clips[slot]!.name} (${t.name}).`;
@@ -269,7 +371,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
       fit: () => {
         const sc = scrollerRef.current;
         if (!sc) return;
-        const next = fitZoom(projectSongBars(session.store.getState()), sc.clientWidth - live.current.headW);
+        const next = fitZoom(projectTimelineBars(session.store.getState()), sc.clientWidth - live.current.headW);
         pendingScroll.current = 0;
         if (next === ppbStore.getState()) sc.scrollLeft = 0;
         else ppbStore.setState(next);
@@ -327,7 +429,8 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
     const bar = songPlayheadBar();
     if (bar === null) return;
     placeHead(bar);
-    markPlaying(bar);
+    // Paused: nothing is "under the playhead" in amber.
+    markPlaying(live.current.songPlaying ? bar : null);
     const sc = scrollerRef.current;
     const l = live.current;
     if (!sc || !l.follow || l.busy || controller.active || performance.now() - l.userScrollAt < FOLLOW_REST_MS) return;
@@ -342,11 +445,28 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
     if (songOn) {
       const bar = songPlayheadBar();
       if (bar !== null) placeHead(bar);
+      if (!songPlaying) markPlaying(null);
       return;
     }
     placeHead(cursor);
     markPlaying(null);
-  }, [songOn, cursor, ppb, placeHead, markPlaying]);
+  }, [songOn, songPlaying, cursor, ppb, placeHead, markPlaying]);
+  // The song stopped and the playhead went back: the view goes back with it when it is out of sight.
+  const wasOn = useRef(songOn);
+  useEffect(() => {
+    const was = wasOn.current;
+    wasOn.current = songOn;
+    if (!was || songOn) return;
+    const sc = scrollerRef.current;
+    if (!sc) return;
+    const l = live.current;
+    const x = cursor * l.ppb;
+    const view = sc.clientWidth - l.headW;
+    if (x < sc.scrollLeft || x > sc.scrollLeft + view - 12) {
+      ignoreScroll.current = true;
+      sc.scrollLeft = Math.max(0, x - view * 0.05);
+    }
+  }, [songOn, cursor]);
 
   /* ---------------------------------------------------------------- */
   /* Scroll and wheel                                                 */
@@ -406,10 +526,14 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
     if (t.closest('button, input, [data-hover-more]') && !t.closest('[data-region-id], [data-section-id]')) return;
     if (t.closest('[data-part-head]')) return;
     if (controller.press(e.nativeEvent)) {
-      // Keep keyboard focus in the lane (on the pressed region), never on the scroller.
+      // Keyboard focus in the lane: on the pressed region, else on the rows as a whole (never left on a button
+      // pressed earlier, never on the scroller); the keys then act on whatever the press selected.
       const region = t.closest<HTMLElement>('[data-region-id]');
       if (region) region.focus({ preventScroll: true });
-      else if (!t.closest('[data-section-id]')) e.preventDefault();
+      else if (!t.closest('[data-section-id]')) {
+        e.preventDefault();
+        focusRows();
+      }
     }
   };
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -484,16 +608,16 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   /* Keys                                                             */
   /* ---------------------------------------------------------------- */
 
-  const focusRegion = (id: Id | null) => {
+  /** Keyboard focus on a loop (and the view scrolled to show it, clear of the part headers). */
+  function focusRegion(id: Id | null, scroll = true): void {
     if (!id) return;
     requestAnimationFrame(() => {
       const el = scrollerRef.current?.querySelector<HTMLElement>(`[data-region-id="${id}"]`);
       if (!el) return;
       el.focus({ preventScroll: true });
-      // Into view, clear of the part headers.
       const sc = scrollerRef.current!;
       const r = session.store.getState().arrangement.regions.find((x) => x.id === id);
-      if (!r) return;
+      if (!r || !scroll) return;
       const l = live.current;
       const x0 = r.start * l.ppb;
       const x1 = regionEnd(r) * l.ppb;
@@ -501,43 +625,63 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
       if (x0 < sc.scrollLeft) sc.scrollLeft = Math.max(0, x0 - 24);
       else if (x1 > sc.scrollLeft + view) sc.scrollLeft = Math.min(x0 - 24, x1 - view + 24);
     });
-  };
+  }
 
-  const onRowsKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (partKeysNav(e, rows.length, (row, col) => {
-      setHeadTab({ row, col });
-      scrollerRef.current?.querySelector<HTMLElement>(`[data-part-head] [data-row="${row}"][data-col="${col}"]`)?.focus();
-    }))
-      return;
-    const t = e.target as Element;
-    if (!t.closest('[data-region-id]') && t !== e.currentTarget) return;
+  /** Keyboard focus somewhere neutral (the rows as a whole): after a delete nothing is selected, and nothing looks it. */
+  const focusRows = () => rowsRef.current?.focus({ preventScroll: true });
+
+  // The Song view's keys, wherever focus is in the view (or on nothing), see OWN_KEYS for where they are not.
+  const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyRef.current = (e: KeyboardEvent) => {
+    if (e.defaultPrevented || e.isComposing || controller.active) return;
+    const root = rootRef.current;
+    if (!root || root.closest('[hidden]')) return;
+    const t = e.target instanceof Element ? e.target : null;
+    const onNothing = !t || t === document.body || t === document.documentElement;
+    if (!onNothing && t.closest(OWN_KEYS)) return;
+    if (document.querySelector('[aria-modal="true"]') || document.body.hasAttribute('data-popover-open')) return;
+    // Inside the song view (header, timeline, loop browser) or the transport; not the takes panel, the keyboard or the hint.
+    const inView = onNothing || !!t.closest('section[aria-labelledby="song-title"], header[aria-label="Transport"]');
+    if (!inView) return;
+    const inLane = onNothing || root.contains(t);
     const k = laneKey(e, isMac());
     if (!k) return;
+    // Enter and Home, ↑ ↓, the menu key and Esc belong to whatever button has focus outside the timeline.
+    if (!inLane && (k.kind === 'home' || k.kind === 'focus' || k.kind === 'menu' || k.kind === 'escape')) return;
+    // Copying text the person selected on the page is the browser's.
+    if ((k.kind === 'copy' || k.kind === 'cut') && !window.getSelection()?.isCollapsed) return;
     const p = session.store.getState();
     const sel = selectionStore.getState();
-    const ids = sel.ids.length ? [...sel.ids] : sel.focus ? [sel.focus] : [];
+    const ids = [...sel.ids];
     const at = currentBar();
     const say = (text: string) => onStatus(text);
-    e.preventDefault();
-    e.stopPropagation();
+    const take = () => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
     switch (k.kind) {
       case 'focus': {
         const n = neighbour(p.arrangement.regions, live.current.tracks, sel.focus, k.dir, at);
+        take();
         if (!n) return;
         setSelection({ ids: k.extend ? [...sel.ids.filter((x) => x !== n), n] : [n], focus: n });
         focusRegion(n);
         return;
       }
       case 'move': {
+        if (!ids.length) return;
+        take();
         const r = act.moveLoops(ids, k.bars);
         if (r?.changed) {
           const first = session.store.getState().arrangement.regions.find((x) => x.id === ids[0]);
           if (first) say(`${act.loopsWords(ids)} at bar ${first.start + 1}`);
-          focusRegion(sel.focus);
+          if (inLane && t?.closest('[data-region-id]')) focusRegion(sel.focus);
         }
         return;
       }
       case 'length': {
+        if (!ids.length) return;
+        take();
         const r = act.resizeLoops(ids, 'end', k.bars);
         if (r?.changed) {
           const first = session.store.getState().arrangement.regions.find((x) => x.id === ids[0]);
@@ -546,38 +690,51 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
         return;
       }
       case 'delete': {
-        if (!ids.length) return;
-        const next = neighbour(p.arrangement.regions.filter((r) => !ids.includes(r.id) || r.id === sel.focus), live.current.tracks, sel.focus, 'next') ?? neighbour(p.arrangement.regions.filter((r) => !ids.includes(r.id) || r.id === sel.focus), live.current.tracks, sel.focus, 'prev');
-        if (act.deleteLoops(ids)?.changed) {
-          const keep = next && !ids.includes(next) ? next : (session.store.getState().arrangement.regions[0]?.id ?? null);
-          setSelection({ ids: [], focus: keep });
-          focusRegion(keep);
+        const labels = sel.sections ?? [];
+        if (!ids.length && !labels.length) return;
+        take();
+        if (act.deleteSelection(ids, labels)) {
+          // Nothing selected; keyboard focus on the rows as a whole (never a loop that would look chosen).
+          const left = session.store.getState().arrangement.regions;
+          setSelection({ ids: [], focus: left.some((r) => r.id === sel.focus) ? sel.focus : (left[0]?.id ?? null) });
+          if (inLane) focusRows();
         }
         return;
       }
       case 'copy':
+        if (!ids.length) return;
+        take();
         act.copyLoops(ids);
         return;
       case 'cut':
-        act.cutLoops(ids);
+        if (!ids.length) return;
+        take();
+        if (act.cutLoops(ids)?.changed && inLane) focusRows();
         return;
       case 'paste': {
+        take();
         const r = act.pasteLoops(at);
-        focusRegion(r?.ids?.[0] ?? null);
+        if (inLane) focusRegion(r?.ids?.[0] ?? null);
         return;
       }
       case 'duplicate': {
+        if (!ids.length) return;
+        take();
         const r = act.duplicateLoops(ids);
-        focusRegion(r?.ids?.[0] ?? null);
+        if (inLane) focusRegion(r?.ids?.[0] ?? null);
         return;
       }
       case 'selectAll':
-        setSelection(selectAll(p.arrangement.regions));
+        take();
+        setSelection(selectAll(p.arrangement.regions, p.arrangement.sections));
         return;
       case 'split':
+        if (!ids.length) return;
+        take();
         act.splitLoops(ids, at);
         return;
       case 'home':
+        take();
         seekOrCursor(0);
         if (scrollerRef.current) scrollerRef.current.scrollLeft = 0;
         say('Playhead at bar 1');
@@ -586,15 +743,42 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
         const id = sel.focus ?? ids[0];
         const el = id ? scrollerRef.current?.querySelector<HTMLElement>(`[data-region-id="${id}"]`) : null;
         if (!id || !el) return;
+        take();
         noteKeyboardMenu(el);
         if (!sel.ids.includes(id)) setSelection({ ids: [id], focus: id });
         setMenu({ kind: 'region', id, anchor: anchorFromElement(el), returnFocus: el, bar: null });
         return;
       }
       case 'escape':
-        if (sel.ids.length) setSelection({ ids: [], focus: sel.focus });
+        if (!sel.ids.length && !sel.sections?.length) return;
+        take();
+        setSelection(selectNone(sel));
         return;
     }
+  };
+  // On the document: after what has focus handled its own keys (React's handlers, a section's arrows), before the
+  // app's window-wide keys (which keep Ctrl+A from selecting the page's text when no view used it).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keyRef.current(e);
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  // The part keys in the headers: arrows move between them.
+  const onRowsKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    partKeysNav(e, rows.length, (row, col) => {
+      setHeadTab({ row, col });
+      scrollerRef.current?.querySelector<HTMLElement>(`[data-part-head] [data-row="${row}"][data-col="${col}"]`)?.focus();
+    });
+  };
+
+  // A loop reached with Tab is the one the keys act on (as a click would make it).
+  const onRowsFocus = (e: ReactFocusEvent<HTMLDivElement>) => {
+    const el = (e.target as Element).closest<HTMLElement>('[data-region-id]');
+    if (!el || !el.matches(':focus-visible')) return;
+    const id = el.dataset.regionId!;
+    const sel = selectionStore.getState();
+    if (!sel.ids.includes(id)) setSelection({ ids: [id], focus: id });
   };
 
   /* ---------------------------------------------------------------- */
@@ -635,7 +819,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   } as CSSProperties;
 
   return (
-    <div ref={rootRef} className={styles.timeline} style={style} data-testid="song-timeline" data-playing={songOn || undefined}>
+    <div ref={rootRef} className={styles.timeline} style={style} data-testid="song-timeline" data-playing={songPlaying || undefined}>
       <div
         ref={scrollerRef}
         className={styles.scroller}
@@ -655,7 +839,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
             </div>
             <SectionsLayer sections={sections} songBars={songBars} renaming={renaming} onRenameDone={onRenameDone} onRename={onRename} onMenu={onSectionMenu} />
           </div>
-          <div className={styles.rows} role="group" aria-label="The song: a row of loops for each part" aria-describedby="song-keys-help" onKeyDown={onRowsKeyDown} tabIndex={hasRegions ? -1 : 0}>
+          <div ref={rowsRef} className={styles.rows} role="group" aria-label="The song: a row of loops for each part" aria-describedby="song-keys-help" onKeyDown={onRowsKeyDown} onFocus={onRowsFocus} tabIndex={hasRegions ? -1 : 0}>
             <span id="song-keys-help" hidden>
               Arrow keys: ↑ ↓ the part above or below, Ctrl+← → the previous or next loop, ← → move the selected loops a bar, Alt+← → change their length. Delete removes, Ctrl+D duplicates, Ctrl+C and Ctrl+V copy and paste at the playhead, Shift+F10 opens a loop’s actions.
             </span>
@@ -680,22 +864,32 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
               }
             />
           </div>
-          <div ref={lineRef} className={styles.playhead} data-on={songOn || undefined} aria-hidden="true" />
+          <div ref={lineRef} className={styles.playhead} data-on={songPlaying || undefined} aria-hidden="true" />
         </div>
       </div>
-      {!hasRegions && !dragging && (
-        <div className={styles.empty} data-testid="song-empty">
-          <p className={styles.emptyText}>{hasScenes ? 'Drag a scene or a loop here — or' : 'Make some loops on the pads in Play, then drag them here.'}</p>
-          {hasScenes && (
-            <Button variant="primary" icon="sparkle" onClick={() => act.fillFromScenes()} data-testid="empty-make-song">
-              Make a song from my scenes
-            </Button>
-          )}
-        </div>
-      )}
+      {!hasRegions && <EmptyNote hasScenes={hasScenes} />}
       {menu?.kind === 'region' && menuRegion && <RegionMenu region={menuRegion} targets={menuTargets} clickedBar={menu.bar} anchor={menu.anchor} returnFocus={menu.returnFocus} ignore={menu.viaMore ? moreRef.current : null} host={menuHost} onClose={() => setMenu(null)} />}
       {menu?.kind === 'section' && menuSection && <SectionMenu section={menuSection} anchor={menu.anchor} returnFocus={menu.returnFocus} host={menuHost} onClose={() => setMenu(null)} />}
       {menu?.kind === 'picker' && <LoopPicker trackId={menu.trackId} bar={menu.bar} anchor={menu.anchor} returnFocus={menu.returnFocus} onClose={() => setMenu(null)} />}
+    </div>
+  );
+}
+
+/**
+ * The empty song (no loops, whatever section labels are left): one line and
+ * one button. It steps aside while something is dragged in.
+ */
+function EmptyNote({ hasScenes }: { hasScenes: boolean }) {
+  const dragging = useStore(dragStore, (d) => d !== null);
+  if (dragging) return null;
+  return (
+    <div className={styles.empty} data-testid="song-empty">
+      <p className={styles.emptyText}>{hasScenes ? 'The song is empty. Drag a scene or a loop here — or' : 'The song is empty. Make some loops on the pads in Play, then drag them here.'}</p>
+      {hasScenes && (
+        <Button variant="primary" icon="sparkle" onClick={() => act.fillFromScenes()} data-testid="empty-make-song">
+          Make a song from my scenes
+        </Button>
+      )}
     </div>
   );
 }
@@ -760,6 +954,10 @@ function HoverMore({ menuFor, onToggle, buttonRef }: { menuFor: Id | null; onTog
 
 /** Clear a drag view left behind (tests). */
 export function resetLaneState(): void {
+  kept.projectId = null;
+  kept.focus = null;
+  kept.left = 0;
+  kept.top = 0;
   dragStore.setState(null);
   hoverStore.setState(null);
   selectionStore.setState({ ids: [], focus: null });

@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  FIT_MIN_PX_PER_BAR,
   DEFAULT_PX_PER_BAR,
   END_ROOM_BARS,
   MAX_PX_PER_BAR,
@@ -78,7 +79,18 @@ describe('zoom', () => {
     const next = zoomStep(ppb, 1);
     expect(next === null || (64 + 2) * next > 900).toBe(true);
     expect(fitZoom(0, 900)).toBe(DEFAULT_PX_PER_BAR);
-    expect(fitZoom(MAX_SONG_BARS, 300)).toBe(MIN_PX_PER_BAR);
+  });
+
+  it('a song too long for the smallest step is still shown whole, below the ladder', () => {
+    // 288 bars at 1180 px: 4 px per bar would need 1160 px for the song alone, plus a bar either side.
+    const ppb = fitZoom(400, 1180);
+    expect(ppb).toBeLessThan(MIN_PX_PER_BAR);
+    expect((400 + 2) * ppb).toBeLessThanOrEqual(1180);
+    expect((400 + 2) * (ppb + 0.25)).toBeGreaterThan(1180);
+    // + goes back onto the ladder; − has nowhere further to go.
+    expect(zoomStep(ppb, 1)).toBe(MIN_PX_PER_BAR);
+    expect(zoomStep(ppb, -1)).toBeNull();
+    expect(fitZoom(MAX_SONG_BARS, 300)).toBe(FIT_MIN_PX_PER_BAR);
   });
 
   it('steps along the ladder and stops at its ends', () => {

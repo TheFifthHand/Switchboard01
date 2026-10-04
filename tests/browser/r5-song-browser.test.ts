@@ -15,6 +15,7 @@ import {
   centre,
   clickAt,
   doubleClickAt,
+  dragCursorNow,
   dragTo,
   dragView,
   openSong,
@@ -97,14 +98,19 @@ describe('dragging from the loop browser', () => {
     await dragTo(from, wrong, { release: false });
     expect(dragView()?.notAllowed).toBe(true);
     expect(dragView()?.ownRow).toBe(bass.id);
-    expect(document.documentElement.dataset.songCarry).toBe('no');
+    expect(dragCursorNow()).toBe('not-allowed');
+    // "Not this part" at the pointer, not on the rows.
+    const note = [...document.querySelectorAll<HTMLElement>('[role="status"]')].find((e) => e.textContent === 'Not this part')!;
+    const nb = note.getBoundingClientRect();
+    expect(Math.hypot(nb.left - wrong.x, nb.bottom - wrong.y)).toBeLessThan(40);
+    expect(document.querySelectorAll('[role="status"]').length).toBeGreaterThan(0);
     await release(wrong);
     expect(regions()).toEqual([]);
     // Over its own row: there.
     const right = { x: barX(2) + 4, y: rowY(bass.id) };
     await dragTo(from, right);
     expect(regions()).toMatchObject([{ trackId: bass.id, clipId: clip.id, start: 2, bars: clip.bars }]);
-    expect(document.documentElement.dataset.songCarry).toBeUndefined();
+    expect(dragCursorNow()).toBeNull();
   });
 
   it('Enter on a chip adds it at the playhead (the keyboard way)', async () => {

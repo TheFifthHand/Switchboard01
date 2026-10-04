@@ -252,6 +252,12 @@ export const centre = (el: Element, fx = 0.5, fy = 0.5): Pt => {
   return { x: r.left + r.width * fx, y: r.top + r.height * fy };
 };
 
+/** The cursor a drag shows (its sheet over the page), or null while no drag runs. */
+export function dragCursorNow(): string | null {
+  const el = document.querySelector<HTMLElement>('[data-song-drag-shield]');
+  return el && el.style.display !== 'none' ? el.style.cursor : null;
+}
+
 /** Poll (letting React and the audio clock run) until `cond` holds. */
 export async function waitFor(cond: () => boolean, what: string, timeout = 8000): Promise<void> {
   const start = performance.now();

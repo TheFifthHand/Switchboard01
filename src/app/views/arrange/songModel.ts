@@ -153,18 +153,19 @@ export function notches(r: Pick<SongRegion, 'bars' | 'offset'>, clipBars: number
 /* ------------------------------------------------------------------ */
 
 /** While moving: "Bar 9" (where the first moved region starts), "+ Copy · Bar 9" with the copy key held. */
-export function moveBadge(start: number, copy: boolean): string {
-  return copy ? `+ Copy · Bar ${start + 1}` : `Bar ${start + 1}`;
+export function moveBadge(start: number, copy: boolean, count = 1): string {
+  const many = count > 1 ? `${count} loops · ` : '';
+  return copy ? `+ Copy · ${many}Bar ${start + 1}` : `${many}Bar ${start + 1}`;
 }
 
-/** While dragging a right edge: "8 bars · plays 4×". */
-export function lengthBadge(bars: number, clipBars: number): string {
-  return `${barsText(bars)} · plays ${timesShort(bars, clipBars)}`;
+/** While dragging a right edge: "8 bars · plays 4×" ("4 loops · 8 bars · plays 4×" when several stretch together). */
+export function lengthBadge(bars: number, clipBars: number, count = 1): string {
+  return `${count > 1 ? `${count} loops · ` : ''}${barsText(bars)} · plays ${timesShort(bars, clipBars)}`;
 }
 
-/** While dragging a left edge: "starts at bar 5". */
-export function startBadge(start: number): string {
-  return `starts at bar ${start + 1}`;
+/** While dragging a left edge: "starts at bar 5" ("4 loops · start at bar 5"). */
+export function startBadge(start: number, count = 1): string {
+  return count > 1 ? `${count} loops · start at bar ${start + 1}` : `starts at bar ${start + 1}`;
 }
 
 /* ------------------------------------------------------------------ */

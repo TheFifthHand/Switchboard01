@@ -34,6 +34,7 @@ import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { finishHints, hideHints, hintsRunning, hintsStore, markHintDone, startSongHints, type HintId } from './hintsState';
 import { HINT_STEPS, bassHasClips, bassPart, currentHint, drumsPart, hintWhere, hintsFinishedText, projectHasClips, type HintContext } from './steps';
 import { findSpotFast, hardened, placeOk, readObstacles, spotCost, workArea, type Box, type Spot } from './placement';
+import { browserOpenStore } from '../arrange/laneStore';
 import { watchHints } from './tracker';
 import styles from './Hints.module.css';
 
@@ -93,6 +94,8 @@ const RECHECK_MS = 200;
 const NO_ROOM_RETRY_MS = 1500;
 /** A spot costing this little counts as free. */
 const FREE = 0.5;
+/** How much taller than its home's row the chip may be there (px): one line of words, never two. */
+const HOME_SLACK_PX = 8;
 /**
  * After the chip appears, moves or changes size, pointer clicks on it are
  * ignored for this long: the second click of a double-click meant for what
@@ -157,7 +160,7 @@ export function Hints({ active, shownView }: HintsProps) {
   // Progress is tracked whenever hints are on, even while the guide or a dialog is showing.
   useEffect(() => {
     if (!running) return;
-    return watchHints({ project: session.store, history: session.store.info, runtime: runtimeStore, view: viewStore, exports: session.exportsFinished }, (id) => markHintDone(id));
+    return watchHints({ project: session.store, history: session.store.info, runtime: runtimeStore, view: viewStore, exports: session.exportsFinished, lastChange: () => session.store.lastChange() }, (id) => markHintDone(id));
   }, [running]);
 
   // The Song view opened while the hints run: the song track becomes current (once; again after "Show hints again").
@@ -189,7 +192,8 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
   const exportShownRef = useRef(exportShown);
   exportShownRef.current = exportShown;
   // The words follow the view on screen, as the placement does (the chosen view is a moment ahead during a switch).
-  const base: HintContext = { view: onScreen, padMode, recording, ...parts, exportAt: exportShown ? 'strip' : 'menu' };
+  const browserOpen = useStore(browserOpenStore, (s) => s);
+  const base: HintContext = { view: onScreen, padMode, recording, ...parts, exportAt: exportShown ? 'strip' : 'menu', browserOpen };
   // Whether the pads play matters to one step's words only (Play is Pause then): only that step listens, so Play / Pause
   // does not re-render the chip otherwise.
   const listens = currentHint(done, base, { song })?.step.id === 'song-play';
@@ -291,12 +295,14 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     // Collapsed (a step done elsewhere): the one-line layouts only.
     const choices = LAYOUTS.map((l, i) => ({ l, i })).filter(({ l }) => (go ? l.compact : !l.terse));
     let best: (Spot & { maxW: number; i: number }) | null = null;
-    // The view's home first: the chip sits on it (over the home's own words), as wide as it needs, when that covers nothing else.
+    // The view's home first: the chip sits on it (over the home's own words), as wide as it needs, when that covers
+    // nothing else, and only in a layout as low as the home's row (a second line would hang over what is below it).
     const home = homeBox(el, vw, vh, area);
     if (home) {
       for (const { l, i } of choices) {
         const maxW = Math.min(l.maxW, area.right - area.left);
         const size = sizeOf(el, i, maxW, vw);
+        if (size.h > home.box.bottom - home.box.top + HOME_SLACK_PX) continue;
         const wanted = home.align === 'end' ? home.box.right - size.w : home.align === 'center' ? (home.box.left + home.box.right - size.w) / 2 : home.box.left;
         const x = Math.round(Math.max(area.left, Math.min(wanted, area.right - size.w)));
         // Centred on the home's line, never above the work area.

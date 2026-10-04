@@ -12,7 +12,10 @@
  * - `detect` reads one change of the real state (the project, its undo
  *   history, the runtime, the view, a finished export; see tracker.ts) and
  *   says whether it was this step's action. Never a timer, never a click on
- *   the hint itself; switching to another project counts as nothing.
+ *   the hint itself; switching to another project counts as nothing, and
+ *   neither does an Undo or Redo bringing a state back, nor a side effect of
+ *   another edit (a section moved with its loops, an intro pushing the song
+ *   later).
  *
  * A step that needs another view offers a button that goes there.
  */
@@ -41,6 +44,8 @@ export interface HintContext {
   padsPlaying?: boolean;
   /** The song has loops (an empty song has nothing to play, stretch or move). Absent: yes. */
   hasRegions?: boolean;
+  /** The Song view's loop browser ("Add loops") is open. Absent: no. */
+  browserOpen?: boolean;
 }
 
 export interface HintGo {
@@ -62,6 +67,8 @@ export interface HintChange {
   prevRuntime: RuntimeState;
   view: View;
   prevView: View;
+  /** For a project change: an edit, an Undo or a Redo ('other': not a step of the history). Absent: an edit. */
+  edit?: 'edit' | 'undo' | 'redo' | 'other';
 }
 
 /** What a step remembers between changes (set again when another project opens). */
@@ -153,9 +160,9 @@ function songTotals(p: Project): { count: number; bars: number } {
   return { count: p.arrangement.regions.length, bars };
 }
 
-/** Song loops changed in place: the same loop (by id) before and after, on the same part. */
+/** Song loops changed in place by an edit of the loops themselves (not an Undo or Redo, nor a section edit carrying them along). */
 function changedRegions(c: HintChange): { now: SongRegion; was: SongRegion }[] {
-  if (c.source !== 'project') return [];
+  if (c.source !== 'project' || (c.edit ?? 'edit') !== 'edit' || c.project.arrangement.sections !== c.prevProject.arrangement.sections) return [];
   const now = c.project.arrangement.regions;
   const before = c.prevProject.arrangement.regions;
   if (now === before) return [];
@@ -268,12 +275,13 @@ export const HINT_STEPS: readonly HintStep[] = [
     track: 'song',
     available: (c) => c.hasClips !== false,
     text: () => 'Drag a scene or a loop into the song.',
-    more: () => 'From the Loops panel on the right, onto a part’s row.',
+    // Never pointing at a closed panel: with it shut, say where its key is.
+    more: (c) => (c.browserOpen ? 'From Add loops, on the right, onto a part’s row.' : 'Press Add loops (top right), then drag one onto a part’s row.'),
     here: (c) => c.view === 'arrange',
     go: SONG,
-    // Loops were added: more of them, filling more bars (a split makes more loops but no more bars).
+    // Loops were added by an edit (not an Undo of a delete): more of them, filling more bars (a split makes more loops but no more bars).
     detect: (c) => {
-      if (c.source !== 'project' || c.project.arrangement.regions === c.prevProject.arrangement.regions) return false;
+      if (c.source !== 'project' || (c.edit ?? 'edit') !== 'edit' || c.project.arrangement.regions === c.prevProject.arrangement.regions) return false;
       const now = songTotals(c.project);
       const was = songTotals(c.prevProject);
       return now.count > was.count && now.bars > was.bars;
@@ -287,7 +295,7 @@ export const HINT_STEPS: readonly HintStep[] = [
     more: () => 'It snaps to the bars, and the loop repeats to fill it.',
     here: (c) => c.view === 'arrange',
     go: SONG,
-    // A loop got longer at its end (it starts where it did).
+    // A loop got longer at its end (it starts where it did), by an edit of the loops (not an Undo giving a carved loop its length back).
     detect: (c) => changedRegions(c).some(({ now, was }) => now.start === was.start && regionEnd(now) > regionEnd(was)),
   },
   {

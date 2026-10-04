@@ -9,7 +9,7 @@
  * starting point; it never counts as doing anything.
  */
 import type { Project } from '../../../project/types';
-import type { HistoryInfo } from '../../../state/projectStore';
+import type { ChangeInfo, HistoryInfo } from '../../../state/projectStore';
 import type { ReadableStore } from '../../../state/store';
 import type { View } from '../../../state/uiStore';
 import type { RuntimeState } from '../../runtime';
@@ -24,6 +24,8 @@ export interface HintSources {
   view?: ReadableStore<View>;
   /** How many exports have finished (a WAV was made); each new one is a change. Absent: none. */
   exports?: ReadableStore<number>;
+  /** What the latest project change was (an edit, an Undo, a Redo), read while it is reported. Absent: an edit. */
+  lastChange?: () => ChangeInfo;
 }
 
 /** Subscribe to the sources; `onDone` is called (possibly more than once) for each action seen. Returns the unsubscribe. */
@@ -57,7 +59,7 @@ export function watchHints(src: HintSources, onDone: (id: HintId) => void): () =
         remember(p);
         return;
       }
-      handle({ ...base(), source: 'project', project: p, prevProject: prev });
+      handle({ ...base(), source: 'project', project: p, prevProject: prev, edit: src.lastChange?.().kind ?? 'edit' });
     }),
   );
   offs.push(
