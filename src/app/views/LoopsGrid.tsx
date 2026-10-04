@@ -93,7 +93,7 @@ import {
   type MenuAnchor,
 } from './ClipMenu';
 import { useReplaying, useRovingPads } from './DrumPads';
-import { songTimelineBar } from './arrange/songPlan';
+import { songBarAt } from '../songPlayback';
 import { keysFor } from './hints/shortcuts';
 import { TrackMenu } from './TrackMenu';
 import { SceneMenu } from './SceneMenu';
@@ -128,7 +128,7 @@ type Transport = 'playing' | 'paused' | 'stopped';
 
 /** The bar (from 1, as the transport counts it) that begins at `tick`; while the song plays, on the song's timeline. */
 function barNumber(tick: number, song: boolean): number {
-  const bars = (song ? songTimelineBar(tick) : null) ?? tick / TICKS_PER_BAR;
+  const bars = (song ? songBarAt(tick) : null) ?? tick / TICKS_PER_BAR;
   return Math.floor(bars + 1e-9) + 1;
 }
 
