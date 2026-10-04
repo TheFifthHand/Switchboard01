@@ -95,28 +95,25 @@ async function tab(page, name) {
   // From here on Advanced (remembered): every setting, the cable dock and the Play view's cables drawer.
   await showEverySetting(page);
   await shot(page, '05-shape-cables-1366');
-  await tab(page, 'Arrange');
-  await shot(page, '06-arrange-1366');
-  // The song lane while the song plays, with Drums switched off in block 2; then block 4 lifted
-  // mid-drag towards position 2 (the blocks in between slide aside), cancelled with Esc.
-  await page.getByRole('button', { name: /^Drums in .+ \(block 2\): plays/ }).click();
-  // A narrow block shows its ▶ on hover; with the pads playing, the mode box also offers Play the song.
-  await page.locator('[data-block-id]').first().hover();
-  const fromBlock1 = page.getByRole('button', { name: /^Play song from block 1/ });
-  if (await fromBlock1.isVisible().catch(() => false)) await fromBlock1.click();
-  else await page.getByRole('button', { name: /Play the song/ }).click();
+  await tab(page, 'Song');
+  await shot(page, '06-song-1366');
+  // The song playing (the pads were playing: the header offers Play the song), then a loop lifted
+  // mid-drag along its row: it moves in whole bars with a "Bar N" badge, and what it would cover is
+  // shown trimmed before the drop; Esc cancels.
+  const playSong = page.getByRole('button', { name: /Play the song/ });
+  if (await playSong.isVisible().catch(() => false)) await playSong.click();
+  else await page.keyboard.press('Space');
   await page.waitForTimeout(2500);
-  await shot(page, '22-arrange-song-playing-1366');
+  await shot(page, '22-song-playing-1366');
   {
-    const blocks = page.locator('[data-block-id]');
-    const b = await blocks.nth(3).boundingBox();
-    const a = await blocks.nth(1).boundingBox();
-    await page.mouse.move(b.x + 40, b.y + 14);
+    const regions = page.locator('[data-region-id]');
+    const r = await regions.nth(3).boundingBox();
+    await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
     await page.mouse.down();
-    await page.mouse.move(b.x + 30, b.y + 14, { steps: 4 });
-    await page.mouse.move(a.x + 20, b.y + 14, { steps: 24 });
+    await page.mouse.move(r.x + r.width / 2 + 10, r.y + r.height / 2, { steps: 4 });
+    await page.mouse.move(r.x + r.width / 2 + 90, r.y + r.height / 2, { steps: 24 });
     await page.waitForTimeout(400);
-    await shot(page, '23-arrange-drag-1366');
+    await shot(page, '23-song-drag-1366');
     await page.keyboard.press('Escape');
     await page.mouse.up();
   }
