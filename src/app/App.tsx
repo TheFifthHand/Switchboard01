@@ -20,7 +20,7 @@ import { PlayView } from './views/PlayView';
 import { KeyboardStrip } from './views/KeyboardStrip';
 import { Welcome } from './views/Welcome';
 import { ExportDialog } from './views/ExportDialog';
-import { Library, storageMessage, type LibraryTab } from './views/Library';
+import { Library, hearIt, storageMessage, type LibraryTab } from './views/Library';
 import { Guide } from './views/Guide';
 import { HelpDialog, APP_VERSION, type HelpTab } from './views/HelpDialog';
 import { Hints, VIEW_NAMES, showHintsAgain, startHints } from './views/hints';
@@ -607,7 +607,7 @@ export function App({ boot }: { boot: BootInfo }) {
       void (async () => {
         try {
           const res = await session.importProjectFile(file);
-          notify(res.ok ? `${res.message} Tap a pad or a scene to hear it.` : res.message, res.ok ? 'info' : 'error');
+          notify(res.ok ? `${res.message} ${hearIt()}` : res.message, res.ok ? 'info' : 'error');
         } catch (err) {
           notify(storageMessage(err, 'Opening the project file'), 'error');
         }

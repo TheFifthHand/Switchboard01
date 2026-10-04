@@ -35,6 +35,7 @@ import { StorageError, storageEstimate } from '../../persistence/db';
 import { formatClock } from '../../persistence/summary';
 import { BUNDLE_ACCEPT, BUNDLE_EXTENSION, LEGACY_BUNDLE_EXTENSIONS } from '../../persistence/bundle';
 import { renameProject as renameProjectCmd } from '../../state/commands';
+import { uiStore } from '../../state/uiStore';
 import { session, useAutosave, useProject } from '../instance';
 import { notify, runtimeStore, useRuntime } from '../runtime';
 import { downloadBlob } from '../download';
@@ -64,7 +65,10 @@ const NAME_MAX = 80;
 /** Elements where Space does their own job (press, toggle, type). */
 const SPACE_CONTROLS = 'button, input, select, textarea, a[href], [role="tab"], [role="radio"], [role="switch"], [role="checkbox"], [role="slider"], [contenteditable="true"]';
 /** A freshly loaded project has no clips running: a pad or scene tap starts playback with it. */
-const HEAR_IT = 'Tap a pad or a scene to hear it.';
+/** How to hear what just loaded, in the words of the view the person is in (the Song view plays the song). */
+export function hearIt(): string {
+  return uiStore.getState().view === 'arrange' ? 'Press Play to hear the song.' : 'Tap a pad or a scene to hear it.';
+}
 /** A blank project has no clips: there is nothing to hear yet, and a pad makes the first clip. */
 const BLANK_HINT = 'Tap a pad to make a clip, then press Edit steps.';
 
@@ -135,7 +139,7 @@ const lastNoticeId = () => runtimeStore.getState().notice?.id ?? 0;
  * migrated or partly damaged project) is kept in the same message instead of
  * being replaced, and then nothing is claimed about what was saved.
  */
-function announceLoaded(text: string, noticeBefore: number, extra = '', hint = HEAR_IT): void {
+function announceLoaded(text: string, noticeBefore: number, extra = '', hint = hearIt()): void {
   const n = runtimeStore.getState().notice;
   if (n && n.id !== noticeBefore && n.tone !== 'info') notify(`${text} ${n.text}`, n.tone);
   else notify(`${text}${extra ? ` ${extra}` : ''} ${hint}`);
@@ -304,7 +308,7 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
       await session.newFromStarter(def.id, { discardCurrent });
       // The project is on screen now, even if the dialog was closed meanwhile.
       const name = session.store.getState().name;
-      announceLoaded(`Started ${quote(name)}.`, before, keptPrevious ? `${quote(previous)} is still in My projects.` : '', def === BLANK_STARTER ? BLANK_HINT : HEAR_IT);
+      announceLoaded(`Started ${quote(name)}.`, before, keptPrevious ? `${quote(previous)} is still in My projects.` : '', def === BLANK_STARTER ? BLANK_HINT : hearIt());
       onLoaded('starter');
     });
 
@@ -337,7 +341,7 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
         else notify(res.message, 'error');
         return;
       }
-      notify(`${res.message} ${HEAR_IT}`);
+      notify(`${res.message} ${hearIt()}`);
       onLoaded('import');
     });
   };
@@ -768,7 +772,7 @@ function StartersPanel(props: {
   else if (storageDown) intro = `Starting a project replaces ${quote(currentName)} on screen, and it cannot be kept in this browser right now.`;
   else if (saveFailing) intro = `Starting a project replaces ${quote(currentName)} on screen, and its latest changes could not be saved in this browser.`;
   else if (stored) intro = `Pick a starting point. Your current project ${quote(currentName)} stays in My projects.`;
-  else intro = `Pick a starting point. It loads without playing: ${HEAR_IT.toLowerCase()}`;
+  else intro = `Pick a starting point. It loads without playing: ${hearIt().toLowerCase()}`;
 
   const cards: StarterDef[] = [...STARTERS, BLANK_STARTER];
   return (

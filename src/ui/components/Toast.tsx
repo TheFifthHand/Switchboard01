@@ -196,7 +196,7 @@ export function ToastProvider({ children, max = 4 }: ToastProviderProps) {
 }
 
 const CONTROL =
-  'button, a[href], input, select, textarea, [role="tab"], [role="button"], [role="slider"], [role="switch"], [role="checkbox"], [role="radio"], [role="menuitem"], [role="option"], [role="spinbutton"], [role="combobox"], [contenteditable="true"], [data-region-id], [data-section-id]';
+  'button, a[href], input, select, textarea, [role="tab"], [role="button"], [role="slider"], [role="switch"], [role="checkbox"], [role="radio"], [role="menuitem"], [role="option"], [role="spinbutton"], [role="combobox"], [contenteditable="true"], [data-region-id], [data-section-id], aside[data-hint]';
 /** Narrower widths the stack may take to clear a control (its default is min(520 px, window − 32 px)). */
 const NARROWER_PX = [440, 360];
 const COL_PX = 12;
