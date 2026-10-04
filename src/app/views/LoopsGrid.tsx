@@ -19,8 +19,8 @@
  * toggles and a level meter; a muted part's column dims and says Muted, and
  * with any solo on the others say Not soloed (a soloed part keeps its meter
  * and shows a Solo tag). Paused, a part whose clip holds says "❚❚ Paused" in
- * the meter's place, and its key offers ▶ (continue), never ■ Stop. M mutes the selected part; Solo has no key (S plays
- * a note).
+ * the meter's place, and its key offers ▶ (continue), never ■ Stop. M mutes
+ * the selected part; Solo has no key (S plays a note).
  *
  * Keyboard: the pads (with the scene buttons) are one Tab stop, the part
  * headers another (roving tabindex); arrow keys move inside, Home / End go to

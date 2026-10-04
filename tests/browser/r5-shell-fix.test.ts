@@ -8,7 +8,7 @@
  *   cursor, and the key says "Play song" beforehand; a paused song continues;
  *   back in Play, Space continues the paused song where it held;
  * - paused, the transport's key reads "▶ Continue" (the Scenes column's word)
- *   at the same width as Play and Pause; a part whose clip holds at the pause
+ *   no wider than Pause (nothing moves); a part whose clip holds at the pause
  *   says "❚❚ Paused" in its header at every width, its key never offers
  *   "■ Stop", and its ▶ continues in time;
  * - the keyboard strip says which part it plays ("Keys play Bass") in Play,
@@ -174,7 +174,7 @@ describe('Play and Space in the Song view play the song', () => {
 });
 
 describe('Paused reads paused', () => {
-  it('the transport key says Continue at the width of Play and Pause; a held part says Paused, not Stop, and pressing it continues in time', async () => {
+  it('the transport key says Continue, no wider than Pause; a held part says Paused, not Stop, and pressing it continues in time', async () => {
     await openPlaying();
     const pauseWidth = playKey().getBoundingClientRect().width;
     expect(keyText(playKey())).toBe('Pause');
@@ -189,7 +189,10 @@ describe('Paused reads paused', () => {
     const key = playKey();
     expect(keyText(key)).toBe('Continue');
     expect(key.querySelector('svg')?.getAttribute('data-icon')).toBe('play');
-    expect(key.getBoundingClientRect().width).toBeCloseTo(pauseWidth, 0);
+    // No wider than Pause: Stop, beside it, does not move.
+    expect(key.getBoundingClientRect().width).toBeLessThanOrEqual(pauseWidth + 0.5);
+    const word = [...key.querySelectorAll('span')].find((x) => x.textContent === 'Continue') ?? key;
+    expect(word.scrollWidth).toBeLessThanOrEqual(key.clientWidth);
     // The same word as the key above the scenes.
     expect(document.querySelector('[data-pause-key]')?.textContent).toBe('Continue');
 
@@ -242,11 +245,11 @@ describe('Paused reads paused', () => {
     expect(statusWord(2)).toBeNull();
     expect(keyText(playKey())).toBe('Pause');
 
-    // Stopped, the key reads Play at the same width.
+    // Stopped, the key reads Play again (no wider than Pause).
     act(() => session.stop());
     await settleFrames();
     expect(keyText(playKey())).toBe('Play');
-    expect(playKey().getBoundingClientRect().width).toBeCloseTo(pauseWidth, 0);
+    expect(playKey().getBoundingClientRect().width).toBeLessThanOrEqual(pauseWidth + 0.5);
   });
 });
 
