@@ -159,7 +159,7 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
           onClose();
         }}
       >
-        Launch scene
+        Play row
       </MenuItem>
       <MenuItem
         icon="chevronUp"

@@ -196,7 +196,7 @@ function padTip(look: PadLook, replaying: boolean): string {
     case 'playing':
       return 'Playing. Tap to stop it at the next bar; the other parts carry on.';
     case 'stopping':
-      return `${look.caption}. Tap to keep it playing: it starts again from its beginning at that bar.`;
+      return `${look.caption}. Tap to keep it playing: it carries on in time, as if you had not stopped it.`;
     case 'queued':
       if (look.paused) return 'Paused here. Tap to carry on from the pause, in time.';
       if (transport === 'stopped') return 'Starts when you press Play. Tap to start playing now.';
