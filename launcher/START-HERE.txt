@@ -77,8 +77,11 @@ Use headphones or speakers; start with a moderate volume.
     * Knobs: drag up or down (hold Shift for fine steps). Double-click
       puts a knob back to its default. For an exact value, click a knob,
       type a number and press Enter. Arrow keys work too.
-    * Play the little keyboard with the mouse or your computer keys
-      (A W S E D F T G Y H U J K ...). Musical Assist keeps you in key.
+    * Play the little keyboard with the mouse or your computer keys.
+      With Musical Assist on (the switch beside it) it shows only the
+      notes in your key, as even keys: A S D F ... play them from the
+      left, every key its own note. With it off you get a whole piano
+      (A W S E D F T G Y H U J K ...).
     * Simple shows the essentials; Advanced (switch at the top) shows
       every control. Switching never changes your music.
     * Mix (top left) has a fader per part and mastering: pick a preset
@@ -88,14 +91,21 @@ Use headphones or speakers; start with a moderate volume.
       a WAV file you can listen to anywhere, press "Export" (top right),
       choose your performance under "What to export" and press
       "Export WAV".
+    * Build a song in Song (top left): every part has its own row, like
+      GarageBand. Drag scenes and loops in from the Loops panel, drag a
+      loop along its row to move it, drag its right edge to make it
+      repeat longer. Everything snaps to the bars. Click the ruler to
+      move the playhead; drag along it to loop a stretch. Hold Alt while
+      dragging to copy; right-click a loop for more. Space plays the song.
+    * New in 2.3: the Song view above, the in-key keyboard, Play / Stop
+      words on the pads and a Pause button beside them. Songs made with
+      earlier versions open as they were, on the new rows.
     * New in 2.2: up to 8 scenes and 8-bar clips, chord pads and
       progressions, note selection and drum painting in Steps, song
       fades and filter rises, Reverb and Echo returns in Mix, and a Help
       sheet with every shortcut (press ?).
-    * New in 2.1: build a song in Arrange by moving blocks. Drag a block
-      and the others make room; drag its right edge to make it longer;
-      hold Ctrl while dragging to copy it; click a part in a block to
-      switch it off or on just there. Changes play right away.
+    * New in 2.1: the first song timeline (2.3 replaces it with the
+      rows described above). Song edits play right away.
     * New in 2.0: play Omni Song from a MIDI keyboard or controller, and
       record your voice or a guitar. See the MIDI & audio dialog in the
       app for what your browser and devices support.

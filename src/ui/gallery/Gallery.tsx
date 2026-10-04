@@ -102,7 +102,7 @@ type PadMode = (typeof PAD_MODES)[number]['value'];
 const VIEWS = [
   { value: 'play', label: 'Play', tip: 'Pads, sound controls and keyboard.' },
   { value: 'shape', label: 'Shape', tip: 'Macros, effects and cables.' },
-  { value: 'arrange', label: 'Arrange', tip: 'Put scenes in order to make a song.' },
+  { value: 'arrange', label: 'Song', tip: 'Put loops on each part’s row to build a song.' },
 ] as const;
 type View = (typeof VIEWS)[number]['value'];
 

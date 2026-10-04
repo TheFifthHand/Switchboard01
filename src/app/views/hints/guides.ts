@@ -62,14 +62,14 @@ export interface ReleaseNotes {
 /** What changed in this version, newest first (only the first entry is shown). */
 export const WHATS_NEW: readonly ReleaseNotes[] = [
   {
-    version: '2.2.0',
+    version: '2.3.0',
     notes: [
-      'Up to 8 scenes and clips up to 8 bars; Variation has Subtle, Bold and Back to original.',
-      'Chord pads named in your key, Write a progression…, and changing key can move the whole song.',
-      'Steps: select, move and copy notes, finer grids, Tighten timing and Loosen; drum steps can be painted with a drag.',
-      'Songs: fades, filter rises and echo throws on blocks, Shape the song…, and takes turned into song blocks.',
-      'Mix: Reverb and Echo returns, a Channel drawer for effects, a Match that keeps correcting, and exports with a loudness report.',
-      'Help: every keyboard shortcut in one place (press ?). A project open in two tabs is saved by one of them only. Ctrl+S saves at once.',
+      'Song works like GarageBand: every part has its own row. Drag loops and scenes in from the Loops panel, move them along their row, and drag a loop’s right edge to make it repeat longer. Everything snaps to the bars.',
+      'Click the ruler to move the playhead; drag along it to loop a stretch. Alt-drag copies a loop; right-click one for Split, Duplicate and more. Name parts of the song (Intro, Drop…) in the Sections strip.',
+      'With Musical Assist on, the keyboard shows only the notes in your key, as even keys: every key plays its own note.',
+      'The pads say what a click does (▶ Play / ■ Stop), the part buttons have words, and Pause sits next to the pads.',
+      'A new version opens by itself, and the launcher no longer opens an older copy that is still running.',
+      'Songs from earlier versions open as they were, on the new rows.',
     ],
   },
 ];
