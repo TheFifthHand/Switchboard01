@@ -44,7 +44,7 @@ import {
   type Project,
   type Track,
 } from '../project/types';
-import { regionClip, regionEnd, songBars } from '../project/arrangement';
+import { regionEnd, songBars } from '../project/arrangement';
 import type { ClipPhase, LaunchResult, PlayMode, SeqEvent, SongLoop, StartOptions, TrackLaunchState } from './contracts';
 import { MAX_SWING_TICKS, TempoMap, clampBpm, clampSwing, swingWarp } from './clock';
 import { EMPTY_LATCH, arpDivisionTicks, arpGateTicks, arpGridAtOrAfter, arpInput, arpNoteAt, updateLatch, type LatchState } from './arp';
@@ -153,11 +153,25 @@ interface SongPlay {
   loopStart: number;
 }
 
+/** Every clip by part and id, with its slot (one lookup per region instead of a search). */
+function clipIndex(project: Project): Map<string, { clip: Clip; slot: number }> {
+  const out = new Map<string, { clip: Clip; slot: number }>();
+  for (const t of project.tracks) {
+    t.clips.forEach((clip, slot) => {
+      // As regionClip: the first slot holding the clip.
+      const key = clip ? `${t.id}\u0000${clip.id}` : '';
+      if (clip && !out.has(key)) out.set(key, { clip, slot });
+    });
+  }
+  return out;
+}
+
 /** Each part's regions as spans of song ticks, in time order (regions whose clip is gone play nothing). */
 function songParts(project: Project): Map<Id, PartSpan[]> {
   const out = new Map<Id, PartSpan[]>();
+  const clips = clipIndex(project);
   for (const r of project.arrangement.regions) {
-    const rc = regionClip(project, r);
+    const rc = clips.get(`${r.trackId}\u0000${r.clipId}`);
     if (!rc) continue;
     const len = clipLength(rc.clip);
     const from = r.start * TICKS_PER_BAR;
@@ -174,17 +188,34 @@ function songParts(project: Project): Map<Id, PartSpan[]> {
 }
 
 /**
- * Identity of what the song plays: every region (part, clip, place, length,
- * offset), the clips' lengths and slots, and the song's length. A change of
- * it while the song plays is what `Sequencer.replanSong` follows.
+ * Did what the song plays change from `prev` to `p`: a region (part, clip,
+ * place, length, offset), the slot or length of a clip, or the song's
+ * length? A change while the song plays is what `Sequencer.replanSong`
+ * follows. Cheap: edits keep what they did not touch identical.
  */
-export function songSignature(project: Project): string {
-  const out: string[] = [String(songBars(project))];
-  for (const r of project.arrangement.regions) {
-    const rc = regionClip(project, r);
-    out.push(`${r.trackId}:${r.clipId}:${r.start}+${r.bars}@${r.offset}:${rc ? `${rc.slot}/${rc.clip.bars}` : '-'}`);
+export function songPlayChanged(p: Project, prev: Project): boolean {
+  if (p.arrangement.regions !== prev.arrangement.regions) {
+    const a = p.arrangement.regions;
+    const b = prev.arrangement.regions;
+    if (a.length !== b.length) return true;
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i];
+      const y = b[i];
+      if (x !== y && (x.trackId !== y.trackId || x.clipId !== y.clipId || x.start !== y.start || x.bars !== y.bars || x.offset !== y.offset)) return true;
+    }
   }
-  return out.join('|');
+  if (p.tracks !== prev.tracks) {
+    if (p.tracks.length !== prev.tracks.length) return true;
+    for (let i = 0; i < p.tracks.length; i++) {
+      const t = p.tracks[i];
+      const u = prev.tracks[i];
+      if (t.id !== u.id) return true;
+      if (t.clips === u.clips) continue;
+      if (t.clips.length !== u.clips.length) return true;
+      for (let k = 0; k < t.clips.length; k++) if ((t.clips[k]?.id ?? null) !== (u.clips[k]?.id ?? null) || (t.clips[k]?.bars ?? 0) !== (u.clips[k]?.bars ?? 0)) return true;
+    }
+  }
+  return p.arrangement.sections !== prev.arrangement.sections && songBars(p) !== songBars(prev);
 }
 
 /** a mod n in [0, n). */

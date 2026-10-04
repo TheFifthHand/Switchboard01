@@ -13,7 +13,7 @@ import type { ClipBars, Id, Project, SongRegion, SongSection } from '../../src/p
 import { TICKS_PER_BAR } from '../../src/project/types';
 import { ProjectStore } from '../../src/state/projectStore';
 import type { SeqEvent, SongLoop, StartOptions } from '../../src/time/contracts';
-import { Sequencer, passEnd, songSignature, type NoteCut, type NoteEvent, type SongPass } from '../../src/time/sequencer';
+import { Sequencer, passEnd, songPlayChanged, type NoteCut, type NoteEvent, type SongPass } from '../../src/time/sequencer';
 import { DEFAULT_LOOKAHEAD } from '../../src/time/transport';
 import { makeClip, makeProject, notesOf, ofKind, setClip } from './sequencer-fixtures';
 
@@ -271,7 +271,7 @@ export class Rig {
       }
     }
     let replanned = false;
-    if (this.seq.mode.kind === 'song' && (this.seq.playing || this.seq.paused) && songSignature(p) !== songSignature(prev)) {
+    if (this.seq.mode.kind === 'song' && (this.seq.playing || this.seq.paused) && songPlayChanged(p, prev)) {
       replanned = this.seq.replanSong(at);
       if (replanned && this.seq.playing) this.cancelFrom(at);
     }

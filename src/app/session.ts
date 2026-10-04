@@ -53,7 +53,7 @@ import * as library from '../persistence/library';
 import type { LaunchResult, SongLoop } from '../time/contracts';
 import { recordedNoteAt } from '../time/recordWindow';
 import { makeSnapshot, projectFromSnapshot } from '../time/snapshot';
-import { Sequencer, songSignature, type NoteEvent } from '../time/sequencer';
+import { Sequencer, songPlayChanged, type NoteEvent } from '../time/sequencer';
 import { cleanSongLoop, inSongLoop, sameSongLoop } from '../time/songLoop';
 import { BRACE_AHEAD, BRACE_MS, RealtimeTransport, outputDelaySeconds } from '../time/transport';
 import { meterWake } from '../ui/components/meterScheduler';
@@ -956,7 +956,7 @@ export class Session {
     const t = this.transport;
     if (!seq || !t || seq.mode.kind !== 'song' || !(seq.playing || seq.paused)) return false;
     // The song depends on its regions and sections and on the clips (not on sounds or knobs).
-    if (!songEdited(p, prev) || songSignature(p) === songSignature(prev)) return false;
+    if (!songEdited(p, prev) || !songPlayChanged(p, prev)) return false;
     const changed = t.replanSong();
     // Pads show what each part plays now, or switches to next.
     if (changed) this.refreshLauncherRuntime();
