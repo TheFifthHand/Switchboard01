@@ -9,8 +9,9 @@
  * See src/time/contracts.ts for the timing model. Implementation notes:
  * - Every state change (clip switch, a song region's start or end, a
  *   recorded control event, the end) is a boundary: the window is generated
- *   up to it, the change is applied, generation continues. Applied switches are kept in a short
- *   history so `invalidate()` can roll them back and replay them.
+ *   up to it, the change is applied, generation continues. Applied switches
+ *   are kept in a short history so `invalidate()` can roll them back and
+ *   replay them.
  * - A note already handed out can only be shortened through a `NoteCut`
  *   (`takeCuts()`): the driver releases that voice early. That happens when
  *   a launch is queued after the outgoing clip's note was generated, a mono

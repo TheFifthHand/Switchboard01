@@ -68,9 +68,9 @@ export interface RuntimeState {
    */
   recordStartsAtTick?: number | null;
   /**
-   * Record Notes in the song: false while the song plays a block that does
-   * not play the clip being recorded into (notes still go into it). True
-   * (or absent) otherwise.
+   * Record Notes in the song: false while the part being recorded has no
+   * region under the playhead (nothing records there). True (or absent)
+   * otherwise.
    */
   recordTargetAudible?: boolean;
   /** The project the last starter (Jump In, a new project) replaced on screen; it stays in My projects. Null (or absent): none. */

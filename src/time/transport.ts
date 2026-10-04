@@ -875,7 +875,7 @@ export class RealtimeTransport {
 
   /**
    * The tick at which part `trackId`'s queued change of clip lands (a pad
-   * launch or stop, the next song block switching it), as heard now; null
+   * launch or stop, the song switching it at a region's start or end), as heard now; null
    * when nothing is queued or the transport is stopped. Allocation-free.
    */
   queuedAt(trackId: Id): number | null {

@@ -587,7 +587,7 @@ function switchView(view: View): void {
  * MIDI & audio key needs the room.
  * Unavailable, they stay focusable and their tip says why ("Nothing to
  * undo", or the take lock); available, the tip names the step ("Undo: Move
- * block").
+ * Bounce").
  */
 function HistoryKey(props: { kind: 'undo' | 'redo' }) {
   const { kind } = props;
