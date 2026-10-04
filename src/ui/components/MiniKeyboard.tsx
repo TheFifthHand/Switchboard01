@@ -489,7 +489,6 @@ export function MiniKeyboard({
       data-layout={kitRow ? 'row' : undefined}
       data-rows={kitRow ? kitRows : undefined}
       data-rail={rail || undefined}
-      data-scale-board={scaleBoard || undefined}
       data-fit={fit || undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

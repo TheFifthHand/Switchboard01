@@ -382,7 +382,9 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   // Assist on for a part with notes: only the key's notes, one key each (the Chromatic scale has all 12: the piano).
   const scaleBoard = !isDrums && assist && !chromatic;
   const perOctave = stepsPerOctave(scale);
-  const scaleCount = Math.max(2 * perOctave + 1, Math.min(3 * perOctave + 1, Math.floor(keysBox.width / SCALE_KEY_MIN_PX)));
+  // Folded, no keys show: the computer keys play all three octaves.
+  const fitting = collapsed ? Infinity : Math.floor(keysBox.width / SCALE_KEY_MIN_PX);
+  const scaleCount = Math.max(2 * perOctave + 1, Math.min(3 * perOctave + 1, fitting));
   const notes = useMemo(() => (scaleBoard ? scaleKeyboardNotes(root, scale, baseNote, scaleCount) : null), [scaleBoard, root, scale, baseNote, scaleCount]);
   // Drum pads own the computer keys only while they are on screen with a kit selected (same layout, same table).
   const drumPadsOwnKeys = padMode === 'drums' && view === 'play' && isDrums;

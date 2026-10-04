@@ -10,6 +10,8 @@
  * 16 sound keys. Switching Assist or the key under a held key releases it; a MIDI note is still
  * moved into the key and lights the key that sounds.
  */
+import type { AxeResults } from 'axe-core';
+import axeSource from 'axe-core/axe.min.js?raw';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
@@ -202,6 +204,23 @@ describe('pressing the keys', () => {
     }
   });
 
+  it('folded, the computer keys play all three octaves (up to [ on a seven-note key)', async () => {
+    await bass();
+    expect(keys()).toHaveLength(20);
+    await click(centre(button('Hide the keyboard', strip())!));
+    (document.activeElement as HTMLElement | null)?.blur();
+    const rec = recordPlayed();
+    try {
+      await press('p');
+      await press('[BracketLeft]');
+      await press('[BracketRight]');
+      // G Dorian from G3: key 21 is F6, key 22 G6; there is no key 23.
+      expect(rec.ons().map((p) => p.pitch)).toEqual([89, 91]);
+    } finally {
+      rec.restore();
+    }
+  });
+
   it('on a narrow strip (1024 px) the keys still fill it: two octaves of the scale, a letter on each key a computer key plays', async () => {
     await bass(1024, 768);
     expect(keys()).toHaveLength(15);
@@ -336,5 +355,34 @@ describe('held keys when the layout changes', () => {
     } finally {
       rec.restore();
     }
+  });
+});
+
+describe('accessibility', () => {
+  /** Serious and critical axe-core findings in the keyboard strip. */
+  async function audit(): Promise<string[]> {
+    const w = window as unknown as { axe?: { run(context: Element, options: Record<string, unknown>): Promise<AxeResults> } };
+    if (!w.axe) {
+      const script = document.createElement('script');
+      script.textContent = axeSource;
+      document.head.appendChild(script);
+    }
+    const r = await w.axe!.run(strip(), { resultTypes: ['violations'], runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] } });
+    return r.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical').map((v) => `${v.id}: ${v.help} — ${v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(' | ')}`);
+  }
+
+  it('the keys are buttons named by their note, not Tab stops; the strip passes axe-core with the scale keyboard and the piano', async () => {
+    await bass();
+    for (const k of keys()) {
+      expect(k.getAttribute('role')).toBe('button');
+      expect(k.tabIndex).toBe(-1);
+      expect(k.hasAttribute('tabindex')).toBe(false);
+    }
+    expect(await audit()).toEqual([]);
+    assist(false);
+    await settleFrames(2);
+    expect(names().slice(0, 3)).toEqual(['C4', 'D♭4', 'D4']);
+    expect(names()).toContain('G4 (root)');
+    expect(await audit()).toEqual([]);
   });
 });
