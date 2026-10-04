@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { removeTime } from '../../src/project/arrangement';
 import { createProject } from '../../src/project/factory';
+import { VALIDATION_LIMITS } from '../../src/project/validate';
 import type { SongRegion } from '../../src/project/types';
 import { ProjectStore } from '../../src/state/projectStore';
 import * as cmd from '../../src/state/commands';
@@ -170,7 +171,7 @@ describe('editing loops', () => {
     expect(r.ids!.some((id) => ids.includes(id))).toBe(false);
     expect(sketch(store.getState())).toEqual(['t1:Beat@0+4~0', 't3:Bounce@0+4~2', 't1:Beat@4+4~0', 't3:Bounce@4+4~2']);
     expect(store.undoLabel()).toBe('Copy 2 loops');
-    expect(cmd.moveRegions(store, [ids[0]], 0, { copy: true })).toMatchObject({ changed: false, ids: [] });
+    expect(cmd.moveRegions(store, [ids[0]], 0, { copy: true })).toEqual({ changed: false });
     expectValid(store.getState());
   });
 
@@ -506,6 +507,64 @@ describe('sections', () => {
   });
 });
 
+describe('what a result names', () => {
+  /** 3999 one-bar loops, one per part per bar (every part has a clip): one more than that fits, two do not. */
+  function nearlyFull() {
+    const { store, clip } = songStore();
+    clip.Grain = cmd.createClip(store, 't7', 0, 1, 'Grain').clipId!;
+    clip.Chop = cmd.createClip(store, 't8', 0, 1, 'Chop').clipId!;
+    const per = ['Beat', 'Shaker', 'Bounce', 'Stabs', 'Hook', 'Wash', 'Grain', 'Chop'];
+    store.apply('test:fill', (d) => {
+      d.arrangement.regions = Array.from({ length: VALIDATION_LIMITS.maxRegions - 1 }, (_, i) => ({ id: `rg_${i}`, trackId: `t${(i % 8) + 1}`, clipId: clip[per[i % 8]], start: Math.floor(i / 8), bars: 1, offset: 0 }));
+    });
+    store.clearHistory();
+    return { store, clip };
+  }
+
+  it('a command refused at the song’s limit names no loops that were never added', () => {
+    const { store, clip } = nearlyFull();
+    expectValid(store.getState());
+    const two = [
+      { trackId: 't1', clipId: clip.Beat, start: 505, bars: 1 },
+      { trackId: 't3', clipId: clip.Bounce, start: 505, bars: 1 },
+    ];
+    for (const r of [
+      cmd.addRegions(store, two),
+      cmd.pasteRegions(store, { items: two.map((x, i) => ({ trackId: x.trackId, clipId: x.clipId, at: i, bars: 1, offset: 0 })) }, 505),
+      // The last full bar (499) copied into empty bar 500.
+      cmd.duplicateRegions(store, ['rg_3992', 'rg_3994']),
+      cmd.moveRegions(store, ['rg_0', 'rg_2'], 505, { copy: true }),
+      cmd.splitRegions(store, ['rg_0'], 0.5),
+    ]) {
+      expect(r.changed).toBe(false);
+      expect(r.message).toBeTruthy();
+      for (const k of ['ids', 'trimmed', 'removed']) expect(r).not.toHaveProperty(k);
+    }
+    expect(cmd.addRegions(store, two)).toMatchObject({ changed: false, reason: 'limit' });
+    // One more still fits, and is named.
+    const one = cmd.addRegions(store, [two[0]]);
+    expect(one.changed).toBe(true);
+    expect(one.ids).toHaveLength(1);
+    expect(store.getState().arrangement.regions.some((x) => x.id === one.ids![0])).toBe(true);
+  });
+
+  it('a command that changes nothing names nothing either', () => {
+    const { store, clip } = songStore();
+    const id = cmd.addClipToSong(store, 't3', clip.Bounce, 0, 4).ids![0];
+    const sec = cmd.addSection(store, 0, 4, 'Drop').sectionId!;
+    for (const r of [
+      cmd.moveRegions(store, [id], -2),
+      cmd.moveRegions(store, [id], 0, { copy: true }),
+      cmd.resizeRegions(store, [id], 'end', 0),
+      cmd.setRegionClip(store, id, clip.Bounce),
+      cmd.moveSection(store, sec, -3),
+      cmd.moveSection(store, sec, 0, { copy: true }),
+    ]) {
+      expect(r).toEqual({ changed: false });
+    }
+  });
+});
+
 describe('the export tail and the take lock', () => {
   it('the tail is 0 to 10 seconds; a drag is one step', () => {
     const { store } = songStore();
@@ -540,7 +599,11 @@ describe('the export tail and the take lock', () => {
       cmd.toggleSectionMove(store, sec, 'fadeIn'),
       cmd.setTailSeconds(store, 1),
     ];
-    for (const r of all) expect(r).toMatchObject({ changed: false, refused: 'Recording a performance' });
+    for (const r of all) {
+      expect(r).toMatchObject({ changed: false, refused: 'Recording a performance' });
+      // Nothing was made or moved, so nothing is named.
+      for (const k of ['ids', 'sectionId', 'trimmed', 'removed', 'on']) expect(r).not.toHaveProperty(k);
+    }
     expect(store.getState()).toBe(before);
   });
 });

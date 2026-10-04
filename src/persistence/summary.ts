@@ -17,7 +17,7 @@ export interface ProjectShape {
    * (ProjectSummary.blockCount): more than 0 when the song has music.
    */
   blocks: number;
-  /** Song length in bars: where its last loop or section ends (see songBars). */
+  /** Song length in bars: where its last loop ends (see songBars). */
   songBars: number;
   /** Song length in seconds at the project's tempo. */
   songSeconds: number;
@@ -44,8 +44,9 @@ export function projectShape(p: Project | null | undefined): ProjectShape {
     const scenes = Array.isArray(p.scenes) ? p.scenes.length : 0;
     const regions = spans(p.arrangement?.regions);
     const sections = spans(p.arrangement?.sections);
-    // The same length as songBars (project/arrangement.ts) gives a valid project.
-    const bars = Math.max(regions.end, sections.end);
+    // The same length as songBars (project/arrangement.ts) gives a valid project: the song ends with its
+    // last loop (a section label past the music does not make it play longer).
+    const bars = regions.end;
     const bpm = typeof p.bpm === 'number' && p.bpm > 0 ? p.bpm : 120;
     return { scenes, regions: regions.count, sections: sections.count, blocks: regions.count, songBars: bars, songSeconds: (bars * BEATS_PER_BAR * 60) / bpm };
   } catch {
