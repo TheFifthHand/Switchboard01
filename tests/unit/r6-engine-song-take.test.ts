@@ -25,6 +25,7 @@ describe('songTakeFrom', () => {
         { tick: 10, pitch: 60, velocity: 0.8, duration: 90 },
         { tick: BAR + 5, pitch: 64, velocity: 0.8, duration: 195 },
       ],
+      quantize: 'off',
     });
   });
 
@@ -89,7 +90,7 @@ describe('songTakeFrom', () => {
   });
 
   it('nothing played: an empty take of one bar (the command refuses it with its message)', () => {
-    expect(take([], { stopTick: 0 })).toEqual({ trackId: 't1', startBar: 4, bars: 1, notes: [] });
+    expect(take([], { stopTick: 0 })).toEqual({ trackId: 't1', startBar: 4, bars: 1, notes: [], quantize: 'off' });
     expect(take([on(-BAR, 60), off(-10, 60)], { stopTick: -5 }).notes).toEqual([]);
   });
 

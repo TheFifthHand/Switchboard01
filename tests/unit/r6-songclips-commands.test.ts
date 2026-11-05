@@ -300,7 +300,7 @@ describe('copyLoopToPad', () => {
 });
 
 describe('recordTakeIntoSong', () => {
-  it('cuts a take into 8-bar clips (the last rounded up) back to back from the start bar, in one step', () => {
+  it('cuts a take into 8-bar clips (the last rounded up, its region only the bars recorded) back to back from the start bar, in one step', () => {
     const { store, clip } = fresh();
     cmd.addRegions(store, [{ trackId: 't3', clipId: clip.Bounce, start: 0, bars: 32 }]);
     store.clearHistory();
@@ -316,7 +316,7 @@ describe('recordTakeIntoSong', () => {
     expect(store.historySize().undo).toBe(1);
     expect(store.undoLabel()).toBe('Record Bass');
     const p = store.getState();
-    expect(sketch(p)).toEqual(['t3:Bounce@0+4~0', 't3:Bass take 1@4+8~0', 't3:Bass take 2@12+4~0', 't3:Bounce@16+16~0']);
+    expect(sketch(p)).toEqual(['t3:Bounce@0+4~0', 't3:Bass take 1@4+8~0', 't3:Bass take 2@12+3~0', 't3:Bounce@15+17~3']);
     const [a, b] = p.tracks[2].songClips!;
     expect(a.bars).toBe(8);
     expect(b.bars).toBe(4);
@@ -348,7 +348,8 @@ describe('recordTakeIntoSong', () => {
     expect(songNames(p, 't5')).toEqual(['Lead take 1', 'Lead take 2']);
     expect(p.tracks[4].songClips![1]).toMatchObject({ bars: 4 });
     expect(p.tracks[4].songClips![1].notes[0].tick).toBe(TICKS_PER_BAR * 2 + 10);
-    expect(sketch(p)).toEqual(['t5:Lead take 2@0+4~0', 't5:Lead take 1@20+1~0']);
+    // The loop is 4 bars; the song plays the 3 bars recorded.
+    expect(sketch(p)).toEqual(['t5:Lead take 2@0+3~0', 't5:Lead take 1@20+1~0']);
   });
 
   it('an empty take leaves no step and says so', () => {

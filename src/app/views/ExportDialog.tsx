@@ -17,12 +17,17 @@
  * otherwise the selected scene (never a choice that cannot be exported).
  *
  * "Make it as loud as streaming songs" (on by default, audio formats with
- * the project's mastering on) runs the loudness Match on the render itself:
- * the song is rendered and measured, and when it is more than 0.5 dB from
- * the loudness target the mastering's Loudness drive is set (the same
- * command Match in Mix uses, one undo step) and the song is rendered again,
- * up to two corrections. The output limiter stays, so nothing clips. The
- * result says what it did.
+ * the project's mastering on, for the whole song or a performance: both play
+ * through the song's mastering, and a scene, a loop of the song or the pads
+ * playing now are only a piece of it, too little to set the whole song's
+ * level from) runs the loudness Match on the render itself: the song is
+ * rendered and measured, and when it is more than 0.5 dB from the loudness
+ * target it is rendered again with the mastering's Loudness drive moved, up
+ * to two corrections. The project only changes once the file is saved: then
+ * Loudness drive is set (the same command Match in Mix uses, one undo step)
+ * and the result says by how much. A cancelled or failed export leaves the
+ * mastering as it was, with no undo step. The output limiter stays, so
+ * nothing clips.
  *
  * Parts as separate files: one WAV per part the song lets you hear that
  * plays notes there, each on its own with its effects and its share of the
@@ -37,7 +42,7 @@
  * already). Changing any setting clears the last result.
  */
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Button, Dialog, Icon, NumberField, SegmentedControl, Select, Switch, newGestureId, useToasts, type ToastApi } from '../../ui/components';
+import { Button, Dialog, Icon, NumberField, SegmentedControl, Select, Switch, useToasts, type ToastApi } from '../../ui/components';
 import { measureExport, type ExportReport, type RenderSource } from '../../render/offline';
 import { measureLoudness } from '../../render/loudness';
 import { encodeWav } from '../../render/wav';
@@ -45,7 +50,7 @@ import { songMidi, type NoteSource } from '../../render/midi';
 import { encodeOggOpus, opusSupported, opusSupportKnown, OPUS_BITRATE, OPUS_RATE } from '../../render/opus';
 import { soloPart, stemFileNames, stemParts, zipFiles } from '../../render/stems';
 import { setView, uiStore } from '../../state/uiStore';
-import { matchLoudnessTarget } from '../../state/commands';
+import { loudnessDriveAfter, matchLoudnessTarget } from '../../state/commands';
 import { MASTERING_PARAMS, readParam } from '../../project/params';
 import { songBars } from '../../project/arrangement';
 import { MAX_SCENES, type Project } from '../../project/types';
@@ -313,7 +318,9 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
   const audio = format !== 'midi';
   // Loud applies to a mastered mix; parts are made without the mastering.
   const mastered = (format === 'wav' || format === 'opus') && output === 'mix';
-  const loudShown = mastered && masteringOn;
+  // Only a whole piece sets the song's level: the song, or a performance (it plays through the song's mastering).
+  const loudSource = source === 'song' || source.startsWith('perf:');
+  const loudShown = mastered && masteringOn && loudSource;
   const target = loudnessTarget();
   const ext = FORMAT_EXT[format];
   const what =
@@ -382,53 +389,71 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
     });
 
   /**
-   * Render, and with "Make it as loud…" on: measure, set Loudness drive by the
-   * distance to the target (scaled by what the last correction did, as Match in
-   * Mix does) and render again, until within LOUD_TOLERANCE_DB or after LOUD_PASSES.
+   * Render, and with "Make it as loud…" on: measure, and render again with
+   * Loudness drive moved by the distance to the target (scaled by what the last
+   * correction did, as Match in Mix does), until within LOUD_TOLERANCE_DB or
+   * after LOUD_PASSES. The project is not changed here: `drive` is the Loudness
+   * drive the file was made with when it differs from the song's (`first`), for
+   * `keepLoud` to set once the file is saved.
    */
-  const renderLoud = async (signal: AbortSignal, sampleRate: 44100 | 48000, loudOn: boolean): Promise<{ buffer: AudioBuffer; loud?: string }> => {
+  const renderLoud = async (
+    signal: AbortSignal,
+    sampleRate: 44100 | 48000,
+    loudOn: boolean,
+  ): Promise<{ buffer: AudioBuffer; first?: number; drive?: number; reached?: boolean; note?: string }> => {
     let buffer = await renderMix(signal, sampleRate, loudOn ? 'Checking loudness' : 'Exporting');
     if (!loudOn) return { buffer };
+    if (runtimeStore.getState().recording === 'performance') return { buffer, note: 'A performance is recording, so the loudness was left as it is.' };
     const read = (b: AudioBuffer) => measureLoudness(b.getChannelData(0), b.numberOfChannels > 1 ? b.getChannelData(1) : null, b.sampleRate, { truePeak: false }).integrated;
     let reading = read(buffer);
-    const drive = () => readParam(MASTERING_PARAMS, session.store.getState().mastering.params, 'loudness');
-    const first = drive();
-    const gesture = newGestureId('export-loudness');
+    const base = session.store.getState();
+    const first = readParam(MASTERING_PARAMS, base.mastering.params, 'loudness');
+    // The song as it would play with Loudness drive at `v` (rendered, never stored).
+    const withDrive = (v: number): Project => ({ ...base, mastering: { ...base.mastering, params: { ...base.mastering.params, loudness: v } } });
+    let drive = first;
     let slope = 1;
-    let note: string | null = null;
+    let note: string | undefined;
     for (let pass = 0; pass < LOUD_PASSES && !(Math.abs(reading - target.lufs) <= LOUD_TOLERANCE_DB); pass++) {
       if (!Number.isFinite(reading) || reading < LOUD_FLOOR_LUFS) {
         note = 'The song is too quiet to measure (are its parts muted?), so its loudness was left as it is.';
         break;
       }
       abortIfAsked(signal);
-      const step = (target.lufs - reading) / slope;
-      const before = drive();
-      // matchLoudnessTarget moves the drive by (target − measured): ask for the scaled step.
-      const r = matchLoudnessTarget(session.store, target.lufs, target.lufs - step, gesture);
-      if (r.refused) {
-        note = `The loudness was left as it is: ${r.message ?? 'the mastering cannot change now.'}`;
+      const before = drive;
+      const { after, limit } = loudnessDriveAfter(before, (target.lufs - reading) / slope);
+      if (Math.abs(after - before) < 0.05) {
+        if (limit === 'max') note = 'Loudness drive is at its highest: to get louder still, raise the parts or the master volume in Mix.';
         break;
       }
-      if (!r.changed) {
-        if (r.limit === 'max') note = 'Loudness drive is at its highest: to get louder still, raise the parts or the master volume in Mix.';
-        break;
-      }
-      buffer = await renderMix(signal, sampleRate, r.after > before ? 'Making it louder' : 'Making it quieter');
+      drive = after;
+      buffer = await renderMix(signal, sampleRate, after > before ? 'Making it louder' : 'Making it quieter', { project: withDrive(after) });
       const next = read(buffer);
-      const moved = r.after - before;
+      const moved = after - before;
       if (Math.abs(moved) > 0.05 && Number.isFinite(next)) slope = Math.min(1.2, Math.max(0.25, (next - reading) / moved));
       reading = next;
     }
-    const last = drive();
+    const reached = Math.abs(reading - target.lufs) <= LOUD_TOLERANCE_DB;
+    return Math.abs(drive - first) >= 0.05 ? { buffer, first, drive, reached, note } : { buffer, reached, note };
+  };
+
+  /**
+   * The file is saved: the song takes the Loudness drive it was made with (one
+   * undo step), and the words say what changed. Without a change: whether the
+   * song was on the target already.
+   */
+  const keepLoud = (loud: Awaited<ReturnType<typeof renderLoud>>): string | undefined => {
     const where = `${minus(target.lufs)} LUFS, the ${target.name} level`;
-    const did =
-      Math.abs(last - first) >= 0.05
-        ? `${last > first ? 'Made it louder' : 'Made it quieter'} to reach ${where}: Loudness drive in Mix went from ${signedDb(first)} to ${signedDb(last)} (Undo puts it back). The limiter keeps every peak under ${MINUS}1 dB, so nothing clips.`
-        : Math.abs(reading - target.lufs) <= LOUD_TOLERANCE_DB
-          ? `Already at ${where}: nothing needed changing.`
-          : null;
-    return { buffer, loud: [did, note].filter(Boolean).join(' ') || undefined };
+    let did: string | null = null;
+    if (loud.drive !== undefined && loud.first !== undefined) {
+      // matchLoudnessTarget moves the drive by (target − measured): ask for the change the file was made with.
+      const r = matchLoudnessTarget(session.store, target.lufs, target.lufs - (loud.drive - loud.first));
+      const by = `${Math.abs(loud.drive - loud.first).toFixed(1)} dB`;
+      const file = loud.drive > loud.first ? 'louder' : 'quieter';
+      did = r.changed
+        ? `${loud.drive > loud.first ? 'Raised' : 'Lowered'} the song’s loudness by ${by} to reach ${where}: Loudness drive in Mix is ${signedDb(r.after)} now, was ${signedDb(r.before)} (Undo puts it back). The limiter keeps every peak under ${MINUS}1 dB, so nothing clips.`
+        : `The file was made ${by} ${file} to reach ${where}, but the song in Mix was left as it is: ${r.message ?? r.refused ?? 'the mastering cannot change now.'}`;
+    } else if (loud.reached) did = `Already at ${where}: nothing needed changing.`;
+    return [did, loud.note].filter(Boolean).join(' ') || undefined;
   };
 
   const loudnessLine = (report: ExportReport) =>
@@ -474,7 +499,8 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
         };
       } else {
         const sr = format === 'opus' ? OPUS_RATE : (Number(rate) as 44100 | 48000);
-        const { buffer, loud: did } = await renderLoud(signal, sr, loudShown && loud);
+        const made = await renderLoud(signal, sr, loudShown && loud);
+        const { buffer } = made;
         setBusy({ phase: 'Saving', fraction: 1, left: null });
         const report = await measureExport(buffer);
         abortIfAsked(signal);
@@ -484,6 +510,9 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
           blob = new Blob([bytes as BlobPart], { type: 'audio/ogg; codecs=opus' });
         } else blob = new Blob([encodeWav(stereo(buffer), buffer.sampleRate, Number(depth) as 16 | 24)], { type: 'audio/wav' });
         abortIfAsked(signal);
+        downloadBlob(blob, name);
+        // Saved: only now does the song take the loudness the file was made with.
+        const did = keepLoud(made);
         const integrated = report.integratedLufs;
         const off = Number.isFinite(integrated) && Math.abs(integrated - target.lufs) > 1;
         // Match target moves the mastering's Loudness drive: only offered while the project's mastering is on.
@@ -495,7 +524,6 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
           report: loudnessLine(report),
           offTarget: canMatch && off,
         };
-        downloadBlob(blob, name);
       }
       session.exportSaved();
       setMessage(result);
@@ -691,7 +719,7 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
               checked={loud}
               onChange={changed(setLoud)}
               disabled={!!busy}
-              tip={`Before saving, the song is measured and the mastering’s Loudness drive is set so it lands at ${minus(target.lufs)} LUFS. Undo puts it back.`}
+              tip={`The song is measured, and once the file is saved the mastering’s Loudness drive is set so it lands at ${minus(target.lufs)} LUFS. Undo puts it back; a cancelled export changes nothing.`}
               detail="The same as Match target in Mix, done on the export itself. The output limiter keeps peaks under −1 dBTP, so nothing clips. When the song is not on the target yet it is rendered twice."
             />
             <p className={styles.hint}>
@@ -701,6 +729,11 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
           </div>
         )}
         {mastered && !masteringOn && <p className={styles.hint}>Mastering is off in Mix, so the song is saved at the level it plays now.</p>}
+        {mastered && masteringOn && !loudSource && (
+          <p className={styles.hint} data-testid="export-loud-song-only">
+            Saved at the level it plays now. To {loudLabel(target).replace(/^M/, 'm')}, export the whole song.
+          </p>
+        )}
         <div className={styles.fileField}>
           <label className={styles.file}>
             <span>File name</span>

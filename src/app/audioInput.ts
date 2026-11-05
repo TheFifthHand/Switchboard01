@@ -32,7 +32,7 @@ import { audioBufferFromChannels } from '../audio/instruments/sampleBank';
 import { LIMITER_PROCESSOR_NAME, limiterProcessorOptions } from '../audio/worklets/limiter';
 import { encodeMadeAudio } from '../persistence/audioImport';
 import * as db from '../persistence/db';
-import { clipAtSlot, isSongSlot } from '../project/clips';
+import { clipAtSlot, isSongSlot, trackClips } from '../project/clips';
 import { TICKS_PER_BAR, type ClipBars, type Id } from '../project/types';
 import * as cmd from '../state/commands';
 import { createStore, type Store } from '../state/store';
@@ -919,7 +919,7 @@ export class AudioInputController {
     const where = `${partName} · ${after.scenes[slot]?.name ?? `row ${slot + 1}`}`;
     const seconds = frames / sr;
     // A synth or drum part becomes a sampler with the take: its other clips then play the take at their notes.
-    const others = !!before && before.instrument.kind !== 'sampler' && before.clips.some((c, i) => i !== slot && !!c && c.notes.length > 0);
+    const others = !!before && before.instrument.kind !== 'sampler' && trackClips(before).some((x) => x.slot !== slot && x.clip.notes.length > 0);
     const rest = others ? `${partName} plays recordings now, so its other clips play this take at their notes’ pitches` : 'other clips keep their recordings';
     let message = `Recorded ${seconds.toFixed(1)} s (${clipBars} bar${clipBars === 1 ? '' : 's'}). ${name} plays in its own clip on ${where}${replaced ? `, replacing “${replaced.name}”` : ''}; ${rest}.`;
     if (frames < take.to - take.from - sr * 0.05) message = `Stopped early. ${message}`;

@@ -45,11 +45,13 @@ import {
   type Edge,
   type NewId,
 } from '../../project/arrangement';
+import { cloneClip, cloneClipWithNewIds } from '../../project/clone';
 import { clipById } from '../../project/clips';
 import { uid } from '../../project/factory';
 import {
   MAX_SECTION_NAME,
   MAX_SONG_BARS,
+  MAX_SONG_CLIPS,
   SONG_MOVE_KINDS,
   TICKS_PER_BAR,
   type Clip,
@@ -62,7 +64,7 @@ import {
   type Track,
   type TrackRole,
 } from '../../project/types';
-import { VALIDATION_LIMITS } from '../../project/validate';
+import { VALIDATION_LIMITS, sanitizeClip } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
 import { NOT_FOUND, clamp, cleanName, deepEqual, isFiniteNumber, partName, refuse, run, type CommandResult } from './common';
 
@@ -484,9 +486,16 @@ export function duplicateRegions(store: ProjectStore, ids: readonly Id[]): SongE
   return edited(r, { ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed });
 }
 
-/** Copied loops (UI state): each item's part, clip, length, offset and `at`, bars after the first item's start. */
+/**
+ * Copied loops (UI state): each item's part, clip, length, offset and `at`,
+ * bars after the first item's start. A loop that plays a song clip also
+ * carries a copy of that clip (`clip`: notes, length, name, recording), so a
+ * cut loop can be pasted after Delete took its clip out of the song.
+ */
 export interface RegionClipboard {
-  items: { trackId: Id; clipId: Id; at: number; bars: number; offset: number }[];
+  /** The project the loops were copied from (song clips are only re-made there). */
+  projectId?: Id;
+  items: { trackId: Id; clipId: Id; at: number; bars: number; offset: number; clip?: Clip }[];
 }
 
 /** Regions `ids` as clipboard items (pure), or null when none exists. */
@@ -494,35 +503,72 @@ export function copyRegions(p: Project, ids: readonly Id[]): RegionClipboard | n
   const picked = pickRegions(p, ids);
   if (!picked.length) return null;
   const first = spanOf(picked)![0];
-  return { items: picked.map((r) => ({ trackId: r.trackId, clipId: r.clipId, at: r.start - first, bars: r.bars, offset: r.offset })) };
+  return {
+    projectId: p.id,
+    items: picked.map((r) => {
+      const song = p.tracks.find((t) => t.id === r.trackId)?.songClips?.find((c) => c.id === r.clipId);
+      return { trackId: r.trackId, clipId: r.clipId, at: r.start - first, bars: r.bars, offset: r.offset, ...(song ? { clip: cloneClip(song) } : {}) };
+    }),
+  };
 }
 
 /**
  * Paste copied loops with the first one at bar `atBar` (the others keep
  * their distances). A loop whose clip moved to another part since lands on
- * that part's row; one whose clip is gone is skipped (`skipped`). They win
- * where they land. `ids` in the result: the pasted regions. One undo step.
+ * that part's row. A song loop whose clip is gone (it was cut, or deleted
+ * from the song) gets its clip back from the clipboard's copy, as a new song
+ * clip of its part (several loops of one clip share one copy); any other loop
+ * whose clip is gone is skipped (`skipped`). They win where they land.
+ * `ids` in the result: the pasted regions. One undo step.
  */
 export function pasteRegions(store: ProjectStore, clip: RegionClipboard, atBar: number): SongEditResult & { skipped?: number } {
   const p = store.getState();
   if (!clip || !Array.isArray(clip.items) || !clip.items.length) return refuse('empty', 'Nothing to paste.');
   if (!isInt(atBar) || atBar < 0) return refuse('invalid', WHOLE_BARS);
   const placed: SongRegion[] = [];
+  // Song clips made again from the clipboard, by the copied clip's id.
+  const remade = new Map<Id, { trackId: Id; clip: Clip }>();
+  const sampleIds = new Set(p.samples.map((x) => x.id));
   let skipped = 0;
   for (const it of clip.items) {
     if (!it || !isInt(it.at) || it.at < 0 || !isInt(it.bars) || it.bars < 1 || !isInt(it.offset)) return refuse('invalid', 'The copied loops could not be read.');
-    const where = findClip(p, it.clipId);
+    let where: { trackId: Id; clip: Clip } | null = null;
+    const found = findClip(p, it.clipId);
+    if (found) where = { trackId: found.track.id, clip: found.clip };
+    else if (remade.has(it.clipId)) where = remade.get(it.clipId)!;
+    else if (it.clip && clip.projectId === p.id) {
+      const t = p.tracks.find((x) => x.id === it.trackId);
+      const { clip: clean } = t ? sanitizeClip(it.clip, t.instrument.kind, sampleIds) : { clip: null };
+      if (t && clean) {
+        const made = (t.songClips?.length ?? 0) + [...remade.values()].filter((x) => x.trackId === t.id).length;
+        if (made >= MAX_SONG_CLIPS) return refuse('limit', `${partName(p, t.id)} already has as many loops in the song as it can hold (${MAX_SONG_CLIPS}). Delete some from the song first.`);
+        where = { trackId: t.id, clip: cloneClipWithNewIds(clean) };
+        remade.set(it.clipId, where);
+      }
+    }
     if (!where) {
       skipped++;
       continue;
     }
     const start = atBar + it.at;
     if (start + it.bars > MAX_SONG_BARS) return refuse('limit', `There is no room to paste there: ${TOO_LONG}`);
-    placed.push({ id: newRegionId(), trackId: where.track.id, clipId: it.clipId, start, bars: it.bars, offset: mod(it.offset, where.clip.bars) });
+    placed.push({ id: newRegionId(), trackId: where.trackId, clipId: where.clip.id, start, bars: it.bars, offset: mod(it.offset, where.clip.bars) });
   }
   if (!placed.length) return { ...refuse('empty', 'The copied loops played clips that have been deleted since.'), skipped };
-  const res = landRegions(p, placed);
-  const r = commit(store, p, 'arrange:Paste loops', `Paste ${loopsWords(p, placed)}`, { regions: res.regions });
+  if (!remade.size) {
+    const res = landRegions(p, placed);
+    const r = commit(store, p, 'arrange:Paste loops', `Paste ${loopsWords(p, placed)}`, { regions: res.regions });
+    return { ...edited(r, { ids: res.ids, trimmed: res.trimmed, removed: res.removed }), skipped };
+  }
+  // The song clips come back in the same step as the loops that play them.
+  const fresh = [...remade.values()];
+  const view = { ...p, tracks: p.tracks.map((t) => ({ ...t, songClips: [...(t.songClips ?? []), ...fresh.filter((x) => x.trackId === t.id).map((x) => x.clip)] })) };
+  const res = landRegions(view, placed);
+  if (res.regions.length > VALIDATION_LIMITS.maxRegions && res.regions.length > p.arrangement.regions.length) return refuse('limit', REGION_LIMIT);
+  const r = run(store, 'arrange:Paste loops', (d) => {
+    for (const x of fresh) (d.tracks.find((t) => t.id === x.trackId)!.songClips ??= []).push(x.clip);
+    d.arrangement.regions = res.regions;
+  }, undefined, { display: `Paste ${loopsWords(view, placed)}` });
   return { ...edited(r, { ids: res.ids, trimmed: res.trimmed, removed: res.removed }), skipped };
 }
 

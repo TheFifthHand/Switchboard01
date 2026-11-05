@@ -31,6 +31,7 @@ import { Button, Dialog, Icon, Notice, Switch, newGestureId, type IconName } fro
 import { ALL_SOUNDS, SOUND_CATEGORIES, categoryOfSound, kitInfo, soundCategoryInfo, soundMatchScore, type CatalogSound, type SoundCategory } from '../../content/catalog';
 import { SCALES, keyLabel } from '../../music/scales';
 import { IMPORT_LIMITS } from '../../persistence/audioImport';
+import { trackClips } from '../../project/clips';
 import type { Id, Instrument, InstrumentKind, Project, SampleMeta } from '../../project/types';
 import { changeInstrumentSound, deepEqual, restoreTrackSound, snapshotTrackSound, type CommandResult, type TrackSound } from '../../state/commands';
 import type { ApplyOptions, ProjectStore } from '../../state/projectStore';
@@ -410,7 +411,7 @@ function SoundBrowserDialog({ trackId: openedFor, onClose }: { trackId: Id; onCl
         kind: t.instrument.kind,
         soundId: soundIdOf(t.instrument),
         sound: soundName(p, t.instrument),
-        hasNotes: t.clips.some((c) => !!c && c.notes.length > 0),
+        hasNotes: trackClips(t).some((x) => x.clip.notes.length > 0),
         arp: t.instrument.kind !== 'drums' && t.arp.enabled,
       };
     },

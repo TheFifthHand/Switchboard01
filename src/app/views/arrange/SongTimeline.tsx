@@ -34,6 +34,7 @@
  */
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type Ref } from 'react';
 import { useElementSize, useRafLoop } from '../../../ui/components';
+import { clipAtSlot } from '../../../project/clips';
 import { regionEnd, songBars as projectSongBars, timelineBars as projectTimelineBars } from '../../../project/arrangement';
 import type { Id, Project } from '../../../project/types';
 import { useStore } from '../../../state/store';
@@ -387,7 +388,9 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
     const regions = p.arrangement.regions;
     const rt = runtimeStore.getState();
     const target = rt.recording === 'notes' ? rt.recordTarget : null;
-    const recClip = target ? (p.tracks.find((t) => t.id === target.trackId)?.clips[target.slot]?.id ?? null) : null;
+    const recTrack = target ? p.tracks.find((t) => t.id === target.trackId) : undefined;
+    // A pad or a song slot (song loops are written into too).
+    const recClip = target && recTrack ? (clipAtSlot(recTrack, target.slot)?.id ?? null) : null;
     const whole = bar === null ? -1 : Math.floor(bar);
     const key = `${whole}|${target?.trackId ?? ''}|${recClip ?? ''}`;
     if (key === m.key && regions === m.regions) return;

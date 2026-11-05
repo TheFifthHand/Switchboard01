@@ -208,9 +208,8 @@ describe('Export dialog: report and output', () => {
       session.accepted(cmd.applyMasteringPreset(session.store, 'loud'));
     });
     const { dialog } = open();
-    // As loud as the Loud preset makes it (not matched to the Streaming target).
-    await press(loudSwitch(dialog()));
-    expect(loudSwitch(dialog()).getAttribute('aria-checked')).toBe('false');
+    // As loud as the Loud preset makes it: a scene is never matched to the Streaming target (no switch).
+    expect(loudSwitch(dialog())).toBeUndefined();
     await setLength(dialog(), 2);
     await exportAndWait(dialog());
     const mastered = dialog().querySelector('[data-testid="export-report"]')!.textContent ?? '';

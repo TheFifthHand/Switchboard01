@@ -255,7 +255,7 @@ describe('Record in the Song view (recording into the song)', () => {
     // The transport counts down to it.
     expect(rt().recordStartsAtTick).toBe(startBar * BAR);
     await s.toggleRecordNotes();
-    expect(takes).toEqual([{ trackId: 't2', startBar, bars: 1, notes: [] }]);
+    expect(takes).toEqual([{ trackId: 't2', startBar, bars: 1, notes: [], quantize: 'off' }]);
     expect(rt().notice?.text).toBe('Nothing was played, so nothing was recorded.');
     // The song plays on (it has its end back).
     expect(rt()).toMatchObject({ playing: true, mode: 'song', recording: 'off', songRecording: null });
@@ -272,7 +272,7 @@ describe('Record in the Song view (recording into the song)', () => {
     expect(rt()).toMatchObject({ countingIn: true, recordStartsAtTick: 5 * BAR, songRecording: { startBar: 5, bars: 1 } });
     expect(s.transport!.getPosition().tick).toBeLessThan(5 * BAR);
     s.stop();
-    expect(takes).toEqual([{ trackId: 't4', startBar: 5, bars: 1, notes: [] }]);
+    expect(takes).toEqual([{ trackId: 't4', startBar: 5, bars: 1, notes: [], quantize: 'off' }]);
     expect(rt()).toMatchObject({ playing: false, songCursor: 5, songRecording: null });
   });
 });

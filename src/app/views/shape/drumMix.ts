@@ -15,6 +15,7 @@
 import { getKitVoiceNames } from '../../../audio/instruments/kits';
 import { kitInfo } from '../../../content/catalog';
 import { DRUM_VOICE_PARAM_SPECS, clampParam } from '../../../project/params';
+import { trackClips } from '../../../project/clips';
 import type { Id, Track } from '../../../project/types';
 
 export interface MixGroup {
@@ -53,11 +54,10 @@ const PERCUSSION_ROLES: readonly Role[] = [
   { key: 'perc', label: 'Percussion', slots: () => [7, 8, 9, 10, 11, 12, 13, 14, 15] },
 ];
 
-/** How many notes of each voice (slot) the part's clips play. */
-export function playedSlots(track: Pick<Track, 'clips'>): Map<number, number> {
+/** How many notes of each voice (slot) the part's clips play (pads and song loops). */
+export function playedSlots(track: Pick<Track, 'clips' | 'songClips'>): Map<number, number> {
   const out = new Map<number, number>();
-  for (const c of track.clips) {
-    if (!c) continue;
+  for (const { clip: c } of trackClips(track)) {
     for (const n of c.notes) {
       const s = Math.round(n.pitch);
       if (s >= 0 && s < 16) out.set(s, (out.get(s) ?? 0) + 1);

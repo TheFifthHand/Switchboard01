@@ -3,8 +3,9 @@
  * - Simple shows only: what, format, "Make it as loud as streaming songs" (on), file name and a
  *   folded "More options" (sample rate, bit depth, tail, mastering or not); Advanced shows them all.
  * - Escape closes the dialog, also with a list box focused.
- * - "Make it as loud as streaming songs" renders, measures and sets Loudness drive (one undo step)
- *   so the file lands on −14 LUFS, never above the −1 dBTP ceiling, and says what it did.
+ * - "Make it as loud as streaming songs" renders, measures and, once the file is saved, sets
+ *   Loudness drive (one undo step) so the file lands on −14 LUFS, never above the −1 dBTP ceiling,
+ *   and says what it did. It is for the whole song: a scene is saved at the level it plays.
  * - Smaller file for sharing (Opus in Ogg): decodes in the browser, the right length, not silent.
  * - Parts as separate files: a .zip with one WAV per part that plays, each soloed and not silent.
  * - MIDI file: a type-1 file with a track per part that plays, the project's tempo.
@@ -207,10 +208,16 @@ describe('Simple shows only what a first export needs', () => {
 describe('Make it as loud as streaming songs', () => {
   it('sets Loudness drive so the file lands on −14 LUFS (one undo step), under the ceiling, and says what it did', async () => {
     const drive = () => readParam(MASTERING_PARAMS, session.store.getState().mastering.params, 'loudness');
+    // A short song (scene 2's loops for 4 bars) keeps the renders quick.
+    act(() => {
+      const p = getStarter('house')!.build();
+      p.arrangement.regions = p.tracks.flatMap((t) => (t.clips[1] ? [{ id: `rg_${t.id}`, trackId: t.id, clipId: t.clips[1].id, start: 0, bars: 4, offset: 0 }] : []));
+      p.arrangement.sections = [];
+      session.store.replace(p, { resetHistory: true });
+    });
     const before = drive();
     act(() => setUiMode('advanced'));
-    const dialog = open('scene:1');
-    await length(dialog, 4);
+    const dialog = open('song');
     const phases = await exportAndWait(dialog, /^Export WAV$/, 120_000);
     // The progress showed in the button's place: first the measuring render, then the louder one.
     expect(phases[0]).toBe('Checking loudness');
@@ -226,8 +233,9 @@ describe('Make it as loud as streaming songs', () => {
     expect(peakDb(wav.channels)).toBeLessThan(-0.9);
     expect(drive()).toBeGreaterThan(before);
     expect(loud).toMatch(
-      /^Made it louder to reach −14 LUFS, the Streaming level: Loudness drive in Mix went from \+\d\.\d dB to \+\d+\.\d dB \(Undo puts it back\)\. The limiter keeps every peak under −1 dB, so nothing clips\.$/,
+      /^Raised the song’s loudness by \d+\.\d dB to reach −14 LUFS, the Streaming level: Loudness drive in Mix is \+\d+\.\d dB now, was \+\d\.\d dB \(Undo puts it back\)\. The limiter keeps every peak under −1 dB, so nothing clips\.$/,
     );
+    expect(session.store.historySize().undo).toBe(1);
     expect(session.store.undoLabel()).toBe('Match loudness target');
     act(() => session.undo());
     expect(drive()).toBeCloseTo(before, 5);
@@ -237,6 +245,23 @@ describe('Make it as loud as streaming songs', () => {
     console.info(`[export-loud] again: ${again.join(', ')} | ${dialog().querySelector('[data-testid="export-loud"]')?.textContent}`);
     expect(again).not.toContain('Making it louder');
   }, 240_000);
+
+  it('a scene is saved at the level it plays: no switch, the song’s mastering stays, and it says how to make it louder', async () => {
+    const drive = () => readParam(MASTERING_PARAMS, session.store.getState().mastering.params, 'loudness');
+    const before = drive();
+    const dialog = open('scene:1');
+    expect(dialog().querySelector('[role="switch"]')).toBeNull();
+    expect(dialog().querySelector('[data-testid="export-loud-song-only"]')!.textContent).toBe(
+      'Saved at the level it plays now. To make it as loud as streaming songs, export the whole song.',
+    );
+    await press(byText(dialog(), 'More options'));
+    await length(dialog, 1);
+    const phases = await exportAndWait(dialog, /^Export WAV$/);
+    expect(phases).not.toContain('Checking loudness');
+    expect(saved).toHaveLength(1);
+    expect(drive()).toBe(before);
+    expect(session.store.historySize().undo).toBe(0);
+  }, 120_000);
 });
 
 describe('the other formats', () => {
@@ -245,8 +270,8 @@ describe('the other formats', () => {
     await choose(selects(dialog())[1], 'opus');
     await press(byText(dialog(), 'More options'));
     await length(dialog, 2);
-    // Loudness as it plays (faster): the file itself is what is checked here.
-    await press(dialog().querySelector<HTMLElement>('[role="switch"]')!);
+    // A scene is saved at the level it plays (no loudness match): the file itself is what is checked here.
+    expect(dialog().querySelector('[role="switch"]')).toBeNull();
     await exportAndWait(dialog, /^Export small file$/);
     expect(saved).toHaveLength(1);
     expect(saved[0].name).toMatch(/\.opus$/);

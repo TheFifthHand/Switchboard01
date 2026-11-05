@@ -45,6 +45,7 @@ import { getKitVoiceNames } from '../../audio/instruments/kits';
 import { ROOT_NAMES, SCALES, SCALE_ORDER, keyInterval, keyLabel, keyNoteNames, keyRootName, noteName, rootAtOrBelow, scaleKeyboardNotes, scaleMask, stepsPerOctave, type MusicalKey } from '../../music/scales';
 import { setAssist, setKey, transposeSong } from '../../state/commands';
 import { OCTAVE_RANGE, keyboardCollapsedFor, openKeyboardIfDefault, setKeyboardCollapsedFor, setKeyboardOctave, shiftKeyboardOctave } from '../../state/uiStore';
+import { trackClips } from '../../project/clips';
 import { DRUM_VOICES, type Id, type Project, type ScaleId } from '../../project/types';
 import { session, useProject, useUi } from '../instance';
 import { notify, useRuntime } from '../runtime';
@@ -230,7 +231,7 @@ interface SongMovePlan {
 function songMovePlan(p: Project): SongMovePlan {
   const plan: SongMovePlan = { moving: [], samplers: [], drums: false };
   for (const t of p.tracks) {
-    if (!t.clips.some((c) => c && c.notes.length > 0)) continue;
+    if (!trackClips(t).some((x) => x.clip.notes.length > 0)) continue;
     if (t.instrument.kind === 'drums') plan.drums = true;
     else if (t.instrument.kind === 'sampler') plan.samplers.push({ id: t.id, name: t.name });
     else plan.moving.push(t.name);

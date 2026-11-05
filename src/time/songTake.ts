@@ -67,6 +67,8 @@ export interface CapturedSongTake {
   startBar: number;
   bars: number;
   notes: Omit<Note, 'id'>[];
+  /** The notes are on their grid already (Record timing, or the arpeggiator's own): the command must not snap them again. */
+  quantize: 'off';
 }
 
 function snap(tick: number, grid: QuantizeGrid): number {
@@ -119,5 +121,5 @@ export function songTakeFrom(c: TakeCapture): CapturedSongTake {
   const notes = [...placed.values()]
     .map((n) => ({ ...n, duration: Math.max(1, Math.min(n.duration, end - n.tick)) }))
     .sort((a, b) => a.tick - b.tick || a.pitch - b.pitch);
-  return { trackId: c.trackId, startBar: c.startBar, bars, notes };
+  return { trackId: c.trackId, startBar: c.startBar, bars, notes, quantize: 'off' };
 }

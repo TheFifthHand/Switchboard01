@@ -91,7 +91,8 @@ function project(): Project {
     t.clips[0] = createClip(
       t.name,
       1,
-      Array.from({ length: notes }, (_, k) => ({ tick: k * 96, pitch: 40, velocity: 1, duration: 48 })),
+      // Drum parts play pads 0..15 (a higher note would be silent, and get no file).
+      Array.from({ length: notes }, (_, k) => ({ tick: k * 96, pitch: t.instrument.kind === 'drums' ? 0 : 40, velocity: 1, duration: 48 })),
     );
     p.arrangement.regions.push({ id: `r${i}`, trackId: t.id, clipId: t.clips[0]!.id, start: 0, bars: 2, offset: 0 });
   };

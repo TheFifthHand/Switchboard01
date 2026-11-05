@@ -207,10 +207,12 @@ function roundUpBars(n: number): ClipBars {
  * regions in one undo step that Undo calls "Record <Part>". The take is cut
  * into one clip per 8 bars (the last one rounded up to 1, 2, 4 or 8 bars),
  * each named as a take of the part ("Bass take 1", "Bass take 2"…, as pad
- * takes are), with regions back to
- * back from the start bar, placed like any region (they win over what was
- * there). The take lasts `bars` bars, longer when a note starts later. Notes
- * snap to `take.quantize` (else the project's Record quantize setting); a
+ * takes are), with regions back to back from the start bar that cover only
+ * the bars recorded (a 5-bar take: a 5-bar region playing an 8-bar loop),
+ * placed like any region (they win over what was there). The take lasts
+ * `bars` bars, longer when a note starts later. Notes snap to `take.quantize`
+ * (else the project's Record quantize setting); a take caught by the session
+ * (time/songTake.ts) is already on its grid and says `quantize: 'off'`. A
  * note snapped before the start lands on it. Each note goes into the clip its
  * start falls in, its tick counted from that clip's start; a note crossing
  * into the next clip is cut at the boundary (never dropped). Notes past the
@@ -269,7 +271,8 @@ export function recordTakeIntoSong(store: ProjectStore, take: SongTake): Command
   });
   const regions: SongRegion[] = clips.map((c, i) => {
     const start = startBar + i * TAKE_CLIP_BARS;
-    return { id: newRegionId(), trackId: take.trackId, clipId: c.id, start, bars: Math.min(c.bars, MAX_SONG_BARS - start), offset: 0 };
+    // The region covers the bars recorded, no more: a 5-bar take keeps an 8-bar loop but leaves bars 6-8 of the song alone.
+    return { id: newRegionId(), trackId: take.trackId, clipId: c.id, start, bars: Math.min(c.bars, total - i * TAKE_CLIP_BARS), offset: 0 };
   });
   const placed = placeRegions(withSongClips(p, take.trackId, clips), p.arrangement.regions, regions, { newId: newRegionId }).regions;
   if (placed.length > VALIDATION_LIMITS.maxRegions && placed.length > p.arrangement.regions.length) return refuse('limit', REGION_LIMIT);

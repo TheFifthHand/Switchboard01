@@ -2550,7 +2550,7 @@ export class Session {
     const where = `${part?.name ?? 'the part'} · ${after.scenes[r.slot]?.name ?? `row ${r.slot + 1}`}`;
     let message = `Imported “${res.meta.name}” as a new clip on ${where}. ${importPitchWords(part, r.partRecording === true)}`;
     // A synth or drum part became a sampler: its other clips now play the recording at their notes' pitches.
-    if (track && track.instrument.kind !== 'sampler' && track.clips.some((c, i) => i !== r.slot && !!c && c.notes.length > 0)) {
+    if (track && track.instrument.kind !== 'sampler' && trackClips(track).some((x) => x.slot !== r.slot && x.clip.notes.length > 0)) {
       message += ` ${part?.name ?? 'The part'} plays recordings now, so its other clips play this one at their notes’ pitches.`;
     }
     return { ok: true, message };
@@ -2897,7 +2897,7 @@ async function warmSounds(project: Project, bank: SampleBank, sampleRate: number
   for (const t of project.tracks) {
     if (only && !only.has(t.id)) continue;
     const inst = t.instrument;
-    const used = t.clips.filter((c): c is NonNullable<typeof c> => !!c && c.notes.length > 0);
+    const used = trackClips(t).map((x) => x.clip).filter((c) => c.notes.length > 0);
     if (!used.length) continue;
     if (inst.kind === 'drums') {
       const counts = new Map<number, number>();

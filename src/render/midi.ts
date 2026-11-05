@@ -19,7 +19,7 @@
  */
 import { clipAtSlot, slotOfClip } from '../project/clips';
 import { regionEnd } from '../project/arrangement';
-import { MAX_SONG_BARS, PPQ, TICKS_PER_BAR, type Id, type Clip, type LauncherSnapshotEntry, type Project, type Track } from '../project/types';
+import { DRUM_VOICES, MAX_SONG_BARS, PPQ, TICKS_PER_BAR, type Id, type Clip, type LauncherSnapshotEntry, type Project, type Track } from '../project/types';
 import { clampBpm, swingWarp } from '../time/clock';
 
 /** One note in export ticks (0 = the first beat of the export). */
@@ -65,15 +65,22 @@ function wholeBars(n: number, lo: number, hi: number): number {
   return Number.isFinite(n) ? Math.max(lo, Math.min(hi, Math.round(n))) : lo;
 }
 
+/** A drum part plays pads 0..15 only (drumKit.trigger ignores other notes, kept from a part that was melodic once). */
+function drumPlays(pitch: number): boolean {
+  const slot = Math.round(pitch);
+  return slot >= 0 && slot < DRUM_VOICES;
+}
+
 /**
  * A clip's notes as the sequencer plays them: each ends by the clip's end (a
  * looping clip starts over there); on a one-note part (bass) the lowest of
- * notes starting together wins and a note ends where the next one starts.
+ * notes starting together wins and a note ends where the next one starts; on
+ * a drum part (`drums`) notes no pad plays are left out, as they are silent.
  */
-export function playedNotes(clip: Pick<Clip, 'notes' | 'bars'>, mono: boolean): ExportNote[] {
+export function playedNotes(clip: Pick<Clip, 'notes' | 'bars'>, mono: boolean, drums = false): ExportNote[] {
   const length = clip.bars * TICKS_PER_BAR;
   let list = clip.notes
-    .filter((n) => Number.isFinite(n.tick) && Number.isFinite(n.pitch) && n.tick >= 0 && n.tick < length)
+    .filter((n) => Number.isFinite(n.tick) && Number.isFinite(n.pitch) && n.tick >= 0 && n.tick < length && (!drums || drumPlays(n.pitch)))
     .map((n) => ({ tick: n.tick, pitch: n.pitch, velocity: n.velocity, duration: Math.min(n.tick + (Number.isFinite(n.duration) && n.duration > 0 ? n.duration : 1), length) - n.tick }))
     .sort((a, b) => a.tick - b.tick || a.pitch - b.pitch);
   if (mono) {
@@ -127,8 +134,8 @@ export function exportNotes(project: Project, source: NoteSource): PartNotes[] {
         list.sort((a, b) => a.from - b.from);
         for (let i = 0; i + 1 < list.length; i++) if (list[i].to > list[i + 1].from) list[i] = { ...list[i], to: list[i + 1].from };
         const out = raw.get(trackId)!;
-        const mono = project.tracks.find((t) => t.id === trackId)?.instrument.kind === 'bass';
-        for (const s of list) loopNotes(out, playedNotes(s.clip, mono), s.clip.bars * TICKS_PER_BAR, s.anchor, Math.max(s.from, start), Math.min(s.to, end));
+        const kind = project.tracks.find((t) => t.id === trackId)?.instrument.kind;
+        for (const s of list) loopNotes(out, playedNotes(s.clip, kind === 'bass', kind === 'drums'), s.clip.bars * TICKS_PER_BAR, s.anchor, Math.max(s.from, start), Math.min(s.to, end));
       }
       break;
     }
@@ -146,7 +153,7 @@ export function exportNotes(project: Project, source: NoteSource): PartNotes[] {
             anchor = Number.isFinite(e.startTick) ? e.startTick : 0;
           }
         }
-        if (clip) loopNotes(raw.get(t.id)!, playedNotes(clip, t.instrument.kind === 'bass'), clip.bars * TICKS_PER_BAR, anchor, 0, end);
+        if (clip) loopNotes(raw.get(t.id)!, playedNotes(clip, t.instrument.kind === 'bass', t.instrument.kind === 'drums'), clip.bars * TICKS_PER_BAR, anchor, 0, end);
       }
       break;
     }

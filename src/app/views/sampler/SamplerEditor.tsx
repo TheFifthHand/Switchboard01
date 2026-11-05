@@ -37,6 +37,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type Keyboard
 import { Button, Icon, NumberField, SegmentedControl, Select, Switch, noteName, type SelectOption } from '../../../ui/components';
 import { BUILTIN_SAMPLES, builtinSampleInfo } from '../../../content/catalog';
 import { moduleId } from '../../../project/factory';
+import { trackClips } from '../../../project/clips';
 import type { Id, Project } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { shallowEqual } from '../../../state/store';
@@ -788,7 +789,7 @@ export function SamplerEditor({ trackId }: SamplerEditorProps) {
       kind: inst.kind,
       sound: soundName(p, inst),
       sampleId: inst.kind === 'sampler' ? inst.sampleId : null,
-      noteClips: t.clips.filter((c) => !!c && c.notes.length > 0).length,
+      noteClips: trackClips(t).filter((x) => x.clip.notes.length > 0).length,
     };
   }, shallowEqual);
   const target = useSamplerTarget(trackId);

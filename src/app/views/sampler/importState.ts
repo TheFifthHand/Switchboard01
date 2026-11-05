@@ -17,6 +17,7 @@
  * A finished import's message also goes to the toast, with Undo.
  */
 import { createStore } from '../../../state/store';
+import { trackClips } from '../../../project/clips';
 import { MAX_SCENES, type Id, type Project } from '../../../project/types';
 import { session } from '../../instance';
 import { INSTRUMENT_LABEL, soundName } from '../../labels';
@@ -98,7 +99,7 @@ export function checkImport(p: Project, trackId: Id): ImportCheck {
   if (!hasEmptyPad(p, trackId)) return { kind: 'refused', message: noPadMessage(p, trackId) };
   if (t.instrument.kind === 'sampler') return { kind: 'ok' };
   // The new clip goes on an empty pad: every clip there now would play the recording.
-  const used = t.clips.filter((c): c is NonNullable<typeof c> => !!c && c.notes.length > 0);
+  const used = trackClips(t).map((x) => x.clip).filter((c) => c.notes.length > 0);
   if (!used.length) return { kind: 'ok' };
   const what = `the ${INSTRUMENT_LABEL[t.instrument.kind].toLowerCase()} ${soundName(p, t.instrument)}`;
   const clips = used.length === 1 ? `its clip “${used[0].name}” would then play` : `its ${used.length} clips (${used.map((c) => `“${c.name}”`).join(', ')}) would then play`;

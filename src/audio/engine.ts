@@ -33,6 +33,7 @@ import type {
   VoiceHandle,
 } from './contracts';
 import { OUTPUT_CEILING, PREVIEW_KEY_PREFIXES } from './contracts';
+import { trackClips } from '../project/clips';
 import { PPQ, type Connection, type Id, type Instrument, type MacroId, type MacroTarget, type ModuleType, type ParamValues, type PatchModule, type PortKind, type Project, type Track } from '../project/types';
 import { MODULE_DEFS, portDef } from '../project/modules';
 import { BPM_SPEC, INSTRUMENT_PARAMS, MASTER_VOLUME_SPEC, MODULE_PARAMS, clampParam, dbToGain, specById, type ParamSpec } from '../project/params';
@@ -634,11 +635,10 @@ export class AudioEngine implements AudioEngineApi {
   /* Instrument preparation                                            */
   /* ---------------------------------------------------------------- */
 
-  /** Drum slots a track's clips play, most-played first. */
+  /** Drum slots a track's clips play (pads and song loops), most-played first. */
   private drumOrder(track: Track): number[] {
     const counts = new Map<number, number>();
-    for (const clip of track.clips) {
-      if (!clip) continue;
+    for (const { clip } of trackClips(track)) {
       for (const n of clip.notes) counts.set(n.pitch, (counts.get(n.pitch) ?? 0) + 1);
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).map(([slot]) => slot);
