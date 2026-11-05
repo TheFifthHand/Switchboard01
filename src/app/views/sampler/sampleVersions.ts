@@ -14,6 +14,7 @@ import { audioBufferFromChannels } from '../../../audio/instruments/sampleBank';
 import { builtinSampleInfo } from '../../../content/catalog';
 import { encodeMadeAudio } from '../../../persistence/audioImport';
 import * as db from '../../../persistence/db';
+import { clipAtSlot } from '../../../project/clips';
 import type { Id } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { createStore } from '../../../state/store';
@@ -100,7 +101,7 @@ async function makeVersion(
   const projectId = p.id;
   const track = p.tracks.find((t) => t.id === trackId);
   const inst = track?.instrument;
-  const own = slot !== undefined ? track?.clips[slot]?.sample : undefined;
+  const own = slot !== undefined && track ? clipAtSlot(track, slot)?.sample : undefined;
   if (slot !== undefined && (!own || inst?.kind !== 'sampler')) return finish(false, 'This clip has no recording of its own to edit.');
   if (!own && (inst?.kind !== 'sampler' || !inst.sampleId)) return finish(false, 'This part has no recording to edit.');
   const sampleId = own ? own.id : (inst as { sampleId: Id }).sampleId;

@@ -115,7 +115,12 @@ export interface SongLoop {
 export type PlayMode =
   | { kind: 'live' }
   /** Play the song (its regions) from a bar of the song timeline (0-based). */
-  | { kind: 'song'; fromBar: number }
+  | {
+      kind: 'song';
+      fromBar: number;
+      /** Recording into the song: it plays on past its end (no 'end' event) until stopped. */
+      openEnd?: boolean;
+    }
   /** Replay a recorded performance (uses its snapshot + events). */
   | { kind: 'replay'; performanceId: Id };
 
