@@ -16,8 +16,13 @@ The rules that hold today keep holding: Omni Song runs on your own device, needs
 nothing anywhere and ships its sounds with the app. Any later feature that needs more (a local AI
 model, a camera, a headset) is optional, stays on your machine and is off until you turn it on.
 
-## What exists now (2.3)
+## What exists now (2.4)
 
+- **New in 2.4:** loops of the song's own (record straight into the song, drag in a library of 164
+  original loops in your key, Make this one different), Make a beat from scratch with 52 ready beats,
+  five more starters (Trap, Lo-fi Hip Hop, Pop, Afrobeats, Boom Bap), a loop editor under the song,
+  volume and pan on each song row, insert and remove bars, sections that reorder by drag, and export as
+  a smaller file, separate parts or MIDI, as loud as streaming songs.
 - **Make music without theory:** Jump In plays a starter groove; eight parts by one to eight scenes of
   loops (clips up to 8 bars), Play / Pause / Stop (Pause also beside the pads), pads that say what a
   click does (▶ Play / ■ Stop) and never restart by accident, part keys and scene buttons in words,
@@ -98,7 +103,6 @@ What this becomes will be decided by trying the earlier steps first.
 
 *Plan.* Round 4 (the whole-app upgrade after 2.1) left these out on purpose, to be picked up later:
 
-- **Stem export:** one WAV per part from the Export dialog.
 - **Drum rolls** in the step grid.
 - **Preview on each sound card** in the sound browser (today Preview plays the part's current
   sound).
@@ -108,12 +112,16 @@ What this becomes will be decided by trying the earlier steps first.
 
 Round 5 (2.3, the Song view) left these for later:
 
-- **Add an intro / Add an ending, and inserting or removing bars, from the Song view.** The song
-  commands exist and are tested; 2.3 has no control for them yet.
-- **A "Back to Song" key in Steps** while you came from the Song view (today a toast offers it for
-  20 seconds).
 - **Your own keyboard layout's letters** on the in-key keyboard's I, [ and ] keys (they show the US
   letters).
+
+Round 6 (2.4) left these for later:
+
+- **Undo after reopening** a project (the history is not saved).
+- **Hear a starter before opening it.**
+- **One transport** for the pads and the song (today the Song view says which one plays).
+- **A click only while recording**, more than 8 parts, automation lanes, and guitar, piano and vocal
+  sounds.
 
 ## How plans become features
 

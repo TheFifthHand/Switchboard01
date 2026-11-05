@@ -182,31 +182,45 @@ timing tests (`drumSynth`, `variation`, `r4-notes-variation`, `validate`, live-p
 `wp1-session`, `wp2-notes-recording`, `export-while-playing`) failed under load in some runs and
 passed alone. Final test runs: see TEST_REPORT.md.
 
-## Round 6: loops of the song's own, a loop library, first steps (in progress on `r6-int`)
+## Omni Song 2.4: loops of the song's own, a loop library, first steps (round 6)
 
 Asked for after 2.3: "keep improving… make no mistakes. make it more useful and easier to use and
-have more features", by a music maker who compares Omni Song with GarageBand. Contract: schema v5
-(`Track.songClips`: loops only the song plays, song slots ≥ 100). Not released yet; the version is
-still 2.3.0.
+have more features", by a music maker who compares Omni Song with GarageBand. Two audits of the 2.3
+build (ease of use, features; real mouse and keyboard at 1366 × 768 and 1920 × 1080) set the work.
+Built in slices on `r6-int`; this round ships as **version 2.4.0**. Contract: schema v5
+(`Track.songClips`: loops only the song plays, addressed by song slots ≥ 100; v4 files open unchanged).
 
 | Slice | Commit | What it delivered |
 |------|------|------|
-| clipsmodel | `d5f9f1a` | Schema v5 song clips: validation, every clip command on song slots (pad-only ones refuse in words), `addLoopToSong`, `makeLoopUnique`, `copyLoopToPad`, `recordTakeIntoSong`, orphan song clips removed in the same undo step |
+| spine | `9a3651a`, `44fab8b` | Schema v5 types, `src/project/clips.ts` slot helpers (pads and song), migration step 4→5, the command scaffold |
+| clipsmodel | `d5f9f1a` | Song clips: validation, every clip command on song slots (pad-only ones refuse in words), `addLoopToSong`, `makeLoopUnique`, `copyLoopToPad`, `recordTakeIntoSong`, orphan song clips removed in the same undo step |
 | clipsengine | `8496f5a`, `71eda33` | Song clips play, chase, export and follow slot shifts; Record in the Song view records into the song (a live "Recording…" region, one undo step "Record <Part>") |
-| content | `28ce8ab` | Loop library (164 original loops, 15 styles), 52 beat presets, five beat-maker starters (Trap, Lo-fi Hip Hop, Pop, Afrobeats, Boom Bap), four new sounds |
-| laneedit | `44e6fba` | Part headers with volume, pan, meter and menu; insert/remove bars from the ruler; sections reorder by drag (ripple), Alt places freely, Ctrl copies; gentler drags |
+| content | `28ce8ab` | Loop library (164 original loops, 15 styles, realised in the song's key), 52 beat presets, five beat-maker starters (Trap, Lo-fi Hip Hop, Pop, Afrobeats, Boom Bap), four new sounds |
+| laneedit | `44e6fba` | Part headers with volume, pan, meter and menu; insert/remove bars from the ruler; sections reorder by drag (ripple), Alt places freely, Ctrl copies; gentler drags; zoom kept per project |
 | editor | `100f920` | The loop editor docked under the song (double-click, E, Esc); short loops' bars side by side; bigger targets; Simple drums show the eight main sounds |
-| lanelib | `86f3820` | The loop browser's Library tab (search, part and style chips, ▶ hear once in key on the audio clock), drag or Enter a library loop in, region and row menus for song loops (Make this one different, Put on a pad, New empty loop, Start from a beat…), Move earlier / later |
-| export | `e131f01` | Export: the whole song by default, loud by default, WAV, small file (Opus), parts, MIDI; Simple Mix and Shape trimmed |
-| start | `3af8b2e` | Make a beat from scratch, Start from a beat…, tap an empty pad for a loop, Record into the song from the transport, the project name in the transport, loops named after their part |
-| glue | this commit | The empty song's card (Open the loop library, Make a song from my scenes); after a pad loop is made in a scene the song plays, a toast offers to add it there ([Add], once per loop; never for Put on a pad or during a performance); a carried library loop auto-scrolls the song like any other carry (one gesture path, `laneController`); song takes named "<Part> take N"; notes drawn on an empty pad name the loop after the part; ⋯ menu "Export…"; guide and Help lines; unused Shape helpers (`cardKnob`, `squeeze`, effect-card sentences) removed |
+| lanelib | `86f3820` | The loop browser's Library tab (search, part and style chips, ▶ hear once in key on the audio clock), drag or Enter a library loop in, Make this one different, Put on a pad, New empty loop, Start from a beat…, Move earlier / later |
+| export | `e131f01` | Export: the whole song by default, "Make it as loud as streaming songs", WAV, a smaller file (Opus in Ogg), parts as separate files, MIDI; Simple Mix ("Finish") and Simple Shape trimmed |
+| start | `3af8b2e` | Make a beat from scratch, Start from a beat…, tap an empty pad for a loop, ● Record into the song, the project name in the transport, loops named after their part, toasts clear of the guide and hints, mood words for keys and starters |
+| glue | `3f6a5d3` | Empty-song card, the scenes → song offer, library carries auto-scroll, takes named "<Part> take N", hand-offs |
+| fix1 | `7f34424` | Code review fixes: a take quantized once, a take's region covers only what was recorded, cut/paste keeps song loops, a cancelled loud export changes nothing (loudness matched for the song and performances only), song loops counted everywhere a part's loops are read, MIDI/parts skip notes the kit cannot play |
+| fix2 | `3297268` | Hands-on review fixes: Space always plays/pauses (Enter edits a grid), the editor pane takes focus, the recording readout is whole, one toast place clear of working areas, "Used 2×" badges, hints for the visible editor only, "My beat" projects, beat tempo set only for a fresh beat, "clip" → "loop" in 148 UI strings, theory words in Simple, an opened project returns to the last view, a wider keyboard in Steps and Shape |
 
-**Not done yet (round 6):** a click only while recording (needs a settings change); the Steps clip
-switcher still lists scene names; the wave-3 wording sweep (loop / section / pad).
+**Reviews.** A code-correctness review (4 major, 3 minor, each with a failing test) and a hands-on
+review as a GarageBand user (3 major, 13 minor) ran on the merged build; every finding was fixed
+(fix1, fix2) with regression tests. The r4-play-fixes whole-file failure on newer Chrome was a test
+that wrapped `window.scrollTo` in `act()`, which left React's act queue open (`39a1c64`).
+
+**Not done, or worth knowing:**
+- No click only while recording (the metronome is one on/off setting); the count-in is on by default.
+- Undo history does not survive a reload; starter cards have no preview; Play's pads and the song
+  are still two ways to play (the Song view says which one is playing).
+- The Steps loop switcher still lists the pad rows by scene name.
+- A loud export renders twice when the song is not at the target yet.
+- MIDI files leave out arpeggiator output; parts files skip the mastering (the limiter stays).
 
 ## State at handoff
 
-- Release package: `npm run package` builds `release/omni-song-<version>.zip` (2.3.0: production
+- Release package: `npm run package` builds `release/omni-song-<version>.zip` (2.4.0: production
   build in `app/`, `Start Omni Song.bat`, `START HERE.txt`, `launcher/`, `ASSETS.md`, and the
   repository source in `source/`). `release/omni-song-2.2.0.zip` is in the repository (the update
   e2e opens it as the real older version); older zips stay in git history (2.0 is on `main`).
@@ -223,10 +237,9 @@ switcher still lists scene names; the wave-3 wording sweep (loop / section / pad
 
 ## Next action
 
-Run the full suites on a quiet machine and build the 2.3 release zip (`npm run package`). For
-local verification: extract `release/omni-song-2.3.0.zip` on Windows, double-click `Start Omni
-Song.bat` (with a 2.2 window still open, it should name it and wait), press Jump In, then follow
-"Build a song" in `docs/GUIDE.md` with a mouse or trackpad. Possible next steps are in
+For local verification: extract `release/omni-song-2.4.0.zip` on Windows, double-click `Start Omni
+Song.bat` (with a 2.3 window still open, it should name it and wait), press Make a beat from scratch,
+then open Song, drag loops in from the Library and press ● Record, with a mouse or trackpad. Possible next steps are in
 `docs/ROADMAP.md` (local music-generator bridge, webcam movement control, WebXR, and the items
 rounds 4 and 5 deferred).
 

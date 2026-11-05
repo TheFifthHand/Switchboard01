@@ -5,12 +5,26 @@ Start Omni Song first (Windows: double-click **Start Omni Song.bat** in the rele
 at a moderate volume.
 
 Words used here: a **part** is one instrument (Drums, Bass, Chords …), shown as a column of pads.
-A **clip** is a short loop on one pad, 1 to 8 bars long. A **scene** is a row of clips, launched
-together; a project has 1 to 8 scenes. In the **Song**, every part has a row, a **loop** is a clip
-placed on its part's row, and a **section** (Intro, Drop …) names a stretch of bars.
+A **loop** is a short piece of music, 1 to 8 bars long; on the pads each part has one loop per pad.
+A **scene** is a row of pads, launched together; a project has 1 to 8 scenes. In the **Song**,
+every part has a row, loops are placed along it, and a **section** (Intro, Drop …) names a stretch
+of bars. The song can also hold loops of its own (from the loop library, or recorded into the
+song) that are not on any pad.
 
 Lost? Press **?** (or **⋯ → Help…**) at any time: Help lists every keyboard shortcut, has these
 walkthroughs as short steps, and can show the quick guide and the hints again.
+
+## Make a beat from scratch (about two minutes)
+
+1. On the first screen press **Make a beat from scratch** (or ⋯ → New project → Make a beat from
+   scratch). A new project opens on the Drums grid with an empty 1-bar loop that is already
+   playing.
+2. Click squares to add hits: the row names say which sound (Kick, Snare, Closed Hat …). Click a
+   square again to remove it. **Show all 16** shows the rest of the kit.
+3. Or press **Start from a beat…** and pick a style (Boom Bap, Trap, Lo-fi, House …): ▶ hears a beat,
+   pressing it puts it in your loop. In a fresh beat project the song takes the beat's tempo; the
+   button then reads **Replace with a beat…**, so you can try another.
+4. Space plays and pauses at any time (Enter adds or removes the square that has the keyboard focus).
 
 ## Make your first loop (about three minutes)
 
@@ -89,7 +103,7 @@ Your work saves automatically in this browser; the top right shows a check for *
 1. Select a melodic part such as **Chords** and open the **Notes** tab above the pads.
 2. Switch on **Chords**. Each pad now plays a whole chord of the song's key, named as you would read
    it ("B♭", "E°", "Gm7"). Choose **Triads** or **7ths**, and an inversion (**Smooth** keeps the
-   chords close together). Everything you play is recorded by **Notes** and **Performance** like
+   chords close together). Everything you play is recorded by **● Record** and **Performance** like
    single notes.
 3. **Write a progression…** writes a well-known chord progression into the selected clip, in the
    song's key: pick it by name (Pop, Sad pop, Classic, Jazz turn, Epic, Moody, Anthem, Uplift; each
@@ -172,12 +186,17 @@ ruler on top counts the bars, and you place loops on the rows. A loop plays one 
 clips; make it longer and the clip repeats to fill it. Everything snaps to the bar lines, every
 edit is one Undo (Ctrl+Z), and you hear each change at once, even while the song plays.
 
-1. **Put music in.** The **Loops** panel on the right holds your **Scenes** and each part's loops.
+1. **Put music in.** **+ Add loops** in the Song header opens the loop browser on the right. Its
+   **Library** tab holds 164 ready loops for every part (Beats, Bass, Chords, Melody, Pads …) in
+   many styles: pick a part or a style, or type in the search box, press **▶** to hear one in your
+   song's key, then drag it onto a row (or press Enter to add it at the playhead). Its **This song**
+   tab holds your **Scenes** and each part's loops from the pads.
    Drag a scene card onto the rows: every part with a clip in that scene gets a loop from the bar
    you drop it on, and a section named after the scene labels those bars. Or drag one part's loop:
    it lands only on its own row, which lights up while you carry it (other rows say **Not this
    part**). **▶** on a scene card plays it once on the pads, so you can hear it first. With an empty
-   song, **Make a song from my scenes** lays out every scene twice, in order, in one step.
+   song, **Open the loop library** or **Make a song from my scenes** (it lays out every scene twice,
+   in order, in one step) gets you going.
 2. **Make a loop longer.** Drag a loop's right edge. A bubble says how long it is and how many times
    its clip plays ("8 bars · plays 4×"). Drag its left edge to start it later (or earlier): the
    music stays where it was in time.
@@ -186,23 +205,29 @@ edit is one Undo (Ctrl+Z), and you hear each change at once, even while the song
    on other loops it wins: the drag already shows them cut short, moved later or gone, exactly as
    the drop will leave them. Esc puts everything back.
 4. **Fill a gap quickly.** Point at an empty spot on a row: a faint **+** appears. Double-click
-   there and pick one of that part's loops. Double-click a loop to edit its notes in Play › Steps;
-   **Back to Song** on the message brings you back.
-5. **Select several.** Click a loop to select it (teal), Shift- or Ctrl-click to add more, or drag a
+   there and pick one of that part's loops, a **New empty loop** (1, 2, 4 or 8 bars), or, on a drum
+   part, **Start from a beat…**.
+5. **Edit a loop.** Double-click a loop (or select it and press **E**): its notes or drum steps open
+   in an editor under the song, while the song stays in view. The editor says where else the loop
+   plays ("Also plays at bars 49–64"), because an edit changes every place it plays; **Make this one
+   different** gives just this place its own copy. A loop that plays in several places shows a
+   badge such as **Used 2×**. Esc or ✕ closes the editor.
+6. **Select several.** Click a loop to select it (teal), Shift- or Ctrl-click to add more, or drag a
    box across empty row space. Selected loops move, stretch, copy and delete together.
-6. **Play it.** Click a bar number on the ruler to put the playhead there, then press **Play** at the
+7. **Play it.** Click a bar number on the ruler to put the playhead there, then press **Play** at the
    top (it reads **Play song** here) or Space. Click the ruler while it plays to jump there.
    **Pause** keeps your place; **Stop** takes the playhead back to where you started, so Play
    plays that part again. If your pads are playing when you arrive, **▶ Play the song** in the Song
    header switches to the song. **Follow** turns the page as the playhead reaches the edge.
-7. **Loop a stretch.** Drag along the bar numbers: that stretch repeats while the song plays (a teal
+8. **Loop a stretch.** Drag along the bar numbers: that stretch repeats while the song plays (a teal
    band). Drag the band's ends to change it; click the band, or **Loop** in the header, to switch
    looping off and on. With nothing chosen, **Loop** loops the selected loops, else the section
    under the playhead, else the whole song.
-8. **Name the parts of your song.** The **Sections** strip under the ruler holds labels such as
+9. **Name the parts of your song.** The **Sections** strip under the ruler holds labels such as
    Intro or Drop. Point at a stretch with none and press **+ Add section**; double-click a section
-   to rename it. Drag a section to move it with its music (Alt or Ctrl copies it); drag its edges
-   to change only the label. Right-click a section (or the **⋯** at its end) for **Duplicate**,
+   to rename it. Drag a section to move it with its music: the others make room and close
+   the gap, and nothing is cut (Alt drops it anywhere instead, Ctrl copies it; **Move earlier** and
+   **Move later** in its menu do the same with a click). Drag its edges to change only the label. Right-click a section (or the **⋯** at its end) for **Duplicate**,
    **Delete section (keep the music)**, **Delete section and its music**, the moves **Fade in**,
    **Fade out**, **Filter rise** and **Echo throw** (tick as many as you like; exports sound the
    same), and three helpers:
@@ -210,9 +235,19 @@ edit is one Undo (Ctrl+Z), and you hear each change at once, even while the song
    - **Strip down**: everything first, then the parts drop out one at a time.
    - **Breakdown**: the drums, percussion and bass leave the section.
    A helper that would change nothing is greyed out and says why.
-9. **More on a loop.** Right-click a loop (or its **⋯**) for **Play from here**, **Loop this**,
+10. **More on a loop.** Right-click a loop (or its **⋯**) for **Play from here**, **Loop this**,
    **Duplicate**, **Split at playhead**, **Split here**, **Delete**, **Use another loop**, **Edit
-   notes** and **Make it 2× longer**.
+   notes**, **Make it 2× longer**, **Make this one different** and **Put on a pad** (so you can play
+   a song's own loop live from the pads).
+11. **Make room, or take bars out.** Right-click the bar numbers: **Insert 4 bars here** or **Insert 8
+   bars here** pushes everything after that bar later. Mark bars by dragging along the ruler, then
+   right-click for **Remove bars …** to take them out.
+12. **Balance the parts.** Each row's header has a volume slider and a pan dial, the same ones as in
+   Mix; its **⋯** renames the part or changes its instrument.
+13. **Record into the song.** Select a part, put the playhead where you want to start, and press
+   **● Record**. After a one-bar count-in the song plays and a coral **Recording…** loop grows on the
+   part's row as you play the keyboard. Press Stop: what you played becomes loops in the song, in one
+   Undo.
 
 Zoom with **−**, **Fit** and **+** in the Song header, or Ctrl+wheel over the song; the mouse wheel
 or a trackpad scrolls sideways. On a touch screen a swipe scrolls; rest your finger on a loop for a
@@ -232,6 +267,8 @@ blocks becomes a section, and what each part played there becomes a loop.
 
 **Record a performance**
 
+(Advanced: switch **Simple · Advanced** at the top right to Advanced first.)
+
 1. With music playing, press **Performance** in the RECORD group at the top. It turns coral and the
    caption reads *Recording performance*.
 2. Play: tap pads, launch scenes, play keys, turn knobs. Cables and instrument choices are locked
@@ -243,14 +280,19 @@ blocks becomes a section, and what each part played there becomes a loop.
    launched to the end of the song: each loop on its part's row, for as long as it played, rounded
    to whole bars (the notes and knob moves you played stay in the take).
 
-**Record notes into a clip** (optional)
+**Record notes into a loop** (optional)
 
-Select a part and a clip, press **Notes**, and play the keyboard or pads. If you start a moment
+In the Song view, **● Record** records into the song (see Build a song). In Play, select a part and a
+pad, press **● Record**, and play the keyboard or pads. If you start a moment
 early, the notes still land on the first beat. The caption counts down to the start and shows the
 timing grid. Grid, metronome and count-in are in the recording options (the button next to
-**Performance**). Press **Notes** again to stop; one Undo removes the whole pass.
+**Performance**). Press **● Record** again to stop; one Undo removes the whole pass.
 
 **Mix and master**
+
+In Simple, Mix shows the faders and one **Finish** card: pick a preset chip, then press **Make it as
+loud as streaming songs**; the line under it says how far off the song is. The steps below are the
+Advanced view.
 
 1. Open **Mix** (top left). Each part has a fader with its level meter (the small number is its
    highest peak; click it to reset), **Mute**, **Solo** and **Pan**. Double-click a fader for 0 dB.
@@ -270,21 +312,26 @@ timing grid. Grid, metronome and count-in are in the recording options (the butt
 6. **Compare A/B** lets you hear the mix without mastering at the same loudness ("Level-matched"),
    so you judge the sound, not the volume.
 
-**Export a WAV**
+**Export**
 
 1. Press **Export** (the download button at the top right; on narrow windows it is in the **⋯**
-   menu).
-2. In **What to export**, choose the clips playing now, a scene, the **Song** ("Song (32 bars)";
-   chosen already when you press Export in Song), the **Loop** you set on the Song ruler ("Loop
-   (bars 9–16)", played once), or a **Performance**. **Output** is the **Mix** as you hear it, or
-   **Mix without
-   mastering** if you want to master it elsewhere (the limiter still protects it).
-3. Set the **Echo tail**, **Sample rate**, **Bit depth** (24-bit unless you need smaller files) and
-   the file name, then press **Export WAV**. A progress bar shows the time left; **Cancel export**
-   stops it. The file starts exactly on the first beat, so a loop repeats cleanly in another app.
-   It is rendered by the same engine you hear, not recorded from your speakers.
-4. When it is done a line reports the file's loudness and true peak against your target, with
-   **Match target in Mix** when it is more than 1 dB off.
+   menu). **What to export** starts on the whole song ("The whole song (2:19)") whenever the song has
+   loops; you can also choose a scene, the loop you set on the Song ruler, the loops playing now, or
+   a performance.
+2. Choose a **Format**:
+   - **WAV (best quality)**: the usual choice.
+   - **Smaller file for sharing**: about a tenth of the size, to send to a friend (shown when your
+     browser can make it).
+   - **Parts as separate files**: a .zip with one WAV per part, without the mastering (the limiter
+     still protects each one).
+   - **MIDI file (notes only)**: the song's notes, one track per part, for another music app.
+3. **Make it as loud as streaming songs** is on for the whole song: the export measures the song,
+   adjusts the mastering's Loudness drive and renders again. Afterwards it says what it changed,
+   and Undo puts it back. Cancel changes nothing.
+4. Type a file name and press the export button. Progress shows in its place, with **Cancel
+   export**. The file starts exactly on the first beat and is rendered by the same engine you hear.
+   **More options** (Advanced shows them all) holds the echo tail, sample rate, bit depth and
+   **Mix without mastering**.
 
 ## Keep your work safe
 
@@ -312,7 +359,7 @@ timing grid. Grid, metronome and count-in are in the recording options (the butt
 2. Open **More** (the ⋯ button, top right) → **MIDI & audio…**, and connect MIDI. The browser asks
    for permission the first time.
 3. Play. Notes go to the **selected part** (or a part you choose for each input), through Musical
-   Assist, and **Notes** and **Performance** record them just like the computer keyboard. Drum parts
+   Assist, and **● Record** and **Performance** record them just like the computer keyboard. Drum parts
    follow the usual General MIDI drum layout.
 4. In the same dialog you can **learn** a knob, fader or wheel to one of the big knobs, a part's
    volume, the master volume or the tempo: choose what to control, then move the control.
