@@ -143,7 +143,7 @@ describe('the editor pane in the Song view', () => {
     const root = document.querySelector<HTMLElement>('[data-steps-root]')!;
     expect(root.textContent).not.toMatch(/Scene 10\d|Row 10\d/);
     expect(root.querySelector('[role="radio"][aria-label^="In the song: Night Bass"]')?.getAttribute('aria-checked')).toBe('true');
-    expect((root.querySelector('input[aria-label="Clip name"]') as HTMLInputElement).value).toBe('Night Bass');
+    expect((root.querySelector('input[aria-label="Loop name"]') as HTMLInputElement).value).toBe('Night Bass');
     expect(root.querySelector<HTMLElement>('[data-testid="pitch-roll"]')!.dataset.bars).toBe('2');
   });
 

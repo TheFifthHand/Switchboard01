@@ -27,12 +27,12 @@
  */
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { Button, Icon, IconButton } from '../../../ui/components';
-import { setPadMode, setView, uiStore, type View } from '../../../state/uiStore';
+import { selectTrack, setPadMode, setView, uiStore, type View } from '../../../state/uiStore';
 import { shallowEqual, useStore, type ReadableStore } from '../../../state/store';
 import { session, useProject, useUi } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { finishHints, hideHints, hintsRunning, hintsStore, markHintDone, startSongHints, type HintId } from './hintsState';
-import { bassHasClips, bassPart, currentHint, drumsHaveNotes, drumsPart, hintWhere, hintsFinishedText, projectHasClips, tourSteps, type HintContext } from './steps';
+import { currentHint, drumsPart, hintWhere, hintsFinishedText, projectFacts, tourSteps, type HintContext } from './steps';
 import { findSpotFast, hardened, placeOk, readObstacles, spotCost, workArea, type Box, type Spot } from './placement';
 import { browserOpenStore } from '../arrange/laneStore';
 import { watchHints } from './tracker';
@@ -178,21 +178,7 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
   const onScreen = shownView ?? view;
   const padMode = useUi((s) => s.padMode);
   const uiMode = useUi((s) => s.uiMode);
-  const parts = useProject(
-    (p) => {
-      const drums = drumsPart(p);
-      return {
-        bassName: bassPart(p)?.name ?? null,
-        drumsName: drums?.name ?? null,
-        drumsMuted: drums?.mute ?? false,
-        drumsHasNotes: drumsHaveNotes(p),
-        hasClips: projectHasClips(p),
-        bassHasClips: bassHasClips(p),
-        hasRegions: p.arrangement.regions.length > 0,
-      };
-    },
-    shallowEqual,
-  );
+  const parts = useProject(projectFacts, shallowEqual);
   const recording = useRuntime((s) => s.recording !== 'off');
   const selectedTrack = useUi((s) => s.selectedTrackId);
   // Where Export is at this width, for the closing line and the export step (read from the strip, which follows the window).
@@ -201,7 +187,8 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
   exportShownRef.current = exportShown;
   // The words follow the view on screen, as the placement does (the chosen view is a moment ahead during a switch).
   const browserOpen = useStore(browserOpenStore, (s) => s);
-  const base: HintContext = { view: onScreen, padMode, recording, ...parts, exportAt: exportShown ? 'strip' : 'menu', browserOpen };
+  const drumsId = useProject((p) => drumsPart(p)?.id ?? null);
+  const base: HintContext = { view: onScreen, padMode, recording, ...parts, exportAt: exportShown ? 'strip' : 'menu', browserOpen, drumsSelected: drumsId === null || selectedTrack === drumsId };
   // Whether the pads play matters to one step's words only (Play is Pause then): only that step listens, so Play / Pause
   // does not re-render the chip otherwise.
   const listens = currentHint(done, base, { song })?.step.id === 'song-play';
@@ -512,6 +499,8 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
     if (!go) return;
     setView(go.view);
     if (go.padMode) setPadMode(go.padMode);
+    const drums = go.part === 'drums' ? drumsPart(session.store.getState()) : null;
+    if (drums) selectTrack(drums.id);
   };
 
   return (

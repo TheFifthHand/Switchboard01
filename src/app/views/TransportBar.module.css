@@ -55,10 +55,11 @@
   align-self: stretch;
 }
 .recCaption {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  /* As wide as the buttons below, never wider. */
+  /* As wide as the buttons below; a take into the song is given more room (TransportBar.tsx useCaptionFit). */
   width: 0;
   min-width: 100%;
   font: var(--type-eyebrow);
@@ -72,6 +73,26 @@
 }
 .recCaption[data-live] {
   color: var(--coral-ink);
+}
+/* Hidden copies of the caption's wordings, measured (never shown, never in the layout or its scroll size). */
+.recMeasures {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+.recMeasure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  visibility: hidden;
+  white-space: nowrap;
+  pointer-events: none;
 }
 /* The status text gives way (ellipsis) before the Record Notes grid does. */
 .recText {
@@ -858,6 +879,10 @@
   flex: 0 1 auto;
   min-width: 40px;
   max-width: 180px;
+  /* The name's text lines up with the bar's edge; its hover frame reaches into the padding. The offset is
+     here, not on the button: a negative margin on the flex item's child would make the item 6 px too
+     narrow for its own name, and the name would always lose its last letters. */
+  margin-left: -6px;
 }
 .titleName {
   display: flex;
@@ -869,7 +894,6 @@
   min-width: 0;
   height: 44px;
   padding: 0 6px;
-  margin-left: -6px;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
   background: transparent;
@@ -940,7 +964,7 @@
 }
 @media (max-width: 1439px) {
   .title {
-    max-width: 100px;
+    max-width: 112px;
   }
   .bar[data-mode='advanced'] .title {
     max-width: 62px;

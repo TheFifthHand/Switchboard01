@@ -244,16 +244,18 @@
   top: 2px;
   right: 3px;
   z-index: 3;
-  /* Gone (whole, never a sliver) on a region too narrow to hold it beside the name. */
-  max-width: clamp(0px, calc((var(--b) * var(--ppb) * 1px - 100px) * 100), 40px);
+  /* Gone (whole, never a sliver) on a region too narrow to hold it beside the name ("Used 12×" fits in 56 px). */
+  max-width: clamp(0px, calc((var(--b) * var(--ppb) * 1px - 120px) * 100), 56px);
   overflow: hidden;
-  padding: 0 3px;
+  /* The padding goes with it (no 6 px sliver of the first letter on a short region). */
+  padding: 0 clamp(0px, calc((var(--b) * var(--ppb) * 1px - 120px) * 100), 3px);
   border-radius: 3px;
   background: hsl(var(--h) 30% 98% / 0.85);
   color: hsl(var(--h) 45% 24%);
   font: var(--fw-semibold) var(--fs-2xs) / 13px var(--font-mono);
   white-space: nowrap;
-  pointer-events: none;
+  /* Takes the pointer for its tooltip; a press on it is a press on the region (it is inside it). */
+  cursor: help;
 }
 
 /* ------------------------------------------------------------------ */

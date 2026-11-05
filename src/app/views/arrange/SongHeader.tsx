@@ -105,7 +105,12 @@ export function SongHeader({ handle, follow, onFollow, browserOpen, onBrowser, f
         <span className={styles.padsChip} role="status" data-testid="pads-playing" data-paused={pads === 'paused' || undefined}>
           <span>{!hasRegions ? `The song is empty: your pads are ${pads}` : `Pads are ${pads}`}</span>
           {hasRegions && (
-            <Button size="sm" variant="secondary" icon="play" onClick={() => void session.playSong()} data-testid="play-the-song" tip="The pads stop and the song plays from the playhead (or the loop). Space does the same here.">
+            <Button size="sm" variant="secondary" icon="play" onClick={() => void session.playSong()} data-testid="play-the-song" tip={
+                pads === 'playing'
+                  ? 'The pads stop and the song plays from the playhead (or the loop). Space pauses the pads first; press it again to play the song.'
+                  : 'The pads stop and the song plays from the playhead (or the loop). Space does the same now.'
+              }
+            >
               Play the song instead
             </Button>
           )}

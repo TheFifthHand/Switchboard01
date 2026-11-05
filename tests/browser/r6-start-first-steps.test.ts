@@ -21,7 +21,7 @@ import { session } from '../../src/app/instance';
 import { notify, patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { hintsStore } from '../../src/app/views/hints/hintsState';
 import { BEATS } from '../../src/content/beats';
-import { topBelowGuidance } from '../../src/ui/components/Toast';
+import { bottomAboveGuidance } from '../../src/ui/components/Toast';
 import { keyboardCollapsedFor, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { button, click, closeShell, keys, openShell, settle, shown, transport, until } from './r4-shell-harness';
 
@@ -234,12 +234,12 @@ describe('the keyboard in Song', () => {
 });
 
 describe('toasts and guidance', () => {
-  it('stack below what they would cover (pure)', () => {
-    const chip = { left: 400, right: 900, top: 70, bottom: 110 };
-    expect(topBelowGuidance(64, 420, 940, 48, [chip])).toBe(118);
-    expect(topBelowGuidance(64, 950, 1300, 48, [chip])).toBe(64);
-    // Two in a column: below both.
-    expect(topBelowGuidance(64, 420, 940, 48, [chip, { left: 420, right: 600, top: 112, bottom: 150 }])).toBe(158);
+  it('stack above what they would cover (pure)', () => {
+    const chip = { left: 400, right: 900, top: 620, bottom: 660 };
+    expect(bottomAboveGuidance(660, 420, 940, 48, [chip])).toBe(612);
+    expect(bottomAboveGuidance(660, 950, 1300, 48, [chip])).toBe(660);
+    // Two in a column: above both.
+    expect(bottomAboveGuidance(660, 420, 940, 48, [chip, { left: 420, right: 600, top: 570, bottom: 610 }])).toBe(562);
   });
 
   it('a toast never covers the hint chip', async () => {

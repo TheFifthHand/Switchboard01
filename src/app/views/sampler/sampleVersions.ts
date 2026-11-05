@@ -102,7 +102,7 @@ async function makeVersion(
   const track = p.tracks.find((t) => t.id === trackId);
   const inst = track?.instrument;
   const own = slot !== undefined && track ? clipAtSlot(track, slot)?.sample : undefined;
-  if (slot !== undefined && (!own || inst?.kind !== 'sampler')) return finish(false, 'This clip has no recording of its own to edit.');
+  if (slot !== undefined && (!own || inst?.kind !== 'sampler')) return finish(false, 'This loop has no recording of its own to edit.');
   if (!own && (inst?.kind !== 'sampler' || !inst.sampleId)) return finish(false, 'This part has no recording to edit.');
   const sampleId = own ? own.id : (inst as { sampleId: Id }).sampleId;
   // What plays: the clip's own region, or the part's effective Start and End (a macro may move them).

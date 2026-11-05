@@ -203,7 +203,7 @@ export function RegionMenu(props: {
         </MenuItem>
       )}
       {!many && loop?.inSong && (
-        <MenuItem icon="paste" disabled={locked || padsFull} disabledReason={reason ?? `Every ${partName} pad has a clip`} onSelect={run(() => act.putLoopOnPad(region.trackId, region.clipId))}>
+        <MenuItem icon="paste" disabled={locked || padsFull} disabledReason={reason ?? `Every ${partName} pad has a loop`} onSelect={run(() => act.putLoopOnPad(region.trackId, region.clipId))}>
           Put on a pad
         </MenuItem>
       )}

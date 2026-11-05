@@ -56,13 +56,20 @@ export interface HintContext {
   hasRegions?: boolean;
   /** The Song view's loop browser ("Add loops") is open. Absent: no. */
   browserOpen?: boolean;
+  /** The selected part (the one Steps shows) is the drums part. Absent: yes. */
+  drumsSelected?: boolean;
 }
+
+/** What the hints read from the project itself (the rest of HintContext is the view on screen). */
+export type ProjectFacts = Pick<HintContext, 'bassName' | 'drumsName' | 'drumsMuted' | 'drumsHasNotes' | 'hasClips' | 'bassHasClips' | 'hasRegions'>;
 
 export interface HintGo {
   /** Button text, e.g. "Show the pads". */
   label: string;
   view: View;
   padMode?: PadMode;
+  /** The part to choose there (Steps shows the selected part's loop). */
+  part?: 'drums';
 }
 
 /** One change of the real state, with what it was before. */
@@ -101,8 +108,12 @@ export interface HintStep {
   available?(ctx: HintContext): boolean;
   /** False while it cannot be done yet (nothing to do it with yet): later steps come first. Default: yes. */
   ready?(ctx: HintContext): boolean;
-  /** True when it has no point in this state (left out of the tour, unless done already). Default: no. */
-  skip?(ctx: HintContext): boolean;
+  /**
+   * True when it has no point in this state (left out of the tour, unless done already). Default: no.
+   * It reads only what the project says (ProjectFacts), so the tracker can tell that a step was left out
+   * when it was done, and not count it then (the tour's total never grows).
+   */
+  skip?(facts: ProjectFacts): boolean;
   /** What the step remembers when a project opens (default: nothing). */
   init?(p: Project): HintMemo;
   /** Was this change the step's action? */
@@ -137,6 +148,19 @@ export function projectHasClips(p: Project): boolean {
 /** The bass part (see bassPart) has a clip to tap. */
 export function bassHasClips(p: Project): boolean {
   return trackHasClip(bassPart(p));
+}
+
+export function projectFacts(p: Project): Required<ProjectFacts> {
+  const drums = drumsPart(p);
+  return {
+    bassName: bassPart(p)?.name ?? null,
+    drumsName: drums?.name ?? null,
+    drumsMuted: drums?.mute ?? false,
+    drumsHasNotes: drumsHaveNotes(p),
+    hasClips: projectHasClips(p),
+    bassHasClips: bassHasClips(p),
+    hasRegions: p.arrangement.regions.length > 0,
+  };
 }
 
 /** Undo labels of the clip drag-and-drop edits. */
@@ -202,8 +226,9 @@ export const HINT_STEPS: readonly HintStep[] = [
     track: 'basics',
     text: (c) => `Click squares in the grid to add ${c.drumsName ?? 'drum'} hits.`,
     more: () => 'Each row is one drum sound; the loop plays them as it comes round.',
-    here: (c) => c.view === 'play' && c.padMode === 'steps',
-    go: { label: 'Open Steps', view: 'play', padMode: 'steps' },
+    // Only while Steps shows the drums: on another part's piano roll a click would write that part's notes.
+    here: (c) => c.view === 'play' && c.padMode === 'steps' && c.drumsSelected !== false,
+    go: { label: 'Show me', view: 'play', padMode: 'steps', part: 'drums' },
     available: (c) => c.drumsName !== null,
     // Only for drums with no beat yet (a blank project, a beat from scratch); a starter's drums already play one.
     skip: (c) => c.drumsHasNotes !== false,
@@ -257,7 +282,7 @@ export const HINT_STEPS: readonly HintStep[] = [
   {
     id: 'drag',
     track: 'basics',
-    text: () => 'Drag a clip onto another pad.',
+    text: () => 'Drag a loop onto another pad.',
     more: () => 'Hold Ctrl to copy it instead. Undo puts it back.',
     here: onPads,
     go: PADS,
@@ -406,10 +431,14 @@ export const VIEW_NAMES: Readonly<Record<View, string>> = { play: 'Play', shape:
 /** Pad tab names (Play's Loops · Drums · Notes · Steps), for "Next, in Loops: …". */
 export const PAD_MODE_NAMES: Readonly<Record<PadMode, string>> = { loops: 'Loops', drums: 'Drums', notes: 'Notes', steps: 'Steps' };
 
-/** Where a step that is done elsewhere is done: the view, or the pad tab when the view is already open ("Next, in Loops:"). */
-export function hintWhere(go: HintGo, ctx: Pick<HintContext, 'view'>): string {
+/**
+ * Where a step that is done elsewhere is done: the view, or the pad tab when the view is already open
+ * ("Next, in Loops:"), and the part when it names one ("Next, in Steps on Drums:").
+ */
+export function hintWhere(go: HintGo, ctx: Pick<HintContext, 'view' | 'drumsName'>): string {
   const place = go.view === ctx.view && go.padMode ? PAD_MODE_NAMES[go.padMode] : VIEW_NAMES[go.view];
-  return `Next, in ${place}:`;
+  const part = go.part === 'drums' && ctx.drumsName ? ` on ${ctx.drumsName}` : '';
+  return `Next, in ${place}${part}:`;
 }
 
 export interface CurrentHint {

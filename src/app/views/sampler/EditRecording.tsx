@@ -80,7 +80,7 @@ export function EditRecording(props: { target: SamplerTarget; available: boolean
         <span className={styles.rule} aria-hidden="true" />
       </div>
       <p className={styles.fine}>
-        Edits change the trimmed region (what plays, in amber). Each one makes a new version {clip ? `for this clip (${target.partName} · ${target.sceneName})` : 'for this part'}; Undo goes back.
+        Edits change the trimmed region (what plays, in amber). Each one makes a new version {clip ? `for this loop (${target.partName} · ${target.sceneName})` : 'for this part'}; Undo goes back.
       </p>
       <div className={styles.editKeys} role="group" aria-label="Edits">
         {key('normalize', 'Normalize', 'Makes the region as loud as it can be without clipping: its loudest peak reaches -1 dB.', () => ({ kind: 'normalize' }))}

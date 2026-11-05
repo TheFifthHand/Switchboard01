@@ -20,16 +20,24 @@ export interface EditorTarget {
   clipId: Id;
   /** The region the pane was opened from (Make this one different splits this one off). */
   regionId: Id;
+  /** Set when the pane was opened from the keyboard (E, a menu): it then takes focus (a new number each time). */
+  focus?: number;
 }
 
 export const editorStore = createStore<EditorTarget | null>(null);
 
-/** Open the editor on the loop a region plays (false when the region or its loop is not found). */
-export function openLoopEditor(p: Project, regionId: Id): boolean {
+let focusAsks = 0;
+
+/**
+ * Open the editor on the loop a region plays (false when the region or its
+ * loop is not found). `focus`: keyboard focus moves into the pane's grid
+ * (opened with E or a menu, so the keyboard can go on editing there).
+ */
+export function openLoopEditor(p: Project, regionId: Id, opts: { focus?: boolean } = {}): boolean {
   const r = p.arrangement.regions.find((x) => x.id === regionId);
   const t = r ? p.tracks.find((x) => x.id === r.trackId) : undefined;
   if (!r || !t || slotOfClip(t, r.clipId) < 0) return false;
-  editorStore.setState({ trackId: t.id, clipId: r.clipId, regionId });
+  editorStore.setState({ trackId: t.id, clipId: r.clipId, regionId, ...(opts.focus ? { focus: ++focusAsks } : {}) });
   return true;
 }
 

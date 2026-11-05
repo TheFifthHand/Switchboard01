@@ -710,7 +710,7 @@ export const LOCKED_TEXT = 'Locked while a performance records';
 /** The short reason a menu row shows (and reads out) while locked. */
 export const LOCKED_REASON = 'Locked while recording';
 /** The one-line notice for a key that would edit while locked. */
-const LOCKED_NOTICE = 'Locked while a performance records. Stop the take to change clips and scenes.';
+const LOCKED_NOTICE = 'Locked while a performance records. Stop the take to change loops and scenes.';
 
 /** The project refuses edits now (a performance take records): views show it instead of offering what would be refused. */
 export function isEditLocked(): boolean {
@@ -771,7 +771,7 @@ export const clipActions = {
     selectTrack(trackId);
     selectSlot(trackId, slot);
     const { track, clip } = trackAndClip(trackId, slot);
-    const text = `New ${bars}-bar clip "${clip?.name ?? ''}" on ${track?.name ?? 'this part'}. Add notes in Steps or with Record Notes.`;
+    const text = `New ${bars}-bar loop "${clip?.name ?? ''}" on ${track?.name ?? 'this part'}. Add notes in Steps or with Record Notes.`;
     if (toasts) toasts.show({ id: 'notice', tone: 'info', message: text, action: { label: 'Edit steps', onAction: () => clipActions.editSteps(trackId, slot) } });
     else notify(text, 'info', 'undo');
     return true;
@@ -787,7 +787,7 @@ export const clipActions = {
     const before = trackAndClip(trackId, slot).clip?.notes.length ?? 0;
     if (!session.accepted(cmd.setClipBars(session.store, trackId, slot, bars))) return false;
     const after = trackAndClip(trackId, slot).clip?.notes.length ?? 0;
-    if (after < before) notify(`Clip shortened to ${barsLabel(bars)}: ${before - after} note${before - after === 1 ? '' : 's'} past the end removed.`, 'info', 'undo');
+    if (after < before) notify(`Loop shortened to ${barsLabel(bars)}: ${before - after} note${before - after === 1 ? '' : 's'} past the end removed.`, 'info', 'undo');
     return true;
   },
 
@@ -818,7 +818,7 @@ export const clipActions = {
     if (!track || !clip) return false;
     const to = nextEmptySlot(track.clips, slot);
     if (to === null) {
-      notify(`${track.name} has no empty slot left. Delete or clear a clip first.`, 'warn');
+      notify(`${track.name} has no empty slot left. Delete or clear a loop first.`, 'warn');
       return false;
     }
     if (!session.accepted(cmd.duplicateClipToSlot(session.store, trackId, slot, to))) return false;
@@ -841,7 +841,7 @@ export const clipActions = {
   paste(trackId: Id, slot: number): boolean {
     const clipboard = uiStore.getState().clipboard;
     if (!clipboard) {
-      notify(`Copy a clip first (${MOD_KEY}C on a pad, or Copy in its menu).`, 'warn');
+      notify(`Copy a loop first (${MOD_KEY}C on a pad, or Copy in its menu).`, 'warn');
       return false;
     }
     if (lockedNow()) return false;
@@ -860,7 +860,7 @@ export const clipActions = {
     if (!clip || clip.notes.length === 0) return false;
     if (lockedNow()) return false;
     if (!session.accepted(cmd.clearClip(session.store, trackId, slot))) return false;
-    notify(`Cleared the notes of "${clip.name}". The empty clip stays in its slot.`, 'info', 'undo');
+    notify(`Cleared the notes of "${clip.name}". The empty loop stays in its slot.`, 'info', 'undo');
     return true;
   },
 
@@ -887,7 +887,7 @@ export const clipActions = {
 const LENGTH_OPTIONS = CLIP_BAR_CHOICES.map((b) => ({ value: b, label: String(b), ariaLabel: `Length ${barsLabel(b)}` }));
 const NEW_OPTIONS = CLIP_BAR_CHOICES.map((b) => ({ value: b, label: String(b), ariaLabel: `New loop, ${barsLabel(b)}` }));
 /** Length's tooltip: what changing it does to the notes. */
-export const LENGTH_TIP = 'How many bars the clip loops over. Longer: the new bars start empty (Double or Repeat to 8 bars fill them with the pattern). Shorter: notes past the new end are removed; Undo brings them back.';
+export const LENGTH_TIP = 'How many bars long the loop is. Longer: the new bars start empty (Double or Repeat to 8 bars fill them with the pattern). Shorter: notes past the new end are removed; Undo brings them back.';
 const LONGEST: ClipBars = MAX_CLIP_BARS as ClipBars;
 
 export interface ClipMenuProps {
@@ -936,10 +936,10 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
 
   if (renaming && info.clipName !== null) {
     return (
-      <Popover anchor={anchor} label={`Rename clip ${info.clipName}`} role="dialog" onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
-        <MenuHeader eyebrow={`${info.trackName} · ${info.scene}`} title="Rename clip" />
+      <Popover anchor={anchor} label={`Rename loop ${info.clipName}`} role="dialog" onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
+        <MenuHeader eyebrow={`${info.trackName} · ${info.scene}`} title="Rename loop" />
         <RenameForm
-          label="Clip name"
+          label="Loop name"
           initial={info.clipName}
           maxLength={60}
           onSubmit={(name) => {
@@ -990,7 +990,7 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
           hint={`${MOD_KEY}V`}
           keyShortcut={`${MOD_ARIA}+V`}
           disabled={!clipboardName || locked}
-          disabledReason={locked ? LOCKED_REASON : 'Copy a clip first'}
+          disabledReason={locked ? LOCKED_REASON : 'Copy a loop first'}
           onSelect={() => act(() => clipActions.paste(trackId, slot))}
         >
           {clipboardName ? `Paste “${clipboardName}”` : 'Paste'}
@@ -1001,7 +1001,7 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
 
   const bars = info.bars ?? 1;
   return (
-    <Popover anchor={anchor} label={`Clip ${info.clipName}: ${info.trackName}, ${info.scene}`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
+    <Popover anchor={anchor} label={`Loop ${info.clipName}: ${info.trackName}, ${info.scene}`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
       <MenuHeader eyebrow={`${info.trackName} · ${info.scene}`} title={info.clipName}>
         <div className={styles.meta}>
           {barsLabel(bars)} · {info.notes === 0 ? 'no notes yet' : `${info.notes} note${info.notes === 1 ? '' : 's'}`}
@@ -1073,7 +1073,7 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
         hint={`${MOD_KEY}V`}
         keyShortcut={`${MOD_ARIA}+V`}
         disabled={!clipboardName || locked}
-        disabledReason={locked ? LOCKED_REASON : 'Copy a clip first'}
+        disabledReason={locked ? LOCKED_REASON : 'Copy a loop first'}
         onSelect={() => act(() => clipActions.paste(trackId, slot))}
       >
         {clipboardName ? `Paste “${clipboardName}” here` : 'Paste here'}
@@ -1083,7 +1083,7 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
         Clear notes
       </MenuItem>
       <MenuItem icon="trash" tone="danger" hint="Del" keyShortcut="Delete" disabled={locked} disabledReason={LOCKED_REASON} onSelect={() => act(() => clipActions.remove(trackId, slot))}>
-        Delete clip
+        Delete loop
       </MenuItem>
     </Popover>
   );

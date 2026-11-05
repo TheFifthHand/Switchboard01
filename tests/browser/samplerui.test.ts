@@ -516,7 +516,7 @@ describe('Sampler import', () => {
     expect(document.activeElement?.id).toBe('sampler-recording-t4');
     // The file's own rate (44.1 kHz), not the rate the browser decoded it at.
     await until(() => m.container.textContent?.includes('0.50 s · 44.1 kHz · Mono · WAV') ?? false, 'the recording details');
-    await until(() => statusText(m.container).includes('Imported “Test Tone” as a new clip on Chords · Intro. It plays at its recorded pitch.'), 'the result message');
+    await until(() => statusText(m.container).includes('Imported “Test Tone” as a new loop on Chords · Intro. It plays at its recorded pitch.'), 'the result message');
     // The editor edits the new clip's own recording, and says so.
     expect(m.container.textContent).toContain('Test Tone — plays in Chords · Intro');
     const picker = m.container.querySelector<HTMLSelectElement>('#sampler-recording-t4')!;

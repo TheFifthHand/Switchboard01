@@ -142,7 +142,7 @@ const clips = (trackId: Id): (Clip | null)[] => project().tracks.find((t) => t.i
 const names = (trackId: Id) => clips(trackId).map((c) => c?.name ?? null);
 const pad = (trackId: Id, slot: number) => document.getElementById(`pad-${trackId}-${slot}`) as HTMLButtonElement;
 const cell = (trackId: Id, slot: number) => pad(trackId, slot).closest<HTMLElement>('[data-pad-cell]')!;
-const gridEl = () => document.querySelector<HTMLElement>('[aria-label="Clip pads: eight parts by four scenes"]')!;
+const gridEl = () => document.querySelector<HTMLElement>('[aria-label="Loop pads: eight parts by four scenes"]')!;
 const lift = () => document.querySelector<HTMLElement>('[data-testid="pad-lift"]');
 const rowLift = () => document.querySelector<HTMLElement>('[data-testid="row-lift"]');
 const label = () => (lift() ?? rowLift())?.querySelector<HTMLElement>('[class*="liftText"]')?.textContent ?? null;
@@ -301,7 +301,7 @@ describe('carrying a clip pad', () => {
     const drum = clips('t1').findIndex((c) => !c) >= 0 ? clips('t1').findIndex((c) => !c) : 0;
     await press(centre(pad('t3', a)));
     await moveTo(centre(pad('t3', a)), centre(pad('t1', drum)), 10);
-    expect(label()).toBe('Melodic clips go to melodic parts');
+    expect(label()).toBe('Melodic loops go to melodic parts');
     expect(lift()!.dataset.kind).toBe('no');
     expect(cell('t1', drum).dataset.target).toBe('no');
     expect(word()).toBe('Can’t go here');

@@ -920,12 +920,12 @@ export class AudioInputController {
     const seconds = frames / sr;
     // A synth or drum part becomes a sampler with the take: its other clips then play the take at their notes.
     const others = !!before && before.instrument.kind !== 'sampler' && trackClips(before).some((x) => x.slot !== slot && x.clip.notes.length > 0);
-    const rest = others ? `${partName} plays recordings now, so its other clips play this take at their notes’ pitches` : 'other clips keep their recordings';
-    let message = `Recorded ${seconds.toFixed(1)} s (${clipBars} bar${clipBars === 1 ? '' : 's'}). ${name} plays in its own clip on ${where}${replaced ? `, replacing “${replaced.name}”` : ''}; ${rest}.`;
+    const rest = others ? `${partName} plays recordings now, so its other loops play this take at their notes’ pitches` : 'other loops keep their recordings';
+    let message = `Recorded ${seconds.toFixed(1)} s (${clipBars} bar${clipBars === 1 ? '' : 's'}). ${name} plays in its own loop on ${where}${replaced ? `, replacing “${replaced.name}”` : ''}; ${rest}.`;
     if (frames < take.to - take.from - sr * 0.05) message = `Stopped early. ${message}`;
     if (peak < SILENT_PEAK) message += ' The take is silent: check the input and its level in MIDI & audio.';
     // Song clips hold notes recorded in the Song view; audio takes keep the pad route there too.
-    if (uiStore.getState().view === 'arrange') message += ' Audio recordings go on the pads, also from the Song view: drag the clip onto the song to place it.';
+    if (uiStore.getState().view === 'arrange') message += ' Audio recordings go on the pads, also from the Song view: drag the loop onto the song to place it.';
     done({ ok: true, message }, peak < SILENT_PEAK ? 'warn' : 'info', entry);
   }
 

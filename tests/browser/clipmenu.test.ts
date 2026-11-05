@@ -188,7 +188,7 @@ describe('Clip pad menu', () => {
     // Clearing again is not offered.
     rightClick(pad('t2', full));
     expect(item('Clear notes').getAttribute('aria-disabled')).toBe('true');
-    click(item('Delete clip'));
+    click(item('Delete loop'));
     expect(clips('t2')[full]).toBeNull();
     act(() => session.undo());
     act(() => session.undo());
@@ -240,9 +240,9 @@ describe('Clip pad menu', () => {
       selectTrack('t3');
       selectSlot('t3', slotsOf('t3').full);
     });
-    const more = document.querySelector<HTMLButtonElement>('button[aria-label^="Options for clip"]')!;
+    const more = document.querySelector<HTMLButtonElement>('button[aria-label^="Options for loop"]')!;
     expect(more).not.toBeNull();
-    expect(document.querySelectorAll('button[aria-label^="Options for clip"], button[aria-label^="Options for empty slot"]')).toHaveLength(1);
+    expect(document.querySelectorAll('button[aria-label^="Options for loop"], button[aria-label^="Options for empty slot"]')).toHaveLength(1);
     click(more);
     expect(menu()).not.toBeNull();
     expect(more.getAttribute('aria-expanded')).toBe('true');

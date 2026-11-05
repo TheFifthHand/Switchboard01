@@ -6,7 +6,8 @@
  * words and its detection together).
  *
  * Switching to another project (a starter, Open, Import) only re-reads the
- * starting point; it never counts as doing anything.
+ * starting point; it never counts as doing anything. A step the tour leaves
+ * out at that moment (its `skip`) is not reported either.
  */
 import type { Project } from '../../../project/types';
 import type { ChangeInfo, HistoryInfo } from '../../../state/projectStore';
@@ -14,7 +15,7 @@ import type { ReadableStore } from '../../../state/store';
 import type { View } from '../../../state/uiStore';
 import type { RuntimeState } from '../../runtime';
 import type { HintId } from './hintsState';
-import { HINT_STEPS, type HintChange, type HintMemo } from './steps';
+import { HINT_STEPS, projectFacts, type HintChange, type HintMemo, type ProjectFacts } from './steps';
 
 export interface HintSources {
   project: ReadableStore<Project>;
@@ -43,10 +44,15 @@ export function watchHints(src: HintSources, onDone: (id: HintId) => void): () =
   let view: View = src.view?.getState() ?? 'play';
 
   const handle = (c: HintChange) => {
+    // A step the tour left out (no point in the state before this change) is not counted as done:
+    // it was never shown, and counting it would make the tour's total grow.
+    let facts: ProjectFacts | null = null;
     for (const step of HINT_STEPS) {
       let memo = memos.get(step.id);
       if (!memo) memos.set(step.id, (memo = {}));
-      if (step.detect(c, memo)) onDone(step.id);
+      if (!step.detect(c, memo)) continue;
+      if (step.skip?.((facts ??= projectFacts(c.prevProject)))) continue;
+      onDone(step.id);
     }
   };
   const base = () => ({ project, prevProject: project, history, prevHistory: history, runtime, prevRuntime: runtime, view, prevView: view });

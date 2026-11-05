@@ -159,7 +159,7 @@ describe('carrying pads and rows at the supported sizes', () => {
       // The longest label (a refusal) over the right-hand columns: it hangs from the pad's right edge, still whole.
       await carry(centre(pad('t1', 1)), centre(pad('t8', 0)));
       const lab = labelOf(lift())!;
-      expect(lab.textContent).toContain('Drum clips go to drum parts');
+      expect(lab.textContent).toContain('Drum loops go to drum parts');
       noSidewaysScroll();
       inside(lab, 'refusal label');
       whole(lab, 'refusal label');

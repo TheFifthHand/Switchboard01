@@ -58,7 +58,7 @@ describe('M1: moves keep to the grid at the clip end', () => {
     expect(selected().length).toBe(before.length);
     await press('{ArrowRight}');
     expect(sig(stabs())).toBe(sig(before));
-    expect(notice()?.text).toBe('The notes are already at the end of the clip.');
+    expect(notice()?.text).toBe('The notes are already at the end of the loop.');
     await press('{ArrowLeft}');
     const after = stabs();
     expect(sig(after)).toBe(sig(before.map((n) => ({ tick: n.tick - 24, pitch: n.pitch }))));
@@ -74,7 +74,7 @@ describe('M1: moves keep to the grid at the clip end', () => {
     await click(notePt(n.id));
     await press('{ArrowRight}');
     expect(bounce().find((x) => x.id === n.id)!.tick).toBe(744);
-    expect(notice()?.text).toBe('The notes are already at the end of the clip.');
+    expect(notice()?.text).toBe('The notes are already at the end of the loop.');
   });
 
   it('a last-bar note dragged past the right edge lands on step 16, where the drag drew it', async () => {

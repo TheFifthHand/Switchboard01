@@ -167,7 +167,7 @@ function PlayPauseButton() {
         ? `Continue ${mode === 'song' ? 'the song ' : ''}from where you paused, in time.`
         : song
           ? `Play song from bar ${fromBar + 1}${looping ? ', in the loop' : ''}.${paused ? ' The paused pads stop.' : ''}`
-          : 'Start the lit clips from bar 1.';
+          : 'Start the lit loops from bar 1.';
   return (
     <Button
       variant="transport"
@@ -219,7 +219,7 @@ function StopButton() {
             ? 'Stop playback and the performance recording (the take is kept). Back to bar 1.'
             : song
               ? 'Stop the song and go back to where it started. Play (or Space) in the Song view plays it again.'
-              : 'Stop and go back to bar 1. The clips that were playing stay lit and start again from the top on Play.'
+              : 'Stop and go back to bar 1. The loops that were playing stay lit and start again from the top on Play.'
       }
       detail={`${keysFor('stop')} also stops.`}
       aria-keyshortcuts="Shift+Space"
@@ -456,6 +456,72 @@ export function songRecordingCaption(part: string, startBar: number, countingIn:
 }
 
 /**
+ * The same, longest first, for less room: the whole words, then "bar 9" without "into the song"
+ * (also as "Rec · Lead · bar 9"), then the part alone. The first that fits is shown (never a cut "RECOR…").
+ */
+export function songRecordingCaptions(part: string, startBar: number, countingIn: boolean): string[] {
+  const word = countingIn ? 'Count-in' : 'Recording';
+  const bar = `bar ${startBar + 1}`;
+  // "Rec", as on a recorder's lamp, keeps the bar in view where "Recording" would push it out.
+  return [songRecordingCaption(part, startBar, countingIn), `${word} · ${part} · ${bar}`, ...(countingIn ? [] : [`Rec · ${part} · ${bar}`]), `${word} · ${part}`];
+}
+
+/** One way to word the caption: its text, and whether the grid ("· Snap 1/16") goes after it. */
+interface CaptionFit {
+  text: string;
+  snap: boolean;
+}
+
+/**
+ * Choose the longest caption wording that fits, and give the caption that
+ * width: the Record group grows into the free space of the strip (the gap
+ * before its right-hand keys) while it needs to, so a take into the song
+ * says its part and bar in full where there is room; with less room the grid
+ * goes first, then "into the song", then the bar. Measured from hidden
+ * copies of every wording; placed again when the strip's width changes.
+ * Below 1024 px (the caption beside the keys, CSS) the width is left to CSS.
+ */
+function useCaptionFit(groupRef: RefObject<HTMLDivElement | null>, captionRef: RefObject<HTMLSpanElement | null>, fits: readonly CaptionFit[], key: string): number {
+  const [chosen, setChosen] = useState(0);
+  useLayoutEffect(() => {
+    const group = groupRef.current;
+    const caption = captionRef.current;
+    if (!group || !caption) return;
+    const place = () => {
+      const buttons = group.querySelector<HTMLElement>('[data-rec-buttons]');
+      const bar = group.parentElement;
+      const right = bar?.querySelector<HTMLElement>('[data-bar-right]');
+      if (!buttons || !right || getComputedStyle(group).flexDirection !== 'column') {
+        caption.style.removeProperty('width');
+        setChosen(0);
+        return;
+      }
+      // What the group may be: as wide as it is now (its buttons, or a caption given room before) plus the strip's free gap.
+      const before = right.previousElementSibling?.getBoundingClientRect().right ?? group.getBoundingClientRect().right;
+      const slack = Math.max(0, right.getBoundingClientRect().left - before - 8);
+      const room = Math.floor(group.getBoundingClientRect().width + slack);
+      const widths = [...caption.querySelectorAll<HTMLElement>('[data-fit]')].map((el) => Math.ceil(el.getBoundingClientRect().width));
+      let pick = widths.findIndex((w) => w <= room);
+      if (pick < 0) pick = widths.length - 1;
+      const need = Math.max(buttons.getBoundingClientRect().width, widths[pick] ?? 0);
+      caption.style.width = `${Math.ceil(need)}px`;
+      setChosen(pick);
+    };
+    place();
+    const bar = group.parentElement;
+    const ro = typeof ResizeObserver !== 'undefined' && bar ? new ResizeObserver(() => requestAnimationFrame(place)) : null;
+    if (bar) ro?.observe(bar);
+    window.addEventListener('resize', place);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', place);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return Math.min(chosen, Math.max(0, fits.length - 1));
+}
+
+/**
  * ● Record (notes), Record Performance (Advanced only) and the options, with
  * the recording status as the caption. In the Song view Record records into
  * the song from its cursor (session.toggleRecordNotes({ song: true })); in
@@ -510,12 +576,43 @@ function RecordGroup() {
       : recording === 'notes' || (recording === 'off' && quantize !== '1/16')
         ? quantizeCaption(quantize)
         : null;
+  // A take into the song: the longest wording that fits (the grid goes first, then "into the song", then the bar).
+  const fits: CaptionFit[] =
+    recording === 'notes' && songTake && caption !== null
+      ? (() => {
+          const [full, ...shorter] = songRecordingCaptions(targetName, songTake.startBar, countingIn || startsAt !== null);
+          return [...(snap ? [{ text: full, snap: true }] : []), { text: full, snap: false }, ...shorter.map((text) => ({ text, snap: false }))];
+        })()
+      : [{ text: caption ?? '', snap: !!snap }];
+  const groupRef = useRef<HTMLDivElement>(null);
+  const captionRef = useRef<HTMLSpanElement>(null);
+  const fitAt = useCaptionFit(groupRef, captionRef, fits, `${fits.map((f) => f.text).join('|')}|${snap}|${recording}|${advanced}`);
+  const shown = fits[fitAt] ?? fits[0];
+  const dot = recording !== 'off' ? <span className={styles.recDot} aria-hidden="true" /> : null;
   return (
-    <div className={`${styles.group} ${styles.recGroup}`} role="group" aria-label="Recording">
-      <span className={styles.recCaption} data-live={recording !== 'off' || undefined} aria-live="polite">
-        {recording !== 'off' && <span className={styles.recDot} aria-hidden="true" />}
+    <div ref={groupRef} className={`${styles.group} ${styles.recGroup}`} role="group" aria-label="Recording">
+      <span ref={captionRef} className={styles.recCaption} data-live={recording !== 'off' || undefined} aria-live="polite">
+        {/* Hidden copies of every wording, measured to choose the one that fits (useCaptionFit). */}
+        {caption !== null && (
+          <span className={styles.recMeasures} aria-hidden="true">
+            {fits.map((f, i) => (
+              <span key={i} className={styles.recMeasure} data-fit={i}>
+                {dot}
+                <span>{f.text}</span>
+                {f.snap && snap && <span>{` · ${snap}`}</span>}
+              </span>
+            ))}
+          </span>
+        )}
+        {dot}
         {caption !== null ? (
-          <span className={styles.recText}>{caption}</span>
+          <>
+            <span className={styles.recText} aria-hidden={shown.text !== caption || undefined}>
+              {shown.text}
+            </span>
+            {/* Read in full by screen readers, whatever the room on screen. */}
+            {shown.text !== caption && <span className="visually-hidden">{caption}</span>}
+          </>
         ) : (
           <span className={styles.recText}>
             <RecordCountdown startsAt={startsAt!} />
@@ -525,9 +622,9 @@ function RecordGroup() {
           </span>
         )}
         {/* The leading space keeps the words apart for screen readers; on screen the gap does. */}
-        {snap && <span className={styles.recSnap}>{` · ${snap}`}</span>}
+        {snap && (caption === null || shown.snap) && <span className={styles.recSnap}>{` · ${snap}`}</span>}
       </span>
-      <div className={styles.recButtons}>
+      <div className={styles.recButtons} data-rec-buttons="">
         <Button
           variant="secondary"
           size="sm"
@@ -775,7 +872,7 @@ export interface TransportBarProps {
  * (--transport-h): the strip's bottom edge, or the bottom of the banners the
  * shell shows right under it (a project open in another tab, playback
  * stopped: [data-banners], the strip's next sibling) while they are in view.
- * Toasts sit just under it (Toast.module.css), so they never hide a banner's
+ * Layers placed under the top chrome read it, so they never hide a banner's
  * keys, and never float down where a banner was once the page has scrolled
  * it away (below 1024 px the strip is sticky and the banners scroll). Kept
  * up to date as the strip wraps or grows, as banners come and go, and as
@@ -913,7 +1010,7 @@ export function TransportBar(props: TransportBarProps) {
         </Button>
       </div>
 
-      <div className={styles.right}>
+      <div className={styles.right} data-bar-right="">
         <SegmentedControl<UiMode>
           label="Simple or Advanced"
           options={MODE_OPTIONS}
@@ -941,7 +1038,8 @@ export function TransportBar(props: TransportBarProps) {
           size="sm"
           icon="download"
           onClick={props.onOpenExport}
-          tip={view === 'arrange' ? 'Export the song as a WAV file (a scene or a recorded performance can be chosen instead).' : 'Export a WAV file: your song, a scene or a recorded performance.'}
+          tip="Export the song as a file"
+          detail="A WAV, a small file to share, one file per part, or MIDI. A scene or a recorded performance can be chosen instead of the song."
           className={styles.exportKey}
         >
           Export

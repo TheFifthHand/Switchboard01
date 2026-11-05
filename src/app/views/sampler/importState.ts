@@ -89,7 +89,7 @@ export function noPadMessage(p: Project, trackId: Id): string {
   const name = t?.name ?? 'This part';
   const rows = t?.clips.length ?? 0;
   const more = p.scenes.length < MAX_SCENES ? ', or add a scene in Play for a new row' : '';
-  return `${name} has no empty pad: all ${rows} of its rows hold clips, and an import makes a new clip. Delete or move a clip on ${name}${more}, then import again.`;
+  return `${name} has no empty pad: all ${rows} of its rows hold loops, and an import makes a new loop. Delete or move a loop on ${name}${more}, then import again.`;
 }
 
 /** What importing onto `trackId` would do, before any file is decoded. */
@@ -102,7 +102,7 @@ export function checkImport(p: Project, trackId: Id): ImportCheck {
   const used = trackClips(t).map((x) => x.clip).filter((c) => c.notes.length > 0);
   if (!used.length) return { kind: 'ok' };
   const what = `the ${INSTRUMENT_LABEL[t.instrument.kind].toLowerCase()} ${soundName(p, t.instrument)}`;
-  const clips = used.length === 1 ? `its clip “${used[0].name}” would then play` : `its ${used.length} clips (${used.map((c) => `“${c.name}”`).join(', ')}) would then play`;
+  const clips = used.length === 1 ? `its loop “${used[0].name}” would then play` : `its ${used.length} loops (${used.map((c) => `“${c.name}”`).join(', ')}) would then play`;
   const low = t.instrument.kind === 'drums' ? ' (drum hits become very low notes)' : '';
   return {
     kind: 'converts',

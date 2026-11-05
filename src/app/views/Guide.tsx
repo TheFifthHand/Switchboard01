@@ -96,7 +96,7 @@ const PAD_TEXT: Record<PadMode, string> = {
   loops: 'Each column is a part. Tap a pad to switch that part to another loop; it joins on the next bar. Mute at the top of a column silences that part, Solo plays it on its own.',
   drums: 'Tap a pad to play that drum sound. The tabs above switch between Loops, Drums, Notes and Steps; Loops has Mute and Solo for every part.',
   notes: "Tap a pad to play a note of the selected part, in the project's key. The tabs above switch modes; Loops has Mute and Solo for every part.",
-  steps: 'Click a numbered step to add or remove a note in the selected clip. The tabs above switch modes; Loops has Mute and Solo for every part.',
+  steps: 'Click a numbered step to add or remove a note in the selected loop. The tabs above switch modes; Loops has Mute and Solo for every part.',
 };
 
 /** The selected part's Change instrument button in the Play view's part panel. */

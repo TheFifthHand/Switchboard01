@@ -28,6 +28,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import { TICKS_PER_BAR, type Clip, type Id, type Note } from '../../../project/types';
 import { keyLabel, keyRootName, keyShortName, noteName, stepsPerOctave, type MusicalKey } from '../../../music/scales';
+import { SCALE_MOOD, keyMood } from '../keyMood';
 import * as cmd from '../../../state/commands';
 import { setStepPage } from '../../../state/uiStore';
 import { IconButton, Tooltip, newGestureId } from '../../../ui/components';
@@ -268,6 +269,7 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1 }: PitchLa
   const root = useProject((p) => p.root);
   const scale = useProject((p) => p.scale);
   const gridName = useUi((s) => s.stepGrid);
+  const advanced = useUi((s) => s.uiMode === 'advanced');
   /** One bar's grid, and the shown cells (the bars side by side). */
   const barSpec = useMemo(() => gridSpec(gridName), [gridName]);
   const spec = useMemo(() => spanSpec(barSpec, span), [barSpec, span]);
@@ -1028,7 +1030,7 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1 }: PitchLa
     const step = Math.abs(dTick);
     const d = clampMoveTicks(selectedNotes(c.clip.notes, new Set(ids)), dTick, c.clipTicks, step);
     if (d === 0) {
-      notify(`The notes are already at the ${dTick > 0 ? 'end' : 'start'} of the clip.`, 'warn');
+      notify(`The notes are already at the ${dTick > 0 ? 'end' : 'start'} of the loop.`, 'warn');
       return;
     }
     const r = cmd.moveNotes(session.store, c.trackId, c.slot, ids, d, 0, burst(`move:${ids.join(',')}`));
@@ -1224,8 +1226,8 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1 }: PitchLa
       case 'End':
         moveCursor(spec.cells - 1, cursorRow);
         break;
-      case 'Enter':
-      case ' ': {
+      // Enter only: Space is Play / Pause here too (the cursor has data-space-plays).
+      case 'Enter': {
         if (e.repeat) break;
         const n = noteAtCursor();
         if (n) {
@@ -1277,9 +1279,11 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1 }: PitchLa
     session.accepted(cmd.setNotesVelocity(session.store, c.trackId, c.slot, ids, velocity, gesture));
   }, []);
 
-  const keyText = inKeyOnly ? keyLabel(root, scale) : 'All notes';
-  const keyShort = inKeyOnly ? keyShortName(root, scale) : 'All';
+  // Simple names the key by its mood ("G · jazzy minor"); the scale's name is in the tooltip and the accessible name.
+  const keyText = !inKeyOnly ? 'All notes' : advanced ? keyLabel(root, scale) : keyMood(root, scale);
+  const keyShort = !inKeyOnly ? 'All' : advanced ? keyShortName(root, scale) : `${keyRootName(root, scale)} · ${SCALE_MOOD[scale].split(/[ ,]/)[0]}`;
   const keyTiny = inKeyOnly ? keyRootName(root, scale) : 'All';
+  const keyName = keyLabel(root, scale);
   const selCount = selSet.size - (selSet.has(DRAW_ID) ? 1 : 0);
   const cols = cellIndices(spec.cells);
 
@@ -1296,8 +1300,8 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1 }: PitchLa
               text={keyText}
               short={keyShort}
               tiny={keyTiny}
-              label={inKeyOnly ? `Rows in key: ${keyText}` : 'Rows: all 12 notes'}
-              tip={inKeyOnly ? `Rows show the notes of ${keyText} (Musical Assist is on).` : 'Rows show all 12 notes (Musical Assist is off).'}
+              label={inKeyOnly ? `Rows in key: ${keyName}` : 'Rows: all 12 notes'}
+              tip={inKeyOnly ? `Rows show the notes of ${keyName}${advanced ? '' : ` (${SCALE_MOOD[scale]})`}: Musical Assist is on.` : 'Rows show all 12 notes (Musical Assist is off).'}
               detail="Switch Musical Assist or the key on the keyboard strip."
             />
           </div>
@@ -1345,6 +1349,7 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1 }: PitchLa
             ref={cursorRef}
             type="button"
             data-steps-entry=""
+            data-space-plays=""
             className={styles.cursor}
             style={{ gridRow: cursorRow + 1, gridColumn: cellColumn(cursorCell, spec.perBeat) }}
             aria-label={`Note grid, ${barsWords(page, span)}. ${describe(cursorCell, cursorPitch)}${selCount ? `. ${plural(selCount, 'note')} selected` : ''}`}

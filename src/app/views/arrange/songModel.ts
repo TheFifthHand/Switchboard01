@@ -251,14 +251,22 @@ export function loopPlaces(p: Pick<Project, 'arrangement'>, trackId: Id, clipId:
   return countsOf(p.arrangement.regions).get(`${trackId} ${clipId}`) ?? 0;
 }
 
-/** The badge on a region whose loop plays in several places: "×3" (null: it plays only here). */
+/**
+ * The badge on a region whose loop plays in several places: "Used 3×" (null: it plays only here).
+ * Not a bare "×3", which reads as "repeats three times".
+ */
 export function placesBadge(places: number): string | null {
-  return places > 1 ? `×${places}` : null;
+  return places > 1 ? `Used ${places}×` : null;
 }
 
 /** The same in words: "this loop plays in 3 places". */
 export function placesWords(places: number): string {
   return `this loop plays in ${places} places`;
+}
+
+/** The badge's tooltip: "This loop plays in 3 places". */
+export function placesTip(places: number): string {
+  return `This loop plays in ${places} places`;
 }
 
 /* ------------------------------------------------------------------ */

@@ -144,6 +144,6 @@ export function targetHeading(p: Project, target: SamplerTarget): string {
   if (target.kind === 'clip') return `${name} — plays in ${target.partName} · ${target.sceneName}`;
   const t = p.tracks.find((x) => x.id === target.trackId);
   const users = (t?.clips ?? []).filter((c): c is NonNullable<typeof c> => !!c && !c.sample).map((c) => c.name);
-  if (!users.length) return `${name} — ${target.partName}’s recording (no clip plays it yet)`;
+  if (!users.length) return `${name} — ${target.partName}’s recording (no loop plays it yet)`;
   return `${name} — plays in ${target.partName}: ${users.join(', ')}`;
 }

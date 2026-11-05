@@ -194,7 +194,7 @@ describe('Play view: the cables drawer', () => {
     expect(drawer.getBoundingClientRect().height).toBeLessThan(h0);
     await keysOn(grip, '{End}');
     // Two whole pad rows stay in view above it.
-    const grid = document.querySelector<HTMLElement>('[aria-label^="Clip pads"]')!;
+    const grid = document.querySelector<HTMLElement>('[aria-label^="Loop pads"]')!;
     const g = grid.getBoundingClientRect();
     const rows = [0, 1].map((r) => document.getElementById(`pad-t4-${r}`)!.getBoundingClientRect());
     for (const r of rows) {

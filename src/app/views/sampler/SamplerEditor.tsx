@@ -130,7 +130,7 @@ function SamplePicker(props: { trackId: Id; target: SamplerTarget | null; partOn
   const tip = takeLocked
     ? 'A performance is recording, so the sound can’t change until you stop.'
     : forClip
-      ? `Choose the recording ${clipWords} plays. The part’s other clips keep theirs. Undo brings the previous one back.`
+      ? `Choose the recording ${clipWords} plays. The part’s other loops keep theirs. Undo brings the previous one back.`
       : 'Choose the recording this part plays: a built-in one or one imported into this project. Undo brings the previous one back.';
   return (
     <Select
@@ -317,7 +317,7 @@ function Audition(props: { target: SamplerTarget; sampleId: Id; duration: number
           : !available
             ? 'This recording’s audio is not in this browser, so there is nothing to play.'
             : (blocked ??
-              `Plays the trimmed recording at its own pitch on its root key (${rootName})${clip ? ', as this clip plays it' : ''}. One-shot plays it once; Loop repeats until you press Stop.`)
+              `Plays the trimmed recording at its own pitch on its root key (${rootName})${clip ? ', as this loop plays it' : ''}. One-shot plays it once; Loop repeats until you press Stop.`)
       }
     >
       {playing ? 'Stop' : 'Audition'}
@@ -356,7 +356,7 @@ function TrimFooter(props: { target: SamplerTarget; duration: number }) {
   const lo = Math.min(v.start, v.end);
   const hi = Math.max(v.start, v.end);
   const loop = v.mode === 1;
-  const every = target.kind === 'clip' ? ` It is ${target.partName}’s setting, for every clip on it.` : '';
+  const every = target.kind === 'clip' ? ` It is ${target.partName}’s setting, for every loop on it.` : '';
   return (
     <div className={styles.trimRow}>
       {knob(trackId, 'fadeIn', 'Fade in', { className: styles.fadeIn, tip: (loop ? 'Softens the start of each note.' : 'Softens the start of the region to avoid clicks.') + every })}
@@ -426,7 +426,7 @@ function PlaybackSection(props: { target: SamplerTarget }) {
         <p className={styles.partWide}>
           <Icon name="info" size={14} className={styles.explainIcon} />
           <span>
-            Root is this clip’s own. One-shot or Loop, the knobs below, the fades and Tempo are {target.partName}’s: they apply to every clip on it.
+            Root is this loop’s own. One-shot or Loop, the knobs below, the fades and Tempo are {target.partName}’s: they apply to every loop on it.
           </span>
         </p>
       )}
@@ -451,7 +451,7 @@ function PlaybackSection(props: { target: SamplerTarget }) {
             rootCtl
               ? `The ${rootCtl} macro sets the root note. Remove that mapping in Macros to set it here.`
               : clip
-                ? 'The key that plays this clip’s recording at its original pitch. Other keys play it higher or lower (and faster or slower).'
+                ? 'The key that plays this loop’s recording at its original pitch. Other keys play it higher or lower (and faster or slower).'
                 : 'The key that plays the recording at its original pitch. Other keys play it higher or lower (and faster or slower).'
           }
           onChange={(val) => setTargetValue(target, 'rootNote', Number(val))}
@@ -502,7 +502,7 @@ function TempoSection(props: { target: SamplerTarget; sampleId: Id; duration: nu
   const matches = inRange && Math.abs(targetBpm - v.originalBpm) < 0.05;
   const range = barsRange(regionSeconds);
   const rate = syncRate(v.originalBpm, bpm);
-  const forPart = target.kind === 'clip' ? ` It is ${target.partName}’s setting, for every clip on it.` : '';
+  const forPart = target.kind === 'clip' ? ` It is ${target.partName}’s setting, for every loop on it.` : '';
 
   // Arrow keys step through whole loop lengths (… 1, 2, 4, 8 …); Shift+arrows and typing still reach quarter bars.
   const onBarsKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -650,7 +650,7 @@ function PartSettingsNote(props: { target: SamplerTarget }) {
     <p className={styles.partNote}>
       <Icon name="info" size={14} className={styles.explainIcon} />
       <span>
-        {target.partName}’s settings change how this recording sounds: {what.join(', ')}. They apply to every clip on {target.partName}; set them in Playback and Tempo below.
+        {target.partName}’s settings change how this recording sounds: {what.join(', ')}. They apply to every loop on {target.partName}; set them in Playback and Tempo below.
       </span>
     </p>
   );
@@ -756,7 +756,7 @@ function NoRecording(props: { trackId: Id; info: PartInfo; target: SamplerTarget
         ) : (
           <>
             <strong>{info.name}</strong> plays the {INSTRUMENT_LABEL[info.kind].toLowerCase()} <strong>{info.sound}</strong>. Import a recording or choose a built-in one to turn this part into a sampler.
-            {clips > 0 ? ` Its ${clips === 1 ? 'clip then plays' : `${clips} clips then play`} the recording at ${clips === 1 ? 'its' : 'their'} notes’ pitches${info.kind === 'drums' ? ' (drum hits are very low notes)' : ''}.` : ''} Undo brings {info.sound} back.
+            {clips > 0 ? ` Its ${clips === 1 ? 'loop then plays' : `${clips} loops then play`} the recording at ${clips === 1 ? 'its' : 'their'} notes’ pitches${info.kind === 'drums' ? ' (drum hits are very low notes)' : ''}.` : ''} Undo brings {info.sound} back.
           </>
         )}
       </p>

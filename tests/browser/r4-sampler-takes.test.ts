@@ -123,7 +123,7 @@ describe('Per-clip recordings in the sampler editor (capability-01)', () => {
     // Oh Chops plays the part's recording: the editor shows that, and the picker is for this clip.
     await until(() => editorText().includes('Vocal "Oh" — plays in Vocal: Oh Chops, Long Oh'), 'the part header');
     expect(pickerName()).toBe('Recording for Vocal · Lift');
-    expect(described(picker())).toContain('The part’s other clips keep theirs');
+    expect(described(picker())).toContain('The part’s other loops keep theirs');
     await pick(picker(), 'builtin:bell-hit');
     expect(track('t8').clips[2]?.sample).toEqual({ id: 'builtin:bell-hit', start: 0, end: 1, rootNote: 60 });
     expect(track('t8').clips[3]).toBe(before.clips[3]);
@@ -178,7 +178,7 @@ describe('Per-clip recordings in the sampler editor (capability-01)', () => {
     expect(track('t8').clips[3]!.sample!.rootNote).toBe(64);
     expect((track('t8').instrument as SamplerInstrument).params.rootNote).toBe(partBefore.rootNote);
     // The Playback section says which settings are the clip's and which the part's.
-    expect(editorText()).toContain('Root is this clip’s own.');
+    expect(editorText()).toContain('Root is this loop’s own.');
 
     // Audition plays the clip's own recording (through the engine, as its notes play it) on its root key.
     expect(await session.startAudio()).toBe(true);

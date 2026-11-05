@@ -8,7 +8,8 @@
  *   [ the step grid (drums) or the piano roll (every other part)            ]
  *
  * Double-click a loop, press E with a loop chosen, or use its menu's Edit
- * notes to open it here; opening another loop switches the pane. Every edit
+ * notes to open it here; opening another loop switches the pane. Opened
+ * from the keyboard (E, the menu), focus moves into the grid. Every edit
  * is an undoable command and plays at once (the song re-plans live). The
  * playhead shows where the song is inside the loop while a region of it
  * plays (the region's start and offset taken into account by the
@@ -96,7 +97,7 @@ export function useEditorKeys(): void {
         closeLoopEditor();
         return;
       }
-      if (openLoopEditor(p, id)) setSelection({ ids: [id], focus: id });
+      if (openLoopEditor(p, id, { focus: true })) setSelection({ ids: [id], focus: id });
     };
     document.addEventListener('keydown', onKey);
     // Another project (open, import, a starter): its loops are not this one's.
@@ -133,11 +134,18 @@ export function LoopEditorPane() {
   }, [target, key]);
   if (!target || !key) return null;
   const [trackId, regionId, slot] = key.split('\u0001');
-  return <Pane key={`${trackId}|${target.clipId}`} trackId={trackId} clipId={target.clipId} regionId={regionId} slot={Number(slot)} />;
+  return <Pane key={`${trackId}|${target.clipId}`} trackId={trackId} clipId={target.clipId} regionId={regionId} slot={Number(slot)} focusAsk={target.focus ?? 0} />;
 }
 
-function Pane({ trackId, clipId, regionId, slot }: { trackId: Id; clipId: Id; regionId: Id; slot: number }) {
+function Pane({ trackId, clipId, regionId, slot, focusAsk }: { trackId: Id; clipId: Id; regionId: Id; slot: number; focusAsk: number }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  // Opened from the keyboard (E, a menu's Edit notes): focus goes to the grid, as Play › Steps does; Esc brings it back to the loop.
+  useEffect(() => {
+    if (!focusAsk) return;
+    // After the grid has its final size (the bars shown are measured) and a closing menu has put its focus back.
+    const id = requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>('[data-steps-entry]')?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(id);
+  }, [focusAsk]);
   const clip = useProject((p) => resolveEditor(p, { trackId, clipId, regionId })?.clip ?? null);
   const track = useProject((p) => {
     const t = p.tracks.find((x) => x.id === trackId);
@@ -240,7 +248,7 @@ function Pane({ trackId, clipId, regionId, slot }: { trackId: Id; clipId: Id; re
   const splitTip = !clip
     ? ''
     : padName !== null && uses <= 1
-      ? `${clip.name} is also the clip on the ${padName} pad. Give these bars their own copy, so edits here leave the pad as it is.`
+      ? `${clip.name} is also the loop on the ${padName} pad. Give these bars their own copy, so edits here leave the pad as it is.`
       : `Give these bars their own copy of ${clip.name}, so edits here leave the other places as they are.`;
   const where = padName !== null ? `${also} · also on the ${padName} pad` : also;
 

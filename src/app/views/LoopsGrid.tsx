@@ -206,10 +206,10 @@ function padTip(look: PadLook, replaying: boolean): string {
       if (transport === 'stopped') return 'Starts when you press Play. Tap to start playing now.';
       return transport === 'paused' ? 'Starts at the next bar after the pause. Tap to carry on playing.' : 'Starts at the next bar, in time with the others.';
     case 'recording':
-      return 'Recording notes into this clip.';
+      return 'Recording notes into this loop.';
     default:
-      if (transport === 'paused') return 'Tap to play this clip from the next bar; playback carries on from the pause.';
-      return transport === 'stopped' ? 'Tap to start playing, with this clip.' : 'Tap to play this clip from the next bar, in time with the others. Tap it again to stop it.';
+      if (transport === 'paused') return 'Tap to play this loop from the next bar; playback carries on from the pause.';
+      return transport === 'stopped' ? 'Tap to start playing, with this loop.' : 'Tap to play this loop from the next bar, in time with the others. Tap it again to stop it.';
   }
 }
 const EMPTY_PAD_TIP = 'Tap to make a loop here and open it in Steps. Right-click (or ⋯) for its length, a ready-made beat or Paste.';
@@ -505,7 +505,7 @@ const DROP_CHIP: Partial<Record<DropKind, string>> = { swap: 'Swap', replace: 'R
 
 /** Why a clip cannot go to a part of the other kind, short enough for the lifted pad's label (the notice on drop says it in full). */
 function refusalShort(p: Project, fromTrackId: Id): string {
-  return p.tracks.find((t) => t.id === fromTrackId)?.instrument.kind === 'drums' ? 'Drum clips go to drum parts' : 'Melodic clips go to melodic parts';
+  return p.tracks.find((t) => t.id === fromTrackId)?.instrument.kind === 'drums' ? 'Drum loops go to drum parts' : 'Melodic loops go to melodic parts';
 }
 
 /**
@@ -1477,10 +1477,10 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
   }
   // The spoken state stays "Starts next bar" (a countdown read out every beat would be noise).
   const stateWord = look.caption ?? STATE_SPOKEN[state];
-  const what = clip ? `clip ${clip.name}` : 'empty slot';
+  const what = clip ? `loop ${clip.name}` : 'empty slot';
   const label = clip ? `${col.name}, ${sceneName}: ${clip.name}, ${barsLabel(clip.bars)}. ${stateWord}.${selected ? ' Selected.' : ''}` : `${col.name}, ${sceneName}: empty. Tap for a new loop.${selected ? ' Selected.' : ''}`;
   const moveSpoken =
-    drop === 'source' ? 'Moving this clip.' : drop === 'no' ? 'It cannot go here.' : target === 'swap' ? 'Press Enter to swap the two clips.' : 'Press Enter to drop it here.';
+    drop === 'source' ? 'Moving this loop.' : drop === 'no' ? 'It cannot go here.' : target === 'swap' ? 'Press Enter to swap the two loops.' : 'Press Enter to drop it here.';
   return (
     <div
       className={styles.cell}
@@ -1525,7 +1525,7 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
         />
       </Tooltip>
       {selected && !move && (
-        <Tooltip name={clip ? 'Clip options' : 'New clip or paste'} tip={clip ? 'Rename, length, duplicate, move, copy, paste, clear or delete this clip.' : 'Make a new clip here, or paste a copied one.'} detail={`Right-click any pad for the same menu (or Shift+F10, or . on a focused pad). Keys on a pad: Delete, ${MOD_KEY}C, ${MOD_KEY}V, F2.`}>
+        <Tooltip name={clip ? 'Loop options' : 'New loop or paste'} tip={clip ? 'Rename, length, duplicate, move, copy, paste, clear or delete this loop.' : 'Make a new loop here, or paste a copied one.'} detail={`Right-click any pad for the same menu (or Shift+F10, or . on a focused pad). Keys on a pad: Delete, ${MOD_KEY}C, ${MOD_KEY}V, F2.`}>
           <button
             type="button"
             className={styles.more}
@@ -1698,7 +1698,7 @@ function PartPlayButton({ col, id }: { col: ColumnSummary; id: string }) {
     const queuedOnly = playingSlot === null;
     const stop = () => session.stopTrack(col.id);
     if (transport === 'stopped') {
-      key = { kind: 'skip', icon: 'stop', word: 'Skip', label: `Skip ${col.name} when Play starts`, tip: 'Its lit clip will not start when you press Play.', disabled: false, onClick: stop };
+      key = { kind: 'skip', icon: 'stop', word: 'Skip', label: `Skip ${col.name} when Play starts`, tip: 'Its lit loop will not start when you press Play.', disabled: false, onClick: stop };
     } else if (transport === 'paused' && !queued) {
       // Its clip holds at the pause: nothing plays, so it does not offer Stop; ▶ carries on from the pause.
       const held = col.clips[playingSlot!]?.name;
@@ -1737,16 +1737,16 @@ function PartPlayButton({ col, id }: { col: ColumnSummary; id: string }) {
       kind: 'play',
       icon: 'play',
       word: 'Play',
-      label: clip ? `Play ${col.name}: ${clip.name}` : first < 0 ? `${col.name} has no clips` : `${col.name}: the selected pad is empty`,
+      label: clip ? `Play ${col.name}: ${clip.name}` : first < 0 ? `${col.name} has no loops` : `${col.name}: the selected pad is empty`,
       tip: !clip
         ? first < 0
-          ? 'Add a clip first: press an empty pad.'
-          : `Select one of ${col.name}'s clips first: this plays the selected one.`
+          ? 'Add a loop first: press an empty pad.'
+          : `Select one of ${col.name}'s loops first: this plays the selected one.`
         : transport === 'stopped'
-          ? `Starts playing, with ${clip.name} (the clip selected on this part).`
+          ? `Starts playing, with ${clip.name} (the loop selected on this part).`
           : transport === 'paused'
-            ? `Plays ${clip.name} from the next bar (the clip selected on this part); playback carries on from the pause.`
-            : `Starts ${clip.name} at the next bar (the clip selected on this part).`,
+            ? `Plays ${clip.name} from the next bar (the loop selected on this part); playback carries on from the pause.`
+            : `Starts ${clip.name} at the next bar (the loop selected on this part).`,
       disabled: !clip,
       onClick: () => {
         if (!clip) return;
@@ -1937,13 +1937,13 @@ function PauseKey() {
 
 /** How many parts a scene row plays, in the words Arrange's scene cards use ("4 parts"). */
 export function scenePartsText(n: number): string {
-  return n === 0 ? 'no clips' : n === 1 ? '1 part' : `${n} parts`;
+  return n === 0 ? 'no loops' : n === 1 ? '1 part' : `${n} parts`;
 }
 
 /** The scene button's tip: what "4 parts" means ("4 of 8 parts have a clip in this row …"). */
 function scenePartsTip(n: number, of: number): string {
-  if (n === 0) return `none of the ${of} parts has a clip in this row, so every part stops.`;
-  return `${n} of ${of} parts ${n === 1 ? 'has a clip' : 'have clips'} in this row and start; the others stop.`;
+  if (n === 0) return `none of the ${of} parts has a loop in this row, so every part stops.`;
+  return `${n} of ${of} parts ${n === 1 ? 'has a loop' : 'have loops'} in this row and start; the others stop.`;
 }
 
 /**
@@ -2039,7 +2039,7 @@ function SceneButton(props: {
               ? 'This row is paused here: carry on from the pause, in time.'
               : `Play the ${scene.name} row from the next bar: ${scenePartsTip(count, columns.length)}`
         }
-        hint="Drag it up or down to move the row (its clips move with it). Right-click for its menu."
+        hint="Drag it up or down to move the row (its loops move with it). Right-click for its menu."
       >
         <button
           ref={btnRef}
@@ -2125,14 +2125,14 @@ function PadActions(props: {
       <div className={styles.actions} role="status" data-locked="" data-hint-avoid="">
         <p className={styles.lockLine}>
           <span className={styles.lockDot} aria-hidden="true" />
-          {LOCKED_TEXT}. Pads and scenes still play; stop the take to edit clips.
+          {LOCKED_TEXT}. Pads and scenes still play; stop the take to edit loops.
         </p>
       </div>
     );
   }
   if (move || drag?.kind === 'pad') {
     return (
-      <div className={styles.actions} role="region" aria-label="Moving a clip" data-moving="" data-hint-avoid="">
+      <div className={styles.actions} role="region" aria-label="Moving a loop" data-moving="" data-hint-avoid="">
         <p className={styles.actionsText} aria-live="polite">
           <Icon name="drag" size={14} />
           {move
@@ -2162,7 +2162,7 @@ function PadActions(props: {
     );
   }
   return (
-    <div className={styles.actions} role="group" aria-label={`Selected clip ${info.name}`} data-pad-actions="" data-hint-avoid="">
+    <div className={styles.actions} role="group" aria-label={`Selected loop ${info.name}`} data-pad-actions="" data-hint-avoid="">
       <p className={styles.actionsText}>
         <span className={styles.actionsWhat}>{info.name}</span>
         <span className={styles.actionsWhere}>
@@ -2170,19 +2170,19 @@ function PadActions(props: {
         </span>
       </p>
       <div className={styles.actionKeys}>
-        <Button size="sm" variant="secondary" data-edit-steps="" onClick={() => clipActions.editSteps(trackId, slot)} tip="Edit this clip’s steps or notes.">
+        <Button size="sm" variant="secondary" data-edit-steps="" onClick={() => clipActions.editSteps(trackId, slot)} tip="Edit this loop’s steps or notes.">
           Edit steps
         </Button>
-        <Button size="sm" variant="secondary" icon="duplicate" disabled={info.full} onClick={() => clipActions.duplicate(trackId, slot)} tip={info.full ? `${info.part} has no empty pad left.` : 'Copy this clip into the next empty pad of the part.'}>
+        <Button size="sm" variant="secondary" icon="duplicate" disabled={info.full} onClick={() => clipActions.duplicate(trackId, slot)} tip={info.full ? `${info.part} has no empty pad left.` : 'Copy this loop into the next empty pad of the part.'}>
           Duplicate
         </Button>
-        <Button size="sm" variant="secondary" icon="drag" onClick={() => onMove(at)} tip="Move this clip to another pad with the arrow keys and Enter. You can also drag it.">
+        <Button size="sm" variant="secondary" icon="drag" onClick={() => onMove(at)} tip="Move this loop to another pad with the arrow keys and Enter. You can also drag it.">
           Move…
         </Button>
-        <Button size="sm" variant="secondary" icon="pencil" onClick={() => onRename(at)} tip="Rename this clip (F2 on the pad).">
+        <Button size="sm" variant="secondary" icon="pencil" onClick={() => onRename(at)} tip="Rename this loop (F2 on the pad).">
           Rename
         </Button>
-        <Button size="sm" variant="danger" icon="trash" onClick={() => clipActions.remove(trackId, slot)} tip="Delete this clip. Undo brings it back.">
+        <Button size="sm" variant="danger" icon="trash" onClick={() => clipActions.remove(trackId, slot)} tip="Delete this loop. Undo brings it back.">
           Delete
         </Button>
       </div>
@@ -2393,7 +2393,7 @@ export function LoopsGrid() {
   const startKeyMove = useCallback((from: PadRef) => {
     setMenu(null);
     if (isEditLocked()) {
-      notify('Locked while a performance records. Stop the take to move clips.', 'warn');
+      notify('Locked while a performance records. Stop the take to move loops.', 'warn');
       return;
     }
     selectTrack(from.trackId);
@@ -2622,7 +2622,7 @@ export function LoopsGrid() {
           onKeyDownCapture={onGridKeyCapture}
           onFocus={onPadFocus}
           role="group"
-          aria-label={`Clip pads: ${countWords(columns.length, 'part', 'parts')} by ${countWords(rows, 'scene', 'scenes')}`}
+          aria-label={`Loop pads: ${countWords(columns.length, 'part', 'parts')} by ${countWords(rows, 'scene', 'scenes')}`}
           data-moving={move ? 'keys' : undefined}
           data-locked={locked || undefined}
           style={{ '--rows': rows } as CSSProperties}

@@ -113,7 +113,7 @@ describe('the overview is a grid of hit targets (PLAY-03)', () => {
     for (let v = 0; v < DRUM_VOICES; v++) expect(row(v).getBoundingClientRect().height, `row ${v}`).toBeGreaterThanOrEqual(27.5);
   });
 
-  it('is one Tab stop: arrows move (up and down choose the sound), Space toggles', async () => {
+  it('is one Tab stop: arrows move (up and down choose the sound), Enter toggles (Space stays Play / Pause)', async () => {
     await openSteps();
     const stops = [...gridEl().querySelectorAll<HTMLElement>('[tabindex="0"]')];
     expect(stops).toHaveLength(1);
@@ -126,7 +126,10 @@ describe('the overview is a grid of hit targets (PLAY-03)', () => {
     expect(document.activeElement).toBe(cell(6, 2));
     expect(drumVoiceFor(uiStore.getState(), 't1')).toBe(6);
     const before = hitsOf(6);
+    // r6: Space is the transport's everywhere a pattern is edited; Enter presses the step.
     await press(' ');
+    expect(hitsOf(6)).toEqual(before);
+    await press('{Enter}');
     expect(hitsOf(6)).toEqual([...before, 1].sort((a, b) => a - b));
     expect([...gridEl().querySelectorAll('[tabindex="0"]')]).toEqual([cell(6, 2)]);
   });

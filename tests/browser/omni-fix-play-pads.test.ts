@@ -143,7 +143,7 @@ describe("the selected pad's '⋯'", () => {
       const p = pad('t4', 1);
       p.scrollIntoView({ block: 'center' });
       await settle();
-      const more = button(/^Options for clip/)!;
+      const more = button(/^Options for loop/)!;
       expect(more.closest('[data-pad-cell]')).toBe(p.closest('[data-pad-cell]'));
       const m = more.getBoundingClientRect();
       // A real target, inside the pad.

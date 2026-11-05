@@ -162,7 +162,7 @@ export const project = () => session.store.getState();
 export const track = (id: Id) => project().tracks.find((t) => t.id === id)!;
 export const clipsOf = (id: Id): (Clip | null)[] => track(id).clips;
 export const pad = (trackId: Id, slot: number) => document.getElementById(`pad-${trackId}-${slot}`) as HTMLButtonElement;
-export const grid = () => document.querySelector<HTMLElement>('[aria-label^="Clip pads"]')!;
+export const grid = () => document.querySelector<HTMLElement>('[aria-label^="Loop pads"]')!;
 export const panel = () => document.querySelector<HTMLElement>('section[aria-labelledby="part-title"]')!;
 export const menu = () => document.querySelector<HTMLElement>('[role="menu"]');
 export const notice = () => runtimeStore.getState().notice?.text ?? '';

@@ -8,7 +8,7 @@
  *   the wrong kind of part it is refused in words;
  * - ▶ plays the loop's notes on the part's instrument, timed on the audio
  *   clock, and a second press stops it;
- * - "Make this one different", the "×3" badge, "Put on a pad";
+ * - "Make this one different", the "Used 3×" badge, "Put on a pad";
  * - a row's empty spot: "New empty loop" and "Start from a beat…";
  * - the section menu's Move earlier / Move later;
  * - the empty song's card (library/EmptySong);
@@ -334,7 +334,7 @@ describe('hearing a library loop', () => {
 });
 
 describe('the region menu', () => {
-  it('a loop that plays in 3 places shows ×3; Make this one different gives one region its own copy', async () => {
+  it('a loop that plays in 3 places shows “Used 3×”; Make this one different gives one region its own copy', async () => {
     await openSong(1366, 768);
     const drums = trackId('Drums');
     const clip = project().tracks[0].clips[1]!;
@@ -342,7 +342,7 @@ describe('the region menu', () => {
     await settle();
     for (const id of ['A', 'B', 'C']) {
       expect(regionEl(id).dataset.places).toBe('3');
-      expect(regionEl(id).querySelector('[class*="places"]')!.textContent).toBe('×3');
+      expect(regionEl(id).querySelector('[class*="places"]')!.textContent).toBe('Used 3×');
       expect(regionEl(id).getAttribute('aria-label')).toContain('this loop plays in 3 places');
     }
     await rightClickAt(on('B'));

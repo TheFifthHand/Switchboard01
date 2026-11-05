@@ -237,7 +237,7 @@ describe('Record audio (sampler editor)', () => {
     await until(() => !!m.container.querySelector('[data-phase]'), 'the progress line');
     await until(() => /Recording: bar 1 of 1/.test(m.container.textContent ?? ''), 'the bar counter');
     expect(button(m.container, 'Stop recording')).toBeTruthy();
-    await until(() => /Recorded \d+\.\d s \(1 bar\)\. Recording 1 plays in its own clip on /.test(statusText(m.container)), 'the result', 10000);
+    await until(() => /Recorded \d+\.\d s \(1 bar\)\. Recording 1 plays in its own loop on /.test(statusText(m.container)), 'the result', 10000);
     const meta = session.store.getState().samples.find((s) => s.name === 'Recording 1')!;
     created.push(meta.id);
     expect(meta.duration).toBeCloseTo(1.2, 1);

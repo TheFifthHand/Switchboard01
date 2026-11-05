@@ -11,6 +11,7 @@ import { setTipsEnabled, uiStore } from '../state/uiStore';
 import * as library from '../persistence/library';
 import { BUNDLE_EXTENSION, LEGACY_BUNDLE_EXTENSIONS } from '../persistence/bundle';
 import { session, useProject, useUi } from './instance';
+import { rememberProjectView } from './projectViews';
 import { IDLE_AUTOSAVE_STATE, type AutosaveState } from '../persistence/autosave';
 import { createStore, useStore } from '../state/store';
 import { notify, runtimeStore, setNoticeHistory, useRuntime, withdrawOffer, type NoticeAction } from './runtime';
@@ -494,6 +495,15 @@ export function App({ boot }: { boot: BootInfo }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [welcome]);
 
+  // Each project remembers the view it was last in, so opening it from My projects lands there (projectViews.ts).
+  useEffect(
+    () =>
+      uiStore.subscribe((u, prev) => {
+        if (u.view !== prev.view) rememberProjectView(session.store.getState().id, u.view);
+      }),
+    [],
+  );
+
   // Global shortcuts: Space = Play/Pause, Shift+Space = Stop, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y = undo/redo,
   // Ctrl+S = save now, ? = Help, M = mute / unmute the selected part.
   useEffect(() => {
@@ -565,13 +575,24 @@ export function App({ boot }: { boot: BootInfo }) {
      * ring on a clicked control too.
      */
     const viaKeyboard = new WeakMap<Element, boolean>();
+    /**
+     * The pointer press under way (pointerdown to pointerup). Focus that a
+     * press moves by script (a grid focusing the clicked cell) is a click,
+     * though Chrome shows a focus ring on it when the focus before was also
+     * set by script (right after the Welcome card or a double-click).
+     */
+    let pressing = false;
     const onFocusIn = (e: FocusEvent) => {
-      if (e.target instanceof Element) viaKeyboard.set(e.target, focusVisible(e.target));
+      if (e.target instanceof Element) viaKeyboard.set(e.target, pressing ? false : focusVisible(e.target));
     };
     // Clicking the control that already has focus makes it a clicked control.
     const onPointerDown = (e: PointerEvent) => {
+      pressing = true;
       const active = document.activeElement;
       if (active && e.target instanceof Node && active.contains(e.target)) viaKeyboard.set(active, false);
+    };
+    const onPointerEnd = () => {
+      pressing = false;
     };
     /**
      * Space = Play / Pause and Shift+Space = Stop, wherever focus is: also on
@@ -649,6 +670,10 @@ export function App({ boot }: { boot: BootInfo }) {
     window.addEventListener('keyup', onSpaceUp, true);
     document.addEventListener('focusin', onFocusIn, true);
     document.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointerup', onPointerEnd, true);
+    window.addEventListener('pointercancel', onPointerEnd, true);
+    // A key press is never part of a pointer press (a lost pointerup must not make Tab focus count as a click).
+    window.addEventListener('keydown', onPointerEnd, true);
     window.addEventListener('keydown', onKey);
     window.addEventListener('blur', release);
     document.addEventListener('visibilitychange', onVis);
@@ -671,6 +696,9 @@ export function App({ boot }: { boot: BootInfo }) {
       window.removeEventListener('keyup', onSpaceUp, true);
       document.removeEventListener('focusin', onFocusIn, true);
       document.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('pointerup', onPointerEnd, true);
+      window.removeEventListener('pointercancel', onPointerEnd, true);
+      window.removeEventListener('keydown', onPointerEnd, true);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('blur', release);
       document.removeEventListener('visibilitychange', onVis);

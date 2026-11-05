@@ -147,7 +147,7 @@ describe('Column headers', () => {
     const empty = project().tracks.findIndex((t) => t.clips.every((c) => !c));
     if (empty >= 0) {
       const name = project().tracks[empty].name;
-      expect(button(`${name} has no clips`)!.disabled).toBe(true);
+      expect(button(`${name} has no loops`)!.disabled).toBe(true);
     }
   });
 
@@ -377,7 +377,7 @@ describe('Keyboard move and the pad action bar', () => {
     const r = pad('t4', full).getBoundingClientRect();
     fire(pad('t4', full), new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: r.left + 10, clientY: r.top + 10 }));
     const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
-    for (const text of ['Edit steps', 'Duplicate', 'Move…', 'Rename', 'Delete clip']) expect(menu.textContent).toContain(text);
+    for (const text of ['Edit steps', 'Duplicate', 'Move…', 'Rename', 'Delete loop']) expect(menu.textContent).toContain(text);
   });
 });
 

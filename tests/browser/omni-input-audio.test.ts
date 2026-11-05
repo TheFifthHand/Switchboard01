@@ -190,7 +190,7 @@ describe('Recording a take', () => {
     const before = s.store.getState();
     const res = await c.record('t8');
     expect(res.ok, res.message).toBe(true);
-    expect(res.message).toMatch(/^Recorded 1\.2 s \(1 bar\)\. Recording 1 plays in its own clip on Sampler · .*; other clips keep their recordings\.$/);
+    expect(res.message).toMatch(/^Recorded 1\.2 s \(1 bar\)\. Recording 1 plays in its own loop on Sampler · .*; other loops keep their recordings\.$/);
     const p = s.store.getState();
     expect(p.samples).toHaveLength(1);
     const meta = p.samples[0];
@@ -329,7 +329,7 @@ describe('Recording a take', () => {
     s.stop();
     const r1 = await p1;
     expect(r1.ok, r1.message).toBe(true);
-    expect(r1.message).toMatch(/^Stopped early\. Recorded 1\.\d s \(2 bars\)\. Recording 1 plays in its own clip/);
+    expect(r1.message).toMatch(/^Stopped early\. Recorded 1\.\d s \(2 bars\)\. Recording 1 plays in its own loop/);
     const meta = s.store.getState().samples[0];
     created.push(meta.id);
     expect(meta.duration).toBeGreaterThan(1.3);

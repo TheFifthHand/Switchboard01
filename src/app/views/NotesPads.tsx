@@ -398,7 +398,7 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
                 disabled={writeDisabled}
                 onClick={() => setWriting(true)}
                 aria-describedby={writeDisabled ? `write-why-${trackId}` : undefined}
-                tip="A common chord progression, in the key, written into this part's selected clip."
+                tip="A common chord progression, in the key, written into this part's selected loop."
               >
                 Write a progression…
               </Button>

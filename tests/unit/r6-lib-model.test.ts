@@ -25,7 +25,7 @@ import {
   realizeFor,
   styleChips,
 } from '../../src/app/views/arrange/library/libraryModel';
-import { loopPlaces, partLoops, placesBadge, sceneOfferText, scenePlaces } from '../../src/app/views/arrange/songModel';
+import { loopPlaces, partLoops, placesBadge, placesTip, sceneOfferText, scenePlaces } from '../../src/app/views/arrange/songModel';
 
 const house = (): Project => getStarter('house')!.build();
 const loop = (id: string): LibraryLoop => getLoop(id)!;
@@ -153,13 +153,14 @@ describe('the browser’s tabs and the part’s loops', () => {
 });
 
 describe('loops in several places and where a scene plays', () => {
-  it('counts the places a loop plays, with a “×N” badge from two places on', () => {
+  it('counts the places a loop plays, with a “Used N×” badge from two places on', () => {
     const p = house();
     const r = p.arrangement.regions[0];
     const n = p.arrangement.regions.filter((x) => x.trackId === r.trackId && x.clipId === r.clipId).length;
     expect(loopPlaces(p, r.trackId, r.clipId)).toBe(n);
     expect(placesBadge(1)).toBeNull();
-    expect(placesBadge(3)).toBe('×3');
+    expect(placesBadge(3)).toBe('Used 3×');
+    expect(placesTip(3)).toBe('This loop plays in 3 places');
   });
 
   it('a scene plays where its loops start (Groove: bars 9 and 65), only where the part is free', () => {
