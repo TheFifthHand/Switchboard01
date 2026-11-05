@@ -1,8 +1,9 @@
-# TEST REPORT — Omni Song 2.3
+# TEST REPORT — Omni Song 2.4
 
-_Formerly SWITCHBOARD / 01. Test results and evidence for the 2.3 build: the GarageBand-style song
-(regions on a row per part, schema v4), the in-key keyboard, clearer pad play/stop/pause, and a new
-download that always opens the new version, on top of 2.2. Every requirement of the original brief
+_Formerly SWITCHBOARD / 01. Test results and evidence for the 2.4 build: loops of the song's own
+(schema v5), recording into the song, a loop library, beat presets, five new starters, the loop
+editor under the song, part volume and pan in Song, new export formats and simpler first steps, on
+top of 2.3 (the GarageBand-style song, schema v4). Every requirement of the original brief
 and of the 2.0–2.3 additions is listed with its evidence in
 [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)._
 
@@ -19,6 +20,23 @@ npm run package                       # build, then release/omni-song-<version>.
 ```
 
 ## Results
+
+### 2.4 (round 6, `r6-int`)
+
+Run on a quiet machine (no other test runs) after every round-6 slice, both review fix rounds, the
+wording sweep and the version bump were merged.
+
+| Suite | Files | Tests | Result |
+|-------|-------|-------|--------|
+| Typecheck (`tsc --noEmit`, app + tests) | — | — | clean |
+| Unit (`tests/unit`, Node) | 110 | 1769 | **1767 passed, 2 skipped** (the 2 need PowerShell, which this container no longer has) |
+| Browser (`tests/browser`, real Chromium) | 201 | 1766 | **1763 passed, 3 failed** in the full run (19.0 min). The 3 are hover tests in `r5-pads-pad-action` (2) and `r5-shell-fix` (1); both files pass alone (14/14). The same files failed this way in the 2.3 full run (see below): they depend on the order tests run in, not on round 6 |
+| End-to-end (`e2e`, production build) | 23 | 57 | **57 passed**, one worker, 10.6 min (after the specs followed round 6's intended changes: Performance is an Advanced control, "loop" wording, the new toast place) |
+| Launcher smoke (Node launcher, 2.3.0 zip running, then the 2.4.0 zip, under a path with spaces) | — | — | 2.4 named the running 2.3.0, waited, started on 127.0.0.1:4173 once 2.3 stopped, and served `omni-song-version` 2.4.0, the manifest and the service worker (200). PowerShell was not available in this container, so the `.bat`/PowerShell path was not re-run for 2.4 |
+
+Reviews: a code-correctness review (4 major, 3 minor) and a hands-on review as a GarageBand user
+(3 major, 13 minor) on the merged build; every finding has a regression test
+(`tests/{unit,browser}/r6-fix-*`, `r6-ux-*`).
 
 ### 2.3 (round 5, `r5-int`)
 
