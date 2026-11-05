@@ -73,6 +73,14 @@ export interface RuntimeState {
    * otherwise.
    */
   recordTargetAudible?: boolean;
+  /**
+   * Recording into the song (the Song view's Record): the part, the song bar
+   * the take starts at and the bars it has reached so far (it grows bar by bar
+   * on the audio clock; the Song view draws it as a live "Recording…"
+   * region). Null (or absent) otherwise. The project is written when the take
+   * ends.
+   */
+  songRecording?: { trackId: Id; startBar: number; bars: number } | null;
   /** The project the last starter (Jump In, a new project) replaced on screen; it stays in My projects. Null (or absent): none. */
   starterReplaced?: { id: Id; name: string } | null;
 }
@@ -117,6 +125,7 @@ export const runtimeStore = createStore<RuntimeState>({
   recordStartsAtTick: null,
   recordTargetAudible: true,
   starterReplaced: null,
+  songRecording: null,
 });
 
 export function patchRuntime(partial: Partial<RuntimeState>): void {

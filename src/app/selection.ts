@@ -13,16 +13,22 @@
  * eagerly, so it runs in every view). Pure reads (`defaultSlot`, `targetSlot`)
  * are exported for controls of parts that are not selected (a column's ▶).
  */
+import { clipAtSlot } from '../project/clips';
 import type { Id, Project } from '../project/types';
 import { ensureSelectedSlot, uiStore, type UiState } from '../state/uiStore';
 import { session } from './instance';
 import { runtimeStore, type RuntimeState } from './runtime';
 
-/** The slot a part's controls act on when none is chosen: the clip it plays, else its first clip, else 0. */
+/**
+ * The slot a part's controls act on when none is chosen: the clip it plays
+ * (a song clip too, while the song plays one), else its first clip, else 0.
+ * A chosen slot may be a song slot (project/clips.ts): the note editors open
+ * song clips like pad clips.
+ */
 export function defaultSlot(p: Project, trackId: Id, playing: number | null | undefined): number {
   const t = p.tracks.find((x) => x.id === trackId);
   if (!t) return 0;
-  if (playing != null && t.clips[playing]) return playing;
+  if (playing != null && clipAtSlot(t, playing)) return playing;
   const first = t.clips.findIndex((c) => !!c);
   return first < 0 ? 0 : first;
 }

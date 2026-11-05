@@ -32,6 +32,7 @@ import { audioBufferFromChannels } from '../audio/instruments/sampleBank';
 import { LIMITER_PROCESSOR_NAME, limiterProcessorOptions } from '../audio/worklets/limiter';
 import { encodeMadeAudio } from '../persistence/audioImport';
 import * as db from '../persistence/db';
+import { clipAtSlot, isSongSlot } from '../project/clips';
 import { TICKS_PER_BAR, type ClipBars, type Id } from '../project/types';
 import * as cmd from '../state/commands';
 import { createStore, type Store } from '../state/store';
@@ -900,7 +901,7 @@ export class AudioInputController {
     const slot = chooseSlot(s, trackId);
     const p = s.store.getState();
     const before = p.tracks.find((t) => t.id === trackId);
-    const replaced = before?.clips[slot] ?? null;
+    const replaced = before ? clipAtSlot(before, slot) : null;
     const r = cmd.addRecordedTake(s.store, { trackId, meta: made.meta, slot, bars: clipBars, bpm: take.bpm, clipName: name });
     if (!r.changed) {
       s.bank?.remove(made.meta.id);
@@ -923,6 +924,8 @@ export class AudioInputController {
     let message = `Recorded ${seconds.toFixed(1)} s (${clipBars} bar${clipBars === 1 ? '' : 's'}). ${name} plays in its own clip on ${where}${replaced ? `, replacing “${replaced.name}”` : ''}; ${rest}.`;
     if (frames < take.to - take.from - sr * 0.05) message = `Stopped early. ${message}`;
     if (peak < SILENT_PEAK) message += ' The take is silent: check the input and its level in MIDI & audio.';
+    // Song clips hold notes recorded in the Song view; audio takes keep the pad route there too.
+    if (uiStore.getState().view === 'arrange') message += ' Audio recordings go on the pads, also from the Song view: drag the clip onto the song to place it.';
     done({ ok: true, message }, peak < SILENT_PEAK ? 'warn' : 'info', entry);
   }
 
@@ -950,10 +953,15 @@ export function nextRecordingName(existing: readonly string[]): string {
   return `Recording ${n + 1}`;
 }
 
-/** The part's selected clip slot when it is empty, else its first empty slot, else the selected one (replaced; Undo brings it back). */
+/**
+ * The part's selected clip slot when it is empty, else its first empty slot,
+ * else the selected one (replaced; Undo brings it back). Takes always go on
+ * the pads: with a song clip selected, the first empty pad (else the first).
+ */
 function chooseSlot(s: InputSession, trackId: Id): number {
   const clips = s.store.getState().tracks.find((t) => t.id === trackId)?.clips ?? [];
-  const selected = slotFor(uiStore.getState(), trackId);
+  const chosen = slotFor(uiStore.getState(), trackId);
+  const selected = isSongSlot(chosen) ? 0 : chosen;
   if (!clips[selected]) return selected;
   const empty = clips.findIndex((c) => !c);
   return empty >= 0 ? empty : selected;

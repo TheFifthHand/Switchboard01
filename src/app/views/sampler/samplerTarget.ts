@@ -14,6 +14,7 @@
  * Original BPM) belongs to the part and applies to every clip on it.
  */
 import { builtinSampleInfo } from '../../../content/catalog';
+import { clipAtSlot, isSongSlot } from '../../../project/clips';
 import type { ClipSample, Id, InstrumentKind, Project } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { shallowEqual } from '../../../state/store';
@@ -57,7 +58,7 @@ export function readTarget(p: Project, trackId: Id, slot: number): SamplerTarget
   const t = p.tracks.find((x) => x.id === trackId);
   if (!t) return null;
   const inst = t.instrument;
-  const clip = t.clips[slot] ?? null;
+  const clip = clipAtSlot(t, slot);
   const partSampleId = inst.kind === 'sampler' ? inst.sampleId : null;
   const own = inst.kind === 'sampler' && clip?.sample ? clip.sample : null;
   return {
@@ -65,7 +66,7 @@ export function readTarget(p: Project, trackId: Id, slot: number): SamplerTarget
     kind: own ? 'clip' : 'part',
     slot,
     clipName: clip?.name ?? null,
-    sceneName: p.scenes[slot]?.name ?? `Row ${slot + 1}`,
+    sceneName: isSongSlot(slot) ? 'Song' : (p.scenes[slot]?.name ?? `Row ${slot + 1}`),
     sampleId: own ? own.id : partSampleId,
     partSampleId,
     partName: t.name,
@@ -89,7 +90,8 @@ export function useSamplerTarget(trackId: Id): SamplerTarget | null {
 /** The clip's own recording settings when `target` is a clip, else null. */
 export function clipSampleOf(p: Project, target: Pick<SamplerTarget, 'trackId' | 'slot' | 'kind'>): ClipSample | null {
   if (target.kind !== 'clip') return null;
-  return p.tracks.find((t) => t.id === target.trackId)?.clips[target.slot]?.sample ?? null;
+  const t = p.tracks.find((x) => x.id === target.trackId);
+  return t ? (clipAtSlot(t, target.slot)?.sample ?? null) : null;
 }
 
 /** Ids that a clip's own recording settings replace. */

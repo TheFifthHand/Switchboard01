@@ -53,6 +53,7 @@ import {
   type Track,
 } from '../project/types';
 import { regionEnd, songBars } from '../project/arrangement';
+import { clipAtSlot, isSongSlot, slotOfClip, trackClips } from '../project/clips';
 import type { ClipPhase, LaunchResult, PlayMode, SeqEvent, SongLoop, StartOptions, TrackLaunchState } from './contracts';
 import { MAX_SWING_TICKS, TempoMap, clampBpm, clampSwing, swingWarp } from './clock';
 import { EMPTY_LATCH, arpDivisionTicks, arpGateTicks, arpGridAtOrAfter, arpInput, arpNoteAt, updateLatch, type LatchState } from './arp';
@@ -173,17 +174,42 @@ interface SongPlay {
   loopStart: number;
 }
 
-/** Every clip by part and id, with its slot (one lookup per region instead of a search). */
+/** Every clip (pad and song clips) by part and id, with its slot (one lookup per region instead of a search). */
 function clipIndex(project: Project): Map<string, { clip: Clip; slot: number }> {
   const out = new Map<string, { clip: Clip; slot: number }>();
   for (const t of project.tracks) {
-    t.clips.forEach((clip, slot) => {
+    for (const { clip, slot } of trackClips(t)) {
       // As regionClip: the first slot holding the clip.
-      const key = clip ? `${t.id}\u0000${clip.id}` : '';
-      if (clip && !out.has(key)) out.set(key, { clip, slot });
-    });
+      const key = `${t.id}\u0000${clip.id}`;
+      if (!out.has(key)) out.set(key, { clip, slot });
+    }
   }
   return out;
+}
+
+/**
+ * The clip a part's `Playing` plays. A pad slot is what counts (a clip pasted
+ * over the playing one plays on in its place). Song clips are addressed by
+ * id: their slots shift when one before them goes, so one found elsewhere in
+ * the part's song clips is followed there (`p.slot` is updated).
+ */
+function playedClip(track: Track, p: { slot: number; clipId: Id }): Clip | null {
+  const clip = clipAtSlot(track, p.slot);
+  if (!isSongSlot(p.slot) || clip?.id === p.clipId) return clip;
+  const at = slotOfClip(track, p.clipId);
+  if (at < 0 || !isSongSlot(at)) return clip;
+  p.slot = at;
+  return clipAtSlot(track, at);
+}
+
+/** Did a list of clips change in what the song plays: a clip's slot (id there) or length? */
+function clipListChanged(a: readonly (Clip | null)[] | undefined, b: readonly (Clip | null)[] | undefined): boolean {
+  if (a === b) return false;
+  const x = a ?? [];
+  const y = b ?? [];
+  if (x.length !== y.length) return true;
+  for (let k = 0; k < x.length; k++) if ((x[k]?.id ?? null) !== (y[k]?.id ?? null) || (x[k]?.bars ?? 0) !== (y[k]?.bars ?? 0)) return true;
+  return false;
 }
 
 /** Each part's regions as spans of song ticks, in time order (regions whose clip is gone play nothing). */
@@ -230,9 +256,7 @@ export function songPlayChanged(p: Project, prev: Project): boolean {
       const t = p.tracks[i];
       const u = prev.tracks[i];
       if (t.id !== u.id) return true;
-      if (t.clips === u.clips) continue;
-      if (t.clips.length !== u.clips.length) return true;
-      for (let k = 0; k < t.clips.length; k++) if ((t.clips[k]?.id ?? null) !== (u.clips[k]?.id ?? null) || (t.clips[k]?.bars ?? 0) !== (u.clips[k]?.bars ?? 0)) return true;
+      if (clipListChanged(t.clips, u.clips) || clipListChanged(t.songClips, u.songClips)) return true;
     }
   }
   return p.arrangement.sections !== prev.arrangement.sections && songBars(p) !== songBars(prev);
@@ -637,6 +661,8 @@ interface SongState {
    */
   editAt: number;
   editBefore: Map<Id, SongPlay | null>;
+  /** Recording into the song: it has no end (it plays on past its last bar until stopped). */
+  openEnd: boolean;
 }
 
 /** Events with tick < untilTick and time < floorTime were already handed out (and not cancelled). */
@@ -916,7 +942,7 @@ export class Sequencer {
   }
 
   private resolvePlaying(track: Track, slot: number, startTick: number, since = startTick): Playing | null {
-    const clip = Number.isInteger(slot) ? track.clips[slot] : null;
+    const clip = clipAtSlot(track, slot);
     return clip ? { slot, clipId: clip.id, startTick, since } : null;
   }
 
@@ -924,7 +950,7 @@ export class Sequencer {
     if (tr.clipId !== undefined) {
       // A song change plays its clip wherever it is now (scenes and clips move while the song plays).
       if (tr.clipId === null) return null;
-      const at = track.clips.findIndex((c) => c?.id === tr.clipId);
+      const at = slotOfClip(track, tr.clipId);
       return at < 0 ? null : at;
     }
     const slot = tr.row !== null ? tr.row : tr.slot;
@@ -1036,8 +1062,9 @@ export class Sequencer {
       // The transport tick of the first pass is its song tick: bar lines and beats match the song's.
       const at = clampInt(mode.fromBar, 0, MAX_SONG_BARS) * TICKS_PER_BAR;
       fromTick = at;
-      song = { passes: this.firstPasses(at), parts: songParts(base), laidTo: at - 0.5, last: new Map(), editAt: -Infinity, editBefore: new Map() };
-      endTick = songEndTick(song.passes, base);
+      const openEnd = !!mode.openEnd;
+      song = { passes: this.firstPasses(at), parts: songParts(base), laidTo: at - 0.5, last: new Map(), editAt: -Infinity, editBefore: new Map(), openEnd };
+      endTick = openEnd ? null : songEndTick(song.passes, base);
     }
 
     const from = Number.isFinite(fromTick) ? (fromTick as number) : 0;
@@ -1082,7 +1109,7 @@ export class Sequencer {
       let playing: Playing | null = null;
       if (launcher) {
         const e = launcher.find((x) => x.trackId === track.id);
-        const clip = e?.playing && Number.isInteger(e.playing.slot) ? track.clips[e.playing.slot] : null;
+        const clip = e?.playing ? clipAtSlot(track, e.playing.slot) : null;
         // (Notes of it that started before `from` are not chased: a take or a launcher state plays from its start.)
         if (e?.playing && clip) playing = this.resolvePlaying(track, e.playing.slot, loopStartAtOrBefore(e.playing.startTick, clipLength(clip), from), from);
       } else if (mode.kind === 'live' && rt.playing) {
@@ -1456,7 +1483,7 @@ export class Sequencer {
     const at = nextBarTick(nowTick);
     const result: LaunchResult = { trackId: track.id, slot, atTick: at, atTime: this.clock.timeAt(at) };
     const heard = slot !== null ? this.playingAt(track.id, nowTick) : null;
-    if (heard && heard.slot === slot && track.clips[slot]) {
+    if (heard && heard.slot === slot && clipAtSlot(track, slot)) {
       // Live requests from that bar on are called off, also one applied ahead already (the driver
       // regenerates from it, and the rewind must not bring it back).
       const later = (tr: Transition): boolean => tr.source === 'live' && tr.atTick >= at;
@@ -1582,6 +1609,38 @@ export class Sequencer {
     return this.relayoutSong(time, true);
   }
 
+  /**
+   * Recording into the song while it plays or is paused: `open` lets it play
+   * on past its end until stopped (an end already handed out still stops
+   * it). Closing it again only marks the song as ending: the caller replans
+   * (replanSong), which puts the end back, never behind the playhead.
+   * Returns false outside song playback.
+   */
+  setSongOpenEnd(open: boolean): boolean {
+    const song = this.song;
+    if (!song || this._mode.kind !== 'song' || (!this._playing && !this.pausedState)) return false;
+    song.openEnd = open;
+    if (open && this.endSentTime === null) {
+      this.endTick = null;
+      this._ended = false;
+    }
+    return true;
+  }
+
+  /**
+   * Where transport tick `tick` lies on the song timeline while the song
+   * plays or is paused: the song tick, and the song tick where its pass ends
+   * (the loop's end, after which the song jumps back; Infinity when it plays
+   * on). Before the first pass, ticks count back from its start (a count-in).
+   * Null outside song playback.
+   */
+  songTickAt(tick: number): { tick: number; passEnd: number } | null {
+    const p = this.passAt(tick);
+    if (!p || !Number.isFinite(tick)) return null;
+    const s = p.from + (tick - p.at);
+    return { tick: p.to === Infinity ? s : Math.min(s, p.to), passEnd: p.to };
+  }
+
   /** The loop in song ticks, or null. */
   private loopTicks(): { from: number; to: number } | null {
     return this.loop ? { from: this.loop.fromBar * TICKS_PER_BAR, to: this.loop.toBar * TICKS_PER_BAR } : null;
@@ -1651,7 +1710,7 @@ export class Sequencer {
     const until = Math.max(song.laidTo, from);
     extendPasses(passes, this.loopTicks(), until + TICKS_PER_BAR);
     const changes = songChanges(ids, parts, passes, last, from - 0.5, until, from);
-    let end = songEndTick(passes, project);
+    let end = song.openEnd ? null : songEndTick(passes, project);
     // The end never lies behind the playhead: a song cut short below it ends at the next bar line.
     if (end !== null && end <= pos) end = nextBarTick(pos);
     const key = (c: { trackId: Id; atTick: number; clipId: Id | null; loopStart: number | null; chaseFrom: number | null }) =>
@@ -2301,7 +2360,7 @@ export class Sequencer {
   }
 
   private clipCandidates(track: Track, order: number, p: Playing, a: number, b: number, switchTick: number, mono: boolean, cands: Candidate[]): void {
-    const clip = track.clips[p.slot];
+    const clip = playedClip(track, p);
     if (!clip) return;
     if (clip.id !== p.clipId) p.clipId = clip.id;
     const prep = prepareClip(clip, mono);
@@ -2356,7 +2415,7 @@ export class Sequencer {
   private reviveCandidates(track: Track, order: number, rt: TrackRt, a: number, b: number, switchTick: number, mono: boolean, cands: Candidate[]): void {
     const p = rt.playing!;
     if (!chases(track)) return;
-    const clip = track.clips[p.slot];
+    const clip = playedClip(track, p);
     if (!clip) return;
     const len = clipLength(clip);
     for (const r of rt.revive) {
@@ -2654,7 +2713,7 @@ export class Sequencer {
     let clip: Clip | null = null;
     for (const t of project.tracks) {
       if (t.id !== trackId) continue;
-      clip = t.clips[p.slot] ?? null;
+      clip = playedClip(t, p);
       break;
     }
     if (!clip) return null;
