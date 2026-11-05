@@ -13,6 +13,7 @@
  * it stays in phase), split in two, or removed when nothing is left of them.
  * Positions and lengths are whole bars.
  */
+import { clipAtSlot, slotOfClip } from './clips';
 import { MAX_SONG_BARS, type Clip, type Id, type Project, type SongRegion, type SongSection, type Track } from './types';
 
 /** Makes a fresh id for a region or section that an edit creates (a split's second piece, a copy). */
@@ -37,8 +38,9 @@ function clampInt(v: number, lo: number, hi: number): number {
 export function regionClip(p: Pick<Project, 'tracks'>, r: Pick<SongRegion, 'trackId' | 'clipId'>): { track: Track; clip: Clip; slot: number } | null {
   const track = p.tracks.find((t) => t.id === r.trackId);
   if (!track) return null;
-  const slot = track.clips.findIndex((c) => c?.id === r.clipId);
-  return slot < 0 ? null : { track, clip: track.clips[slot]!, slot };
+  const slot = slotOfClip(track, r.clipId);
+  const clip = clipAtSlot(track, slot);
+  return clip ? { track, clip, slot } : null;
 }
 
 /** Length of a region's clip in bars (1 when the clip is gone). */

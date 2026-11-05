@@ -63,6 +63,14 @@ export const MIGRATIONS: readonly MigrationStep[] = [
       return d;
     },
   },
+  {
+    from: 4,
+    // Song clips are optional, so a version-4 project is already a valid
+    // version-5 project. The bump makes older builds refuse version-5 files
+    // (which may hold loops only the song plays) instead of dropping them.
+    description: 'Allow loops that only the song plays (optional: nothing changes).',
+    migrate: (d) => d,
+  },
 ];
 
 /* ------------------------------------------------------------------ */

@@ -8,7 +8,7 @@
  */
 
 export const PROJECT_SCHEMA = 'switchboard01.project' as const;
-export const PROJECT_VERSION = 4 as const;
+export const PROJECT_VERSION = 5 as const;
 
 export type Id = string;
 
@@ -32,6 +32,10 @@ export const MAX_TRACKS = 8;
 /** Fewest and most scenes (clip rows) a project can have (schema v3). Every part has one clip slot per scene. */
 export const MIN_SCENES = 1;
 export const MAX_SCENES = 8;
+/** Clip slots from here on address a part's song clips: slot SONG_SLOT_BASE + i is songClips[i]. */
+export const SONG_SLOT_BASE = 100;
+/** Most song clips one part can hold. */
+export const MAX_SONG_CLIPS = 96;
 /** Scenes a new project starts with. */
 export const DEFAULT_SCENE_ROWS = 4;
 /**
@@ -214,6 +218,14 @@ export interface Track {
   instrument: Instrument;
   /** One entry per scene (project.scenes.length); null = empty slot. Row index == scene index. */
   clips: (Clip | null)[];
+  /**
+   * Loops only the song plays (schema v5): library loops, recordings made in
+   * the Song view and "make this copy different" copies. They never appear on
+   * the pads. Addressed by song slots (SONG_SLOT_BASE + index, see
+   * project/clips.ts); ids are unique across `clips` and `songClips`. A song
+   * clip no region plays is removed. Absent = none.
+   */
+  songClips?: Clip[];
   mute: boolean;
   solo: boolean;
   /** Locked parts are never modified by Variation. */

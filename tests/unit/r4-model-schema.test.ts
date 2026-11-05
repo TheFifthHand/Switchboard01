@@ -56,7 +56,7 @@ function upgradedSong(old: Record<string, unknown>) {
 
 describe('schema constants', () => {
   it('a project holds 1 to 8 scenes and clips of 1 to 8 bars; new projects start with 4 scenes', () => {
-    expect(PROJECT_VERSION).toBe(4);
+    expect(PROJECT_VERSION).toBe(5);
     expect([MIN_SCENES, MAX_SCENES, DEFAULT_SCENE_ROWS]).toEqual([1, 8, 4]);
     // The deprecated alias still names the default, so older view code compiles.
     expect(SCENE_ROWS).toBe(DEFAULT_SCENE_ROWS);
@@ -85,7 +85,7 @@ describe('migration', () => {
   });
 
   it('every step upgrades one version; the step to 3 changes nothing and the step to 4 only the song', () => {
-    expect(MIGRATIONS.map((m) => m.from)).toEqual([1, 2, 3]);
+    expect(MIGRATIONS.map((m) => m.from)).toEqual([1, 2, 3, 4]);
     const v2 = houseV2();
     const to3 = runMigrations(v2, MIGRATIONS, 3);
     expect(to3.ok && to3.migrated).toBe(true);
