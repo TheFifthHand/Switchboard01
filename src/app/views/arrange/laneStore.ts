@@ -75,6 +75,8 @@ export interface DragView {
   sections?: readonly SongSection[];
   /** The section being dragged (as it would land). */
   section?: SongSection | null;
+  /** A section drag that reorders: the bar where the section goes (a line across the strip and the rows). */
+  insertAt?: number;
   /** The loop range as a ruler drag would set it. */
   range?: BarRange;
   /** A loop from the browser: its part's row lights up; other rows say not here. */

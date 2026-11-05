@@ -17,14 +17,18 @@
  * - the ruler: a click moves the playhead (or the song's start point); a
  *   drag sets the loop range and turns looping on; the band's ends drag, a
  *   click on the band switches the loop;
- * - a section: a click selects its loops, a drag moves it with its music
- *   (Alt or Ctrl copies), its edges resize the label.
+ * - a section: a click selects its loops, a drag moves it to another place
+ *   in the order with its music (the bars between close up, as GarageBand's
+ *   arrangement track does: a teal line shows where it goes); Alt places it
+ *   freely on any bar instead (today's free move), Ctrl (⌘) drops a copy
+ *   there; its edges resize the label.
  *
  * While a gesture runs nothing is written to the project: the drop's result
  * is worked out with the timeline rules (laneGestures) and published to the
  * drag store, which only the overlay draws. The project changes once, at
  * the drop, as one undo step. Escape cancels. Near the timeline's left or
- * right edge the view scrolls by itself.
+ * right edge the view scrolls by itself: gently at first, faster the deeper
+ * the pointer is in the edge, never faster than AUTOSCROLL_BARS_PER_S.
  *
  * Pointer moves are cheap: positions come from the geometry cached when the
  * gesture began (no layout reads), and the overlay is told only when what it
@@ -38,13 +42,15 @@
  * edge or section up, and from then on the browser does not pan. A tap is a
  * click.
  */
-import { regionEnd, type Edge } from '../../../project/arrangement';
+import { clipBarsOf, regionEnd, reorderSection, reorderTarget, type Edge } from '../../../project/arrangement';
 import { TOUCH_HOLD_MS, TOUCH_SLOP_PX } from '../../../ui/components';
 import type { Id, Project, SongRegion } from '../../../project/types';
 import { selectTrack } from '../../../state/uiStore';
 import {
   DRAG_SLOP_PX,
   barsMoved,
+  diffRegions,
+  previewIds,
   copyKey,
   loopDrop,
   offRow,
@@ -61,6 +67,7 @@ import {
 } from './laneGestures';
 import { EMPTY_SELECTION, clickSelect, marqueeSelect, pressSelect, regionsInBox, type LaneSelection } from './laneSelection';
 import { carriedStore, dragStore, rangeStore, selectionStore, setSelection, type DragView } from './laneStore';
+import { reorderSectionTo } from './laneEdits';
 import { addLoop, addScene, moveLoops, moveSectionBy, resizeLoops, resizeSectionBy } from './songActions';
 import { barAt, edgeAt, rowAt, rulerBarAt, xToBar } from './songLayout';
 import { lengthBadge, moveBadge, startBadge } from './songModel';
@@ -158,8 +165,8 @@ interface Active {
   meta: boolean;
   /** What the overlay shows now (its key, so unchanged moves publish nothing). */
   key: string;
-  /** The last preview (committed at the drop). */
-  last: { delta: number; copy: boolean; range?: BarRange; drop?: { bar: number; ok: boolean } } | null;
+  /** The last preview (committed at the drop). `before`: a section reorder (null: to the end). */
+  last: { delta: number; copy: boolean; range?: BarRange; drop?: { bar: number; ok: boolean }; before?: Id | null } | null;
   captured: Element | null;
   /**
    * The view may scroll by itself near its edges: at once for gestures that
@@ -177,8 +184,22 @@ interface Active {
 
 /** Distance from the timeline's left or right edge (px) where a drag starts scrolling the view. */
 export const AUTOSCROLL_EDGE_PX = 36;
-/** Fastest auto-scroll (px per frame) with the pointer at or past the edge. */
-const AUTOSCROLL_MAX_PX = 22;
+/** Fastest auto-scroll (bars per second), with the pointer at or past the edge, once it has eased in. */
+export const AUTOSCROLL_BARS_PER_S = 2;
+/** Time the auto-scroll takes to reach its speed (ms). */
+export const AUTOSCROLL_EASE_MS = 600;
+
+/**
+ * Auto-scroll speed in bars per second (negative: towards the start) for a
+ * pointer `depth` into the edge band (-1..1, ±1 at or past the edge) after
+ * `ms` of scrolling: eased in with the depth (squared) and with time.
+ */
+export function autoScrollSpeed(depth: number, ms: number): number {
+  const d = Math.max(-1, Math.min(1, depth));
+  const t = Math.max(0, Math.min(1, ms / AUTOSCROLL_EASE_MS));
+  const ease = t * t * (3 - 2 * t);
+  return Math.sign(d) * d * d * ease * AUTOSCROLL_BARS_PER_S;
+}
 
 export class LaneController {
   private a: Active | null = null;
@@ -412,7 +433,7 @@ export class LaneController {
           badge = { text: moveBadge(start, copy, n), x: start * ppb, row, align: 'start' };
         } else {
           const m = pv.moved.find((r) => r.id === g.anchor.id) ?? g.anchor;
-          const clipBars = p.tracks.find((t) => t.id === m.trackId)?.clips.find((c) => c?.id === m.clipId)?.bars ?? 1;
+          const clipBars = clipBarsOf(p, m);
           badge = g.edge === 'end' ? { text: lengthBadge(m.bars, clipBars, n), x: regionEnd(m) * ppb, row, align: 'end' } : { text: startBadge(m.start, n), x: m.start * ppb, row, align: 'start' };
         }
         this.publish({ kind: isMove ? 'move' : g.edge, preview: pv, slide: isMove ? pv.delta : undefined, badge, notAllowed: off, touches: pv.touches });
@@ -447,14 +468,41 @@ export class LaneController {
         const delta = barsMoved(dx, ppb);
         const sections = p.arrangement.sections;
         if (g.edge === 'move') {
-          const key = `${delta}|${copy}`;
+          // Ctrl (⌘): a copy placed freely; Alt alone: the section placed freely; neither: reorder.
+          const dup = a.ctrl || a.meta;
+          const free = dup || a.alt;
+          if (!free) {
+            const target = reorderTarget(sections, g.id, delta);
+            const key = `order|${target?.before ?? 'end'}|${target?.same}`;
+            if (key === a.key) return;
+            a.key = key;
+            const s = sections.find((x) => x.id === g.id);
+            if (!target || !s) return;
+            const res = target.same ? null : reorderSection(p, regions, sections, g.id, target.before, previewIds());
+            a.last = { delta: 0, copy: false, before: target.same ? undefined : target.before };
+            const landed = res?.section ?? s;
+            const next = target.before ? sections.find((x) => x.id === target.before) : null;
+            const text = target.same ? 'Drag over another section to move it' : next ? `Move before ${next.name}` : 'Move to the end';
+            const pv: DragPreview | undefined = res ? { regions: res.regions, ...diffRegions(regions, res.regions), moved: res.moved, trimmed: 0, removed: 0, touches: [], delta: res.delta } : undefined;
+            this.publish({
+              kind: 'section',
+              preview: pv,
+              sections: res?.sections ?? [...sections],
+              section: landed,
+              insertAt: res ? landed.start : undefined,
+              touches: [],
+              badge: { text, x: landed.start * ppb, row: 0, align: 'start', top: true },
+            });
+            return;
+          }
+          const key = `free|${delta}|${dup}`;
           if (key === a.key) return;
           a.key = key;
-          const pv = previewSectionMove(p, regions, sections, g.id, delta, copy);
+          const pv = previewSectionMove(p, regions, sections, g.id, delta, dup);
           const d = pv.section ? pv.section.start - (sections.find((s) => s.id === g.id)?.start ?? 0) : 0;
-          a.last = { delta: d, copy };
+          a.last = { delta: d, copy: dup };
           const at = pv.section?.start ?? 0;
-          this.publish({ kind: 'section', preview: pv.regions, slide: pv.regions.delta, sections: pv.sections, section: pv.section, touches: [], badge: pv.section ? { text: moveBadge(at, copy), x: at * ppb, row: 0, align: 'start', top: true } : undefined });
+          this.publish({ kind: 'section', preview: pv.regions, slide: pv.regions.delta, sections: pv.sections, section: pv.section, touches: [], badge: pv.section ? { text: moveBadge(at, dup), x: at * ppb, row: 0, align: 'start', top: true } : undefined });
         } else {
           const key = `${delta}`;
           if (key === a.key) return;
@@ -521,25 +569,45 @@ export class LaneController {
     dragStore.setState(view);
   }
 
-  /** Near the timeline's left or right edge, scroll a little every frame while the drag lasts. */
+  /**
+   * Near the timeline's left or right edge, scroll every frame while the drag
+   * lasts: eased in, and never faster than AUTOSCROLL_BARS_PER_S (see
+   * autoScrollSpeed). Whole pixels are scrolled; what is left over carries on
+   * to the next frame.
+   */
   private autoScroll(): void {
     const a = this.a;
     if (!a || this.raf || a.g.kind === 'ruler' || a.g.kind === 'rangeEdge') return;
-    const step = () => {
+    let since = -1;
+    let then = 0;
+    let carry = 0;
+    const step = (now: number) => {
       this.raf = 0;
       const cur = this.a;
       const sc = this.host.scroller();
       if (!cur || !cur.started || !sc) return;
       if (cur.g.kind === 'carry' && (!cur.armed || !this.overRows(cur.cx, Math.min(cur.box.bottom - 1, Math.max(cur.box.top + 1, cur.cy))))) return;
       const { left, right } = cur.box;
-      let v = 0;
-      if (cur.cx < left + AUTOSCROLL_EDGE_PX) v = -Math.min(1, (left + AUTOSCROLL_EDGE_PX - cur.cx) / AUTOSCROLL_EDGE_PX);
-      else if (cur.cx > right - AUTOSCROLL_EDGE_PX) v = Math.min(1, (cur.cx - (right - AUTOSCROLL_EDGE_PX)) / AUTOSCROLL_EDGE_PX);
-      if (!v) return;
-      const before = sc.scrollLeft;
-      sc.scrollLeft = before + v * AUTOSCROLL_MAX_PX;
-      if (sc.scrollLeft === before) return;
-      this.update();
+      let depth = 0;
+      if (cur.cx < left + AUTOSCROLL_EDGE_PX) depth = -Math.min(1, (left + AUTOSCROLL_EDGE_PX - cur.cx) / AUTOSCROLL_EDGE_PX);
+      else if (cur.cx > right - AUTOSCROLL_EDGE_PX) depth = Math.min(1, (cur.cx - (right - AUTOSCROLL_EDGE_PX)) / AUTOSCROLL_EDGE_PX);
+      if (!depth) return;
+      if (since < 0) {
+        since = now;
+        then = now;
+      }
+      const dt = Math.min(50, Math.max(0, now - then));
+      then = now;
+      carry += (autoScrollSpeed(depth, now - since) * this.host.pxPerBar() * dt) / 1000;
+      const px = Math.trunc(carry);
+      if (px) {
+        carry -= px;
+        const before = sc.scrollLeft;
+        sc.scrollLeft = before + px;
+        // At the end of the timeline: nothing more to scroll.
+        if (Math.round(sc.scrollLeft) === Math.round(before)) return;
+        this.update();
+      }
       this.raf = requestAnimationFrame(step);
     };
     this.raf = requestAnimationFrame(step);
@@ -578,8 +646,9 @@ export class LaneController {
         return;
       case 'section':
         if (!last) return;
-        if (g.edge === 'move') moveSectionBy(g.id, last.delta, last.copy);
-        else resizeSectionBy(g.id, g.edge, last.delta);
+        if (g.edge !== 'move') resizeSectionBy(g.id, g.edge, last.delta);
+        else if (last.before !== undefined) reorderSectionTo(g.id, last.before);
+        else moveSectionBy(g.id, last.delta, last.copy);
         return;
       case 'carry':
         if (!last?.drop?.ok) return;

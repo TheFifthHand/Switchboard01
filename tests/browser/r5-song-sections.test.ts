@@ -1,7 +1,7 @@
 /**
  * Sections in real Chromium: a double-click renames one in place, a click
- * selects the loops that start in it, a drag moves it with its music (one
- * undo step), its edges resize the label only (stopping at the next one), and its menu duplicates it,
+ * selects the loops that start in it, an Alt drag places it freely with its
+ * music (one undo step), its edges resize the label only (stopping at the next one), and its menu duplicates it,
  * deletes it (the label, or with its music) and switches its song moves (the
  * menu shows which are on). Hovering a stretch with no section offers
  * "+ Add section" there.
@@ -76,11 +76,11 @@ describe('sections', () => {
     expect(sel).toEqual(['B', 'C']);
   });
 
-  it('a drag moves it with its music, one undo step', async () => {
+  it('an Alt drag places it freely with its music, one undo step (a plain drag reorders: r6-lane-sections)', async () => {
     await open();
     const before = undoCount();
     const from = centre(sectionEl('S2'), 0.4);
-    await dragTo(from, { x: from.x + 8 * 32, y: from.y });
+    await dragTo(from, { x: from.x + 8 * 32, y: from.y }, { modifiers: 1 });
     expect(sections().find((s) => s.id === 'S2')).toMatchObject({ start: 12, bars: 8 });
     expect(get('B')?.start).toBe(12);
     expect(get('C')?.start).toBe(12);

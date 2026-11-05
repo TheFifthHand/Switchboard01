@@ -377,6 +377,118 @@ export function mergeTouching(p: Pick<Project, 'tracks'>, regions: readonly Song
 }
 
 /* ------------------------------------------------------------------ */
+/* Reordering sections (ripple)                                        */
+/* ------------------------------------------------------------------ */
+
+/** A section moved to another place in the song's order, with everything that plays in it. */
+export interface SectionReorder extends TimeEdit {
+  /** The moved section where it lands. */
+  section: SongSection;
+  /** How far it moved, in bars (negative: earlier). */
+  delta: number;
+  /** The regions that moved with it, as they land. */
+  moved: SongRegion[];
+}
+
+/**
+ * Section `id` moved to just before section `before` (null: after the last
+ * section), like GarageBand's arrangement track: the music under it goes
+ * with it, the bars between where it was and where it goes close up behind
+ * it, nothing is cut and the song keeps its length.
+ *
+ * The time line is cut at three bars: the section's start and end and the
+ * place it goes to. A region crossing one of them is split there first (the
+ * piece after the cut carries on in its clip, so every bar still plays what
+ * it played): the pieces inside the section move with it, the others stay
+ * with the bars they are in. So only the order of the bars changes, never
+ * what plays in them. Pieces of one region that meet again afterwards, in
+ * the same phase, are joined again; separate loops are never joined.
+ *
+ * Null when nothing would change: an unknown section, `before` unknown or
+ * the section itself, or the section already there (just before `before`,
+ * or already the last one for null).
+ */
+export function reorderSection(p: Pick<Project, 'tracks'>, regions: readonly SongRegion[], sections: readonly SongSection[], id: Id, before: Id | null, newId: NewId): SectionReorder | null {
+  const sorted = sortSections(sections);
+  const i = sorted.findIndex((x) => x.id === id);
+  if (i < 0 || before === id) return null;
+  const s = sorted[i];
+  const a = s.start;
+  const b = regionEnd(s);
+  const len = b - a;
+  let target: number;
+  if (before === null) {
+    if (i === sorted.length - 1) return null;
+    target = Math.max(...sorted.filter((x) => x.id !== id).map((x) => regionEnd(x)));
+  } else {
+    const j = sorted.findIndex((x) => x.id === before);
+    if (j < 0 || j === i + 1) return null;
+    target = sorted[j].start;
+  }
+  if (target > a && target < b) return null;
+  // Where a bar goes: the section's bars to the target, the bars between the two close up behind it.
+  const shift = (start: number): number => {
+    if (start >= a && start < b) return target < a ? start - (a - target) : start + (target - b);
+    if (target < a && start >= target && start < a) return start + len;
+    if (target > b && start >= b && start < target) return start - len;
+    return start;
+  };
+  // Cut the regions at the three bars (no region crosses one afterwards); remember which pieces were one region.
+  const root = new Map<Id, Id>();
+  let cut = [...regions];
+  for (const at of [a, b, target]) {
+    const next: SongRegion[] = [];
+    for (const r of cut) {
+      if (at <= r.start || at >= regionEnd(r)) {
+        next.push(r);
+        continue;
+      }
+      const right: SongRegion = { ...r, id: newId(), start: at, bars: regionEnd(r) - at, offset: mod(r.offset + (at - r.start), Math.max(1, clipBarsOf(p, r))) };
+      root.set(right.id, root.get(r.id) ?? r.id);
+      next.push({ ...r, bars: at - r.start }, right);
+    }
+    cut = next;
+  }
+  const shifted = sortRegions(
+    p,
+    cut.map((r) => ({ ...r, start: shift(r.start) })),
+  );
+  // Join pieces of one region that meet again in the same phase. Loops that were apart stay apart.
+  const rootOf = (r: SongRegion) => root.get(r.id) ?? r.id;
+  const out: SongRegion[] = [];
+  for (const r of shifted) {
+    const k = out.findIndex((q) => q.trackId === r.trackId && q.clipId === r.clipId && regionEnd(q) === r.start && rootOf(q) === rootOf(r));
+    if (k >= 0 && mod(out[k].offset + out[k].bars, Math.max(1, clipBarsOf(p, out[k]))) === r.offset) {
+      out[k] = { ...out[k], bars: out[k].bars + r.bars };
+      continue;
+    }
+    out.push(r);
+  }
+  const landed: SongSection = { ...s, start: shift(a) };
+  const secs = sortSections(sorted.map((x) => (x.id === id ? landed : { ...x, start: shift(x.start) })));
+  const moved = out.filter((r) => r.start >= landed.start && r.start < regionEnd(landed));
+  return { regions: sortRegions(p, out), sections: secs, section: landed, delta: landed.start - a, moved };
+}
+
+/**
+ * The section a reorder drag points at: the dragged section's middle, moved
+ * `delta` bars, goes before the first other section whose middle is later
+ * (null: after the last one). `same` is true when that is where the section
+ * already is (dropping changes nothing).
+ */
+export function reorderTarget(sections: readonly SongSection[], id: Id, delta: number): { before: Id | null; same: boolean } | null {
+  const sorted = sortSections(sections);
+  const i = sorted.findIndex((x) => x.id === id);
+  if (i < 0) return null;
+  const s = sorted[i];
+  const mid = s.start + s.bars / 2 + delta;
+  const others = sorted.filter((x) => x.id !== id);
+  const next = others.find((x) => x.start + x.bars / 2 > mid) ?? null;
+  const same = next ? sorted[i + 1]?.id === next.id : i === sorted.length - 1;
+  return { before: next?.id ?? null, same };
+}
+
+/* ------------------------------------------------------------------ */
 /* Scenes as song material                                             */
 /* ------------------------------------------------------------------ */
 

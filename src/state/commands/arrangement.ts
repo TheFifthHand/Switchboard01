@@ -30,6 +30,7 @@ import {
   regionEnd,
   removeRegions as removePure,
   removeTime,
+  reorderSection as reorderPure,
   resizeRegions as resizePure,
   rowBars,
   sceneRegions,
@@ -657,6 +658,47 @@ export function moveSection(store: ProjectStore, id: Id, delta: number, opts: { 
   const verb = opts.copy ? 'Copy' : 'Move';
   const r = commit(store, p, `arrange:${verb} section`, `${verb} ${s.name}`, { regions: res.regions, sections }, opts.gesture);
   return edited(r, { sectionId: landed.id, ids: res.moved.map((x) => x.id), trimmed: res.trimmed, removed: res.removed });
+}
+
+/**
+ * Move a section to just before section `before` (null: after the last
+ * section) with everything that plays in it, like GarageBand's arrangement
+ * track: the bars between close up behind it, nothing is cut and the song
+ * keeps its length (see project reorderSection: loops crossing the moved
+ * bars' edges are split there, so every bar plays what it played).
+ * `sectionId`: the moved section; `ids`: the loops that moved with it.
+ * Nothing changes (and no step) when it is already there. One undo step.
+ */
+export function reorderSection(store: ProjectStore, id: Id, before: Id | null, opts: { display?: string } = {}): SongEditResult & { sectionId?: Id } {
+  const p = store.getState();
+  const s = findSection(p, id);
+  if (!s) return NOT_FOUND('section');
+  const other = before === null ? null : findSection(p, before);
+  if (before !== null && !other) return NOT_FOUND('section');
+  const res = reorderPure(p, p.arrangement.regions, p.arrangement.sections, id, before, newRegionId);
+  if (!res) return { changed: false };
+  const display = opts.display ?? (other ? `Move ${s.name} before ${other.name}` : `Move ${s.name} to the end`);
+  const r = commit(store, p, 'arrange:Move section', display, { regions: res.regions, sections: res.sections });
+  return edited(r, { sectionId: id, ids: res.moved.map((x) => x.id) });
+}
+
+/**
+ * Move a section one place earlier (before the section before it) or later
+ * (after the section after it), with its music, as reorderSection does.
+ * Refused at the first or last place. One undo step ("Move Groove earlier").
+ */
+export function moveSectionStep(store: ProjectStore, id: Id, dir: -1 | 1): SongEditResult & { sectionId?: Id } {
+  const p = store.getState();
+  const sorted = sortSections(p.arrangement.sections);
+  const i = sorted.findIndex((x) => x.id === id);
+  if (i < 0) return NOT_FOUND('section');
+  const s = sorted[i];
+  if (dir < 0) {
+    if (i === 0) return refuse('invalid', `${s.name} is already the first section.`);
+    return reorderSection(store, id, sorted[i - 1].id, { display: `Move ${s.name} earlier` });
+  }
+  if (i === sorted.length - 1) return refuse('invalid', `${s.name} is already the last section.`);
+  return reorderSection(store, id, sorted[i + 2]?.id ?? null, { display: `Move ${s.name} later` });
 }
 
 /**

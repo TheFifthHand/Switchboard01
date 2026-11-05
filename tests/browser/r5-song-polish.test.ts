@@ -12,7 +12,8 @@
  *   section's end grip is not under its ⋯, a narrow loop band shows its sign
  *   (never cut words), a narrow "+ Add section" shows "+" and there is one
  *   after the song's end; a new section opens for its name;
- * - a section drag says "Bar N" / "+ Copy · Bar N" as a loop drag does;
+ * - a section placed freely (Alt drag) says "Bar N", a copy (Ctrl drag)
+ *   "+ Copy · Bar N", as a loop drag does (a plain drag reorders: r6-lane-*);
  * - Use another loop: its chevron at the right, the loop playing now ticked;
  * - Back to Song after Edit notes: the loop selected and focused again;
  * - Shape the song… adds an intro or an ending (unavailable, with the
@@ -253,14 +254,14 @@ describe('hit areas', () => {
 });
 
 describe('drags and menus', () => {
-  it('a section drag says where it lands, and "+ Copy" with Alt', async () => {
+  it('a section placed freely (Alt) says where it lands, and "+ Copy" with Ctrl', async () => {
     await open(16);
     const from = centre(sectionEl('S1'), 0.4);
-    await dragTo(from, { x: from.x + 4 * ppb(), y: from.y }, { release: false });
+    await dragTo(from, { x: from.x + 4 * ppb(), y: from.y }, { release: false, modifiers: 1 });
     const badge = () => [...document.querySelectorAll<HTMLElement>('[role="status"]')].find((e) => /Bar \d+$/.test(e.textContent ?? ''));
     expect(badge()?.textContent).toBe('Bar 5');
     await press('Escape');
-    await dragTo(from, { x: from.x + 64 * ppb(), y: from.y }, { release: false, modifiers: 1 });
+    await dragTo(from, { x: from.x + 64 * ppb(), y: from.y }, { release: false, modifiers: 2 });
     expect(badge()?.textContent).toMatch(/^\+ Copy · Bar \d+$/);
     await press('Escape');
   });

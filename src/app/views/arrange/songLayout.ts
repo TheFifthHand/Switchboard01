@@ -38,13 +38,13 @@ export const SECTIONS_H = 32;
 export const ROW_MIN_PX = 40;
 /** …nor taller than this (a tall window: about 1080 px and up). */
 export const ROW_MAX_PX = 84;
-/** Width of the sticky part headers at the left of the rows. */
-export const HEADER_W = 196;
-/** A narrower header for windows under 1280 px. */
-export const HEADER_W_NARROW = 172;
+/** Width of the sticky part headers at the left of the rows (name, volume and pan, Mute, Solo, ⋯). */
+export const HEADER_W = 256;
+/** A narrower header for a narrow timeline (under 980 px). */
+export const HEADER_W_NARROW = 232;
 
-/** Width of a region's edge grip (px): a press this close to an edge drags the edge. */
-export const EDGE_GRIP_PX = 8;
+/** Width of a region's edge grip (px): a press this close to an edge drags the edge (a near miss still grabs it). */
+export const EDGE_GRIP_PX = 14;
 
 /* ------------------------------------------------------------------ */
 /* Bars and pixels                                                     */
@@ -211,8 +211,8 @@ export function rowAt(y: number, rowH: number): number {
 
 /**
  * Which edge of a region a press `x` px into it (of `width` px) grabs: the
- * outer EDGE_GRIP_PX at either end, less on a narrow region so its middle
- * can still be grabbed to move it.
+ * outer EDGE_GRIP_PX at either end, less on a narrow region (a quarter of
+ * it) so its middle can still be grabbed to move it.
  */
 export function edgeAt(x: number, width: number): 'start' | 'end' | null {
   const grip = Math.min(EDGE_GRIP_PX, Math.max(3, width / 4));

@@ -52,13 +52,13 @@ import { sameRange } from './laneLoop';
 import { neighbour, pruneSelection, selectAll, selectNone } from './laneSelection';
 import { dragStore, hoverStore, ppbStore, rangeStore, selectionStore, setSelection, usePxPerBar, useRange, type DragView } from './laneStore';
 import { readZoom, writeZoom } from './laneSettings';
-import { PartRow, partKeysNav } from './PartRow';
+import { PartRow, partKeysNav, type HeadCol } from './PartRow';
 import { SectionStrip, type SectionStripProps } from './SectionStrip';
 import * as act from './songActions';
 import { LoopPicker, RegionMenu, SectionMenu, type MenuHost } from './SongMenus';
 import { HEADER_W, HEADER_W_NARROW, RULER_H, SECTIONS_H, barAt, fitZoom, followScroll, gridStep, rowHeight, snapBar, timelineBars, zoomScroll, zoomStep } from './songLayout';
 import { rowViews, sameRows } from './songModel';
-import { TimelineRuler } from './TimelineRuler';
+import { TimeMenu, TimelineRuler } from './TimelineRuler';
 import styles from './SongView.module.css';
 
 /** After the person scrolls the timeline, the playhead does not turn its page for this long (ms). */
@@ -80,7 +80,8 @@ export interface TimelineHandle {
 type Menu =
   | { kind: 'region'; id: Id; anchor: MenuAnchor; returnFocus: HTMLElement | null; bar: number | null; viaMore?: boolean }
   | { kind: 'section'; id: Id; anchor: MenuAnchor; returnFocus: HTMLElement | null }
-  | { kind: 'picker'; trackId: Id; bar: number; anchor: MenuAnchor; returnFocus: HTMLElement | null };
+  | { kind: 'picker'; trackId: Id; bar: number; anchor: MenuAnchor; returnFocus: HTMLElement | null }
+  | { kind: 'time'; bar: number; anchor: MenuAnchor; returnFocus: HTMLElement | null };
 
 const selectSongBars = (p: Project) => projectSongBars(p);
 /** How far the timeline is in use: the loops and the section labels (a label past the music still shows). */
@@ -138,7 +139,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   const toasts = useToastsIfAny();
   const [menu, setMenu] = useState<Menu | null>(null);
   const [renaming, setRenaming] = useState<Id | null>(null);
-  const [headTab, setHeadTab] = useState<{ row: number; col: 0 | 1 }>({ row: 0, col: 0 });
+  const [headTab, setHeadTab] = useState<{ row: number; col: HeadCol }>({ row: 0, col: 0 });
 
   // Live values for the controller and the frame loop (no re-render needed to read them).
   const live = useRef({ ppb, rowH, headW, tracks, follow, busy: false, userScrollAt: -Infinity, viewW, bars, songPlaying });
@@ -213,9 +214,12 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
     }
     kept.projectId = projectId;
     kept.focus = null;
+    // A project's zoom is kept from the first visit on (fitted then), so the loops and their edges are where they were left.
     const remembered = readZoom(projectId);
     const p = session.store.getState();
-    ppbStore.setState(remembered ?? fitZoom(projectTimelineBars(p), size.width - headW));
+    const zoom = remembered ?? fitZoom(projectTimelineBars(p), size.width - headW);
+    ppbStore.setState(zoom);
+    if (remembered === null) writeZoom(projectId, zoom);
     if (sc) sc.scrollLeft = 0;
     setSelection({ ids: [], focus: p.arrangement.regions[0]?.id ?? null });
     rangeStore.setState(runtimeStore.getState().songLoop ?? null);
@@ -515,6 +519,13 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   /* Pointer                                                          */
   /* ---------------------------------------------------------------- */
 
+  /** The bars in view now (for a drag's overlay, which draws only around them). */
+  const visibleBars = useCallback((): [number, number] => {
+    const sc = scrollerRef.current;
+    const l = live.current;
+    if (!sc) return [0, l.bars];
+    return [sc.scrollLeft / l.ppb, (sc.scrollLeft + Math.max(0, sc.clientWidth - l.headW)) / l.ppb];
+  }, []);
   const timelineX = (clientX: number) => clientX - (originRef.current?.getBoundingClientRect().left ?? 0);
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -601,6 +612,9 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
       setMenu({ kind: 'section', id: section.dataset.sectionId!, anchor: anchorFromContextEvent(e, section), returnFocus: section });
     } else if (lane) {
       setMenu({ kind: 'picker', trackId: lane.dataset.lane!, bar: barAt(timelineX(e.clientX), live.current.ppb), anchor: { left: e.clientX, top: e.clientY, width: 0, height: 0 }, returnFocus: null });
+    } else {
+      // The ruler: insert bars at the nearest bar line, or remove the marked bars.
+      setMenu({ kind: 'time', bar: snapBar(timelineX(e.clientX), live.current.ppb), anchor: { left: e.clientX, top: e.clientY, width: 0, height: 0 }, returnFocus: null });
     }
   };
 
@@ -740,9 +754,20 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
         say('Playhead at bar 1');
         return;
       case 'menu': {
-        const id = sel.focus ?? ids[0];
+        const id = ids.length ? (sel.focus && ids.includes(sel.focus) ? sel.focus : ids[0]) : t?.closest('[data-region-id]') ? sel.focus : null;
         const el = id ? scrollerRef.current?.querySelector<HTMLElement>(`[data-region-id="${id}"]`) : null;
-        if (!id || !el) return;
+        if (!id || !el) {
+          // No loop chosen: the time menu at the playhead (insert or remove bars).
+          take();
+          noteKeyboardMenu(t ?? rowsRef.current);
+          // At the playhead's head on the ruler while it is in view, else at the top of the rows.
+          const head = headRef.current;
+          const box = scrollerRef.current?.getBoundingClientRect();
+          const hx = head?.getBoundingClientRect().left ?? -1;
+          const inView = !!box && hx >= box.left + live.current.headW && hx <= box.right;
+          setMenu({ kind: 'time', bar: at, anchor: anchorFromElement(inView ? head : rowsRef.current), returnFocus: t instanceof HTMLElement ? t : rowsRef.current });
+          return;
+        }
         take();
         noteKeyboardMenu(el);
         if (!sel.ids.includes(id)) setSelection({ ids: [id], focus: id });
@@ -800,7 +825,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   const menuSection = menu?.kind === 'section' ? sections.find((s) => s.id === menu.id) : undefined;
   const menuTargets = menu?.kind === 'region' ? (selectionStore.getState().ids.includes(menu.id) ? selectionStore.getState().ids : [menu.id]) : [];
 
-  const onFocusKey = useCallback((row: number, col: 0 | 1) => setHeadTab((t) => (t.row === row && t.col === col ? t : { row, col })), []);
+  const onFocusKey = useCallback((row: number, col: HeadCol) => setHeadTab((t) => (t.row === row && t.col === col ? t : { row, col })), []);
   const onRenameDone = useCallback(() => setRenaming(null), []);
   const onRename = useCallback((id: Id) => setRenaming(id), []);
   const onSectionMenu = useCallback((id: Id, trigger: HTMLElement) => {
@@ -841,14 +866,14 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
           </div>
           <div ref={rowsRef} className={styles.rows} role="group" aria-label="The song: a row of loops for each part" aria-describedby="song-keys-help" onKeyDown={onRowsKeyDown} onFocus={onRowsFocus} tabIndex={hasRegions ? -1 : 0}>
             <span id="song-keys-help" hidden>
-              Arrow keys: ↑ ↓ the part above or below, Ctrl+← → the previous or next loop, ← → move the selected loops a bar, Alt+← → change their length. Delete removes, Ctrl+D duplicates, Ctrl+C and Ctrl+V copy and paste at the playhead, Shift+F10 opens a loop’s actions.
+              Arrow keys: ↑ ↓ the part above or below, Ctrl+← → the previous or next loop, ← → move the selected loops a bar, Alt+← → change their length. Delete removes, Ctrl+D duplicates, Ctrl+C and Ctrl+V copy and paste at the playhead, Shift+F10 opens a loop’s actions (with no loop selected: insert or remove bars at the playhead).
             </span>
             {rows.map((r) => (
               <PartRow key={r.id} row={r} anySolo={anySolo} tab={headTab.row === r.index ? headTab.col : headTab.row >= rows.length && r.index === 0 ? 0 : null} onFocusKey={onFocusKey} />
             ))}
           </div>
           <div ref={originRef} className={styles.origin}>
-            <DragOverlay tracks={tracks} />
+            <DragOverlay tracks={tracks} visibleBars={visibleBars} />
             <div ref={plusRef} className={styles.plus} aria-hidden="true">
               +
             </div>
@@ -870,6 +895,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
       {!hasRegions && <EmptyNote hasScenes={hasScenes} />}
       {menu?.kind === 'region' && menuRegion && <RegionMenu region={menuRegion} targets={menuTargets} clickedBar={menu.bar} anchor={menu.anchor} returnFocus={menu.returnFocus} ignore={menu.viaMore ? moreRef.current : null} host={menuHost} onClose={() => setMenu(null)} />}
       {menu?.kind === 'section' && menuSection && <SectionMenu section={menuSection} anchor={menu.anchor} returnFocus={menu.returnFocus} host={menuHost} onClose={() => setMenu(null)} />}
+      {menu?.kind === 'time' && <TimeMenu bar={menu.bar} range={range} anchor={menu.anchor} returnFocus={menu.returnFocus} onClose={() => setMenu(null)} />}
       {menu?.kind === 'picker' && <LoopPicker trackId={menu.trackId} bar={menu.bar} anchor={menu.anchor} returnFocus={menu.returnFocus} onClose={() => setMenu(null)} />}
     </div>
   );
@@ -905,7 +931,7 @@ function sameNewSection(a: DragView['newSection'] | null, b: DragView['newSectio
 }
 
 /** The sections strip, with the sections a section drag would leave (and a scene drop's new section) while one runs. */
-function SectionsLayer(props: Omit<SectionStripProps, 'dragged' | 'newSection'>) {
+function SectionsLayer(props: Omit<SectionStripProps, 'dragged' | 'newSection' | 'insertAt'>) {
   const sectionDrag = useStore(dragStore, (d) => (d?.kind === 'section' ? d : null));
   const newSection = useStore(dragStore, (d) => (d?.kind === 'drop' ? (d.newSection ?? null) : null), sameNewSection);
   return (
@@ -914,6 +940,7 @@ function SectionsLayer(props: Omit<SectionStripProps, 'dragged' | 'newSection'>)
       sections={sectionDrag?.sections ?? props.sections}
       dragged={sectionDrag?.section ?? null}
       newSection={newSection}
+      insertAt={sectionDrag?.insertAt ?? null}
     />
   );
 }

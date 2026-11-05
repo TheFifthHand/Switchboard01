@@ -504,15 +504,26 @@
   /* Opaque: the loops scroll under the header. */
   background: linear-gradient(90deg, var(--teal-wash), transparent 60%), var(--surface-hi);
 }
+/* Name, then its instrument (or its state in words) on the same line; volume and pan under them. */
+.partBody {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
 .partNameLine {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  align-items: baseline;
+  gap: 5px;
   min-width: 0;
+  line-height: 15px;
 }
 .partCurrent {
   display: inline-flex;
   flex: none;
+  align-self: center;
   color: var(--teal-ink);
 }
 .partNum {
@@ -526,30 +537,22 @@
   color: #fff;
   font: var(--fw-semibold) var(--fs-2xs) / 1 var(--font-mono);
 }
-.partText {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-  line-height: 14px;
-}
-/* Names and sounds cut at a word where they must ("Hand…", never "Hand Percuss"), the whole name in the tooltip. */
+/* Names and sounds end in an ellipsis where they must; the whole name is in the tooltip. */
 .partName,
 .partSound {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
-  line-clamp: 1;
   overflow: hidden;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .partName {
+  flex: 0 1 auto;
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
   color: var(--ink);
 }
 .partSound {
+  flex: 1 1 0;
+  min-width: 24px;
   font-size: var(--fs-2xs);
   color: var(--ink-3);
 }
@@ -561,10 +564,134 @@
   color: var(--amber-ink);
   font-weight: var(--fw-semibold);
 }
+
+/* Volume (a slider in dB over a thin meter) and pan (a small dial), as on the part's Mix strip. */
+.partControls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.levelStack {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+.level {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+.levelTrack {
+  position: relative;
+  display: block;
+  height: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--shell-hi);
+  overflow: hidden;
+  cursor: ew-resize;
+  outline: none;
+  /* A finger swipe scrolls the song; a finger that rests first drags the slider. */
+  touch-action: pan-x pan-y;
+  user-select: none;
+}
+.levelTrack:hover {
+  border-color: var(--ink-3);
+}
+.levelTrack:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.levelFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--pos) * 100%);
+  background: hsl(var(--h) 22% 74%);
+  pointer-events: none;
+}
+.levelCap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--pos) * 100% - 1px);
+  width: 2px;
+  background: var(--ink-2);
+  pointer-events: none;
+}
+/* The value on a chip of its own, at the end away from the cap, so the cap stays in sight. */
+.levelValue {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  bottom: 1px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--shell-hi);
+  font: var(--fw-medium) var(--fs-2xs) / 12px var(--font-mono);
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.levelTrack[data-side='right'] .levelValue {
+  left: auto;
+  right: 1px;
+}
+.level[data-readonly] .levelTrack,
+.level[data-disabled] .levelTrack {
+  cursor: default;
+}
+.level[data-readonly] .levelValue {
+  color: var(--teal-ink);
+}
+.level[data-disabled] .levelTrack {
+  opacity: 0.5;
+}
+.levelEntry {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--teal);
+  border-radius: 4px;
+  background: var(--shell-hi);
+  font: var(--fw-medium) var(--fs-2xs) / 14px var(--font-mono);
+  color: var(--ink);
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.levelEntry[data-invalid] {
+  border-color: var(--coral);
+}
+.partMeter {
+  display: block;
+}
+/* The pan dial: small, its name in its tooltip and for screen readers (as the transport's Master). */
+.partHead .partPan[data-size] {
+  --dial: 22px;
+  --w: 24px;
+}
+.partPan [role='slider'] {
+  padding: 0;
+}
+.partPan [role='slider'] > :nth-child(2) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .partKeys {
   display: inline-flex;
   gap: 2px;
   flex: none;
+}
+.partKey[data-kind='more'] {
+  width: 22px;
 }
 .partKey {
   display: grid;
@@ -766,12 +893,16 @@
     display: none;
   }
 }
-/* The edge grips: an 8 px band at each end (less on a narrow region), with a visible grip on hover. */
+/*
+ * The edge grips: a 14 px band at each end (a quarter of a narrow region, so its middle still moves
+ * it). On hover a handle shows where the grip is: a short bar, and a light band over the grip under
+ * the pointer.
+ */
 .grip {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: min(8px, max(3px, 25%));
+  width: min(14px, max(3px, 25%));
   cursor: ew-resize;
 }
 .grip[data-edge='start'] {
@@ -783,23 +914,73 @@
 .grip::after {
   content: '';
   position: absolute;
-  top: 30%;
-  bottom: 30%;
-  width: 2px;
-  border-radius: 1px;
-  background: hsl(var(--h) 34% 36%);
+  top: 25%;
+  bottom: 25%;
+  width: 3px;
+  border-radius: 2px;
+  background: hsl(var(--h) 34% 32%);
   opacity: 0;
   transition: opacity var(--t-fast) var(--ease);
 }
 .grip[data-edge='start']::after {
-  left: 2px;
+  left: 3px;
 }
 .grip[data-edge='end']::after {
-  right: 2px;
+  right: 3px;
 }
-.region:hover .grip::after,
+.region:hover .grip::after {
+  opacity: 0.7;
+}
+.grip:hover {
+  background: hsl(var(--h) 40% 40% / 0.14);
+}
 .grip:hover::after {
-  opacity: 0.85;
+  opacity: 1;
+}
+
+/*
+ * Record writing into the song: a coral region growing from the bar the take began, above the loops
+ * on the row, with the word (colour is never alone).
+ */
+.recRegion {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: calc(var(--s) * var(--ppb) * 1px + 1px);
+  width: max(3px, calc(var(--b) * var(--ppb) * 1px - 2px));
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--coral-key);
+  border-radius: 6px;
+  background: repeating-linear-gradient(135deg, rgba(220, 95, 71, 0.22) 0 6px, rgba(220, 95, 71, 0.3) 6px 12px), var(--shell-hi);
+  color: var(--coral-ink);
+  overflow: hidden;
+  pointer-events: none;
+}
+.recDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 3px;
+  border-radius: 50%;
+  background: var(--coral);
+  animation: recPulse 1s ease-in-out infinite alternate;
+}
+.recText {
+  position: sticky;
+  left: calc(var(--head-w) + 4px);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  line-height: 14px;
+  white-space: nowrap;
+}
+@keyframes recPulse {
+  to {
+    opacity: 0.35;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -887,6 +1068,19 @@
 }
 .badge[data-no] {
   background: var(--coral-key);
+}
+/* Where a reordered section goes: a teal line over the sections and down the rows. */
+.insertLine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--s) * var(--ppb) * 1px - 2px);
+  width: 4px;
+  border-radius: 2px;
+  background: var(--teal);
+  box-shadow: 0 0 6px var(--teal-glow);
+  z-index: 4;
+  pointer-events: none;
 }
 .marquee {
   position: absolute;
@@ -1034,6 +1228,15 @@
   font-family: var(--font-ui);
   font-size: var(--fs-xs);
   line-height: 1.35;
+  color: var(--ink-3);
+}
+.timeMenu {
+  min-width: 240px;
+  max-width: min(300px, calc(100vw - 16px));
+}
+.timeMenuNote {
+  margin: 4px 12px 10px;
+  font-size: var(--fs-sm);
   color: var(--ink-3);
 }
 .picker {
@@ -1306,7 +1509,8 @@
   .region[data-slide] {
     transition: none;
   }
-  .touch {
+  .touch,
+  .recDot {
     animation: none;
   }
 }

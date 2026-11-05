@@ -3,7 +3,9 @@
  * labelled bar over its bars, with icons for its song moves (fades, filter
  * rise, echo throw). A click selects the loops that start in it, a
  * double-click (or F2) renames it in place, its edges resize the label, a
- * drag moves it with its music (laneController); right-click, the ⋯ that
+ * drag moves it to another place in the order with its music (a teal line
+ * shows where; Alt places it freely, see laneController), Alt+← and Alt+→
+ * move it one place earlier or later; right-click, the ⋯ that
  * shows near its end under the pointer (clear of the edge grip), or
  * Shift+F10 opens its actions. Hovering a stretch of the song no section
  * covers, or the bars after the song, offers "+ Add section" there (just "+"
@@ -19,6 +21,7 @@ import { MAX_SECTION_NAME, type Id, type SongMoveKind, type SongSection } from '
 import { MoreIcon, isMenuKey } from '../ClipMenu';
 import { LaneIcon, type LaneIconName } from './laneIcons';
 import { useSelectedSections } from './laneStore';
+import { moveSectionStepNow } from './laneEdits';
 import { addSectionAt, renameSectionTo } from './songActions';
 import { sectionLabel } from './songModel';
 import styles from './SongView.module.css';
@@ -76,6 +79,8 @@ export interface SectionStripProps {
   dragged: SongSection | null;
   /** A scene card would add this section. */
   newSection: { start: number; bars: number; name: string } | null;
+  /** A section drag that reorders: where the section goes (a teal line). */
+  insertAt?: number | null;
   renaming: Id | null;
   onRenameDone(): void;
   onMenu(id: Id, trigger: HTMLElement): void;
@@ -85,7 +90,7 @@ export interface SectionStripProps {
 /** Bars an "+ Add section" after the song (or its last section) offers. */
 export const AFTER_END_BARS = 8;
 
-export const SectionStrip = memo(function SectionStrip({ sections, songBars, dragged, newSection, renaming, onRenameDone, onMenu, onRename }: SectionStripProps) {
+export const SectionStrip = memo(function SectionStrip({ sections, songBars, dragged, newSection, insertAt, renaming, onRenameDone, onMenu, onRename }: SectionStripProps) {
   const [tabId, setTabId] = useState<Id | null>(null);
   const selected = useSelectedSections();
   // The section under the pointer shows a ⋯ at its end (its actions, as a right-click opens them).
@@ -110,6 +115,14 @@ export const SectionStrip = memo(function SectionStrip({ sections, songBars, dra
       onRename(s.id);
       return;
     }
+    // Alt+← →: the section one place earlier or later, with its music (keyboard focus stays on it).
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      e.stopPropagation();
+      const el = e.currentTarget;
+      if (moveSectionStepNow(s.id, e.key === 'ArrowLeft' ? -1 : 1)?.changed) requestAnimationFrame(() => (el.isConnected ? el : el.parentElement?.querySelector<HTMLElement>(`[data-section-id="${s.id}"]`))?.focus({ preventScroll: true }));
+      return;
+    }
     const i = sections.findIndex((x) => x.id === s.id);
     const to = e.key === 'ArrowRight' ? sections[i + 1] : e.key === 'ArrowLeft' ? sections[i - 1] : e.key === 'Home' ? sections[0] : e.key === 'End' ? sections[sections.length - 1] : undefined;
     if (!to || e.altKey || e.ctrlKey || e.metaKey) return;
@@ -118,7 +131,7 @@ export const SectionStrip = memo(function SectionStrip({ sections, songBars, dra
     (e.currentTarget.parentElement?.querySelector(`[data-section-id="${to.id}"]`) as HTMLElement | null)?.focus();
   };
   return (
-    <div className={styles.sections} data-sections="" data-space-plays="" role="group" aria-label="Sections of the song (← → move between them, F2 renames, Shift+F10 for actions)">
+    <div className={styles.sections} data-sections="" data-space-plays="" role="group" aria-label="Sections of the song (← → move between them, Alt+← → move one earlier or later, F2 renames, Shift+F10 for actions)">
       {sections.map((s) => {
         const isDragged = dragged?.id === s.id;
         const moves = s.moves ?? [];
@@ -177,6 +190,7 @@ export const SectionStrip = memo(function SectionStrip({ sections, songBars, dra
           <MoreIcon size={12} />
         </button>
       )}
+      {insertAt !== undefined && insertAt !== null && <span className={styles.insertLine} style={{ '--s': insertAt } as CSSProperties} aria-hidden="true" />}
       {newSection && (
         <div className={styles.section} data-new="" aria-hidden="true" style={{ '--s': newSection.start, '--b': newSection.bars } as CSSProperties}>
           <span className={styles.sectionName}>{newSection.name}</span>
