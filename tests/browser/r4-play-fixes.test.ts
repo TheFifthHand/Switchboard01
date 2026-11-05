@@ -55,7 +55,9 @@ describe('keyboard focus stays in view (M2)', () => {
     } else {
       const transport = document.querySelector<HTMLElement>('header[aria-label="Transport"]')!;
       const abs = pad('t1', 0).getBoundingClientRect().top + window.scrollY;
-      act(() => window.scrollTo(0, abs - transport.getBoundingClientRect().height + 40));
+      // A plain scroll, not wrapped in act(): on Chrome 153 the wrapped call left React's act queue open,
+      // so every later test's render waited in it and the app never appeared.
+      window.scrollTo(0, abs - transport.getBoundingClientRect().height + 40);
     }
     await act(async () => {
       await new Promise((r) => requestAnimationFrame(r));
