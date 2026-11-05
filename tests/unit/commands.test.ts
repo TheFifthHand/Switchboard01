@@ -416,7 +416,7 @@ describe('moving and copying clips between pads', () => {
     expect(moveClip(store, 't3', 0, 't3', 3)).toMatchObject({ changed: true, swapped: false });
     expect(names(store, 2)).toEqual([null, 'Bass B', null, 'Bass A']);
     expect(store.getState().tracks[2].clips[3]!.id).toBe(id);
-    expect(store.undoLabel()).toBe('Move clip');
+    expect(store.undoLabel()).toBe('Move loop');
     // Bass to chords: both melodic.
     expect(moveClip(store, 't3', 3, 't4', 0).changed).toBe(true);
     expect(store.getState().tracks[3].clips[0]!.id).toBe(id);
@@ -432,7 +432,7 @@ describe('moving and copying clips between pads', () => {
     const store = withClips();
     expect(moveClip(store, 't3', 0, 't3', 1)).toMatchObject({ changed: true, swapped: true });
     expect(names(store, 2)).toEqual(['Bass B', 'Bass A', null, null]);
-    expect(store.undoLabel()).toBe('Swap clips');
+    expect(store.undoLabel()).toBe('Swap loops');
     expect(moveClip(store, 't3', 1, 't4', 2)).toMatchObject({ swapped: true });
     expect(names(store, 2)).toEqual(['Bass B', 'Chords', null, null]);
     expect(names(store, 3)).toEqual([null, null, 'Bass A', null]);
@@ -454,7 +454,7 @@ describe('moving and copying clips between pads', () => {
     expect(copy.notes[0].id).not.toBe(src.notes[0].id);
     expect(copyClipTo(store, 't3', 0, 't4', 2)).toMatchObject({ changed: true, replaced: true });
     expect(names(store, 3)).toEqual([null, null, 'Bass A', null]);
-    expect(store.undoLabel()).toBe('Copy clip');
+    expect(store.undoLabel()).toBe('Copy loop');
     store.undo();
     expect(names(store, 3)).toEqual([null, null, 'Chords', null]);
     expect(names(store, 2)).toEqual(['Bass A', 'Bass B', 'Bass A', null]);

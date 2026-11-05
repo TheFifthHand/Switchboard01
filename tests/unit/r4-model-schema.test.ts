@@ -142,7 +142,7 @@ describe('scenes: 1 to 8 per project, one clip slot per scene on every part', ()
     mismatch.tracks[3].clips.pop();
     const r = validateProject(mismatch);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.errors).toContain('Part 4 has 5 clip slots but the project has 6 scenes: every part needs one slot per scene.');
+    if (!r.ok) expect(r.errors).toContain('Part 4 has 5 pads but the project has 6 scenes: every part needs one pad per scene.');
   });
 });
 
@@ -163,7 +163,7 @@ describe('clips of up to 8 bars', () => {
     bad.tracks[3].clips[0].bars = 9;
     const refused = validateProject(bad);
     expect(refused.ok).toBe(false);
-    if (!refused.ok) expect(refused.errors).toContain('A clip has an invalid length (clips are 1 to 8 bars).');
+    if (!refused.ok) expect(refused.errors).toContain('A loop has an invalid length (loops are 1 to 8 bars).');
     expect(sanitizeClip({ id: 'c', name: 'x', bars: 9, notes: [] }, 'poly').clip).toBeNull();
   });
 });
@@ -192,7 +192,7 @@ describe('a clip that plays its own recording (Clip.sample)', () => {
     expect(r.project.tracks[7].clips[0]!.sample).toBeUndefined();
     expect(r.project.tracks[7].clips[1]!.sample).toBeUndefined();
     expect(r.project.tracks[7].clips[0]!.notes).toHaveLength(1);
-    expect(r.warnings).toContain('A clip referred to a recording that is not in the project; it plays its part’s recording instead. (2 times)');
+    expect(r.warnings).toContain('A loop referred to a recording that is not in the project; it plays its part’s recording instead. (2 times)');
   });
 
   it('repairs a region that is not valid and a root note out of range', () => {

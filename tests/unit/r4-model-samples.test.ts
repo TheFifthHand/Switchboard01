@@ -114,7 +114,7 @@ describe('an imported recording becomes its own clip', () => {
     expect(vocal(p).instrument).toEqual(t.instrument);
     expect(vocal(p).clips.slice(2)).toEqual(t.clips.slice(2));
     expect(p.samples.map((s) => s.id)).toEqual(['smp_loop']);
-    expect(store.undoLabel()).toBe('Import recording as a clip');
+    expect(store.undoLabel()).toBe('Import recording as a loop');
     valid(p);
     store.undo();
     expect(store.getState().samples).toEqual([]);
@@ -139,7 +139,7 @@ describe('an imported recording becomes its own clip', () => {
     for (let i = 0; i < 4; i++) p.tracks[7].clips[i] = createClip(`C${i}`, 1);
     const store = new ProjectStore(p);
     const r = importRecordingAsClip(store, 't8', 'builtin:bell-hit', { durationSeconds: 2 });
-    expect(r).toMatchObject({ changed: false, reason: 'occupied', message: 'No empty pad on Vocal: delete or move a clip first.' });
+    expect(r).toMatchObject({ changed: false, reason: 'occupied', message: 'No empty pad on Vocal: delete or move a loop first.' });
     expect(store.getState()).toBe(p);
     expect(importRecordingAsClip(store, 't8', 'smp_nope', { durationSeconds: 2 })).toMatchObject({ changed: false, reason: 'invalid' });
   });
@@ -159,7 +159,7 @@ describe('usage counts clips', () => {
     const p = store.getState();
     expect(sampleUsage(p, 'smp_take1')).toEqual({ tracks: [], clips: [{ trackId: t.id, slot: 0, clipId: vocal(p).clips[0]!.id }], performances: [] });
     expect(clipSampleIds(p)).toEqual(new Set(['smp_take1']));
-    expect(removeSampleMeta(store, 'smp_take1')).toMatchObject({ changed: false, reason: 'in-use', message: 'This recording plays in a clip (Recording 1 on Vocal). Delete that clip or give it another recording first.' });
+    expect(removeSampleMeta(store, 'smp_take1')).toMatchObject({ changed: false, reason: 'in-use', message: 'This recording plays in a loop (Recording 1 on Vocal). Delete that loop or give it another recording first.' });
   });
 
   it('a new version of a clip’s own recording replaces it in that clip; the old one leaves once unused', () => {
@@ -243,9 +243,9 @@ describe('a clip’s own recording: region, root and which recording', () => {
     setClipSampleRegion(store, id, 0, { start: 0.1 }, 'drag-1');
     setClipSampleRegion(store, id, 0, { start: 0.2, end: 0.8 }, 'drag-1');
     expect(store.historySize().undo).toBe(undo + 1);
-    expect(store.undoLabel()).toBe('Trim clip recording');
+    expect(store.undoLabel()).toBe('Trim loop recording');
     setClipSampleRegion(store, id, 0, { rootNote: 64 });
-    expect(store.undoLabel()).toBe('Change clip root note');
+    expect(store.undoLabel()).toBe('Change loop root note');
     expect(vocal(store.getState()).clips[0]!.sample).toEqual({ id: 'smp_take1', start: 0.2, end: 0.8, rootNote: 64 });
   });
 
@@ -264,7 +264,7 @@ describe('a clip’s own recording: region, root and which recording', () => {
   it('gives a clip another recording, starts one from the part’s, and goes back to the part’s with null', () => {
     const { store, id } = setup();
     setClipSampleRegion(store, id, 0, { id: 'builtin:bell-hit' });
-    expect(store.undoLabel()).toBe('Change clip recording');
+    expect(store.undoLabel()).toBe('Change loop recording');
     expect(vocal(store.getState()).clips[0]!.sample!.id).toBe('builtin:bell-hit');
     // Oh Chops plays the part's recording; it can get its own, starting from the part's.
     setClipSampleRegion(store, id, 2, { start: 0.5 });

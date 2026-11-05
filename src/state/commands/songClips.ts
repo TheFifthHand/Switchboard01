@@ -153,7 +153,7 @@ export function makeLoopUnique(store: ProjectStore, regionId: Id): CommandResult
   const region = p.arrangement.regions.find((r) => r.id === regionId);
   if (!region) return NOT_FOUND('loop');
   const rc = regionClip(p, region);
-  if (!rc) return NOT_FOUND('clip');
+  if (!rc) return NOT_FOUND('loop');
   if (isSongSlot(rc.slot) && loopUse(p, region.trackId, region.clipId) <= 1) {
     return refuse('invalid', 'Only this loop plays these notes already: changing it changes nothing else in the song.');
   }
@@ -178,17 +178,17 @@ export function copyLoopToPad(store: ProjectStore, trackId: Id, slot: number, ro
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
-  if (!isSongSlot(slot)) return refuse('invalid', 'That clip is already on a pad.');
+  if (!isSongSlot(slot)) return refuse('invalid', 'That loop is already on a pad.');
   const clip = clipAtSlot(t, slot);
   if (!clip) return NOT_FOUND('loop');
   let to: number;
   if (row !== undefined) {
     if (!isSlot(row, t)) return refuse('invalid', 'There is no pad there.');
-    if (t.clips[row]) return refuse('occupied', 'That pad already has a clip: choose an empty pad.');
+    if (t.clips[row]) return refuse('occupied', 'That pad already has a loop: choose an empty pad.');
     to = row;
   } else {
     to = t.clips.findIndex((c) => c === null);
-    if (to < 0) return refuse('occupied', `All ${t.clips.length} pads of ${partName(p, trackId)} are full: delete or move a clip first.`);
+    if (to < 0) return refuse('occupied', `All ${t.clips.length} pads of ${partName(p, trackId)} are full: delete or move a loop first.`);
   }
   const copy = cloneClipWithNewIds(clip);
   const r = run(store, 'clip:Copy loop to a pad', (d) => {

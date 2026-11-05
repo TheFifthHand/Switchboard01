@@ -314,7 +314,7 @@ function validateNote(raw: unknown, clipTicks: number, range: PitchRange, ids: S
   }
   const { tick, pitch, velocity, duration } = raw;
   if (!isNum(tick) || tick < 0 || tick >= clipTicks) {
-    issues.warn('Removed a note outside its clip.');
+    issues.warn('Removed a note outside its loop.');
     return null;
   }
   if (!isNum(pitch) || !isNum(velocity) || !isNum(duration)) {
@@ -356,46 +356,46 @@ const ROOT_NOTE_SPEC = specById(SAMPLER_PARAMS, 'rootNote')!;
  */
 function validateClipSample(raw: unknown, sampleIds: ReadonlySet<Id> | null, issues: Issues): ClipSample | null {
   if (!isObj(raw) || typeof raw.id !== 'string') {
-    issues.warn('Removed a damaged recording reference from a clip (it plays its part’s recording).');
+    issues.warn('Removed a damaged recording reference from a loop (it plays its part’s recording).');
     return null;
   }
   const id = raw.id;
   const wellFormed = id.startsWith('builtin:') ? BUILTIN_SAMPLES.some((b) => b.id === id) : isSimpleId(id);
   if (!wellFormed || (sampleIds !== null && !knownSampleId(id, sampleIds))) {
-    issues.warn('A clip referred to a recording that is not in the project; it plays its part’s recording instead.');
+    issues.warn('A loop referred to a recording that is not in the project; it plays its part’s recording instead.');
     return null;
   }
   let start = isNum(raw.start) ? clamp(raw.start, 0, 1) : NaN;
   let end = isNum(raw.end) ? clamp(raw.end, 0, 1) : NaN;
   if (!(start < end)) {
-    issues.warn('Reset a clip’s recording region that was not valid (it plays the whole recording).');
+    issues.warn('Reset a loop’s recording region that was not valid (it plays the whole recording).');
     start = 0;
     end = 1;
-  } else if (start !== raw.start || end !== raw.end) issues.warn('Adjusted a clip’s recording region.');
+  } else if (start !== raw.start || end !== raw.end) issues.warn('Adjusted a loop’s recording region.');
   return { id, start, end, rootNote: specNum(raw.rootNote, ROOT_NOTE_SPEC, issues) };
 }
 
 function validateClipInner(raw: unknown, range: PitchRange, clipIds: Set<Id>, sampleIds: ReadonlySet<Id> | null, issues: Issues): Clip | null {
   if (!isObj(raw)) {
-    issues.error('A clip is damaged.');
+    issues.error('A loop is damaged.');
     return null;
   }
   const bars = raw.bars;
   if (!isNum(bars) || !Number.isInteger(bars) || bars < 1 || bars > MAX_CLIP_BARS) {
-    issues.error(`A clip has an invalid length (clips are 1 to ${MAX_CLIP_BARS} bars).`);
+    issues.error(`A loop has an invalid length (loops are 1 to ${MAX_CLIP_BARS} bars).`);
     return null;
   }
   if (!Array.isArray(raw.notes)) {
-    issues.error('A clip has no note list.');
+    issues.error('A loop has no note list.');
     return null;
   }
   if (raw.notes.length > VALIDATION_LIMITS.maxNotesPerClip) {
-    issues.error(`A clip has more than ${VALIDATION_LIMITS.maxNotesPerClip} notes.`);
+    issues.error(`A loop has more than ${VALIDATION_LIMITS.maxNotesPerClip} notes.`);
     return null;
   }
   let id = raw.id;
   if (!isId(id) || clipIds.has(id)) {
-    issues.warn('Gave a clip a new id.');
+    issues.warn('Gave a loop a new id.');
     id = uid('clip');
   }
   clipIds.add(id as string);
@@ -406,13 +406,13 @@ function validateClipInner(raw: unknown, range: PitchRange, clipIds: Set<Id>, sa
     const note = validateNote(n, ticks, range, noteIds, issues);
     if (note) notes.push(note);
   }
-  const clip: Clip = { id: id as string, name: text(raw.name, 'Clip', issues, 'clip name', 60), bars: bars as ClipBars, notes };
+  const clip: Clip = { id: id as string, name: text(raw.name, 'Loop', issues, 'loop name', 60), bars: bars as ClipBars, notes };
   if (raw.variation !== undefined) {
     const v = raw.variation;
     if (isObj(v) && isNum(v.seed) && isNum(v.generation) && Number.isInteger(v.generation) && v.generation >= 0) {
       clip.variation = { seed: v.seed, generation: v.generation } satisfies VariationInfo;
     } else {
-      issues.warn('Removed damaged Variation information from a clip.');
+      issues.warn('Removed damaged Variation information from a loop.');
     }
   }
   if (raw.sample !== undefined) {
@@ -435,7 +435,7 @@ export function sanitizeClip(raw: unknown, kind: InstrumentKind, sampleIds?: Rea
     const clip = validateClipInner(raw, playableRange(kind), new Set(), sampleIds ?? null, issues);
     return { clip: issues.failed ? null : clip, warnings: [...issues.errors, ...issues.warnings()] };
   } catch {
-    return { clip: null, warnings: ['The clip could not be read.'] };
+    return { clip: null, warnings: ['The loop could not be read.'] };
   }
 }
 
@@ -654,11 +654,11 @@ function validateTrack(raw: unknown, index: number, rows: number | null, trackId
   const instrument = validateInstrument(raw.instrument, sampleIds, issues);
   if (!instrument) return null;
   if (!Array.isArray(raw.clips) || raw.clips.length < MIN_SCENES || raw.clips.length > MAX_SCENES) {
-    issues.error(`Part ${index + 1} must have ${MIN_SCENES} to ${MAX_SCENES} clip slots, one per scene.`);
+    issues.error(`Part ${index + 1} must have ${MIN_SCENES} to ${MAX_SCENES} pads, one per scene.`);
     return null;
   }
   if (rows !== null && raw.clips.length !== rows) {
-    issues.error(`Part ${index + 1} has ${raw.clips.length} clip slots but the project has ${rows} scenes: every part needs one slot per scene.`);
+    issues.error(`Part ${index + 1} has ${raw.clips.length} pads but the project has ${rows} scenes: every part needs one pad per scene.`);
     return null;
   }
   const clips: (Clip | null)[] = [];
@@ -987,7 +987,7 @@ function validateRegion(raw: unknown, tracks: readonly Track[], ids: Set<Id>, is
   if (!track || !clip) {
     // Said as it is: a loop plays a clip of its own part only.
     const elsewhere = typeof raw.clipId === 'string' && tracks.some((t) => t !== track && clipById(t, raw.clipId as string) !== null);
-    issues.warn(!track ? 'Removed a loop of a part that does not exist from the song.' : elsewhere ? 'Removed a loop that played another part’s clip.' : 'Removed a loop whose clip no longer exists from the song.');
+    issues.warn(!track ? 'Removed a loop of a part that does not exist from the song.' : elsewhere ? 'Removed a loop from the song that played another part’s music.' : 'Removed a loop from the song: the music it played no longer exists.');
     return null;
   }
   const span = songSpan(raw.start, raw.bars, 'a loop', issues);
@@ -1002,7 +1002,7 @@ function validateRegion(raw: unknown, tracks: readonly Track[], ids: Set<Id>, is
   // Bars cut off the start: the music stays where it was, later in the clip.
   const want = Math.round(raw.offset) + span.cut;
   const offset = ((want % clip.bars) + clip.bars) % clip.bars;
-  if (offset !== raw.offset && span.cut === 0) issues.warn('Adjusted where a loop starts in its clip.');
+  if (offset !== raw.offset && span.cut === 0) issues.warn('Adjusted where a loop starts in its music.');
   let id = raw.id;
   if (!isId(id) || ids.has(id)) {
     issues.warn('Gave a loop in the song a new id.');

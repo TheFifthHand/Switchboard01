@@ -29,9 +29,9 @@ describe('clips of 1 to 8 bars', () => {
     expect([0, 9, 2.5].some(isClipBars)).toBe(false);
     const store = new ProjectStore(createProject({ now: 0 }));
     expect(createClip(store, 't1', 0, 8).changed).toBe(true);
-    expect(createClip(store, 't1', 1, 9 as never)).toMatchObject({ changed: false, message: 'Clips are 1 to 8 bars.' });
+    expect(createClip(store, 't1', 1, 9 as never)).toMatchObject({ changed: false, message: 'Loops are 1 to 8 bars.' });
     expect(setClipBars(store, 't1', 0, 6).changed).toBe(true);
-    expect(setClipBars(store, 't1', 0, 9 as never)).toMatchObject({ changed: false, message: 'Clips are 1 to 8 bars.' });
+    expect(setClipBars(store, 't1', 0, 9 as never)).toMatchObject({ changed: false, message: 'Loops are 1 to 8 bars.' });
     // A slot the part does not have is refused.
     expect(createClip(store, 't1', 5, 1).changed).toBe(false);
   });
@@ -41,7 +41,7 @@ describe('clips of 1 to 8 bars', () => {
     duplicateClipContent(store, 't4', 0);
     expect(store.getState().tracks[3].clips[0]!.bars).toBe(8);
     expect(ticksOf(store)).toEqual([0, 400, 1536, 1936]);
-    expect(duplicateClipContent(store, 't4', 0)).toMatchObject({ changed: false, reason: 'limit', message: `Clips can be at most ${MAX_CLIP_BARS} bars long.` });
+    expect(duplicateClipContent(store, 't4', 0)).toMatchObject({ changed: false, reason: 'limit', message: `Loops can be at most ${MAX_CLIP_BARS} bars long.` });
   });
 });
 
@@ -54,7 +54,7 @@ describe('repeat a clip to a length (PLAY-22)', () => {
     expect(c.bars).toBe(8);
     expect(ticksOf(store)).toEqual([0, 480, 1068, 1152, 1632, 2220, 2304, 2784]);
     expect(new Set(c.notes.map((x) => x.id)).size).toBe(c.notes.length);
-    expect(store.undoLabel()).toBe('Repeat clip to 8 bars');
+    expect(store.undoLabel()).toBe('Repeat loop to 8 bars');
     const r = validateProject(JSON.parse(JSON.stringify(store.getState())));
     expect(r.ok && r.warnings).toEqual([]);
     store.undo();

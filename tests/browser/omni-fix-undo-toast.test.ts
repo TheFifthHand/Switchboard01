@@ -2,7 +2,7 @@
  * An undo toast belongs to the edit it describes. "Moved …" [Undo] undoes the
  * move, and only while the move is the newest edit: after Ctrl+Z, another edit
  * or another project, that toast is gone (it never undoes something else).
- * Undo and Redo say what they did ("Undid: Move clip" [Redo], "Redid: …"
+ * Undo and Redo say what they did ("Undid: Move loop" [Redo], "Redid: …"
  * [Undo]), tied the same way.
  */
 import { act, createElement as h } from 'react';
@@ -70,7 +70,7 @@ describe('Undo toasts', () => {
     act(() => void ctrlZ());
     await actFrame();
     t = only();
-    expect(t.text).toContain('Undid: Move clip');
+    expect(t.text).toContain('Undid: Move loop');
     expect(t.button?.textContent).toBe('Redo');
     expect(clipAt(m.trackId, 0)?.name).toBe(m.name);
     expect(session.store.getState().bpm).toBe(133);
@@ -80,12 +80,12 @@ describe('Undo toasts', () => {
     await actFrame();
     expect(clipAt(m.trackId, m.to)?.name).toBe(m.name);
     t = only();
-    expect(t.text).toContain('Redid: Move clip');
+    expect(t.text).toContain('Redid: Move loop');
     expect(t.button?.textContent).toBe('Undo');
     press(t.button);
     await actFrame();
     expect(clipAt(m.trackId, 0)?.name).toBe(m.name);
-    expect(only().text).toContain('Undid: Move clip');
+    expect(only().text).toContain('Undid: Move loop');
     // The earlier edit is untouched by all of it.
     expect(session.store.getState().bpm).toBe(133);
   });
@@ -123,6 +123,6 @@ describe('Undo toasts', () => {
     expect(clipAt(m.trackId, 0)?.name).toBe(m.name);
     expect(clipAt(m.trackId, m.to)).toBeNull();
     expect(session.store.getState().bpm).toBe(128);
-    expect(only().text).toContain('Undid: Move clip');
+    expect(only().text).toContain('Undid: Move loop');
   });
 });

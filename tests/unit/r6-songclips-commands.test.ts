@@ -290,7 +290,7 @@ describe('copyLoopToPad', () => {
     expect(cmd.copyLoopToPad(store, 't3', a.slot!, 3)).toMatchObject({ changed: true, slot: 3 });
     expectRefused(store, () => cmd.copyLoopToPad(store, 't3', a.slot!, 0), 'occupied');
     expectRefused(store, () => cmd.copyLoopToPad(store, 't3', a.slot!), 'occupied');
-    expect(cmd.copyLoopToPad(store, 't3', a.slot!).message).toBe('All 4 pads of Bass are full: delete or move a clip first.');
+    expect(cmd.copyLoopToPad(store, 't3', a.slot!).message).toBe('All 4 pads of Bass are full: delete or move a loop first.');
     expectRefused(store, () => cmd.copyLoopToPad(store, 't3', 0), 'invalid');
     expectRefused(store, () => cmd.copyLoopToPad(store, 't3', a.slot! + 1), 'not-found');
     store.undo();

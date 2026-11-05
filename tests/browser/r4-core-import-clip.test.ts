@@ -99,7 +99,7 @@ describe('Import a recording as a clip (shape-05)', () => {
     const before = s.store.getState();
     const stored = new Set(await db.listSampleIds());
     const r3 = await s.importSample(wavFile('Loop 4.wav', 2), 't8');
-    expect(r3).toEqual({ ok: false, message: 'No empty pad on Sampler: delete or move a clip first.' });
+    expect(r3).toEqual({ ok: false, message: 'No empty pad on Sampler: delete or move a loop first.' });
     expect(s.store.getState()).toBe(before);
     // The file stored for it went again.
     await new Promise((r) => setTimeout(r, 50));
