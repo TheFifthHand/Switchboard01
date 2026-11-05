@@ -2,14 +2,16 @@
  * INSTRUMENT column: every synthesis parameter of the selected part.
  *
  * - Bass / poly synths: parameters grouped by what they do — Tones,
- *   Unison, FM, Noise, Pitch & movement, Filter, Envelope, Output (anything
- *   unlisted lands in "More"). A group whose main control is at zero says
- *   "Off" and which control turns it on, so its other knobs never look
- *   broken.
+ *   Unison, FM, Noise, Pitch & movement, Vibrato, Filter, Envelope, Output
+ *   (anything unlisted lands in "More"). A group whose main control is off
+ *   says "Off" and which control turns it on, and its other knobs are
+ *   dimmed with that reason in their tip (ParamSpec.gate), so they never
+ *   look broken.
  * - Drum kits: kit-wide parameters plus a 16-voice table with tune, decay,
  *   level and pan per voice and an audition button.
  * - Samplers: the sampler editor (recording, waveform trim, playback, tempo).
- * Parameters a macro moves are read-only and badged with the macro name.
+ * Parameters a big knob (macro) moves are read-only: a chain mark beside the
+ * dial, a teal arc over the span it sweeps, and the big knob's name in the tip.
  */
 import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Button, Icon, Knob, Panel, Tooltip } from '../../../ui/components';
@@ -32,30 +34,38 @@ import styles from './InstrumentColumn.module.css';
 interface Section {
   title: string;
   params: readonly string[];
-  /** The group does nothing while this control sits at `off`; the header then says so. */
-  gate?: { param: string; off: number; hint: string };
+  /**
+   * The group does nothing while this control is off (`when` as ParamGate:
+   * 'above' `value`, or 'nonzero'); the header then says "Off: <hint>" and
+   * the group's other knobs are dimmed with `reason`.
+   */
+  gate?: { param: string; when: 'above' | 'nonzero'; value?: number; hint: string; reason: string };
 }
 
 type SectionKind = 'bass' | 'poly' | 'drums';
 
+const FM_GATE: NonNullable<Section['gate']> = { param: 'fmAmount', when: 'above', hint: 'turn up FM Amount', reason: 'Does nothing while FM Amount is at 0.' };
+const SWEEP_GATE: NonNullable<Section['gate']> = { param: 'pitchEnv', when: 'nonzero', hint: 'set a Pitch Sweep', reason: 'Does nothing while Pitch Sweep is at 0.' };
+
 const SYNTH_SECTIONS: Record<SectionKind, readonly Section[]> = {
   bass: [
     { title: 'Tones', params: ['wave', 'octave', 'sub', 'subWave', 'unisonDetune', 'glide'] },
-    { title: 'FM', params: ['fmAmount', 'fmRatio', 'fmDecay'], gate: { param: 'fmAmount', off: 0, hint: 'turn up FM Amount' } },
-    { title: 'Pitch Sweep', params: ['pitchEnv', 'pitchDecay'], gate: { param: 'pitchEnv', off: 0, hint: 'set a Pitch Sweep' } },
+    { title: 'FM', params: ['fmAmount', 'fmRatio', 'fmDecay'], gate: FM_GATE },
+    { title: 'Pitch Sweep', params: ['pitchEnv', 'pitchDecay'], gate: SWEEP_GATE },
     { title: 'Filter', params: ['cutoff', 'resonance', 'envAmount', 'filterDecay'] },
     { title: 'Envelope', params: ['attack', 'decay', 'sustain', 'release'] },
     { title: 'Output', params: ['drive', 'velocity', 'level'] },
   ],
   poly: [
     { title: 'Tones', params: ['osc1Wave', 'osc2Wave', 'osc2Semi', 'detune', 'osc2Level'] },
-    { title: 'Unison', params: ['unison', 'unisonDetune', 'width'] },
-    { title: 'FM', params: ['fmAmount', 'fmRatio', 'fmDecay'], gate: { param: 'fmAmount', off: 0, hint: 'turn up FM Amount' } },
-    { title: 'Noise', params: ['noise', 'noiseColor'], gate: { param: 'noise', off: 0, hint: 'turn up Noise' } },
-    { title: 'Pitch & movement', params: ['pitchEnv', 'pitchDecay', 'vibrato', 'vibratoRate', 'drift'] },
+    { title: 'Unison', params: ['unison', 'unisonDetune'], gate: { param: 'unison', when: 'above', value: 1, hint: 'raise Unison above 1', reason: 'Does nothing until Unison is above 1.' } },
+    { title: 'FM', params: ['fmAmount', 'fmRatio', 'fmDecay'], gate: FM_GATE },
+    { title: 'Noise', params: ['noise', 'noiseColor'], gate: { param: 'noise', when: 'above', hint: 'turn up Noise', reason: 'Does nothing while Noise is at 0.' } },
+    { title: 'Pitch & movement', params: ['pitchEnv', 'pitchDecay', 'drift'] },
+    { title: 'Vibrato', params: ['vibrato', 'vibratoRate'], gate: { param: 'vibrato', when: 'above', hint: 'turn up Vibrato', reason: 'Does nothing while Vibrato is at 0.' } },
     { title: 'Filter', params: ['cutoff', 'resonance', 'filterEnv', 'filterDecay'] },
     { title: 'Envelope', params: ['attack', 'decay', 'sustain', 'release'] },
-    { title: 'Output', params: ['velocity', 'level'] },
+    { title: 'Output', params: ['width', 'velocity', 'level'] },
   ],
   drums: [{ title: 'Whole kit', params: ['tune', 'decay', 'cutoff', 'velocity', 'level'] }],
 };
@@ -77,7 +87,9 @@ function sectionsFor(kind: SectionKind): ResolvedSection[] {
       const spec = specById(all, id);
       if (!spec) return [];
       used.add(id);
-      return [spec];
+      // The group's other knobs act only while its main control is on: dimmed with the reason meanwhile.
+      const g = s.gate;
+      return [g && id !== g.param && !spec.gate ? { ...spec, gate: { param: g.param, when: g.when, value: g.value, reason: g.reason } } : spec];
     }),
   }));
   const rest = all.filter((s) => !used.has(s.id));
@@ -93,12 +105,13 @@ const SECTIONS: Record<SectionKind, ResolvedSection[]> = {
 
 /**
  * A kit's Level resets (double-click) to the level that matches the kit to
- * the synth parts, not to 0 dB, which would make the drums 10+ dB louder.
+ * the synth parts (its home, paramHomeFor), not to 0 dB, which would make the
+ * drums 10+ dB louder; the tip says why.
  */
 function kitLevelSpec(spec: ParamSpec, kitId: string): ParamSpec {
   const matched = kitInfo(kitId)?.level;
   if (matched === undefined) return spec;
-  return { ...spec, default: matched, detail: `Output trim. The default, ${matched} dB, matches this kit to the other sounds.` };
+  return { ...spec, detail: `Output trim. ${matched} dB matches this kit to the other sounds.` };
 }
 
 function ParamSections(props: { trackId: Id; kind: SectionKind; kitId?: string }) {
@@ -130,12 +143,13 @@ function ParamSections(props: { trackId: Id; kind: SectionKind; kitId?: string }
   );
 }
 
-/** "Off: turn up FM Amount" while a group's main control is at its off value. */
+/** "Off: turn up FM Amount" while a group's main control is off. */
 function GateState(props: { trackId: Id; gate: NonNullable<Section['gate']> }) {
   const { trackId, gate } = props;
   const off = useProject((p) => {
     const v = effectiveValue(p, moduleId.inst(trackId), gate.param) ?? p.tracks.find((t) => t.id === trackId)?.instrument.params[gate.param];
-    return v === undefined || v === gate.off;
+    if (v === undefined) return true;
+    return gate.when === 'nonzero' ? v === 0 : v <= (gate.value ?? 0);
   });
   if (!off) return null;
   return <span className={styles.sectionState}>Off: {gate.hint}</span>;
@@ -305,6 +319,8 @@ function sameHeader(a: Header | null, b: Header | null): boolean {
 function ChangeSound(props: { trackId: Id; sound: string }) {
   const { trackId, sound } = props;
   const [open, setOpen] = useState(false);
+  // A part switch closes the sound browser (it was opened for the part left).
+  useEffect(() => setOpen(false), [trackId]);
   return (
     <>
       <Button

@@ -1,7 +1,9 @@
 /**
  * Factories for well-formed project data. Every project always has exactly
- * MAX_TRACKS (8) tracks and SCENE_ROWS (4) scenes, and a complete default
- * patch so a fresh project is never silent because of routing.
+ * MAX_TRACKS (8) tracks; a new one has DEFAULT_SCENE_ROWS (4) scenes (a
+ * project may hold MIN_SCENES to MAX_SCENES), every track one clip slot per
+ * scene, and a complete default patch so a fresh project is never silent
+ * because of routing.
  */
 import {
   DRUM_VOICES,
@@ -9,7 +11,9 @@ import {
   MAX_TRACKS,
   PROJECT_SCHEMA,
   PROJECT_VERSION,
-  SCENE_ROWS,
+  DEFAULT_SCENE_ROWS,
+  MAX_SCENES,
+  MIN_SCENES,
   type ArpSettings,
   type Clip,
   type ClipBars,
@@ -158,18 +162,20 @@ export function defaultMacroMap(trackId: Id): MacroMap {
   };
 }
 
-export function emptyClipSlots(): (Clip | null)[] {
-  return Array.from({ length: SCENE_ROWS }, () => null);
+/** Empty clip slots, one per scene. */
+export function emptyClipSlots(count: number = DEFAULT_SCENE_ROWS): (Clip | null)[] {
+  return Array.from({ length: count }, () => null);
 }
 
-export function createTrack(id: Id, role: TrackRole, name?: string, soundId?: string): Track {
+/** A part with its role's default sound and one empty clip slot per scene (`rows`). */
+export function createTrack(id: Id, role: TrackRole, name?: string, soundId?: string, rows: number = DEFAULT_SCENE_ROWS): Track {
   const kind = ROLE_INSTRUMENT[role];
   return {
     id,
     name: name ?? ROLE_LABELS[role],
     role,
     instrument: createInstrument(kind, soundId ?? ROLE_DEFAULT_SOUND[role]),
-    clips: emptyClipSlots(),
+    clips: emptyClipSlots(rows),
     mute: false,
     solo: false,
     locked: false,
@@ -258,15 +264,22 @@ export function defaultPatch(trackIds: readonly Id[]): Patch {
 /* Project                                                             */
 /* ------------------------------------------------------------------ */
 
-export function createScenes(names: readonly string[] = DEFAULT_SCENE_NAMES): Scene[] {
-  return Array.from({ length: SCENE_ROWS }, (_, i) => ({ id: uid('scene'), name: names[i] ?? `Scene ${i + 1}` }));
+export function createScenes(names: readonly string[] = DEFAULT_SCENE_NAMES, count: number = DEFAULT_SCENE_ROWS): Scene[] {
+  return Array.from({ length: count }, (_, i) => ({ id: uid('scene'), name: names[i] ?? `Scene ${i + 1}` }));
 }
 
-export function createProject(opts: { name?: string; bpm?: number; roles?: readonly TrackRole[]; now?: number } = {}): Project {
+/**
+ * A new project: eight parts with their roles' default sounds, the default
+ * patch, empty clips and an empty song. `scenes` names the scenes
+ * (and sets how many there are, MIN_SCENES to MAX_SCENES; default: Intro,
+ * Groove, Lift, Break).
+ */
+export function createProject(opts: { name?: string; bpm?: number; roles?: readonly TrackRole[]; now?: number; scenes?: readonly string[] } = {}): Project {
   const now = opts.now ?? Date.now();
   const roles = opts.roles ?? DEFAULT_ROLES;
-  const tracks = TRACK_IDS.slice(0, MAX_TRACKS).map((id, i) => createTrack(id, roles[i] ?? DEFAULT_ROLES[i]));
-  const scenes = createScenes();
+  const rows = opts.scenes ? Math.min(MAX_SCENES, Math.max(MIN_SCENES, opts.scenes.length)) : DEFAULT_SCENE_ROWS;
+  const tracks = TRACK_IDS.slice(0, MAX_TRACKS).map((id, i) => createTrack(id, roles[i] ?? DEFAULT_ROLES[i], undefined, undefined, rows));
+  const scenes = createScenes(opts.scenes ?? DEFAULT_SCENE_NAMES, rows);
   return {
     schema: PROJECT_SCHEMA,
     version: PROJECT_VERSION,
@@ -283,10 +296,8 @@ export function createProject(opts: { name?: string; bpm?: number; roles?: reado
     tracks,
     scenes,
     patch: defaultPatch(tracks.map((t) => t.id)),
-    arrangement: {
-      blocks: scenes.map((s) => ({ id: uid('blk'), sceneId: s.id, repeats: 2 })),
-      tailSeconds: 3,
-    },
+    // The clips are empty, so the song is too: it is built from clips (see state/commands/arrangement.ts).
+    arrangement: { regions: [], sections: [], tailSeconds: 3 },
     performances: [],
     samples: [],
     seed: Math.floor(Math.random() * 2 ** 31),

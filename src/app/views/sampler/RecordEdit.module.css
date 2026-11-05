@@ -211,6 +211,27 @@
   }
 }
 
+/*
+ * Reduced motion (design-01): nothing blinks or spins. The recording dot is a steady coral dot and the
+ * Stop recording key keeps a steady coral ring. A spinner would stand still, so it goes: the words
+ * beside it ("Normalizing…", "Decoding … on this device…") say that work is going on.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .recActive {
+    animation: none;
+    box-shadow: 0 0 0 3px var(--coral-wash);
+  }
+
+  .recDot {
+    animation: none;
+    opacity: 1;
+  }
+
+  .spinner {
+    display: none;
+  }
+}
+
 /* ---------- edits ---------- */
 
 .editKeys {

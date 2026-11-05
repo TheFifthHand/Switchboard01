@@ -122,11 +122,164 @@ export function bpmToBars(bpm: number, regionSeconds: number): number {
   return (regionSeconds * bpm) / 240;
 }
 
-/** Bars the helper suggests for a region at the current Original BPM (quarter-bar steps). */
-export function suggestedBars(regionSeconds: number, originalBpm: number): number {
-  const raw = bpmToBars(originalBpm, regionSeconds);
-  if (!Number.isFinite(raw)) return 1;
-  return clamp(Math.round(raw / BARS_STEP) * BARS_STEP, BARS_MIN, BARS_MAX);
+/** Whole bar counts a loop is suggested as (the helper's arrow keys step through these and their halves and doubles). */
+export const LOOP_BARS = [1, 2, 4, 8] as const;
+/** Tempos a suggested loop length may imply: where loops are usually played (BPM). */
+export const LOOP_BPM_MIN = 70;
+export const LOOP_BPM_MAX = 180;
+/**
+ * Two candidates whose tempos lie about this near the project tempo (log2
+ * distance, about 15 %) are a tie, settled by where the recording's hits fall.
+ */
+const TIE_OCTAVES = 0.2;
+
+/** Bar counts the helper's arrow keys step through: powers of two inside the field's range (… 1, 2, 4, 8 …). */
+export const BAR_STEPS: readonly number[] = (() => {
+  const out: number[] = [];
+  for (let b = BARS_MIN; b <= BARS_MAX + 1e-9; b *= 2) out.push(b);
+  return out;
+})();
+
+/** The next bar count up (+1) or down (-1) in BAR_STEPS from `bars` (a value between two steps goes to the next one in that direction). */
+export function stepBars(bars: number, dir: 1 | -1): number {
+  if (dir > 0) return BAR_STEPS.find((b) => b > bars + 1e-9) ?? BARS_MAX;
+  for (let i = BAR_STEPS.length - 1; i >= 0; i--) if (BAR_STEPS[i] < bars - 1e-9) return BAR_STEPS[i];
+  return BARS_MIN;
+}
+
+/**
+ * How far the hits (seconds from the region start) lie from the 16th-note
+ * grid of `bpm`, in grid steps (0: on the grid, 0.5: as far off as can be).
+ */
+export function gridMisfit(onsets: readonly number[], bpm: number): number {
+  const step = 60 / bpm / 4;
+  if (!onsets.length || !(step > 0)) return 0;
+  let sum = 0;
+  for (const t of onsets) {
+    const x = t / step;
+    sum += Math.abs(x - Math.round(x));
+  }
+  return sum / onsets.length;
+}
+
+/**
+ * Bars the tempo helper suggests for a region of `regionSeconds`
+ * (shape-06): the count the current Original BPM already gives when that is
+ * a whole 1, 2, 4 or 8 bars (a recorded take, a loop already set);
+ * otherwise 1, 2, 4 or 8 bars whose tempo lies in 70-180 BPM, the one
+ * nearest the project tempo (`projectBpm`), and when two are about as near,
+ * the one whose 16th-note grid the recording's hits (`onsets`, seconds from
+ * the region start) clearly fit better. A region no whole loop length fits
+ * (a short hit) gets the quarter-bar count nearest the Original BPM.
+ */
+export function suggestedBars(regionSeconds: number, projectBpm: number, opts: { originalBpm?: number; onsets?: readonly number[] } = {}): number {
+  return suggestion(regionSeconds, projectBpm, opts).bars;
+}
+
+/** True when the suggestion is a tie between two loop lengths that the recording's hits would settle (load them then). */
+export function suggestionNeedsHits(regionSeconds: number, projectBpm: number, originalBpm?: number): boolean {
+  return suggestion(regionSeconds, projectBpm, { originalBpm }).tie;
+}
+
+function suggestion(regionSeconds: number, projectBpm: number, opts: { originalBpm?: number; onsets?: readonly number[] }): { bars: number; tie: boolean } {
+  const pick = (bars: number, tie = false) => ({ bars, tie });
+  if (!(regionSeconds > 0)) return pick(1);
+  const ob = opts.originalBpm !== undefined && Number.isFinite(opts.originalBpm) && opts.originalBpm > 0 ? opts.originalBpm : undefined;
+  if (ob !== undefined) {
+    const implied = bpmToBars(ob, regionSeconds);
+    const whole = LOOP_BARS.find((b) => Math.abs(implied - b) < 0.01);
+    if (whole !== undefined) return pick(whole);
+  }
+  const project = Number.isFinite(projectBpm) && projectBpm > 0 ? projectBpm : 120;
+  const candidates = LOOP_BARS.map((bars) => ({ bars, bpm: barsToBpm(bars, regionSeconds) }))
+    .filter((c) => c.bpm >= LOOP_BPM_MIN && c.bpm <= LOOP_BPM_MAX)
+    .map((c) => ({ ...c, off: Math.abs(Math.log2(c.bpm / project)) }))
+    .sort((a, b) => a.off - b.off);
+  if (candidates.length) {
+    const [best, next] = candidates;
+    const tie = !!next && next.off - best.off < TIE_OCTAVES;
+    const hits = opts.onsets?.filter((t) => t >= 0 && t <= regionSeconds) ?? [];
+    // Only a clear difference overrides the tempo (on nested grids the finer one fits at least as well).
+    if (tie && hits.length >= 3 && gridMisfit(hits, next.bpm) + 0.08 < gridMisfit(hits, best.bpm)) return pick(next.bars, true);
+    return pick(best.bars, tie);
+  }
+  const raw = bpmToBars(ob ?? project, regionSeconds);
+  if (!Number.isFinite(raw)) return pick(1);
+  return pick(clamp(Math.round(raw / BARS_STEP) * BARS_STEP, BARS_MIN, BARS_MAX));
+}
+
+/* ------------------------------------------------------------------ */
+/* Snapping (Shift while dragging a trim handle)                       */
+/* ------------------------------------------------------------------ */
+
+/** The point of `points` nearest `value`, when it lies within `tolerance` (same units); else null. */
+export function nearestWithin(value: number, points: readonly number[], tolerance: number): number | null {
+  let best: number | null = null;
+  let dist = tolerance;
+  for (const p of points) {
+    const d = Math.abs(p - value);
+    if (d <= dist) {
+      dist = d;
+      best = p;
+    }
+  }
+  return best;
+}
+
+/** `value` moved to the nearest whole number of `step`s from `anchor` (the beat grid of a region's other end). */
+export function snapToGrid(value: number, anchor: number, step: number): number {
+  if (!(step > 0)) return value;
+  return anchor + Math.round((value - anchor) / step) * step;
+}
+
+/* ------------------------------------------------------------------ */
+/* Zoom (the waveform's visible window, as fractions of the file)       */
+/* ------------------------------------------------------------------ */
+
+export interface WaveView {
+  /** First visible point (fraction of the file). */
+  a: number;
+  /** Last visible point. */
+  b: number;
+}
+
+export const FULL_VIEW: WaveView = { a: 0, b: 1 };
+/** Closest zoom: this many times the whole file across the waveform… */
+export const MAX_ZOOM = 512;
+/** …but never less than this much sound (seconds) across it. */
+export const MIN_VIEW_SECONDS = 0.04;
+
+/** Narrowest window (fraction of the file) for a file of `duration` seconds. */
+export function minViewSpan(duration: number): number {
+  return clamp(duration > 0 ? MIN_VIEW_SECONDS / duration : 1, 1 / MAX_ZOOM, 1);
+}
+
+/** A window of `span` around the point `at` (a fraction of the file) placed `where` (0..1) across it, kept inside the file. */
+export function placeView(span: number, at: number, where: number, duration: number): WaveView {
+  const s = clamp(span, minViewSpan(duration), 1);
+  const a = clamp(at - where * s, 0, 1 - s);
+  return { a, b: a + s };
+}
+
+/** Zoom by `factor` (2 = twice as close) keeping the point `at` where it is on screen. */
+export function zoomView(v: WaveView, factor: number, at: number, duration: number): WaveView {
+  const span = v.b - v.a;
+  const where = span > 0 ? clamp((at - v.a) / span, 0, 1) : 0.5;
+  return placeView(span / factor, at, where, duration);
+}
+
+/** Move the window by `delta` (fraction of the file), kept inside the file. */
+export function panView(v: WaveView, delta: number): WaveView {
+  const span = v.b - v.a;
+  const a = clamp(v.a + delta, 0, 1 - span);
+  return { a, b: a + span };
+}
+
+/** The window moved just enough to show `at` (with a margin of `margin` of its width). */
+export function revealInView(v: WaveView, at: number, margin = 0.1): WaveView {
+  const span = v.b - v.a;
+  if (at >= v.a + span * margin * 0.5 && at <= v.b - span * margin * 0.5) return v;
+  return at < v.a + span * 0.5 ? panView(v, at - span * margin - v.a) : panView(v, at + span * margin - v.b);
 }
 
 /** Bar counts (quarter-bar steps) whose Original BPM lands inside the accepted range, or null. */

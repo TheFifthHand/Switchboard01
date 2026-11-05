@@ -5,6 +5,7 @@
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import '../../src/ui/theme.css';
 import { session } from '../../src/app/instance';
 import { patchRuntime } from '../../src/app/runtime';
 import { NotesPads } from '../../src/app/views/NotesPads';
@@ -85,6 +86,14 @@ describe('Notes pad mode', () => {
       expect(pad(i)!.getAttribute('aria-label')).toContain('root note');
     }
     expect(pad(0)!.parentElement!.hasAttribute('data-root')).toBe(false);
+    // design-17: a root is marked by a bold "Root" label and a dotted ink outline, never the teal of selection.
+    const rootCell = pad(roots[0][1])!.parentElement!;
+    const ring = getComputedStyle(rootCell, '::after');
+    expect(ring.borderTopStyle).toBe('dotted');
+    expect(ring.boxShadow).toBe('none');
+    const mark = [...rootCell.querySelectorAll('span')].find((el) => el.textContent === 'Root')!;
+    expect(Number(getComputedStyle(mark).fontWeight)).toBeGreaterThanOrEqual(700);
+    expect(getComputedStyle(mark).backgroundColor).toBe('rgba(0, 0, 0, 0)');
     expect(m.container.textContent).toContain('Musical Assist: pads play only notes in A minor.');
     expect(m.container.textContent).toContain(`${noteName(expected[0])}–${noteName(expected[15])}`);
   });

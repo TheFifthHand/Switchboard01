@@ -11,3 +11,4 @@ export * from './arrangement';
 export * from './performances';
 export * from './samples';
 export * from './mastering';
+export * from './songClips';

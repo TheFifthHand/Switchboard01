@@ -80,11 +80,20 @@ export class Oscillator {
  * Returns the phase after the last sample.
  */
 export function addSquareWave(out: Float32Array, freq: number, sampleRate: number, phase = 0, gain = 1): number {
+  return addSquareWaveSpan(out, freq, sampleRate, ((phase % 1) + 1) % 1, gain, 0, out.length);
+}
+
+/**
+ * addSquareWave over out[from..to) starting at phase `t` (0 <= t < 1, used
+ * as is): pass the returned phase to the next span to continue the wave
+ * exactly as one call over the whole buffer would.
+ */
+export function addSquareWaveSpan(out: Float32Array, freq: number, sampleRate: number, t: number, gain: number, from: number, to: number): number {
   const dt = Math.min(0.5, Math.max(0, freq / sampleRate));
-  let t = ((phase % 1) + 1) % 1;
   if (dt === 0) return t;
   const inv = 1 / dt;
-  for (let i = 0; i < out.length; i++) {
+  const end = Math.min(out.length, to);
+  for (let i = Math.max(0, from); i < end; i++) {
     let y = t < 0.5 ? 1 : -1;
     if (t < dt) {
       const x = t * inv;

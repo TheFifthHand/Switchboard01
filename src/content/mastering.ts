@@ -68,7 +68,8 @@ export const MASTERING_PRESETS: readonly MasteringPreset[] = [
     air: 1,
     loudness: 1,
   }),
-  preset('loud', 'Loud', 'As loud as it gets for streaming and clubs: firm glue, a touch of warmth and a hard push into the limiter.', {
+  // How loud it ends up depends on the mix going in, so the name and sentence promise no number.
+  preset('loud', 'Loud', 'The loudest preset: firm glue, a touch of warmth and a hard push into the limiter; how loud it gets depends on your mix.', {
     lowCut: 30,
     lowGain: 1,
     highGain: 1,

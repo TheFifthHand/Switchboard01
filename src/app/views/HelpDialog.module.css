@@ -1,0 +1,155 @@
+.dialog {
+  max-height: min(720px, calc(100dvh - 32px));
+}
+
+.tabs {
+  display: flex;
+  margin-bottom: 12px;
+}
+
+/* The section scrolls inside the dialog, never the page. */
+.panel {
+  max-height: min(520px, calc(100dvh - 220px));
+  overflow-y: auto;
+  padding-right: 4px;
+  border-radius: var(--r-sm);
+}
+.panel:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px 24px;
+}
+
+.group,
+.walk,
+.news {
+  min-width: 0;
+}
+
+.groupTitle {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font: var(--type-label);
+  font-weight: var(--fw-semibold);
+}
+
+.where {
+  margin: 0 0 6px;
+  color: var(--ink-3);
+  font: var(--type-caption);
+}
+
+.list {
+  margin: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(120px, 42%) minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.keys {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 0;
+  min-width: 0;
+}
+
+/* One way to press it: its keys stay together, and a long row of keys wraps inside the column. */
+.alt {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  min-width: 0;
+  max-width: 100%;
+}
+.seq {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: var(--r-sm);
+  background: var(--shell-hi);
+  color: var(--ink);
+  font: var(--type-value);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.or {
+  color: var(--ink-3);
+  font: var(--type-caption);
+  white-space: pre;
+}
+
+.does {
+  margin: 0;
+  color: var(--ink-2);
+  font: var(--type-label);
+  font-weight: var(--fw-regular);
+}
+
+.guides {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.again {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.time {
+  color: var(--ink-3);
+  font-weight: var(--fw-regular);
+}
+
+.steps {
+  margin: 0;
+  padding-left: 22px;
+  color: var(--ink-2);
+  font: var(--type-label);
+  font-weight: var(--fw-regular);
+}
+.steps li + li {
+  margin-top: 4px;
+}
+
+.about {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.name {
+  margin: 0;
+  color: var(--ink);
+  font: var(--type-panel-title);
+}
+
+.version {
+  margin-left: 6px;
+  color: var(--ink-2);
+  font: var(--type-value);
+}

@@ -156,7 +156,7 @@ describe('Sizes and visibility', () => {
           const r = el.getBoundingClientRect();
           return r.top >= box.top - 0.5 && r.bottom <= box.bottom + 0.5 && r.left >= box.left - 0.5 && r.right <= box.right + 0.5;
         };
-        for (const name of ['Mute', 'Solo', /^Change instrument/, 'Variation', 'Lock']) expect(inside(named(panel(), name)), `${mode}: ${String(name)}`).toBe(true);
+        for (const name of ['Mute', 'Solo', /^Change instrument/, 'Variation', 'More Variation choices', 'Keep pattern']) expect(inside(named(panel(), name)), `${mode}: ${String(name)}`).toBe(true);
         expect(inside(panel().querySelector('[role="slider"][aria-label^="Volume"]')), `${mode}: Volume`).toBe(true);
         const macros = panel().querySelectorAll('[role="group"][aria-label$="macros"] [role="slider"]');
         expect(macros.length).toBe(6);
@@ -167,7 +167,7 @@ describe('Sizes and visibility', () => {
         expect(smallTargets(keyboard(), 32).filter((t) => !/^[A-G]#?\d/.test(t)), `${mode} keyboard controls`).toEqual([]);
         // Primary controls: 40 px.
         const tabs = [...transport().querySelectorAll<HTMLElement>('[role="tab"]')];
-        expect(tabs.map((t) => t.textContent)).toEqual(['Play', 'Shape', 'Arrange', 'Mix']);
+        expect(tabs.map((t) => t.textContent)).toEqual(['Play', 'Shape', 'Song', 'Mix']);
         for (const el of [...tabs, transport().querySelector<HTMLElement>('button[aria-keyshortcuts="Space"]'), named(transport(), 'Stop'), named(panel(), 'Mute'), named(panel(), 'Solo'), named(panel(), /^Change instrument/)]) {
           const r = el!.getBoundingClientRect();
           expect(Math.min(r.width, r.height), el!.getAttribute('aria-label') ?? el!.textContent ?? '').toBeGreaterThanOrEqual(40);

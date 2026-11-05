@@ -3,3 +3,13 @@
   font-size: var(--fs-xs);
   color: var(--ink-3);
 }
+
+/* The question before deleting a scene the song uses: says how many blocks it takes with it. */
+.warn {
+  max-width: 300px;
+  margin: 4px 0 0;
+  font-size: var(--fs-sm);
+  line-height: 18px;
+  color: var(--ink-2);
+  white-space: normal;
+}

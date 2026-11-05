@@ -1,13 +1,30 @@
-Launcher smoke test, 2026-10-01, in the cloud container (Linux, PowerShell 7.4.6, Node 22). This is not a Windows run; see TEST_REPORT.md.
+Launcher smoke test, 2026-10-04, in the cloud container (Linux, PowerShell 7.4.6, Node 22). This is not a Windows run; see TEST_REPORT.md.
 
-== Package: release/omni-song-2.0.0.zip extracted to .../Jo Ann Downloads/omni-song
-== PowerShell 7.4.6 (Linux), same arguments as 'Start Omni Song.bat': -File launcher/serve.ps1 -Root <package>/app
-   ps> 
-   ps>   Omni Song
-   ps>   Running at http://127.0.0.1:4410/  (this computer only)
-   ps>   Keep this window open while you play. Close it or press Ctrl+C to stop.
-   ps> 
--- listening socket for 4410 in /proc/net/tcp (0100007F = 127.0.0.1): 0100007F:113A
+== Packages: release/omni-song-2.2.0.zip and release/omni-song-2.3.0.zip, extracted under .../Jo Ann Downloads/ (a path with spaces)
+== Scene: the user's 2.2 launcher window is still open when they start 2.3 (the trap that showed them the old app)
+   2.2> 
+   2.2>   Omni Song
+   2.2>   Running at http://127.0.0.1:4173/  (this computer only)
+   2.2>   Keep this window open while you play. Close it or press Ctrl+C to stop.
+   2.2> 
+-- 2.3 started while 2.2 runs (12 s later):
+   2.3> 
+   2.3>   Another copy of Omni Song (an older version) is running in another window,
+   2.3>   at http://127.0.0.1:4173/
+   2.3>   This is version 2.3.0. Close the other small black Omni Song window
+   2.3>   (or press Ctrl+C in it): this window then starts version 2.3.0 by itself,
+   2.3>   at the same address, so all your projects are there.
+   2.3>   Waiting for the other copy to stop...
+   page served now: no version meta (2.2)
+-- the user closes the 2.2 window:
+   2.3 window now says:
+   2.3>   Another copy of Omni Song (an older version) is running in another window,
+   2.3>   This is version 2.3.0. Close the other small black Omni Song window
+   2.3>   Omni Song
+   2.3>   Running at http://127.0.0.1:4173/  (this computer only)
+   2.3>   Keep this window open while you play. Close it or press Ctrl+C to stop.
+-- 2.3 runs on port 4173 (same address as 2.2, so projects carry over); listening socket in /proc/net/tcp (0100007F = 127.0.0.1): 0100007F:104D
+   page served now: omni-song-version" content="2.3.0
    GET (as-is) / -> 200
    GET (as-is) /manifest.webmanifest -> 200
    GET (as-is) /sw.js -> 200
@@ -15,14 +32,14 @@ Launcher smoke test, 2026-10-01, in the cloud container (Linux, PowerShell 7.4.6
    GET (as-is) /../../../../etc/passwd -> 403
    GET (as-is) /no-such-file.js -> 404
    GET (as-is) /some/deep/route -> 200
-   page title: <title>Omni Song</title>
 -- from the container's non-loopback address 192.0.2.2: 000 (000 = refused)
--- a second start while the first runs:
-   ps2> 
-   ps2>   Omni Song is already running at http://127.0.0.1:4410/
-   ps2>   The window (or program) that started it keeps it running.
-   ps2>   Open http://127.0.0.1:4410/ in your browser.
-   ps2>   To start a different copy (for example a newer version), close the other window first.
-   ps2> 
--- Jump In in Chromium against the package served by serve.ps1: {"audio":"running","project":"House Starter","masterRms":0.2113,"masterPeak":0.4919,"pageErrors":0}
+-- a second start of 2.3 while 2.3 runs:
+   2.3 again> 
+   2.3 again>   Omni Song is already running at http://127.0.0.1:4173/
+   2.3 again>   The window (or program) that started it keeps it running.
+   2.3 again>   Open http://127.0.0.1:4173/ in your browser.
+   2.3 again> 
+-- page version meta 2.3.0; Welcome card "Version 2.3.0"
+-- Jump In in Chromium against the package served by serve.ps1: {"audio":"running","project":"House Starter","masterRms":0.052,"masterPeak":0.1303,"pageErrors":0}
+-- Song view in the package: a loop dragged with the mouse from bar 49 -> bar 53 (4 bars); Undo -> back as before; page errors 0
 -- launcher stopped (closing the window or Ctrl+C does this on Windows)

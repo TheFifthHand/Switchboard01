@@ -10,7 +10,18 @@
  *   ahead for a wide image. Loop gain is feedback (≤ 0.85) times a 12 kHz
  *   damping pole, so it always decays; the input is scaled by √(1 − fb²) to
  *   keep the broadband level even as feedback rises.
- *       y = (1 − mix)·x + mix·line(t − d(t))
+ *       y = g · (cos(mix·π/2)·x + sin(mix·π/2)·line(t − d(t)))
+ *   An equal-power blend keeps the energy of sound the swept line
+ *   decorrelates (most of a chord or a pad), but a delay of a few ms is
+ *   nearly in phase with bass, where the two add coherently (+3 dB, more with
+ *   feedback, whose comb peaks include 0 Hz). So the blend is level-matched:
+ *   g = sqrt(mean x² / mean y_blend²) over FLANGER_MATCH_TAU (block-wise
+ *   averages that start empty, so the first blocks already give the ratio),
+ *   bounded to ±FLANGER_MATCH_MAX_DB, glided over 50 ms and moved linearly
+ *   across each block. Silence measures nothing (the gain holds, so a
+ *   feedback tail rings out as it was). At Mix 0 the gain returns to 1
+ *   (exactly dry). The sweep still moves the notches; the level averaged
+ *   over FLANGER_MATCH_TAU stays the part's own.
  *
  * 'sb-tape' — tape colour:
  *   1. saturation at 2x (polyphase IIR half-bands, see halfband.ts): a soft,
@@ -30,15 +41,40 @@
  *   The dry path for Mix runs through the same half-band all-pass and the
  *   same mean delay, so blending never comb-filters (only the wobble itself
  *   differs).
+ *
+ * 'sb-level-match' — the Drive's level compensation in practice. Input 0 is
+ *   the driven (wet) sound, input 1 the same part before the drive, both
+ *   already scaled by the wet share. Their mean squares are averaged over
+ *   LEVEL_MATCH_TAU and the wet sound leaves multiplied by
+ *   sqrt(reference / wet), glided over LEVEL_MATCH_GLIDE and bounded to
+ *   ±LEVEL_MATCH_MAX_DB: whatever level and shape a part reaches its Drive
+ *   with, turning Drive up keeps its RMS level. In silence the gain holds.
+ *   Averages and glide advance once per render quantum (the gain moves
+ *   linearly across it); no AudioParams (a 'reset' port message starts the
+ *   measurement afresh), so a quantum costs a few operations per sample.
  */
 import { FLUSH_PARAM_JS, WORKLET_COMMON_JS } from './common';
 import { HALFBAND_JS } from './halfband';
 
 export const FLANGER_PROCESSOR_NAME = 'sb-flanger';
 export const TAPE_PROCESSOR_NAME = 'sb-tape';
+export const LEVEL_MATCH_PROCESSOR_NAME = 'sb-level-match';
+
+/** Averaging time of the level match's mean squares (seconds). */
+export const LEVEL_MATCH_TAU = 0.4;
+/** Glide of its gain toward the measured ratio (seconds). */
+export const LEVEL_MATCH_GLIDE = 0.05;
+/** Largest correction the level match applies, either way (dB). */
+export const LEVEL_MATCH_MAX_DB = 6;
+/** Below this mean square (about −80 dBFS) the level match holds its gain (silence says nothing). */
+export const LEVEL_MATCH_FLOOR = 1e-8;
 
 export const FLANGER_MIN_MS = 0.3;
 export const FLANGER_MAX_MS = 8;
+/** Averaging time of the flanger's level match (seconds; a third of a sweep at the default Rate). */
+export const FLANGER_MATCH_TAU = 2;
+/** Largest correction of the flanger's level match, either way (dB). */
+export const FLANGER_MATCH_MAX_DB = 6;
 /** Peak delay excursion of the main wow component at Wobble 1 (ms). */
 export const TAPE_WOW_MS = 1.5;
 export const TAPE_WOW_HZ = 0.55;
@@ -64,6 +100,21 @@ ${HALFBAND_JS}
 
 const SB_FL_MIN = ${FLANGER_MIN_MS} * 0.001;
 const SB_FL_MAX = ${FLANGER_MAX_MS} * 0.001;
+const SB_FL_MATCH_TAU = ${FLANGER_MATCH_TAU};
+const SB_FL_MATCH_MAX = Math.pow(10, ${FLANGER_MATCH_MAX_DB} / 20);
+/** Glide of the flanger's level-match gain toward the measured ratio (seconds). */
+const SB_FL_MATCH_GLIDE = 0.05;
+/** Below this mean square (about −100 dBFS) a block measures nothing. */
+const SB_FL_MATCH_FLOOR = 1e-10;
+
+/** Equal-power blend gain for mix m (0..1): sin for the wet side, cos for the dry side; exact at the ends. */
+function sbEqualPower(m, wet) {
+  const x = m <= 0 ? 0 : m >= 1 ? 1 : m;
+  if (x === 0) return wet ? 0 : 1;
+  if (x === 1) return wet ? 1 : 0;
+  const th = x * Math.PI * 0.5;
+  return wet ? Math.sin(th) : Math.cos(th);
+}
 
 function sbPow2(n) {
   let s = 1;
@@ -95,6 +146,14 @@ class SbFlangerProcessor extends AudioWorkletProcessor {
     this.aDamp = 1 - Math.exp((-2 * Math.PI * Math.min(12000, sampleRate * 0.4)) / sampleRate);
     this.minFrames = Math.max(3, SB_FL_MIN * sampleRate);
     this.logRange = Math.log(SB_FL_MAX / SB_FL_MIN);
+    // Level match: block-wise mean squares of the input and of the blend, and the gain.
+    this.eIn = 0;
+    this.eOut = 0;
+    this.g = 1;
+    this.gNext = 1;
+    this.blockN = 0;
+    this.aMatch = 0;
+    this.bMatch = 0;
     this.flushSeen = 0;
     this.alive = true;
     this.port.onmessage = (e) => {
@@ -114,7 +173,18 @@ class SbFlangerProcessor extends AudioWorkletProcessor {
       this.bufR.fill(0);
       this.dampL = 0;
       this.dampR = 0;
+      this.eIn = 0;
+      this.eOut = 0;
     }
+    if (n !== this.blockN) {
+      this.blockN = n;
+      this.aMatch = 1 - Math.pow(sbPole(SB_FL_MATCH_TAU), n);
+      this.bMatch = 1 - Math.pow(sbPole(SB_FL_MATCH_GLIDE), n);
+    }
+    const g0 = this.g;
+    const dg = (this.gNext - g0) / n;
+    let sIn = 0;
+    let sOut = 0;
     const input = inputs[0];
     const iL = input && input.length > 0 ? input[0] : null;
     const iR = input && input.length > 1 ? input[1] : iL;
@@ -123,12 +193,18 @@ class SbFlangerProcessor extends AudioWorkletProcessor {
     const minF = this.minFrames, logRange = this.logRange, aDamp = this.aDamp;
     let w = this.w, phase = this.phase, dampL = this.dampL, dampR = this.dampR;
     const twoPi = 2 * Math.PI;
+    const mixConst = mixA.length === 1;
+    let gDry = sbEqualPower(mixA[0], false);
+    let gWet = sbEqualPower(mixA[0], true);
     for (let i = 0; i < n; i++) {
       const l = iL ? sbIn(iL[i]) : 0;
       const r = iR ? sbIn(iR[i]) : 0;
       const depth = sbAt(depthA, i);
       const fb = sbAt(fbA, i);
-      const mix = sbAt(mixA, i);
+      if (!mixConst) {
+        gDry = sbEqualPower(mixA[i], false);
+        gWet = sbEqualPower(mixA[i], true);
+      }
       phase += sbAt(rateA, i) / sampleRate;
       if (phase >= 1) phase -= 1;
       const sweepL = 0.5 - 0.5 * Math.cos(twoPi * phase);
@@ -144,13 +220,36 @@ class SbFlangerProcessor extends AudioWorkletProcessor {
       bufL[w] = sbTidy(l * k + fb * dampL);
       bufR[w] = sbTidy(r * k + fb * dampR);
       w = (w + 1) & mask;
-      oL[i] = l + mix * (yl - l);
-      if (oR) oR[i] = r + mix * (yr - r);
+      const bl = l * gDry + yl * gWet;
+      const br = r * gDry + yr * gWet;
+      sIn += l * l + r * r;
+      sOut += bl * bl + br * br;
+      const gi = g0 + dg * (i + 1);
+      oL[i] = bl * gi;
+      if (oR) oR[i] = br * gi;
     }
     this.w = w;
     this.phase = phase;
     this.dampL = sbTidy(dampL);
     this.dampR = sbTidy(dampR);
+    this.g = this.gNext;
+    const mIn = sIn / (2 * n);
+    if (mixConst && !(mixA[0] > 0)) {
+      // Dry: nothing to match (and a later blend measures afresh).
+      this.eIn = 0;
+      this.eOut = 0;
+      this.gNext = this.g + this.bMatch * (1 - this.g);
+      if (Math.abs(this.gNext - 1) < 1e-6) this.gNext = 1;
+    } else if (mIn > SB_FL_MATCH_FLOOR) {
+      this.eIn = sbTidy(this.eIn + this.aMatch * (mIn - this.eIn));
+      this.eOut = sbTidy(this.eOut + this.aMatch * (sOut / (2 * n) - this.eOut));
+      if (this.eOut > SB_FL_MATCH_FLOOR) {
+        let target = Math.sqrt(this.eIn / this.eOut);
+        if (target > SB_FL_MATCH_MAX) target = SB_FL_MATCH_MAX;
+        else if (target < 1 / SB_FL_MATCH_MAX) target = 1 / SB_FL_MATCH_MAX;
+        this.gNext = this.g + this.bMatch * (target - this.g);
+      }
+    }
     for (let ch = 2; ch < output.length; ch++) output[ch].fill(0);
     return this.alive;
   }
@@ -388,6 +487,98 @@ class SbTapeProcessor extends AudioWorkletProcessor {
   }
 }
 
+const SB_LM_TAU = ${LEVEL_MATCH_TAU};
+const SB_LM_GLIDE = ${LEVEL_MATCH_GLIDE};
+const SB_LM_MAX = Math.pow(10, ${LEVEL_MATCH_MAX_DB} / 20);
+const SB_LM_FLOOR = ${LEVEL_MATCH_FLOOR};
+
+class SbLevelMatchProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.eWet = 0;
+    this.eRef = 0;
+    this.g = 1;
+    this.gNext = 1;
+    this.blockN = 0;
+    this.a = 0;
+    this.b = 0;
+    this.alive = true;
+    this.port.onmessage = (e) => {
+      if (e.data === 'dispose') this.alive = false;
+      else if (e.data === 'reset') {
+        this.eWet = 0;
+        this.eRef = 0;
+        this.g = 1;
+        this.gNext = 1;
+      }
+    };
+  }
+
+  process(inputs, outputs) {
+    const output = outputs[0];
+    if (!output || output.length === 0) return this.alive;
+    const oL = output[0];
+    const oR = output.length > 1 ? output[1] : null;
+    const n = oL.length;
+    if (n !== this.blockN) {
+      // Block-wise one-poles: the averages and the glide advance once per render quantum.
+      this.blockN = n;
+      this.a = 1 - Math.pow(sbPole(SB_LM_TAU), n);
+      this.b = 1 - Math.pow(sbPole(SB_LM_GLIDE), n);
+    }
+    const wet = inputs[0] || [];
+    const ref = inputs[1] || [];
+    const wL = wet.length > 0 ? wet[0] : null;
+    const wR = wet.length > 1 ? wet[1] : wL;
+    const rL = ref.length > 0 ? ref[0] : null;
+    const rR = ref.length > 1 ? ref[1] : rL;
+    // The gain moves linearly from g to gNext over this block (gNext came from the averages so far).
+    const g0 = this.g;
+    const dg = (this.gNext - g0) / n;
+    let sw = 0;
+    let sr = 0;
+    if (wL) {
+      for (let i = 0; i < n; i++) {
+        const l = sbIn(wL[i]);
+        const r = sbIn(wR[i]);
+        const gi = g0 + dg * (i + 1);
+        sw += l * l + r * r;
+        oL[i] = l * gi;
+        if (oR) oR[i] = r * gi;
+      }
+    } else {
+      oL.fill(0);
+      if (oR) oR.fill(0);
+    }
+    if (rL) {
+      if (rR !== rL) for (let i = 0; i < n; i++) sr += rL[i] * rL[i] + rR[i] * rR[i];
+      else for (let i = 0; i < n; i++) sr += 2 * rL[i] * rL[i];
+    }
+    this.g = this.gNext;
+    // Mean squares (per channel) of this block into the averages; silence measures nothing.
+    const mw = sw / (2 * n);
+    const mr = sr / (2 * n);
+    if (mw > SB_LM_FLOOR * 0.01 && mr > SB_LM_FLOOR * 0.01 && mr < 1e12) {
+      this.eWet = sbTidy(this.eWet + this.a * (mw - this.eWet));
+      this.eRef = sbTidy(this.eRef + this.a * (mr - this.eRef));
+    } else {
+      // Silence: both averages fade alike (their ratio, and so the gain, holds), so what plays next
+      // soon outweighs what played before.
+      this.eWet = sbTidy(this.eWet * (1 - this.a));
+      this.eRef = sbTidy(this.eRef * (1 - this.a));
+    }
+    if (this.eWet > SB_LM_FLOOR && this.eRef > SB_LM_FLOOR) {
+      let target = Math.sqrt(this.eRef / this.eWet);
+      if (target > SB_LM_MAX) target = SB_LM_MAX;
+      else if (target < 1 / SB_LM_MAX) target = 1 / SB_LM_MAX;
+      this.gNext = this.g + this.b * (target - this.g);
+    }
+    for (let ch = 2; ch < output.length; ch++) output[ch].fill(0);
+    return this.alive;
+  }
+}
+
 sbRegister('${FLANGER_PROCESSOR_NAME}', SbFlangerProcessor);
 sbRegister('${TAPE_PROCESSOR_NAME}', SbTapeProcessor);
+sbRegister('${LEVEL_MATCH_PROCESSOR_NAME}', SbLevelMatchProcessor);
 `;

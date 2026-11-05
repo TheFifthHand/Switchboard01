@@ -1,8 +1,11 @@
 import { createElement as h, Fragment } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
+// The app's tokens (type sizes): kit key names are measured in them.
+import '../../src/ui/theme.css';
 import { Dialog, MiniKeyboard } from '../../src/ui/components';
 import { drumKeyHint, noteKeyLabels, useComputerKeyboard, type ComputerKeyboardLayout } from '../../src/ui/hooks/useComputerKeyboard';
 import { cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
+import { centre, click, settleFrames } from './r4-uikit-input';
 
 afterEach(cleanup);
 
@@ -398,5 +401,86 @@ describe('useComputerKeyboard', () => {
     ]);
     key(document.body, 'keydown', { code: 'KeyL', key: 'l' });
     expect(log).toHaveLength(4);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* MiniKeyboard: kit row and key-spelled names (real mouse)            */
+/* ------------------------------------------------------------------ */
+
+describe('MiniKeyboard kit row and spelling', () => {
+  it("kit 'row': 16 named keys in one row of four groups (Z–V, A–F, Q–R, 1–4); the mouse plays the key under it, a gap plays its nearest key", async () => {
+    const events: Ev[] = [];
+    const names = Array.from({ length: 16 }, (_, i) => `Sound ${i + 1}`);
+    const letters = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [60 + i, drumKeyHint(i)!]));
+    const m = mount(
+      h('div', { style: { width: '900px' } }, h(MiniKeyboard, { variant: 'kit', kitLayout: 'row', baseNote: 60, height: 90, kitNames: names, keyLabels: letters, onNoteOn: (n: number, v: number) => events.push(['on', n, v]), onNoteOff: (n: number) => events.push(['off', n]) })),
+      { width: 940 },
+    );
+    const board = m.container.querySelector<HTMLElement>('[role="group"]')!;
+    const keys = [...board.querySelectorAll<HTMLElement>('[data-midi]')];
+    expect(keys).toHaveLength(16);
+    expect(new Set(keys.map((k) => Math.round(k.getBoundingClientRect().top))).size).toBe(1);
+    expect(keys.map((k) => k.textContent)).toEqual(names.map((n, i) => `${n}${drumKeyHint(i)}`));
+    for (const k of keys) expect(k.getBoundingClientRect().height).toBeGreaterThanOrEqual(80);
+    // Groups of four: the space between groups is wider than between keys in a group.
+    const gap = (a: number, b: number) => keys[b].getBoundingClientRect().left - keys[a].getBoundingClientRect().right;
+    expect(gap(3, 4)).toBeGreaterThan(gap(2, 3) + 2);
+    await click(centre(keys[5], 0.5, 0.9));
+    const between = { x: (keys[3].getBoundingClientRect().right + keys[4].getBoundingClientRect().left) / 2 + 2, y: centre(keys[4]).y };
+    await click(between);
+    expect(events.filter((e) => e[0] === 'on').map((e) => e[1])).toEqual([65, 64]);
+    expect(events.filter((e) => e[0] === 'off').map((e) => e[1])).toEqual([65, 64]);
+  });
+
+  it('pitchNames spell the root on the rail and in legends the way the key writes it (B♭, not A#)', () => {
+    const flats = ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'G♭', 'G', 'A♭', 'A', 'B♭', 'B'];
+    const rail = mount(h('div', { style: { width: '760px' } }, h(MiniKeyboard, { baseNote: 60, height: 90, rootPc: 10, pitchNames: flats, noteNames: 'above', onNoteOn: () => {}, onNoteOff: () => {} })), { width: 800 });
+    expect([...rail.container.querySelectorAll('[class*="railName"]')].map((r) => r.textContent)).toEqual(['C4', 'B♭', 'C5', 'B♭', 'C6']);
+    const legend = mount(h('div', { style: { width: '760px' } }, h(MiniKeyboard, { baseNote: 60, height: 90, rootPc: 10, pitchNames: flats, onNoteOn: () => {}, onNoteOff: () => {} })), { width: 800 });
+    // B♭ is a black key: its name shows on the rail only; the white C keys keep C4 / C5.
+    expect(legend.container.querySelector('[data-midi="60"] [class*="name"]')!.textContent).toBe('C4');
+  });
+});
+
+describe('MiniKeyboard kit row on narrow strips', () => {
+  function kitRow(width: number) {
+    const events: Ev[] = [];
+    const names = ['Kick', 'Kick 2', 'Snare', 'Clap', 'Closed Hat', 'Open Hat', 'Pedal Hat', 'Rim', 'Low Tom', 'Mid Tom', 'High Tom', 'Cowbell', 'Crash', 'Ride', 'Blip', 'Zap'];
+    const letters = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [60 + i, drumKeyHint(i)!]));
+    const m = mount(
+      h('div', { style: { width: `${width}px` } }, h(MiniKeyboard, { variant: 'kit', kitLayout: 'row', baseNote: 60, height: 90, kitNames: names, keyLabels: letters, onNoteOn: (n: number, v: number) => events.push(['on', n, v]), onNoteOff: (n: number) => events.push(['off', n]) })),
+      { width: width + 40 },
+    );
+    const board = m.container.querySelector<HTMLElement>('[role="group"]')!;
+    return { names, events, board, keys: () => [...board.querySelectorAll<HTMLElement>('[data-midi]')] };
+  }
+
+  it('under about 44 px a key, two rows of eight (8–15 above 0–7); the mouse plays the key under it', async () => {
+    const { keys, events } = kitRow(470);
+    await settleFrames(2);
+    const ks = keys();
+    expect(new Set(ks.map((k) => Math.round(k.getBoundingClientRect().top))).size).toBe(2);
+    expect(ks[8].getBoundingClientRect().top).toBeLessThan(ks[0].getBoundingClientRect().top);
+    for (const k of ks) expect(k.getBoundingClientRect().height).toBeGreaterThanOrEqual(32);
+    await click(centre(ks[9]));
+    await click(centre(ks[1]));
+    expect(events.filter((e) => e[0] === 'on').map((e) => e[1])).toEqual([69, 61]);
+  });
+
+  it('when even two rows are too narrow, names are shortened (the whole name is the title)', async () => {
+    const { keys, names } = kitRow(300);
+    await settleFrames(2);
+    const ks = keys();
+    expect(ks[4].firstElementChild!.textContent).toBe('CH');
+    expect(ks[4].title).toBe('Closed Hat');
+    expect(ks[1].firstElementChild!.textContent).toBe('K2');
+    expect(ks[0].firstElementChild!.textContent).toBe('Kick');
+    expect(ks[11].firstElementChild!.textContent).toBe('Cwbl');
+    expect(ks[2].firstElementChild!.textContent).toBe('Snr');
+    for (const [i, k] of ks.entries()) {
+      const n = k.firstElementChild as HTMLElement;
+      expect(n.scrollWidth, names[i]).toBeLessThanOrEqual(n.clientWidth + 1);
+    }
   });
 });

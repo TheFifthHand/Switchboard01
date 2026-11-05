@@ -176,6 +176,23 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
   );
   const cableSet = useMemo(() => computeCables({ layout, connections, modules, tracks, trackId }), [layout, connections, modules, tracks, trackId]);
 
+  // A patch wider than its panel scrolls sideways: edge shadows and arrow keys say there is more (Master Out is last).
+  const [edges, setEdges] = useState<{ left: boolean; right: boolean }>({ left: false, right: false });
+  const readEdges = useCallback(() => {
+    const sc = scrollerRef.current;
+    if (!sc) return;
+    const left = sc.scrollLeft > 2;
+    const right = sc.scrollLeft + sc.clientWidth < sc.scrollWidth - 2;
+    setEdges((e) => (e.left === left && e.right === right ? e : { left, right }));
+  }, []);
+  useLayoutEffect(readEdges, [readEdges, layout.width, avail.width, avail.height]);
+  const scrollPatch = (dir: -1 | 1) => {
+    const sc = scrollerRef.current;
+    if (!sc) return;
+    const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    sc.scrollBy({ left: dir * Math.max(120, Math.round(sc.clientWidth * 0.6)), behavior: reduce ? 'auto' : 'smooth' });
+  };
+
   // Selection and armed sockets that no longer exist are dropped.
   const selected = selectedId ? (connections.find((c) => c.id === selectedId) ?? null) : null;
   const armSocket = arm ? (layout.sockets.get(arm) ?? null) : null;
@@ -882,7 +899,7 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
       </div>
 
       <div className={styles.viewportWrap}>
-        <div className={styles.viewport} ref={scrollerRef}>
+        <div className={styles.viewport} ref={scrollerRef} onScroll={readEdges}>
           <div
             id={`${listId}-stage`}
             ref={stageRef}
@@ -933,6 +950,22 @@ export function CablePanelFrame({ trackId, height, headerStart }: CablePanelFram
             )}
           </div>
         </div>
+        {edges.left && (
+          <>
+            <span className={styles.edgeShadow} data-side="left" aria-hidden="true" />
+            <span className={styles.edgeArrow} data-side="left">
+              <IconButton icon="chevronLeft" size="md" label="Scroll the patch left" tip="More of the patch to the left: the instrument starts it." onClick={() => scrollPatch(-1)} />
+            </span>
+          </>
+        )}
+        {edges.right && (
+          <>
+            <span className={styles.edgeShadow} data-side="right" aria-hidden="true" />
+            <span className={styles.edgeArrow} data-side="right">
+              <IconButton icon="chevronRight" size="md" label="Scroll the patch right" tip="More of the patch to the right, up to Master Out." onClick={() => scrollPatch(1)} />
+            </span>
+          </>
+        )}
         {locked && (
           <div className={styles.lockVeil} role="status">
             <div className={styles.lockCard}>

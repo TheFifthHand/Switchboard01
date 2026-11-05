@@ -12,6 +12,10 @@
  * merges keep it), so a message about an edit ("Moved clip" [Undo]) can tell
  * whether its edit is still the newest step.
  *
+ * A label names the kind of edit ("track:Mute part"): the edit lock and the
+ * performance take's allow-list match it, so it never carries data. An edit
+ * may give the words Undo and Redo show instead (`display`, "Mute Lead").
+ *
  * The edit lock refuses routing edits (labels starting with "patch:") while a
  * performance take is recording, including undo/redo of such edits and of
  * undoable whole-project swaps (which replace the patch as well). A lock can
@@ -38,21 +42,52 @@ export interface ApplyOptions {
    * steps that edit notes of an array this change adds to or removes from).
    */
   skipHistory?: boolean;
+  /**
+   * What Undo and Redo call this step ("Bass level", "Mute Lead"), when it
+   * says more than the label's own words. The label still names the kind of
+   * edit for the edit lock. Ignored inside an undo group (the group's label
+   * names the step); a gesture keeps the words of its first edit.
+   */
+  display?: string;
 }
 
 export interface ApplyResult {
   changed: boolean;
   /** Set when the edit lock refused the edit: the lock reason. */
   refused?: string;
+  /**
+   * The edit changed the project but left no undo step of its own (a gesture
+   * that came back to where it started): offer no Undo for it.
+   */
+  noStep?: boolean;
+}
+
+/**
+ * What the latest change to the project was, for listeners that keep state of
+ * their own per undo step (the song loop): a recorded edit (a new step, or one
+ * merged into the newest step by its gesture or group), an undo or redo of a
+ * step, or a change outside the history (an unrecorded edit, a project swap).
+ */
+export interface ChangeInfo {
+  kind: 'edit' | 'undo' | 'redo' | 'other';
+  /** The history entry the change belongs to (null for 'other'). */
+  entryId: number | null;
 }
 
 export interface HistoryEntry {
   /** Unique for the app's lifetime; kept when later edits merge into this step. */
   id: number;
   label: string;
+  /** Words for Undo/Redo instead of the label's (ApplyOptions.display). */
+  display?: string;
   gesture?: string;
   patches: ImmerPatch[];
   inverse: ImmerPatch[];
+  /**
+   * The state before this step, kept only while its gesture is still open, so
+   * a gesture that ends where it started leaves no step behind.
+   */
+  base?: Project;
 }
 
 export interface HistoryInfo {
@@ -76,6 +111,11 @@ const nextEntryId = (): number => ++lastEntryId;
 export function displayLabel(label: string): string {
   const m = /^[a-z]+:(.*)$/.exec(label);
   return m ? m[1] : label;
+}
+
+/** The words Undo and Redo show for a step. */
+function entryText(entry: HistoryEntry): string {
+  return entry.display ?? displayLabel(entry.label);
 }
 
 function isPatchLabel(label: string): boolean {
@@ -102,6 +142,44 @@ function unstableRoot(p: ImmerPatch): PatchPath {
   return p.op !== 'replace' || last === 'length' ? p.path.slice(0, -1) : p.path;
 }
 
+function valueAt(root: unknown, path: PatchPath): unknown {
+  let v = root;
+  for (const k of path) {
+    if (v === null || typeof v !== 'object') return undefined;
+    v = (v as Record<string | number, unknown>)[k as string | number];
+  }
+  return v;
+}
+
+/** Structural equality for project data (plain objects and arrays). */
+function sameData(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    const bb = b as unknown[];
+    return a.length === bb.length && a.every((x, i) => sameData(x, bb[i]));
+  }
+  const ra = a as Record<string, unknown>;
+  const rb = b as Record<string, unknown>;
+  const ka = Object.keys(ra);
+  return ka.length === Object.keys(rb).length && ka.every((k) => Object.prototype.hasOwnProperty.call(rb, k) && sameData(ra[k], rb[k]));
+}
+
+/**
+ * Whether `state` equals `base` everywhere `entry` changed anything: the step
+ * has no net effect (a part switched off and on again, a knob dragged back).
+ * A change inside an array is checked on the whole array, so an item removed
+ * and a different one added at the same index still counts as a change.
+ */
+function netUnchanged(entry: HistoryEntry, base: Project, state: Project): boolean {
+  return entry.patches.every((p) => {
+    const parent = p.path.slice(0, -1);
+    const at = p.path.length > 1 && (Array.isArray(valueAt(state, parent)) || Array.isArray(valueAt(base, parent))) ? parent : p.path;
+    return sameData(valueAt(state, at), valueAt(base, at));
+  });
+}
+
 function entryTouches(entry: HistoryEntry, roots: readonly PatchPath[]): boolean {
   const hit = (q: ImmerPatch) => roots.some((r) => strictlyInside(q.path, r));
   return entry.patches.some(hit) || entry.inverse.some(hit);
@@ -118,8 +196,12 @@ export class ProjectStore implements ReadableStore<Project> {
   private redoStack: HistoryEntry[] = [];
   /** Gesture of the most recent recorded apply; cleared by anything that ends the gesture. */
   private openGesture: string | null = null;
-  /** Open undo group: its label, and its history entry once something was recorded. */
-  private group: { label: string; entry: HistoryEntry | null } | null = null;
+  /**
+   * Open undo group: its label, and once something was recorded its history
+   * entry and the state just before that entry (an undo inside the group can
+   * drop the entry; the next edit then starts a new one from where it is).
+   */
+  private group: { label: string; entry: HistoryEntry | null; base: Project | null } | null = null;
   private lock: string | null = null;
   /** While locked: which edits are still allowed (default: everything except routing edits). */
   private lockAllows: ((label: string) => boolean) | null = null;
@@ -127,6 +209,7 @@ export class ProjectStore implements ReadableStore<Project> {
   private lockPaths: ((path: readonly (string | number)[]) => boolean) | null = null;
   private readonly now: () => number;
   private readonly limit: number;
+  private change: ChangeInfo = { kind: 'other', entryId: null };
   /** History and lock state, for undo buttons and lock banners. */
   readonly info: Store<HistoryInfo>;
 
@@ -153,6 +236,9 @@ export class ProjectStore implements ReadableStore<Project> {
       recipe(d as Project);
     });
     if (patches.length === 0) return { changed: false };
+    // A gesture that came back to where it started: its step is dropped (known at the return).
+    let undone = false;
+    let entryId: number | null = null;
 
     if (opts.skipHistory) {
       // Redo entries were recorded against the pre-change state; they would no longer apply cleanly.
@@ -171,41 +257,81 @@ export class ProjectStore implements ReadableStore<Project> {
       const top = this.undoStack[this.undoStack.length - 1];
       const inGroup = !!this.group && !!top && this.group.entry === top;
       if (inGroup || (opts.gesture !== undefined && top && top.gesture === opts.gesture && this.openGesture === opts.gesture)) {
+        entryId = top.id;
         top.patches.push(...patches);
         // Inverses run newest-first.
         top.inverse = [...inverse, ...top.inverse];
+        // A gesture back where it started leaves no undo step (its next edit starts a new one).
+        if (!inGroup && top.base && netUnchanged(top, top.base, next)) {
+          this.undoStack.pop();
+          undone = true;
+        }
       } else {
+        if (top) delete top.base;
         const entry: HistoryEntry = { id: nextEntryId(), label: this.group?.label ?? label, gesture: opts.gesture, patches, inverse };
+        if (opts.display !== undefined && !this.group) entry.display = opts.display;
+        if (opts.gesture !== undefined && !this.group) entry.base = base;
         this.undoStack.push(entry);
-        if (this.group) this.group.entry = entry;
+        if (this.group) {
+          this.group.entry = entry;
+          this.group.base = base;
+        }
+        entryId = entry.id;
         if (this.undoStack.length > this.limit) this.undoStack.splice(0, this.undoStack.length - this.limit);
       }
-      this.openGesture = opts.gesture ?? null;
+      // After a gesture cancelled itself out, its next edit starts a fresh step.
+      this.openGesture = undone ? null : (opts.gesture ?? null);
       this.redoStack = [];
     }
+    this.change = entryId === null ? { kind: 'other', entryId: null } : { kind: 'edit', entryId };
     this.commit(next);
-    return { changed: true };
+    // No undo step left for this edit: a message about it must not offer Undo (that would undo an older step).
+    return undone ? { changed: true, noStep: true } : { changed: true };
+  }
+
+  /** The latest change (see ChangeInfo); listeners called for it can read it. */
+  lastChange(): ChangeInfo {
+    return this.change;
   }
 
   /** Close the current gesture so the next edit with the same id starts a new undo step. */
   endGesture(): void {
     this.openGesture = null;
+    const top = this.undoStack[this.undoStack.length - 1];
+    if (top) delete top.base;
   }
 
   /**
    * Open an undo group: until endGroup(), every recorded edit, whatever its
    * gesture, joins one undo step labelled `label` (a Record Notes pass with
-   * any knob moves made during it). An undo inside the group removes what was
-   * recorded so far; later edits start the group's step again.
+   * any knob moves made during it, or a whole sound-browser session). An undo
+   * inside the group removes what was recorded so far; later edits start the
+   * group's step again.
    */
   beginGroup(label: string): void {
-    this.group = { label, entry: null };
+    if (this.group) this.endGroup();
+    this.group = { label, entry: null, base: null };
     this.openGesture = null;
   }
 
-  endGroup(): void {
+  /**
+   * Close the undo group. A group step whose edits ended where the step began
+   * (sounds tried, then Cancel back to the original) is dropped, so Undo
+   * stays on the edit before it. Returns whether the group left an undo step.
+   */
+  endGroup(): { step: boolean } {
+    const g = this.group;
     this.group = null;
     this.openGesture = null;
+    if (!g || !g.entry || !g.base) return { step: false };
+    const top = this.undoStack[this.undoStack.length - 1];
+    if (top !== g.entry) return { step: false };
+    if (netUnchanged(top, g.base, this.store.getState())) {
+      this.undoStack.pop();
+      this.info.setState(this.computeInfo());
+      return { step: false };
+    }
+    return { step: true };
   }
 
   canUndo(): boolean {
@@ -218,15 +344,15 @@ export class ProjectStore implements ReadableStore<Project> {
     return !!top && !(this.lock !== null && this.entryLocked(top));
   }
 
-  /** Display text of the edit Undo would revert ("Connect cable"), or null. */
+  /** Display text of the edit Undo would revert ("Connect cable", "Bass level"), or null. */
   undoLabel(): string | null {
     const top = this.undoStack[this.undoStack.length - 1];
-    return top ? displayLabel(top.label) : null;
+    return top ? entryText(top) : null;
   }
 
   redoLabel(): string | null {
     const top = this.redoStack[this.redoStack.length - 1];
-    return top ? displayLabel(top.label) : null;
+    return top ? entryText(top) : null;
   }
 
   /** Id of the step Undo would revert (the newest edit), or null. */
@@ -246,6 +372,7 @@ export class ProjectStore implements ReadableStore<Project> {
     this.undoStack.pop();
     this.redoStack.push(entry);
     this.openGesture = null;
+    this.change = { kind: 'undo', entryId: entry.id };
     this.commit(applyPatches(this.store.getState(), entry.inverse));
     return { changed: true };
   }
@@ -257,6 +384,7 @@ export class ProjectStore implements ReadableStore<Project> {
     this.redoStack.pop();
     this.undoStack.push(entry);
     this.openGesture = null;
+    this.change = { kind: 'redo', entryId: entry.id };
     this.commit(applyPatches(this.store.getState(), entry.patches));
     return { changed: true };
   }
@@ -271,17 +399,20 @@ export class ProjectStore implements ReadableStore<Project> {
     const prev = this.store.getState();
     this.openGesture = null;
     if (opts.resetHistory === false) {
+      const id = nextEntryId();
       this.undoStack.push({
-        id: nextEntryId(),
+        id,
         label: opts.label ?? 'project:Replace project',
         patches: [{ op: 'replace', path: [], value: next }],
         inverse: [{ op: 'replace', path: [], value: prev }],
       });
       if (this.undoStack.length > this.limit) this.undoStack.splice(0, this.undoStack.length - this.limit);
       this.redoStack = [];
+      this.change = { kind: 'edit', entryId: id };
     } else {
       this.undoStack = [];
       this.redoStack = [];
+      this.change = { kind: 'other', entryId: null };
     }
     this.store.setState(next);
     this.info.setState(this.computeInfo());

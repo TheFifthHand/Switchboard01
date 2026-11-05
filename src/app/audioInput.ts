@@ -18,8 +18,9 @@
  *   track's reported input latency) plus the user's offset, so the take lines
  *   up with what the player heard.
  * - The take becomes a WAV recording stored like an import (same limits and
- *   messages), put on the part with a clip that plays it from the downbeat:
- *   one undo step (cmd.addRecordedTake).
+ *   messages), in its own clip on the part that plays it from the downbeat
+ *   (Clip.sample): one undo step (cmd.addRecordedTake). Other clips keep
+ *   their recordings. Takes are 1, 2, 4 or 8 bars.
  * - Stop, Pause, Mute All or the input going away end a take early and keep
  *   what was recorded (up to the moment of stopping, latency included); a
  *   tempo change, a performance take or Record Notes starting cancel it (it
@@ -28,14 +29,17 @@
  *   recording starts while a finished take is still being saved.
  */
 import { audioBufferFromChannels } from '../audio/instruments/sampleBank';
-import { LIMITER_PROCESSOR_NAME, engineLatencyFrames, limiterProcessorOptions } from '../audio/worklets/limiter';
+import { LIMITER_PROCESSOR_NAME, limiterProcessorOptions } from '../audio/worklets/limiter';
 import { encodeMadeAudio } from '../persistence/audioImport';
 import * as db from '../persistence/db';
+import { clipAtSlot, isSongSlot, trackClips } from '../project/clips';
 import { TICKS_PER_BAR, type ClipBars, type Id } from '../project/types';
 import * as cmd from '../state/commands';
 import { createStore, type Store } from '../state/store';
 import { selectSlot, slotFor, uiStore } from '../state/uiStore';
 import { nextBarTick } from '../time/sequencer';
+import { outputDelaySeconds, type EngineLatency } from '../time/transport';
+import { meterWake } from '../ui/components/meterScheduler';
 import { notify, runtimeStore, type RuntimeState } from './runtime';
 import type { Session } from './session';
 
@@ -152,8 +156,8 @@ function loadRecorder(ctx: BaseAudioContext): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 export type InputStatus = 'off' | 'requesting' | 'open' | 'denied' | 'unsupported' | 'nodevice' | 'error';
-export type RecordBars = 1 | 2 | 4;
-export const RECORD_BAR_CHOICES: readonly RecordBars[] = [1, 2, 4];
+export type RecordBars = 1 | 2 | 4 | 8;
+export const RECORD_BAR_CHOICES: readonly RecordBars[] = [1, 2, 4, 8];
 
 export interface InputDevice {
   id: string;
@@ -457,6 +461,7 @@ export class AudioInputController {
     const id = settings.deviceId ?? deviceId;
     this.patch({ status: 'open', message: null, deviceId: id, deviceLabel: track.label || 'Audio input' });
     this.persist();
+    meterWake();
     await this.refreshDevices();
     // The name the device list uses for it (the same as the track's on real devices).
     const listed = this.state.getState().devices.find((d) => d.id === id)?.label;
@@ -655,7 +660,8 @@ export class AudioInputController {
     const ctx = this.session.ctx;
     const offsetMs = this.state.getState().offsetMs;
     if (!ctx) return { outputMs: 0, inputMs: 0, offsetMs, totalMs: offsetMs };
-    const out = (ctx.outputLatency || 0) + (ctx.baseLatency || 0) + engineLatencyFrames(ctx.sampleRate) / ctx.sampleRate;
+    // The same output delay Record Notes and the playheads use (device, base and engine latency).
+    const out = outputDelaySeconds(ctx, this.session.engine as (InputSession['engine'] & EngineLatency) | null);
     const reported = (this.track?.getSettings() as (MediaTrackSettings & { latency?: number }) | undefined)?.latency;
     const input = typeof reported === 'number' && Number.isFinite(reported) && reported >= 0 ? reported : ctx.baseLatency || 0;
     const outputMs = Math.round(out * 1000);
@@ -754,6 +760,7 @@ export class AudioInputController {
       this.take = take;
       this.recorder!.port.postMessage({ type: 'window', from, to, channels });
       this.patch({ take: info });
+      meterWake();
       // The phase word for the editor (display only: the worklet does the timing).
       take.timers.push(setTimeout(() => this.take === take && !take.stopping && this.patch({ take: { ...info, phase: 'recording' } }), Math.max(0, (startTime - ctx.currentTime) * 1000)));
       // If the audio clock stops (a suspended device), finish with what arrived.
@@ -893,7 +900,8 @@ export class AudioInputController {
     }
     const slot = chooseSlot(s, trackId);
     const p = s.store.getState();
-    const replaced = p.tracks.find((t) => t.id === trackId)?.clips[slot] ?? null;
+    const before = p.tracks.find((t) => t.id === trackId);
+    const replaced = before ? clipAtSlot(before, slot) : null;
     const r = cmd.addRecordedTake(s.store, { trackId, meta: made.meta, slot, bars: clipBars, bpm: take.bpm, clipName: name });
     if (!r.changed) {
       s.bank?.remove(made.meta.id);
@@ -910,9 +918,14 @@ export class AudioInputController {
     const partName = after.tracks.find((t) => t.id === trackId)?.name ?? 'the part';
     const where = `${partName} · ${after.scenes[slot]?.name ?? `row ${slot + 1}`}`;
     const seconds = frames / sr;
-    let message = `Recorded “${name}” (${seconds.toFixed(1)} s, ${clipBars} bar${clipBars === 1 ? '' : 's'}): its clip on ${where} plays it from the downbeat${replaced ? `, replacing “${replaced.name}”` : ''}. Undo removes it.`;
+    // A synth or drum part becomes a sampler with the take: its other clips then play the take at their notes.
+    const others = !!before && before.instrument.kind !== 'sampler' && trackClips(before).some((x) => x.slot !== slot && x.clip.notes.length > 0);
+    const rest = others ? `${partName} plays recordings now, so its other loops play this take at their notes’ pitches` : 'other loops keep their recordings';
+    let message = `Recorded ${seconds.toFixed(1)} s (${clipBars} bar${clipBars === 1 ? '' : 's'}). ${name} plays in its own loop on ${where}${replaced ? `, replacing “${replaced.name}”` : ''}; ${rest}.`;
     if (frames < take.to - take.from - sr * 0.05) message = `Stopped early. ${message}`;
     if (peak < SILENT_PEAK) message += ' The take is silent: check the input and its level in MIDI & audio.';
+    // Song clips hold notes recorded in the Song view; audio takes keep the pad route there too.
+    if (uiStore.getState().view === 'arrange') message += ' Audio recordings go on the pads, also from the Song view: drag the loop onto the song to place it.';
     done({ ok: true, message }, peak < SILENT_PEAK ? 'warn' : 'info', entry);
   }
 
@@ -940,10 +953,15 @@ export function nextRecordingName(existing: readonly string[]): string {
   return `Recording ${n + 1}`;
 }
 
-/** The part's selected clip slot when it is empty, else its first empty slot, else the selected one (replaced; Undo brings it back). */
+/**
+ * The part's selected clip slot when it is empty, else its first empty slot,
+ * else the selected one (replaced; Undo brings it back). Takes always go on
+ * the pads: with a song clip selected, the first empty pad (else the first).
+ */
 function chooseSlot(s: InputSession, trackId: Id): number {
   const clips = s.store.getState().tracks.find((t) => t.id === trackId)?.clips ?? [];
-  const selected = slotFor(uiStore.getState(), trackId);
+  const chosen = slotFor(uiStore.getState(), trackId);
+  const selected = isSongSlot(chosen) ? 0 : chosen;
   if (!clips[selected]) return selected;
   const empty = clips.findIndex((c) => !c);
   return empty >= 0 ? empty : selected;

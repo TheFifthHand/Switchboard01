@@ -8,6 +8,13 @@
  *   focus, never intercepts the pointer (pointer-events: none), hides the
  *   moment anything is pressed so it never gets in the way of playing,
  *   closes on Escape wherever focus is, and is kept inside the viewport.
+ * - Keyboard focus means the user moved it with a navigation key (Tab, the
+ *   arrow keys, Home/End, Page Up/Down) just before: focus the app moves by
+ *   itself (after Delete, a dialog closing, a drop) opens nothing, so a tip
+ *   never lands on a button the user did not go to.
+ * - Hover means the pointer moved over the control: a control that comes to
+ *   lie under a resting pointer (after a drop, or when a dialog, menu or the
+ *   guide closes, or a hint appears) shows nothing until the pointer moves.
  * - An optional `hint` says how to operate the control (gestures, shortcuts);
  *   it comes last and, like the explanations, follows the Tips setting.
  * - When Tips are off, a tooltip still shows a control's `name` if it has one
@@ -71,6 +78,32 @@ export const TOOLTIP_DELAY_MS = 350;
 const MARGIN = 8;
 const GAP = 8;
 
+/** Keys that move keyboard focus (sequentially, or within a composite widget). */
+const NAV_KEYS = new Set(['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']);
+/** Focus counts as the user's own move for this long after a navigation key. */
+const NAV_FOCUS_MS = 400;
+
+/** The last key pressed anywhere, watched once for every tooltip. */
+const lastKey = { key: '', at: -Infinity };
+let watchingKeys = false;
+function watchKeys(): void {
+  if (watchingKeys || typeof window === 'undefined') return;
+  watchingKeys = true;
+  window.addEventListener(
+    'keydown',
+    (e) => {
+      lastKey.key = e.key;
+      lastKey.at = performance.now();
+    },
+    { capture: true, passive: true },
+  );
+}
+
+/** True when focus just moved because the user pressed a navigation key. */
+function focusFromNavigation(): boolean {
+  return NAV_KEYS.has(lastKey.key) && performance.now() - lastKey.at < NAV_FOCUS_MS;
+}
+
 export interface TooltipProps {
   /** Short name of the control, shown first (and even when Tips are off). */
   name?: string;
@@ -117,7 +150,10 @@ export function Tooltip({ name, tip, detail, hint, placement = 'top', disabled, 
     setPos(null);
   }, []);
 
-  useEffect(() => () => clearTimer(), []);
+  useEffect(() => {
+    watchKeys();
+    return () => clearTimer();
+  }, []);
   useEffect(() => {
     if (!hasContent) hide();
   }, [hasContent, hide]);
@@ -170,8 +206,10 @@ export function Tooltip({ name, tip, detail, hint, placement = 'top', disabled, 
   if (!isValidElement(children)) return children;
   if (!hasContent) return children;
 
-  const onPointerOver = (e: PointerEvent) => {
-    if (e.pointerType === 'touch' || suppressed.current || open || timer.current !== undefined) return;
+  // The hover delay starts when the pointer moves over the control, never just because something
+  // appeared under a pointer at rest (the browser then sends pointerover, but no pointermove).
+  const onPointerMove = (e: PointerEvent) => {
+    if (e.pointerType === 'touch' || e.buttons !== 0 || suppressed.current || open || timer.current !== undefined) return;
     timer.current = window.setTimeout(() => {
       timer.current = undefined;
       setOpen(true);
@@ -195,7 +233,8 @@ export function Tooltip({ name, tip, detail, hint, placement = 'top', disabled, 
     } catch {
       keyboard = false;
     }
-    if (keyboard && !suppressed.current) {
+    // Only focus the user moved with the keyboard: not focus the app moved after another key.
+    if (keyboard && !suppressed.current && focusFromNavigation()) {
       clearTimer();
       setOpen(true);
     }
@@ -219,7 +258,7 @@ export function Tooltip({ name, tip, detail, hint, placement = 'top', disabled, 
     <span
       ref={anchorRef}
       className={styles.anchor}
-      onPointerOver={onPointerOver}
+      onPointerMove={onPointerMove}
       onPointerOut={onPointerOut}
       onPointerDown={onPointerDown}
       onFocus={onFocus}

@@ -22,6 +22,14 @@
  * "flush" counter resets the processor state (Mute All) sample-accurately,
  * live and offline. The processors keep themselves alive until the node
  * posts 'dispose'.
+ *
+ * With processorOptions { report: true } (live engines) each processor posts
+ * its gain reduction in dB (the most of the last report period, >= 0) at
+ * DYNAMICS_REPORT_HZ, for the meters: the compressor's computed reduction
+ * (before make-up and Mix), the gate's attenuation of input above
+ * GATE_REPORT_FLOOR_DB (a closed gate in silence reports 0: it is reducing
+ * nothing). A processor that has nothing to reduce posts one 0 and then
+ * stays quiet until it does.
  */
 import { FLUSH_PARAM_JS, WORKLET_COMMON_JS } from './common';
 
@@ -36,10 +44,47 @@ export const GATE_HYSTERESIS_DB = 4;
 export const GATE_HOLD_MS = 15;
 /** Decay of the gate's peak detector (seconds). */
 export const GATE_DETECTOR_DECAY = 0.005;
+/** Gain-reduction reports per second (live engines). */
+export const DYNAMICS_REPORT_HZ = 30;
+/** The gate reports attenuation only of input above this level (dBFS). */
+export const GATE_REPORT_FLOOR_DB = -90;
+
+export interface DynamicsProcessorOptions {
+  /** Post gain-reduction readings to the main thread. */
+  report: boolean;
+}
 
 export const DYNAMICS_WORKLET_SOURCE = /* js */ `
 ${WORKLET_COMMON_JS}
 const SB_COMP_KNEE = ${COMPRESSOR_KNEE_DB};
+const SB_DYN_REPORT_HZ = ${DYNAMICS_REPORT_HZ};
+const SB_GATE_REPORT_FLOOR = Math.pow(10, ${GATE_REPORT_FLOOR_DB} / 20);
+
+/** Gain-reduction reporting shared by the dynamics processors. */
+class SbReporter {
+  constructor(port, options) {
+    const o = (options && options.processorOptions) || {};
+    this.port = port;
+    this.on = !!o.report;
+    this.every = Math.max(128, Math.round(sampleRate / SB_DYN_REPORT_HZ));
+    this.count = 0;
+    this.max = 0;
+    this.last = -1;
+  }
+  /** Account for a block of n frames whose largest reduction was db. */
+  block(n, db) {
+    if (!this.on) return;
+    if (db > this.max) this.max = db;
+    this.count += n;
+    if (this.count < this.every) return;
+    this.count = 0;
+    const v = this.max > 1e-3 ? this.max : 0;
+    this.max = 0;
+    if (v === 0 && this.last === 0) return;
+    this.last = v;
+    this.port.postMessage(v);
+  }
+}
 
 class SbCompressorProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {
@@ -54,9 +99,10 @@ class SbCompressorProcessor extends AudioWorkletProcessor {
     ];
   }
 
-  constructor() {
+  constructor(options) {
     super();
     this.gr = 0;
+    this.reporter = new SbReporter(this.port, options);
     this.flushSeen = 0;
     this.alive = true;
     this.port.onmessage = (e) => {
@@ -90,6 +136,7 @@ class SbCompressorProcessor extends AudioWorkletProcessor {
     };
     setup(0);
     let gr = this.gr;
+    let grMax = 0;
     const halfKnee = SB_COMP_KNEE / 2;
     for (let i = 0; i < n; i++) {
       if (varying && i > 0) setup(i);
@@ -108,6 +155,7 @@ class SbCompressorProcessor extends AudioWorkletProcessor {
         }
       }
       gr = target > gr ? target + (gr - target) * aA : target + (gr - target) * aR;
+      if (gr > grMax) grMax = gr;
       const mix = sbAt(mixA, i);
       const g = mk === 0 && gr === 0 ? 1 : sbDbToGain(mk - gr);
       const w = mix === 1 ? g : 1 - mix + mix * g;
@@ -115,6 +163,7 @@ class SbCompressorProcessor extends AudioWorkletProcessor {
       if (oR) oR[i] = r * w;
     }
     this.gr = gr < 1e-9 ? 0 : gr;
+    this.reporter.block(n, grMax);
     for (let ch = 2; ch < output.length; ch++) output[ch].fill(0);
     return this.alive;
   }
@@ -135,8 +184,9 @@ class SbGateProcessor extends AudioWorkletProcessor {
     ];
   }
 
-  constructor() {
+  constructor(options) {
     super();
+    this.reporter = new SbReporter(this.port, options);
     this.env = 0;
     this.open = false;
     this.hold = 0;
@@ -175,6 +225,7 @@ class SbGateProcessor extends AudioWorkletProcessor {
     };
     setup(0);
     let env = this.env, open = this.open, hold = this.hold, g = this.g;
+    let gMin = 1;
     const aDet = this.aDet;
     for (let i = 0; i < n; i++) {
       if (varying && i > 0) setup(i);
@@ -195,6 +246,8 @@ class SbGateProcessor extends AudioWorkletProcessor {
       }
       const target = open ? 1 : floor;
       g = target > g ? target + (g - target) * aA : target + (g - target) * aR;
+      // Only attenuation of something audible counts (a closed gate in silence reduces nothing).
+      if (g < gMin && env > SB_GATE_REPORT_FLOOR) gMin = g;
       oL[i] = l * g;
       if (oR) oR[i] = r * g;
     }
@@ -202,6 +255,7 @@ class SbGateProcessor extends AudioWorkletProcessor {
     this.open = open;
     this.hold = hold;
     this.g = g;
+    this.reporter.block(n, gMin < 1 ? -20 * Math.log10(Math.max(1e-6, gMin)) : 0);
     for (let ch = 2; ch < output.length; ch++) output[ch].fill(0);
     return this.alive;
   }

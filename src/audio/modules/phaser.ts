@@ -12,7 +12,10 @@
  * sweeps them across that whole range. Web Audio needs a DelayNode in every
  * cycle; it is set to its minimum (one render quantum). Loop gain is at most
  * fb (all-passes have unit gain), so it cannot run away; the input is scaled
- * by sqrt(1 − fb²) so broadband level stays even as feedback rises.
+ * by sqrt(1 − fb²) so broadband level stays even as feedback rises. Mix
+ * (plus its modulation, clamped to 0..1) blends dry and wet with an
+ * equal-power law (dry cos, wet sin), so switching the phaser in keeps the
+ * part's energy (a linear 50/50 blend lost about 3.5 dB).
  */
 import { PHASER_PARAMS, readParam } from '../../project/params';
 import type { Id, ParamValues } from '../../project/types';
@@ -51,7 +54,7 @@ export class PhaserModule extends EffectModule {
     sum.connect(this.bypass.processed);
     this.ctl = new ControlBus(ctx, mix, 1, this.own);
     this.registerMod('mix', this.ctl.modInput);
-    const { dry, wet } = this.ctl.blend();
+    const { dry, wet } = this.ctl.blendEqualPower();
     this.bypass.input.connect(dry);
     dry.connect(sum);
     wet.connect(sum);

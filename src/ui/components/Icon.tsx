@@ -56,6 +56,12 @@ export const ICON_NAMES = [
   'spectrum',
   'stereo',
   'midi',
+  'pencil',
+  'scissors',
+  'cut',
+  'join',
+  'layers',
+  'scene',
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -157,6 +163,22 @@ const GLYPHS: Record<IconName, ReactElement[]> = {
   spectrum: [P('M2.5 13.5 H13.5'), F('M3 9 H4.6 V13 H3 Z'), F('M5.8 5 H7.4 V13 H5.8 Z'), F('M8.6 7 H10.2 V13 H8.6 Z'), F('M11.4 10 H13 V13 H11.4 Z')],
   stereo: [<circle key="l" cx={6} cy={8} r={3.6} {...S} />, <circle key="r" cx={10} cy={8} r={3.6} {...S} />],
   midi: [<circle key="o" cx={8} cy={8} r={5.8} {...S} />, Dot(5, 8.2), Dot(11, 8.2), Dot(6, 5.6), Dot(10, 5.6), Dot(8, 4.6), P('M7 12 H9')],
+  // Rename: a pencil writing.
+  pencil: [P('M10.4 2.9 L13.1 5.6 L5.6 13.1 L2.4 13.6 L2.9 10.4 Z'), P('M9 4.3 L11.7 7')],
+  // Split: open scissors.
+  scissors: [<circle key="a" cx={4.4} cy={11.6} r={2} {...S} />, <circle key="b" cx={11.6} cy={11.6} r={2} {...S} />, P('M5.8 10.2 L11.4 2.6'), P('M10.2 10.2 L4.6 2.6')],
+  // Cut (to the clipboard): scissors cutting along a dotted line.
+  cut: [<circle key="a" cx={3.6} cy={4.6} r={1.8} {...S} />, <circle key="b" cx={3.6} cy={11.4} r={1.8} {...S} />, P('M5.1 5.6 L10.6 9.4'), P('M5.1 10.4 L10.6 6.6'), Dot(12.6, 8, 0.75), Dot(14.6, 8, 0.75)],
+  // Join: two halves brought together.
+  join: [P('M6.2 4.2 H3.4 V11.8 H6.2'), P('M9.8 4.2 H12.6 V11.8 H9.8'), P('M5.6 8 H10.4')],
+  // Layer / replace parts: stacked sheets.
+  layers: [P('M8 2.6 L14 5.8 L8 9 L2 5.8 Z'), P('M2 9 L8 12.2 L14 9')],
+  // A scene: a row of clips.
+  scene: [
+    <rect key="a" x={1.8} y={5} width={3.6} height={6} rx={1} {...S} />,
+    <rect key="b" x={6.2} y={5} width={3.6} height={6} rx={1} {...S} />,
+    <rect key="c" x={10.6} y={5} width={3.6} height={6} rx={1} {...S} />,
+  ],
 };
 
 export interface IconProps {

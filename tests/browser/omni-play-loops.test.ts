@@ -19,7 +19,7 @@ import { Session, type BootInfo } from '../../src/app/session';
 import { LoopsGrid } from '../../src/app/views/LoopsGrid';
 import { getStarter } from '../../src/content/starters';
 import type { Clip, Id } from '../../src/project/types';
-import { addBlock } from '../../src/state/commands';
+import { addSceneToSong } from '../../src/state/commands';
 import { selectSlot, selectTrack, setGuideDone, setPadMode, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { cleanup, fire, key, mount, pointer, pointIn, wait } from './ui-harness';
 
@@ -115,9 +115,13 @@ describe('Column headers', () => {
     const header = mute.closest<HTMLElement>('[data-dim]')!;
     expect(header.textContent).toContain('Muted');
     expect(cell('t3', 0).hasAttribute('data-dim')).toBe(true);
-    await act(async () => {
-      await wait(250);
-    });
+    // The dim fades in (a short transition; on a busy machine frames can come late, so allow up to 2 s).
+    const end = performance.now() + 2000;
+    while (Number(getComputedStyle(cell('t3', 0)).opacity) >= 0.7 && performance.now() < end) {
+      await act(async () => {
+        await wait(50);
+      });
+    }
     expect(Number(getComputedStyle(cell('t3', 0)).opacity)).toBeLessThan(0.7);
     click(mute);
     expect(project().tracks[2].mute).toBe(false);
@@ -143,7 +147,7 @@ describe('Column headers', () => {
     const empty = project().tracks.findIndex((t) => t.clips.every((c) => !c));
     if (empty >= 0) {
       const name = project().tracks[empty].name;
-      expect(button(`${name} has no clips`)!.disabled).toBe(true);
+      expect(button(`${name} has no loops`)!.disabled).toBe(true);
     }
   });
 
@@ -182,14 +186,15 @@ describe('Column headers', () => {
 });
 
 describe('Pads', () => {
-  it('empty pads are quiet: a "+" and "Add clip" only on hover or focus; clip pads show the name large and the length small', async () => {
+  // r6: an empty pad's words are "New loop" (a tap makes one).
+  it('empty pads are quiet: a "+" and "New loop" only on hover or focus; clip pads show the name large and the length small', async () => {
     await fonts();
     grid();
     const { empty, full } = emptyAndFull('t3');
     const e = pad('t3', empty);
     expect(e.textContent).not.toContain('Empty');
-    expect(e.getAttribute('aria-label')).toContain('Add clip');
-    const label = [...e.querySelectorAll<HTMLElement>('span')].filter((s) => s.textContent === 'Add clip').at(-1)!;
+    expect(e.getAttribute('aria-label')).toContain('Tap for a new loop');
+    const label = [...e.querySelectorAll<HTMLElement>('span')].filter((s) => s.textContent === 'New loop').at(-1)!;
     expect(getComputedStyle(label).opacity).toBe('0');
     const f = pad('t3', full);
     const leaves = [...f.querySelectorAll<HTMLElement>('span')].filter((s) => s.children.length === 0);
@@ -198,18 +203,21 @@ describe('Pads', () => {
     expect(parseFloat(getComputedStyle(name).fontSize)).toBeGreaterThan(parseFloat(getComputedStyle(length).fontSize));
   });
 
-  it('tapping an empty pad ("+") offers a new clip right there', async () => {
+  // r6 (audit-ease 15): a tap makes a loop as long as its scene's loops and opens it in Steps; the length is in the ⋯ menu.
+  it('tapping an empty pad ("+") makes a loop there and opens it in Steps', async () => {
     grid();
     const { empty } = emptyAndFull('t3');
     const p = pad('t3', empty);
     pointer(p, 'pointerdown', pointIn(p));
     pointer(p, 'pointerup', pointIn(p));
-    const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
-    expect(menu.textContent).toContain('Empty slot');
-    click([...menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((b) => b.getAttribute('aria-label') === 'New clip, 2 bars')!);
-    expect(clips('t3')[empty]).toMatchObject({ bars: 2 });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    const longest = Math.max(1, ...session.store.getState().tracks.map((t) => t.clips[empty]?.bars ?? 0).filter((b) => b > 0));
+    expect(clips('t3')[empty]).toMatchObject({ bars: longest });
     expect(presses).toEqual([]);
     expect(uiStore.getState().selectedSlot.t3).toBe(empty);
+    expect(uiStore.getState().padMode).toBe('steps');
+    act(() => session.undo());
+    act(() => setPadMode('loops'));
   });
 
   it('a tap (less than 6 px of movement) launches the clip; a drag never does', async () => {
@@ -246,7 +254,7 @@ describe('Drag and drop', () => {
     expect(clips('t3')[full]).toBeNull();
     expect(notice()).toContain(`Moved “${name}”`);
     expect(presses).toEqual([]);
-    expect(session.store.undoLabel()).toBe('Move clip');
+    expect(session.store.undoLabel()).toBe('Move loop');
     act(() => session.undo());
     expect(names('t3')).toEqual(before);
     // Selection follows the clip.
@@ -262,7 +270,7 @@ describe('Drag and drop', () => {
     await drag(pad('t4', a), pad('t4', b));
     expect(names('t4')[a]).toBe(before[b]);
     expect(names('t4')[b]).toBe(before[a]);
-    expect(session.store.undoLabel()).toBe('Swap clips');
+    expect(session.store.undoLabel()).toBe('Swap loops');
     act(() => session.undo());
     expect(names('t4')).toEqual(before);
     await drag(pad('t4', a), pad('t4', b), { ctrl: true });
@@ -270,7 +278,7 @@ describe('Drag and drop', () => {
     expect(names('t4')[a]).toBe(before[a]);
     expect(clips('t4')[b]!.id).not.toBe(clips('t4')[a]!.id);
     expect(notice()).toContain('replacing');
-    expect(session.store.undoLabel()).toBe('Copy clip');
+    expect(session.store.undoLabel()).toBe('Copy loop');
     act(() => session.undo());
     expect(names('t4')).toEqual(before);
   });
@@ -328,7 +336,7 @@ describe('Keyboard move and the pad action bar', () => {
     key(document.activeElement!, 'keydown', { key: 'Enter' });
     expect(clips('t3')[empty]!.id).toBe(id);
     expect(presses).toEqual([]);
-    expect(session.store.undoLabel()).toBe('Move clip');
+    expect(session.store.undoLabel()).toBe('Move loop');
 
     // Copy with Ctrl+Enter, onto the Chords part (both melodic).
     act(() => selectSlot('t3', empty));
@@ -340,7 +348,7 @@ describe('Keyboard move and the pad action bar', () => {
     key(document.activeElement!, 'keydown', { key: 'Enter', ctrlKey: true });
     expect(clips('t4')[empty]!.name).toBe(clips('t3')[empty]!.name);
     expect(clips('t3')[empty]!.id).toBe(id);
-    expect(session.store.undoLabel()).toBe('Copy clip');
+    expect(session.store.undoLabel()).toBe('Copy loop');
   });
 
   it('the bar renames, duplicates and deletes the selected clip; right-click offers the same actions', async () => {
@@ -369,14 +377,15 @@ describe('Keyboard move and the pad action bar', () => {
     const r = pad('t4', full).getBoundingClientRect();
     fire(pad('t4', full), new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: r.left + 10, clientY: r.top + 10 }));
     const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
-    for (const text of ['Edit steps', 'Duplicate', 'Move…', 'Rename', 'Delete clip']) expect(menu.textContent).toContain(text);
+    for (const text of ['Edit steps', 'Duplicate', 'Move…', 'Rename', 'Delete loop']) expect(menu.textContent).toContain(text);
   });
 });
 
 describe('Scene rows', () => {
   it('dragging a scene button onto another row moves the row with every part’s clip; a click still launches; Alt+arrows move it too', async () => {
-    act(() => void addBlock(session.store, project().scenes[0].id));
-    const blocks = project().arrangement.blocks;
+    act(() => void addSceneToSong(session.store, 0, 0));
+    const regions = project().arrangement.regions;
+    expect(regions.length).toBeGreaterThan(0);
     grid();
     const scenes = project().scenes.map((s) => s.id);
     const row0 = project().tracks.map((t) => t.clips[0]?.id ?? null);
@@ -395,7 +404,7 @@ describe('Scene rows', () => {
     expect(presses).toEqual(['scene 2']);
     expect(project().scenes.map((s) => s.id)).toEqual([scenes[1], scenes[2], scenes[0], scenes[3]]);
     expect(project().tracks.map((t) => t.clips[2]?.id ?? null)).toEqual(row0);
-    expect(project().arrangement.blocks).toBe(blocks);
+    expect(project().arrangement.regions).toBe(regions);
     expect(session.store.undoLabel()).toBe('Move scene');
     act(() => btn(2).focus());
     key(btn(2), 'keydown', { key: 'ArrowUp', altKey: true });

@@ -29,10 +29,10 @@ async function audit(page: Page, label: string) {
  * visibly changes the control (screenshot of the control + margin, focused vs
  * blurred) — the ring may be drawn on the element or on an inner part.
  */
-async function tabTour(page: Page, presses: number) {
+async function tabTour(page: Page, presses: number, key: 'Tab' | 'Shift+Tab' = 'Tab') {
   const seen: { name: string; ring: boolean; what?: string }[] = [];
   for (let i = 0; i < presses; i++) {
-    await page.keyboard.press('Tab');
+    await page.keyboard.press(key);
     const info = await page.evaluate(() => {
       const el = document.activeElement as HTMLElement | null;
       if (!el || el === document.body) return null;
@@ -61,7 +61,11 @@ async function tabTour(page: Page, presses: number) {
   return seen;
 }
 
+/** A tour takes two screenshots per Tab stop (some 300 in all): it needs more than the default 90 s on a busy machine. */
+const TOUR_TIMEOUT_MS = 240_000;
+
 test('keyboard only: Jump In, reach every essential control, play a note, change a macro', async ({ page }) => {
+  test.setTimeout(TOUR_TIMEOUT_MS);
   await openFresh(page);
   // The Jump In button has focus on arrival; Enter is the gesture that starts audio.
   await expect(page.getByRole('button', { name: 'Jump In' })).toBeFocused();
@@ -83,8 +87,9 @@ test('keyboard only: Jump In, reach every essential control, play a note, change
   reach(/Tempo|BPM/);
   // Swing is an Advanced control; the Simple · Advanced switch is on the strip at 1366 px.
   reach(/^Simple$|^Advanced$/);
-  reach(/Notes/);
-  reach(/Performance/);
+  // Simple records notes with ● Record; Record Performance is an Advanced control (r6, checked below).
+  reach(/^Record Notes$/);
+  expect(names.filter((n) => /Performance/.test(n)), 'Simple shows no Record Performance').toEqual([]);
   reach(/Master/);
   reach(/Mute All/);
   reach(/^Drums, |Groove: /);
@@ -94,6 +99,24 @@ test('keyboard only: Jump In, reach every essential control, play a note, change
   // Every stop in the tour shows a focus indicator.
   const missing = tour.filter((t) => t.name && !t.ring).map((t) => t.name);
   expect(missing, `no visible focus ring on: ${missing.join(', ')}`).toEqual([]);
+
+  // Advanced from the keyboard: Tab to the Simple · Advanced switch, arrow to Advanced; then Record
+  // Performance is a Tab stop (it sits before the switch on the strip) with a visible focus ring.
+  let onSwitch = false;
+  for (let i = 0; i < 200 && !onSwitch; i++) {
+    await page.keyboard.press('Tab');
+    onSwitch = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      return el?.getAttribute('role') === 'radio' && el.textContent?.trim() === 'Simple';
+    });
+  }
+  expect(onSwitch, 'the Simple · Advanced switch is a Tab stop').toBe(true);
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('radio', { name: 'Advanced', exact: true })).toHaveAttribute('aria-checked', 'true');
+  const back = await tabTour(page, 30, 'Shift+Tab');
+  const perf = back.find((t) => /^Record Performance$/.test(t.name));
+  expect(perf, `Record Performance not reachable by Tab in Advanced. Seen: ${back.map((t) => t.name).join(' / ')}`).toBeTruthy();
+  expect(perf!.ring, 'Record Performance shows a focus ring').toBe(true);
 
   // Knobs work with arrow keys.
   const tone = page.getByRole('slider', { name: 'Tone' });
@@ -121,12 +144,13 @@ test('keyboard only: Jump In, reach every essential control, play a note, change
 });
 
 test('keyboard only: every Tab stop in Shape and Arrange has a name and a visible focus ring', async ({ page }) => {
+  test.setTimeout(TOUR_TIMEOUT_MS);
   await openFresh(page);
   await page.getByRole('button', { name: 'Jump In' }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing)).toBe(true);
   const skip = page.getByRole('button', { name: /Skip/ });
   if (await skip.isVisible().catch(() => false)) await skip.click();
-  for (const view of ['Shape', 'Arrange']) {
+  for (const view of ['Shape', 'Song']) {
     const tab = page.getByRole('tab', { name: view, exact: true });
     await tab.click();
     await tab.focus();
@@ -153,8 +177,8 @@ test('automated accessibility audit of the main views has no serious or critical
   }
   await page.getByRole('tab', { name: 'Shape', exact: true }).click();
   await audit(page, 'shape');
-  await page.getByRole('tab', { name: 'Arrange', exact: true }).click();
-  await audit(page, 'arrange');
+  await page.getByRole('tab', { name: 'Song', exact: true }).click();
+  await audit(page, 'song');
 });
 
 test('200 % zoom: the transport strip with Mute All stays on screen while the page scrolls', async ({ page }) => {

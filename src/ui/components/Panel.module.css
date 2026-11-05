@@ -40,7 +40,7 @@
   margin: 0;
   color: var(--ink-2);
   font-size: var(--fs-xs);
-  font-weight: 650;
+  font-weight: var(--fw-semibold);
   letter-spacing: 0.12em;
   line-height: 16px;
   text-transform: uppercase;
@@ -52,7 +52,7 @@
   overflow: hidden;
   color: var(--ink);
   font-size: var(--fs-md);
-  font-weight: 560;
+  font-weight: var(--fw-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

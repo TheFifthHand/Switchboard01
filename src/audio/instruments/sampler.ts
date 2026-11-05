@@ -35,10 +35,16 @@
  *   clicks, every repeat starts with the region's own attack, and the loop
  *   keeps the region's exact length.
  * - At most SAMPLER_MAX_VOICES voices; the oldest is stolen with a 6 ms fade.
+ * - A note may name its own recording (NoteTrigger.sample: a per-clip
+ *   recording with its region and root note); it then plays that buffer,
+ *   region and root with the part's other settings. A note whose recording
+ *   is not loaded is skipped and counted (InstrumentContext.noteSkipped),
+ *   never thrown.
  */
 import { SAMPLER_PARAMS, dbToGain, readParam } from '../../project/params';
 import type { Instrument, SamplerInstrument } from '../../project/types';
-import type { InstrumentContext, InstrumentEngine, NoteTrigger, SampleProvider, VoiceHandle } from '../contracts';
+import type { InstrumentContext, InstrumentEngine, NoteTrigger, PrepareOptions, SampleProvider, VoiceHandle } from '../contracts';
+import { runWhenIdle } from '../idle';
 import { PARAM_SMOOTHING } from '../modules/types';
 import {
   BaseVoice,
@@ -424,6 +430,8 @@ export class SamplerEngine implements InstrumentEngine {
   private readonly ctx: BaseAudioContext;
   private readonly samples: SampleProvider;
   private readonly getBpm: () => number;
+  private readonly noteSkipped: () => void;
+  private readonly offline: boolean;
   private readonly voices = new Set<SamplerVoice>();
   private readonly envelopes = new EdgeEnvelopeCache();
   private readonly loops = new LoopBufferCache();
@@ -441,6 +449,8 @@ export class SamplerEngine implements InstrumentEngine {
     this.ctx = ctx;
     this.samples = ictx.samples;
     this.getBpm = () => ictx.getBpm();
+    this.noteSkipped = () => ictx.noteSkipped?.();
+    this.offline = ictx.offline ?? (typeof OfflineAudioContext !== 'undefined' && ctx instanceof OfflineAudioContext);
     this.instrument = instrument;
     this.settings = readSettings(instrument, ctx.sampleRate);
     this.output = stereoGain(ctx, dbToGain(this.settings.gain));
@@ -460,23 +470,50 @@ export class SamplerEngine implements InstrumentEngine {
     if (next.cutoff !== prev.cutoff) for (const v of this.voices) v.applyLive(next, t);
   }
 
-  /** Build the loop buffer for the current settings now, outside the scheduling path. */
-  prepare(): void {
+  /**
+   * Make the part's recording ready (a built-in one is generated on first
+   * use) and build its loop buffer, outside the scheduling path; with
+   * `incremental` (live engines) as one idle-time unit.
+   */
+  prepare(opts?: PrepareOptions): void | Promise<void> {
+    if (opts?.incremental && !this.offline) {
+      return runWhenIdle(() => {
+        this.prepareNow();
+        return false;
+      });
+    }
+    this.prepareNow();
+  }
+
+  private prepareNow(): void {
     const id = this.instrument.sampleId;
-    const buffer = id && !this.disposed && this.settings.loop ? this.samples.get(id) : null;
-    if (buffer && buffer.length >= 2) this.loops.get(buffer, this.settings);
+    if (!id || this.disposed) return;
+    const buffer = this.samples.get(id);
+    if (buffer && buffer.length >= 2 && this.settings.loop) this.loops.get(buffer, this.settings);
   }
 
   trigger(note: NoteTrigger): VoiceHandle | null {
     if (this.disposed) return null;
-    const id = this.instrument.sampleId;
+    const own = note.sample;
+    const id = own ? own.id : this.instrument.sampleId;
     if (!id) return null;
     const buffer = this.samples.get(id);
-    if (!buffer || buffer.length < 2) return null;
+    if (!buffer || buffer.length < 2) {
+      // Not loaded (yet): this note is skipped, never thrown, and counted.
+      this.noteSkipped();
+      return null;
+    }
     const ctx = this.ctx;
     const now = ctx.currentTime;
     const T = Math.max(finiteOr(note.time, now), now);
-    const s = this.settings;
+    const s = own
+      ? {
+          ...this.settings,
+          start: clamp(finiteOr(own.start, 0), 0, 1),
+          end: clamp(finiteOr(own.end, 1), 0, 1),
+          rootNote: clamp(Math.round(finiteOr(own.rootNote, this.settings.rootNote)), 0, 127),
+        }
+      : this.settings;
     stealVoices(this.voices, T, SAMPLER_MAX_VOICES, SAMPLER_STEAL_FADE);
     const voice = new SamplerVoice(
       ctx,

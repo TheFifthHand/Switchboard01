@@ -4,18 +4,25 @@
  *   [ ← Back to Play   Shaping: 4 Chords — House Stab   Show every setting (Advanced) ]
  *   [ part selector: 8 parts, selected = teal                               ]
  *
- * Simple (the default): the instrument card, the six macros large, and the
- * part's effects as cards with one main knob each (SimpleShape).
+ * Simple (the default): the instrument card with its Sound knobs, the six
+ * big knobs and the part's effects as cards (SimpleShape).
  * Advanced: every control (switching to it here says so in a toast with
  * "Back to Simple", since it changes every view) —
  *   [ MACROS | INSTRUMENT | EFFECTS (chain, channel, returns, LFOs)   ]
- *   [ CABLES (collapsible, resizable split)                           ]
+ *   [ Cables (a bar; opened, a full-height overlay that can be resized) ]
+ * On a window under ADVANCED_TABS_BELOW_PX tall the three columns are tabs
+ * (Macros | Instrument | Effects), one full-height column at a time. Each
+ * column keeps its scroll position per part.
+ *
+ * The columns and SimpleShape are not remounted per part (a part switch
+ * re-renders them with the new part): their per-part local state is reset on
+ * purpose where they keep any.
  *
  * Everything edits the real project through the session and commands, so
  * both modes, the effects rack and the cable panel always show the same sound.
  */
-import { memo, useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { Button, Icon } from '../../../ui/components';
+import { memo, useDeferredValue, useEffect, useId, useRef, useState, type ComponentType, type KeyboardEvent, type PointerEvent, type SyntheticEvent } from 'react';
+import { Button, Icon, SegmentedControl } from '../../../ui/components';
 import { useElementSize } from '../../../ui/hooks/useElementSize';
 import type { Id, InstrumentKind } from '../../../project/types';
 import { selectTrack, setCablesOpen, setUiMode, setView } from '../../../state/uiStore';
@@ -28,9 +35,13 @@ import { EffectsRack } from './EffectsRack';
 import { InstrumentColumn } from './InstrumentColumn';
 import { MacroColumn } from './MacroColumn';
 import { sameItems } from './paramState';
+import { COLUMN_LABEL, SHAPE_COLUMNS, setAdvancedTab, useAdvancedTab, useColumnScroll, useShortWindow, type ShapeColumn } from './shapeLayout';
 import { SHOW_EVERY_SETTING, SHOW_FEWER_SETTINGS, useAdvancedSwitch } from './shared';
 import { SimpleShape } from './SimpleShape';
 import styles from './ShapeView.module.css';
+import { endKnobDragsOnPartSwitch } from './partSwitch';
+
+endKnobDragsOnPartSwitch();
 
 /* ------------------------------------------------------------------ */
 /* Header: way back, what is being shaped, how much is shown           */
@@ -178,31 +189,119 @@ function PartStrip(props: { ids: readonly Id[]; selected: Id }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Cable dock (collapsible, resizable split)                           */
+/* Columns (three side by side, or tabs on a short window)             */
+/* ------------------------------------------------------------------ */
+
+/** The columns, memoised: a render of the view (a part switch, a tab) re-renders a column only when its own props change. */
+const Macros = memo(MacroColumn);
+const Instrument = memo(InstrumentColumn);
+const Effects = memo(EffectsRack);
+const COLUMN: Record<ShapeColumn, ComponentType<{ trackId: Id; className?: string }>> = { macros: Macros, instrument: Instrument, effects: Effects };
+
+/** One column, with its scroll position kept per part. */
+const Column = memo(function Column(props: { col: ShapeColumn; trackId: Id; tabbed: boolean }) {
+  const { col, trackId, tabbed } = props;
+  const ref = useRef<HTMLDivElement>(null);
+  useColumnScroll(ref, col, trackId);
+  const C = COLUMN[col];
+  return (
+    <div ref={ref} id={`shape-col-${col}`} className={styles.colWrap} data-col={col} role={tabbed ? 'tabpanel' : undefined} aria-label={tabbed ? COLUMN_LABEL[col] : undefined}>
+      <C trackId={trackId} className={styles.col} />
+    </div>
+  );
+});
+
+/**
+ * The columns follow a part switch as a deferred (interruptible) render: the
+ * click is answered first with the part strip and the header, however many
+ * knobs the columns hold. Until the columns catch up they swallow input
+ * (below), so nothing edits the part just left, and when that lasts (a busy
+ * machine, after 120 ms) a small note says which part is on its way. They are
+ * not made inert or dimmed meanwhile: inert restyles thousands of controls
+ * twice per switch, and dimming the columns repaints them all (measured:
+ * median switch 104 ms dimmed, 56 ms with the note, 64 ms with neither).
+ */
+const swallow = (e: SyntheticEvent) => {
+  e.preventDefault();
+  e.stopPropagation();
+};
+const swallowKey = (e: KeyboardEvent) => {
+  if (e.key !== 'Tab' && e.key !== 'Escape') swallow(e);
+};
+
+function AdvancedColumns(props: { trackId: Id; tabbed: boolean; inert: boolean }) {
+  const { tabbed, inert } = props;
+  const trackId = useDeferredValue(props.trackId);
+  const stale = trackId !== props.trackId;
+  const newName = useProject((p) => p.tracks.find((t) => t.id === props.trackId)?.name ?? '');
+  const tab = useAdvancedTab();
+  const show = (c: ShapeColumn) => !tabbed || tab === c;
+  return (
+    <>
+      {tabbed && (
+        <div className={styles.tabs} inert={inert || undefined}>
+          <SegmentedControl<ShapeColumn>
+            label="Column"
+            kind="tabs"
+            options={SHAPE_COLUMNS.map((c) => ({ value: c, label: COLUMN_LABEL[c] }))}
+            value={tab}
+            onChange={setAdvancedTab}
+            controls={(c) => `shape-col-${c}`}
+            size="md"
+          />
+          <span className={styles.tabsNote}>One column at a time on a short window: the macros, the instrument or the effects.</span>
+        </div>
+      )}
+      <div
+        className={styles.columns}
+        data-tabs={tabbed || undefined}
+        aria-busy={stale || undefined}
+        inert={inert || undefined}
+        onPointerDownCapture={stale ? swallow : undefined}
+        onClickCapture={stale ? swallow : undefined}
+        onDoubleClickCapture={stale ? swallow : undefined}
+        onContextMenuCapture={stale ? swallow : undefined}
+        onKeyDownCapture={stale ? swallowKey : undefined}
+      >
+        {SHAPE_COLUMNS.filter(show).map((c) => (
+          <Column key={c} col={c} trackId={trackId} tabbed={tabbed} />
+        ))}
+        {stale && (
+          <div className={styles.busy} aria-hidden="true">
+            Showing {newName}…
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Cable dock: a bar; opened, an overlay over the columns (resizable)  */
 /* ------------------------------------------------------------------ */
 
 const DOCK_MIN = 200;
-const DOCK_DEFAULT_MIN = 280;
-const DOCK_DEFAULT_MAX = 320;
-/** Room the columns keep above an open cable panel. */
-const COLUMNS_MIN = 170;
-/** Header + part strip + gaps + splitter above an open cable panel (the view height excludes its padding). */
-const CHROME = 40 + 44 + 10 * 3 + 10;
+const SPLITTER = 10;
 
-function CableDock(props: { trackId: Id; viewHeight: number }) {
-  const { trackId, viewHeight } = props;
+function CableDock(props: { trackId: Id; room: number; onCover(full: boolean): void }) {
+  const { trackId, room, onCover } = props;
   const open = useUi((s) => s.cablesOpen);
   const partName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  /** The overlay's height when the user resized it (null: the whole workspace). */
   const [userHeight, setUserHeight] = useState<number | null>(null);
   const drag = useRef<{ pointerId: number; startY: number; startH: number } | null>(null);
   const panelId = useId();
   const showId = `${panelId}-show`;
   const hideId = `${panelId}-hide`;
 
-  const max = Math.max(DOCK_MIN, viewHeight - CHROME - COLUMNS_MIN);
-  const preferred = Math.min(DOCK_DEFAULT_MAX, Math.max(DOCK_DEFAULT_MIN, Math.round(viewHeight * 0.4)));
-  const height = Math.round(Math.min(max, Math.max(DOCK_MIN, userHeight ?? preferred)));
-  const setClamped = (h: number) => setUserHeight(Math.min(max, Math.max(DOCK_MIN, Math.round(h))));
+  const max = Math.max(DOCK_MIN, room);
+  const height = Math.round(Math.min(max, Math.max(DOCK_MIN, userHeight ?? max)));
+  const full = open && height >= max - 2;
+  useEffect(() => onCover(full), [full, onCover]);
+  const setClamped = (h: number) => {
+    const v = Math.min(max, Math.max(DOCK_MIN, Math.round(h)));
+    setUserHeight(v >= max - 2 ? null : v);
+  };
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -257,7 +356,7 @@ function CableDock(props: { trackId: Id; viewHeight: number }) {
           <h2 className={styles.dockTitle}>Cables</h2>
           <span className={styles.dockSub}>Patch the real audio and modulation routing of {partName || 'this part'}. The effects rack above edits the same cables.</span>
           <span className={styles.dockRule} aria-hidden="true" />
-          <Button id={showId} size="sm" icon="chevronUp" aria-expanded={false} onClick={() => toggle(true)} tip="Open the cable panel: drag cables between sockets to reroute this part.">
+          <Button id={showId} size="sm" icon="chevronUp" aria-expanded={false} onClick={() => toggle(true)} tip="Open the cable panel over the columns: drag cables between sockets to reroute this part.">
             Show cables
           </Button>
         </div>
@@ -266,7 +365,7 @@ function CableDock(props: { trackId: Id; viewHeight: number }) {
   }
 
   return (
-    <section className={styles.dock} data-open aria-label="Cable panel">
+    <section className={styles.dock} data-open data-full={full || undefined} aria-label="Cable panel" style={{ height }}>
       <div
         className={styles.splitter}
         role="separator"
@@ -277,7 +376,7 @@ function CableDock(props: { trackId: Id; viewHeight: number }) {
         aria-valuemin={DOCK_MIN}
         aria-valuemax={max}
         aria-valuenow={height}
-        aria-valuetext={`Cable panel ${height} pixels tall`}
+        aria-valuetext={full ? 'Cable panel covers the columns' : `Cable panel ${height} pixels tall`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
@@ -290,7 +389,7 @@ function CableDock(props: { trackId: Id; viewHeight: number }) {
       <div id={panelId} className={styles.dockBody}>
         <CablePanelFrame
           trackId={trackId}
-          height={height}
+          height={height - SPLITTER - 6}
           headerStart={
             <Button
               id={hideId}
@@ -300,7 +399,7 @@ function CableDock(props: { trackId: Id; viewHeight: number }) {
               aria-expanded
               aria-controls={panelId}
               onClick={() => toggle(false)}
-              tip="Fold the cable panel away to give the knobs more room. Drag the grip above it to resize instead."
+              tip="Fold the cable panel away: the columns are all there under it. Drag the grip above it to see part of both."
             >
               Hide
             </Button>
@@ -315,29 +414,30 @@ function CableDock(props: { trackId: Id; viewHeight: number }) {
 /* View                                                                */
 /* ------------------------------------------------------------------ */
 
+function AdvancedShape(props: { trackId: Id }) {
+  const { trackId } = props;
+  const tabbed = useShortWindow();
+  const workRef = useRef<HTMLDivElement>(null);
+  const work = useElementSize(workRef);
+  const [covered, setCovered] = useState(false);
+  return (
+    <div ref={workRef} className={styles.workspace} data-tabs={tabbed || undefined}>
+      <AdvancedColumns trackId={trackId} tabbed={tabbed} inert={covered} />
+      <CableDock trackId={trackId} room={work.height} onCover={setCovered} />
+    </div>
+  );
+}
+
 export function ShapeView() {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const size = useElementSize(rootRef);
   const ids = useProject<Id[]>((p) => p.tracks.map((t) => t.id), sameItems);
   const chosen = useUi((s) => s.selectedTrackId);
   const advanced = useUi((s) => s.uiMode === 'advanced');
   const trackId = ids.includes(chosen) ? chosen : (ids[0] ?? 't1');
   return (
-    <div ref={rootRef} className={styles.view} data-mode={advanced ? 'advanced' : 'simple'}>
+    <div className={styles.view} data-mode={advanced ? 'advanced' : 'simple'}>
       <ShapeHeader trackId={trackId} advanced={advanced} />
       <PartStrip ids={ids} selected={trackId} />
-      {advanced ? (
-        <>
-          <div className={styles.columns}>
-            <MacroColumn key={`m-${trackId}`} trackId={trackId} className={styles.col} />
-            <InstrumentColumn key={`i-${trackId}`} trackId={trackId} className={styles.col} />
-            <EffectsRack key={`e-${trackId}`} trackId={trackId} className={styles.col} />
-          </div>
-          <CableDock trackId={trackId} viewHeight={size.height} />
-        </>
-      ) : (
-        <SimpleShape key={`s-${trackId}`} trackId={trackId} />
-      )}
+      {advanced ? <AdvancedShape trackId={trackId} /> : <SimpleShape trackId={trackId} />}
     </div>
   );
 }

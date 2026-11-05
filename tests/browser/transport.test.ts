@@ -273,11 +273,12 @@ describe('RealtimeTransport', () => {
 
   it('stops by itself at the end of a song', async () => {
     const p = project(220);
-    p.arrangement = { tailSeconds: 1, blocks: [{ id: 'b', sceneId: p.scenes[0].id, repeats: 1 }] };
+    // One bar of each part's first clip.
+    p.arrangement = { tailSeconds: 1, sections: [], regions: p.tracks.flatMap((t) => (t.clips[0] ? [{ id: t.id, trackId: t.id, clipId: t.clips[0].id, start: 0, bars: 1, offset: 0 }] : [])) };
     const { ctx, tr } = await rig(p);
     const ends: { e: TransportEventMap['end']; now: number }[] = [];
     tr.on('end', (e) => ends.push({ e, now: ctx.currentTime }));
-    tr.start({ mode: { kind: 'song', fromBlock: 0 } });
+    tr.start({ mode: { kind: 'song', fromBar: 0 } });
     await sleep(1500); // one bar at 220 BPM = 1.09 s
     expect(ends).toHaveLength(1);
     expect(ends[0].e.tick).toBe(384);

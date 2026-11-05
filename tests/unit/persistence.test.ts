@@ -28,6 +28,9 @@ function project(name: string, updatedAt: number): Project {
   return p;
 }
 
+/** No tab coordination, rescue copy or versions (covered by the r4-persist tests). */
+const ISOLATED = { tab: null, rescue: null, versions: null } as const;
+
 const bytes = (...v: number[]) => new Blob([new Uint8Array(v)], { type: 'audio/wav' });
 const meta = (id: string) => ({ id, name: id, mime: 'audio/wav', byteLength: 3, duration: 0.1, sampleRate: 44100, channels: 1 });
 
@@ -159,7 +162,7 @@ describe('autosave', () => {
   it('goes idle -> saving -> saved after a debounced edit', async () => {
     const store = new ProjectStore(createProject({ now: 0 }));
     const { calls, save } = deferredSaver();
-    const auto = createAutosaver({ store, save, debounceMs: 800, now: () => 42, events: { document: null, window: null } });
+    const auto = createAutosaver({ store, save, debounceMs: 800, now: () => 42, events: { document: null, window: null }, ...ISOLATED });
     expect(auto.status.getState()).toMatchObject({ status: 'idle', dirty: false });
     store.apply('project:Change tempo', (d) => void (d.bpm = 100));
     store.apply('project:Change tempo', (d) => void (d.bpm = 101));
@@ -179,7 +182,7 @@ describe('autosave', () => {
   it('coalesces edits made during a save into one follow-up save of the latest state', async () => {
     const store = new ProjectStore(createProject({ now: 0 }));
     const { calls, save } = deferredSaver();
-    const auto = createAutosaver({ store, save, debounceMs: 100, events: { document: null, window: null } });
+    const auto = createAutosaver({ store, save, debounceMs: 100, events: { document: null, window: null }, ...ISOLATED });
     store.apply('project:Change tempo', (d) => void (d.bpm = 100));
     await vi.advanceTimersByTimeAsync(100);
     expect(calls).toHaveLength(1);
@@ -205,7 +208,7 @@ describe('autosave', () => {
       if (full) throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
       saved.push(p);
     };
-    const auto = createAutosaver({ store, save, debounceMs: 50, events: { document: null, window: null } });
+    const auto = createAutosaver({ store, save, debounceMs: 50, events: { document: null, window: null }, ...ISOLATED });
     store.apply('project:Rename project', (d) => void (d.name = 'Keep me'));
     await vi.advanceTimersByTimeAsync(50);
     expect(auto.status.getState()).toMatchObject({ status: 'error', dirty: true, lastError: { kind: 'quota', message: QUOTA_MESSAGE } });
@@ -222,7 +225,7 @@ describe('autosave', () => {
     const b = createProject({ name: 'B', now: 0 });
     const store = new ProjectStore(a);
     const saved: Project[] = [];
-    const auto = createAutosaver({ store, save: async (p) => void saved.push(p), debounceMs: 800, events: { document: null, window: null } });
+    const auto = createAutosaver({ store, save: async (p) => void saved.push(p), debounceMs: 800, events: { document: null, window: null }, ...ISOLATED });
     store.apply('project:Rename project', (d) => void (d.name = 'A edited'));
     store.replace(b);
     auto.markSaved(b); // just loaded from storage
@@ -234,7 +237,7 @@ describe('autosave', () => {
   it('writes pending edits when disposed, then stops watching', async () => {
     const store = new ProjectStore(createProject({ now: 0 }));
     const saved: string[] = [];
-    const auto = createAutosaver({ store, save: async (p) => void saved.push(p.name), debounceMs: 800, events: { document: null, window: null } });
+    const auto = createAutosaver({ store, save: async (p) => void saved.push(p.name), debounceMs: 800, events: { document: null, window: null }, ...ISOLATED });
     store.apply('project:Rename project', (d) => void (d.name = 'Last words'));
     await auto.dispose();
     expect(saved).toEqual(['Last words']);
@@ -250,6 +253,7 @@ describe('autosave', () => {
       save: () => Promise.reject(toStorageError(new Error('disk on fire'), 'Saving the project')),
       debounceMs: 10,
       events: { document: null, window: null },
+      ...ISOLATED,
     });
     store.apply('project:Rename project', (d) => void (d.name = 'x'));
     await vi.advanceTimersByTimeAsync(10);
@@ -261,7 +265,7 @@ describe('autosave', () => {
     const store = new ProjectStore(createProject({ now: 0 }));
     const saved: number[] = [];
     const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
-    const auto = createAutosaver({ store, save: async (p) => void saved.push(p.bpm), debounceMs: 800, maxWaitMs: 2000, events: { document: doc, window: null } });
+    const auto = createAutosaver({ store, save: async (p) => void saved.push(p.bpm), debounceMs: 800, maxWaitMs: 2000, events: { document: doc, window: null }, ...ISOLATED });
     for (let i = 0; i < 10; i++) {
       store.apply('project:Change tempo', (d) => void (d.bpm = 60 + i), { gesture: 'drag' });
       await vi.advanceTimersByTimeAsync(300);
@@ -283,7 +287,8 @@ describe('library', () => {
     expect(await library.openLast()).toBeNull();
     const current = createProject({ name: 'Current', now: 10 });
     const starter = createProject({ name: 'House', now: 0 });
-    const created = await library.createFromStarter(starter, current, { now: 20 });
+    const { project: created, replaced } = await library.createFromStarter(starter, current, { now: 20 });
+    expect(replaced).toEqual({ id: current.id, name: 'Current' });
     expect(created.id).not.toBe(starter.id);
     expect(created.name).toBe('House');
     expect((await listProjects()).map((s) => s.name)).toEqual(['House', 'Current']);

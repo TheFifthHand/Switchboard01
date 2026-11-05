@@ -376,7 +376,8 @@ describe('synth presets rendered through the real engines', () => {
     }
     console.info(`[presets] spectral centroid at Tone 0.1 -> 0.9: ${report.join(', ')}`);
     expect(problems).toEqual([]);
-  });
+    // Two offline renders per preset (60+ presets): more than the default minute on a slow machine.
+  }, 240_000);
 
   it('preset data in the table is what the engines render (no hidden defaults)', () => {
     for (const info of SYNTH_PRESETS) {

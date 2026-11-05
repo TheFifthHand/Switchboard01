@@ -48,34 +48,78 @@
   height: 100%;
 }
 
-/* Root notes: a teal ring (as on the keyboard's root keys) and a ROOT tag. */
+/*
+ * Root notes: a bold "Root" label and a dotted inner outline in --ink-3. Not teal: teal is
+ * selection and focus, and two "selected" pads would mislead.
+ */
 .cell[data-root]::after {
   content: '';
   position: absolute;
-  inset: 0;
-  border-radius: 10px;
-  box-shadow: inset 0 0 0 2px var(--teal);
+  inset: 4px;
+  border: 2px dotted var(--ink-3);
+  border-radius: 7px;
   pointer-events: none;
 }
 
 .rootMark {
   position: absolute;
-  left: 8px;
-  bottom: 7px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--teal-ink);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 13px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  left: 10px;
+  bottom: 9px;
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  line-height: 14px;
   pointer-events: none;
 }
 
-/* Chromatic mode: notes outside the key sit a shade darker, like the keyboard's out-of-key keys. */
-.cell[data-outside] .pad:not([data-state='playing']) {
-  background: linear-gradient(180deg, #e9ebed 0%, #dfe2e5 50%, #d6dadd 100%);
+/* Chord pads: the chord's step in the key, small, in the top-right corner. */
+.degree {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* Key block: the Chords switch; chord size and inversion below it. */
+.playRow {
+  display: flex;
+  align-items: center;
+  margin-top: 6px;
+}
+.chordRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.inversion {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Part block: its eyebrow and Write a progression… on one line. */
+.partHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.partHead > p {
+  margin: 0;
+}
+.writeWhy {
+  margin: 6px 0 0;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
   color: var(--ink-3);
 }

@@ -1,9 +1,10 @@
 /**
  * Shape, Simple mode (the default) in real Chromium: what a first-time user
  * sees and does — the part being shaped and the way back to Play, six big
- * knobs (macros), the instrument card, effects as cards with one main knob
- * each, the grouped Add effect menu, Show every setting (Advanced) — checked on the real project
- * through the real session, plus the layout at laptop, desktop and 200 % sizes.
+ * knobs (macros), the instrument card, and nothing else: the part's effects
+ * (with the grouped Add effect menu) are under Show every setting (Advanced),
+ * so each control is shown once — checked on the real project through the
+ * real session, plus the layout at laptop, desktop and 200 % sizes.
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,19 +15,18 @@ import { session } from '../../src/app/instance';
 import { INSTRUMENT_LABEL, soundName } from '../../src/app/labels';
 import { runtimeStore } from '../../src/app/runtime';
 import { ShapeView } from '../../src/app/views/shape/ShapeView';
-import { EFFECT_GROUPS, EFFECT_INFO, effectSentence, mainKnobCandidates, mainParamSpec, menuGroups, ungroupedEffects } from '../../src/app/views/shape/effectCatalog';
+import { EFFECT_GROUPS, menuGroups, ungroupedEffects } from '../../src/app/views/shape/effectCatalog';
+import { setAdvancedTab } from '../../src/app/views/shape/shapeLayout';
 import { createProject } from '../../src/project/factory';
 import { trackChain } from '../../src/project/graph';
-import { INSERTABLE_EFFECTS, MODULE_DEFS } from '../../src/project/modules';
-import { MODULE_PARAMS, specById } from '../../src/project/params';
-import type { ModuleType, Project } from '../../src/project/types';
+import { INSERTABLE_EFFECTS } from '../../src/project/modules';
+import type { Project } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
 import { defaultUiState, selectModule, selectTrack, setCablesOpen, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { actFrame, cleanup, fire, key, mount, wait } from './ui-harness';
 
 const project = (): Project => session.store.getState();
 const track = (id: string) => project().tracks.find((t) => t.id === id)!;
-const mod = (id: string) => project().patch.modules.find((m) => m.id === id);
 
 /** The app's workspace below the 58 px transport and above the 100 px keyboard row. */
 const MAIN_HEIGHT = (viewportHeight: number) => viewportHeight - 158;
@@ -62,12 +62,6 @@ function button(root: Element, name: string | RegExp): HTMLButtonElement {
   return b;
 }
 
-function switchOf(root: Element): HTMLButtonElement {
-  const s = root.querySelector<HTMLButtonElement>('[role="switch"]');
-  if (!s) throw new Error('No switch');
-  return s;
-}
-
 /** The Simple instrument card (a section headed "Instrument · <type>"). */
 function instCard(root: Element): HTMLElement {
   const s = [...root.querySelectorAll<HTMLElement>('section')].find((x) => x.querySelector('h2')?.textContent?.startsWith('Instrument'));
@@ -76,7 +70,6 @@ function instCard(root: Element): HTMLElement {
 }
 
 const click = (el: HTMLElement) => fire(el, new MouseEvent('click', { bubbles: true, cancelable: true }));
-const card = (root: Element, id: string) => root.querySelector<HTMLElement>(`#simple-card-${CSS.escape(id)}`);
 const menu = () => document.querySelector<HTMLElement>('[role="menu"][aria-label="Add effect"]');
 const endBurst = () => act(async () => wait(KNOB_BURST_IDLE_MS + 120));
 
@@ -120,10 +113,17 @@ describe('Simple Shape: orientation', () => {
     click(toggle);
     expect(uiStore.getState().uiMode).toBe('advanced');
     await actFrame();
-    // Every control is back: mapping editor, instrument panel, rack with shared effects, cable dock.
-    expect(m.container.textContent).toContain('Reset mappings');
-    expect(m.container.querySelector('[aria-label="Shared Reverb return"]')).not.toBeNull();
+    // Every control is back: mapping editor, instrument panel, rack with shared effects, cable dock
+    // (a 768 px window shows the three columns as tabs, the instrument first).
+    expect(m.container.querySelector('#shape-col-instrument')).not.toBeNull();
     expect(m.container.querySelector('[aria-label="Cable panel"]')).not.toBeNull();
+    const tab = (name: string) => [...m.container.querySelectorAll<HTMLElement>('[role="tab"]')].find((t) => t.textContent === name)!;
+    click(tab('Macros'));
+    await actFrame();
+    expect(m.container.textContent).toContain('Reset mappings');
+    click(tab('Effects'));
+    await actFrame();
+    expect(m.container.querySelector('[aria-label="Shared Reverb return"]')).not.toBeNull();
     const back = button(m.container, 'Show fewer settings (Simple)');
     expect(document.activeElement).toBe(back);
     click(back);
@@ -138,7 +138,8 @@ describe('Simple Shape: macros and instrument', () => {
     expect(m.container.textContent).not.toMatch(/Macros/);
     const macros = [...m.container.querySelectorAll<HTMLElement>('[role="slider"][id^="shape-macro-"]')];
     expect(macros.map((x) => x.getAttribute('aria-label'))).toEqual(['Tone', 'Space', 'Echo', 'Motion', 'Drive', 'Pump']);
-    for (const k of macros) expect(k.closest('[data-size]')!.getAttribute('data-size')).toBe('lg');
+    // Large or larger: the big knobs have the view's width now that the effects are in Advanced.
+    for (const k of macros) expect(['lg', 'xl']).toContain(k.closest('[data-size]')!.getAttribute('data-size'));
     const tone = m.container.querySelector<HTMLElement>('[aria-label="Tone big knob"]')!;
     expect(tone.textContent).toContain('Dark ↔ bright');
     expect(m.container.querySelector('[aria-label="Pump big knob"]')!.textContent).toContain('Ducks in time');
@@ -187,76 +188,28 @@ describe('Simple Shape: macros and instrument', () => {
   });
 });
 
-describe('Simple Shape: effects', () => {
-  it('lists the part’s effects as cards in signal order, each with one main knob and a plain sentence', () => {
+describe('Simple Shape: the effects are under Show every setting', () => {
+  it('Simple shows no effect cards, chain or Add effect; Show every setting (Advanced) lists the part’s effects in the rack', async () => {
     const m = setup('t4');
-    expect(trackChain(project().patch, 't4')).toEqual(['t4:inst', 't4:drive', 't4:filter', 't4:ch']);
-    const list = m.container.querySelector<HTMLElement>('[role="list"][aria-label="Effects in signal order"]')!;
-    const cards = [...list.querySelectorAll<HTMLElement>('article')];
-    expect(cards.map((c) => c.getAttribute('aria-label'))).toEqual(['Drive, effect 1 of 2', 'Filter, effect 2 of 2']);
-    for (const c of cards) expect(c.querySelectorAll('[role="slider"]')).toHaveLength(1);
-    // The default Drive amount and Filter cutoff belong to big knobs (macros), so each card's one knob is
-    // the next main setting, which turning really changes; the card says which big knob sets the other.
-    expect(cards[0].textContent).toContain(effectSentence('drive', 'tone'));
-    expect(slider(cards[0], 'Tone').hasAttribute('aria-readonly')).toBe(false);
-    expect(cards[0].textContent).toContain('Drive is set by the Drive knob.');
-    expect(slider(cards[1], 'Resonance').hasAttribute('aria-readonly')).toBe(false);
-    expect(cards[1].textContent).toContain('Cutoff is set by the Tone knob.');
-    expect(m.container.textContent).not.toMatch(/macro/i);
-    // The signal flow reads left to right, as plain words (nothing there looks clickable).
-    const flow = m.container.querySelector<HTMLElement>('[aria-label="Signal flow"]')!;
-    expect(flow.textContent).toMatch(/Instrument→Drive→Filter→Channel→Master/);
-    expect(flow.querySelector('button, [role="button"]')).toBeNull();
-    for (const step of flow.querySelectorAll<HTMLElement>('li > span:last-child')) {
-      const st = getComputedStyle(step);
-      expect(st.backgroundColor, step.textContent ?? '').toBe('rgba(0, 0, 0, 0)');
-      expect(st.boxShadow, step.textContent ?? '').toBe('none');
-      expect(st.borderStyle, step.textContent ?? '').toBe('none');
-    }
-  });
-
-  it('adds, switches off, turns and removes an effect: each is one undo step and says what happened', async () => {
-    const m = setup('t4');
-    click(button(m.container, 'Add effect'));
-    click(button(menu()!, 'Chorus'));
-    expect(menu()).toBeNull();
-    expect(trackChain(project().patch, 't4')).toEqual(['t4:inst', 't4:drive', 't4:filter', 't4:chorus', 't4:ch']);
-    expect(runtimeStore.getState().notice).toMatchObject({ text: expect.stringContaining('Added Chorus'), action: 'undo' });
-    const chorus = card(m.container, 't4:chorus')!;
-    expect(chorus.getAttribute('aria-label')).toBe('Chorus, effect 3 of 3');
-
-    // Its one knob is the Mix, and it sets the real module parameter.
-    const mix = slider(chorus, 'Mix');
-    const before = mod('t4:chorus')!.params.mix;
-    key(mix, 'keydown', { key: 'PageUp' });
-    expect(mod('t4:chorus')!.params.mix).toBeCloseTo(before + 0.1, 5);
-    await endBurst();
-
-    click(switchOf(chorus));
-    expect(mod('t4:chorus')!.bypass).toBe(true);
-    expect(chorus.getAttribute('aria-label')).toBe('Chorus, effect 3 of 3, off');
-    expect(m.container.querySelector('[aria-label="Signal flow"]')!.textContent).toMatch(/Chorus off/i);
-
-    click(button(chorus, 'Remove Chorus'));
-    expect(mod('t4:chorus')).toBeUndefined();
-    expect(trackChain(project().patch, 't4')).toEqual(['t4:inst', 't4:drive', 't4:filter', 't4:ch']);
-    expect(runtimeStore.getState().notice?.text).toBe('Removed Chorus. The sound now flows straight past it.');
+    expect(m.container.querySelectorAll('[id^="simple-card-"]')).toHaveLength(0);
+    expect(m.container.querySelector('#shape-add-effect')).toBeNull();
+    expect(m.container.textContent).not.toMatch(/Instrument → |is set by the .* big knob/);
+    click(button(m.container, 'Show every setting (Advanced)'));
+    expect(uiStore.getState().uiMode).toBe('advanced');
+    act(() => setAdvancedTab('effects'));
     await actFrame();
-    // Focus lands on the remaining card next to it, not on the page.
-    expect(document.activeElement?.id).toBe('simple-t4:filter-onoff');
-
-    act(() => session.undo()); // remove
-    expect(mod('t4:chorus')).toBeDefined();
-    act(() => session.undo()); // bypass
-    expect(mod('t4:chorus')!.bypass).toBe(false);
-    act(() => session.undo()); // mix
-    expect(mod('t4:chorus')!.params.mix).toBeCloseTo(before, 5);
-    act(() => session.undo()); // add
-    expect(mod('t4:chorus')).toBeUndefined();
+    for (const id of trackChain(project().patch, 't4')!.slice(1, -1)) expect(m.container.querySelector(`#rack-card-${CSS.escape(id)}`), id).not.toBeNull();
+    expect(m.container.querySelector('#shape-add-effect')).not.toBeNull();
+    act(() => setUiMode('simple'));
   });
 
-  it('the Add effect menu groups every effect by purpose, with a description each, and works from the keyboard', async () => {
+  it('the Add effect menu (Advanced) groups every effect by purpose, with a description each, and works from the keyboard', async () => {
     const m = setup('t4');
+    act(() => {
+      setAdvancedTab('effects');
+      setUiMode('advanced');
+    });
+    await actFrame();
     const add = button(m.container, 'Add effect');
     add.focus();
     key(add, 'keydown', { key: 'ArrowDown' });
@@ -298,123 +251,18 @@ describe('Simple Shape: effects', () => {
     key(document.activeElement!, 'keydown', { key: 'End' });
     click(document.activeElement as HTMLElement);
     expect(trackChain(project().patch, 't4')!.at(-2)).toBe('t4:widener');
+    act(() => setUiMode('simple'));
   });
 
-  it('every insertable effect is in exactly one group, and its sentence names the knob its card shows', () => {
+  it('every insertable effect is in exactly one group of the Add effect menu', () => {
     expect(ungroupedEffects()).toEqual([]);
     const listed = EFFECT_GROUPS.flatMap((g) => g.types);
     expect(new Set(listed).size).toBe(listed.length);
     expect([...listed].sort()).toEqual([...INSERTABLE_EFFECTS].sort());
     expect(menuGroups().map((g) => g.label)).toEqual(['Tone', 'Dynamics', 'Space', 'Movement', 'Colour', 'Stereo']);
-    for (const type of INSERTABLE_EFFECTS) {
-      const candidates = mainKnobCandidates(type);
-      expect(candidates.length, type).toBeGreaterThanOrEqual(2);
-      expect(candidates.map((c) => c.id)).toEqual(EFFECT_INFO[type]!.knobs.map((k) => k.id));
-      expect(mainParamSpec(type)).toBe(candidates[0]);
-      for (const spec of candidates) {
-        expect(specById(MODULE_PARAMS[type], spec.id)).toBe(spec);
-        expect(effectSentence(type, spec.id), `${type} ${spec.id}`).toContain(spec.label);
-      }
-    }
-  });
-
-  it('each effect type’s main knob changes that effect’s own setting', () => {
-    const types = INSERTABLE_EFFECTS;
-    for (let start = 0; start < types.length; start += 4) {
-      const batch = types.slice(start, start + 4);
-      const m = setup('t4');
-      const ids: string[] = [];
-      act(() => {
-        for (const t of batch) ids.push(cmd.insertEffect(session.store, 't4', t).moduleId!);
-      });
-      batch.forEach((type: ModuleType, i) => {
-        const c = card(m.container, ids[i])!;
-        expect(c, `${type} card`).not.toBeNull();
-        const spec = mainParamSpec(type)!;
-        const knob = slider(c, spec.label);
-        expect(knob.hasAttribute('aria-readonly'), `${type} main knob is free`).toBe(false);
-        const before = mod(ids[i])!.params[spec.id];
-        const keyName = before >= spec.max ? 'Home' : 'End';
-        key(knob, 'keydown', { key: keyName });
-        expect(mod(ids[i])!.params[spec.id], `${MODULE_DEFS[type].label} ${spec.label}`).toBe(keyName === 'End' ? spec.max : spec.min);
-      });
-      cleanup();
-    }
-  });
-
-  it('Every setting opens that effect in the Advanced view, selected and in view', async () => {
-    const m = setup('t4');
-    let chorus = '';
-    act(() => {
-      chorus = cmd.insertEffect(session.store, 't4', 'chorus').moduleId!;
-    });
-    click(button(card(m.container, chorus)!, 'Every setting of Chorus (Advanced)'));
-    expect(uiStore.getState().uiMode).toBe('advanced');
-    expect(uiStore.getState().selectedModuleId).toBe(chorus);
-    await actFrame();
-    await actFrame();
-    await actFrame();
-    const rackCard = m.container.querySelector<HTMLElement>(`#rack-card-${CSS.escape(chorus)}`)!;
-    expect(rackCard.hasAttribute('data-selected')).toBe(true);
-    // Every Chorus setting is there.
-    for (const spec of MODULE_PARAMS.chorus) expect(slider(rackCard, spec.label)).toBeTruthy();
-    expect(document.activeElement?.id).toBe(`rack-${chorus}-name`);
-  });
-
-  it('says when the part is full, and Add effect is unavailable', () => {
-    const m = setup('t4');
-    act(() => {
-      for (let i = 0; i < 4; i++) cmd.insertEffect(session.store, 't4', 'phaser');
-    });
-    expect(button(m.container, 'Add effect').disabled).toBe(true);
-    expect(m.container.textContent).toContain('This part already has 6 effects, the most it can hold. Remove one to add another.');
-  });
-
-  it('while a performance records, routing edits are locked and say so; the knobs keep working', () => {
-    const m = setup('t4');
-    let chorus = '';
-    act(() => {
-      chorus = cmd.insertEffect(session.store, 't4', 'chorus').moduleId!;
-      session.store.setLock('Recording a performance: routing is locked until the take ends.');
-    });
-    expect(m.container.textContent).toContain('Effects are locked while a performance records.');
-    expect(button(m.container, 'Add effect').disabled).toBe(true);
-    const c = card(m.container, chorus)!;
-    expect(switchOf(c).disabled).toBe(true);
-    expect(button(c, 'Remove Chorus').disabled).toBe(true);
-    const before = mod(chorus)!.params.mix;
-    key(slider(c, 'Mix'), 'keydown', { key: 'PageUp' });
-    expect(mod(chorus)!.params.mix).toBeGreaterThan(before);
-    key(slider(m.container, 'Tone'), 'keydown', { key: 'PageUp' });
-    expect(track('t4').macros.tone).toBeGreaterThan(0.5);
-  });
-
-  it('custom routing: says so, lists the effects without order numbers, and Add effect points to Advanced', () => {
-    const m = setup('t3');
-    act(() => {
-      expect(cmd.connect(session.store, { module: 't3:inst', port: 'out' }, { module: 't3:ch', port: 'in' }).ok).toBe(true);
-    });
-    expect(m.container.textContent).toContain('This part has custom cable routing.');
-    expect(button(m.container, 'Add effect').disabled).toBe(true);
-    expect(card(m.container, 't3:drive')!.getAttribute('aria-label')).toBe('Drive');
-  });
-
-  it('a part with no path to the output says so, and Restore Connection plugs it back in', () => {
-    const m = setup('t3');
-    const link = project().patch.connections.find((c) => c.from.module === 't3:ch' && c.to.module === 'master')!;
-    act(() => void cmd.disconnect(session.store, link.id));
-    const warning = [...m.container.querySelectorAll<HTMLElement>('[role="alert"]')].find((x) => x.textContent?.includes('This part has no path to the output.'))!;
-    expect(warning).toBeTruthy();
-    click(button(warning, 'Restore Connection'));
-    expect(project().patch.connections.some((c) => c.from.module === 't3:ch' && c.to.module === 'master')).toBe(true);
   });
 });
 
-/* ------------------------------------------------------------------ */
-/* Layout                                                              */
-/* ------------------------------------------------------------------ */
-
-/** Nothing clipped, nothing overflowing sideways, targets big enough. */
 function checkLayout(root: HTMLElement, label: string) {
   expect(root.scrollWidth, `${label}: no sideways overflow`).toBeLessThanOrEqual(root.clientWidth + 1);
   const clipped = (sel: string) =>
@@ -433,7 +281,7 @@ function checkLayout(root: HTMLElement, label: string) {
     const r = b.getBoundingClientRect();
     expect(Math.min(r.width, r.height), `${label}: ${b.getAttribute('aria-label') ?? b.textContent} size`).toBeGreaterThanOrEqual(32);
   }
-  const primary = [button(root, 'Back to Play'), button(root, /Show every setting \(Advanced\)|Show fewer settings \(Simple\)/), button(root, 'Change instrument'), button(root, 'Add effect'), ...root.querySelectorAll<HTMLElement>('article [role="switch"]')];
+  const primary = [button(root, 'Back to Play'), button(root, /Show every setting \(Advanced\)|Show fewer settings \(Simple\)/), button(root, 'Change instrument')];
   for (const b of primary) expect(b.getBoundingClientRect().height, `${label}: ${b.textContent} height`).toBeGreaterThanOrEqual(40);
   // Cards never overlap.
   const rects = [...root.querySelectorAll<HTMLElement>('article')].map((a) => a.getBoundingClientRect());
@@ -447,72 +295,37 @@ function checkLayout(root: HTMLElement, label: string) {
 }
 
 describe('Simple Shape layout', () => {
-  const fill = () =>
-    act(() => {
-      for (const t of ['compressor', 'widener', 'tape', 'crusher'] as const) cmd.insertEffect(session.store, 't4', t);
-    });
-
-  it('fits a 1366 × 768 laptop: the essentials in view, nothing clipped', async () => {
+  it('fits a 1366 × 768 laptop: the instrument and the six big knobs in view, nothing clipped', async () => {
     await document.fonts.ready;
     const m = setup('t4');
-    fill();
     await actFrame();
     checkLayout(m.container, '1366');
-    // The view fits the workspace: macros, instrument and the first effects are visible without scrolling the page.
     const bottom = m.container.getBoundingClientRect().bottom;
     for (const k of m.container.querySelectorAll<HTMLElement>('[id^="shape-macro-"]')) expect(k.getBoundingClientRect().bottom).toBeLessThanOrEqual(bottom);
-    expect(m.container.querySelector('#simple-card-t4\\:drive')!.getBoundingClientRect().bottom).toBeLessThanOrEqual(bottom);
+    // The big knobs have the view's width (no column of effect cards beside them).
+    const panel = [...m.container.querySelectorAll('h2')].find((x) => x.textContent === 'Big knobs')!.closest('section')!.getBoundingClientRect();
+    expect(panel.width).toBeGreaterThan(1366 * 0.9);
   });
 
   it('fits 1920 × 1080', async () => {
     await page.viewport(1920, 1080);
     await document.fonts.ready;
     const m = setup('t4', { width: 1920, height: MAIN_HEIGHT(1080) });
-    fill();
     await actFrame();
     checkLayout(m.container, '1920');
-    // Six effects fit without scrolling at this size.
-    const scroller = m.container.querySelector<HTMLElement>('[class*="fxBody"]')!;
-    expect(scroller.scrollHeight).toBeLessThanOrEqual(scroller.clientHeight + 1);
+    const bottom = m.container.getBoundingClientRect().bottom;
+    for (const k of m.container.querySelectorAll<HTMLElement>('[id^="shape-macro-"]')) expect(k.getBoundingClientRect().bottom).toBeLessThanOrEqual(bottom);
   });
 
-  it('at 960 × 540 (200 % zoom) everything stacks in one column and nothing is cut off', async () => {
+  it('at 960 × 540 (200 % zoom) the instrument sits over the big knobs and nothing is cut off', async () => {
     await page.viewport(960, 540);
     await document.fonts.ready;
     const m = setup('t4', { width: 960, height: 'auto' });
-    fill();
     await actFrame();
     checkLayout(m.container, '960');
     const inst = instCard(m.container).getBoundingClientRect();
-    const fx = [...m.container.querySelectorAll('h2')].find((x) => x.textContent === 'Effects')!.closest('section')!.getBoundingClientRect();
-    expect(fx.top).toBeGreaterThan(inst.bottom);
-    expect(Math.abs(fx.left - inst.left)).toBeLessThan(2);
-  });
-
-  it('the Add effect menu stays inside the window at every size', async () => {
-    for (const [w, hgt] of [
-      [1366, 768],
-      [1920, 1080],
-      [960, 540],
-    ] as const) {
-      await page.viewport(w, hgt);
-      // Let the resize settle first: a resize closes an open menu (its button may have moved).
-      await actFrame();
-      await actFrame();
-      const m = setup('t4', { width: w, height: w < 1024 ? 'auto' : MAIN_HEIGHT(hgt) });
-      click(button(m.container, 'Add effect'));
-      await actFrame();
-      expect(menu(), `${w}: menu open`).not.toBeNull();
-      const r = menu()!.getBoundingClientRect();
-      expect(r.left, `${w} left`).toBeGreaterThanOrEqual(0);
-      expect(r.right, `${w} right`).toBeLessThanOrEqual(w);
-      expect(r.top, `${w} top`).toBeGreaterThanOrEqual(0);
-      expect(r.bottom, `${w} bottom`).toBeLessThanOrEqual(hgt);
-      // Every item can be reached (the menu scrolls inside itself when the window is short).
-      const items = menu()!.querySelectorAll('[role="menuitem"]');
-      expect(items).toHaveLength(14);
-      key(document.activeElement!, 'keydown', { key: 'Escape' });
-      cleanup();
-    }
+    const knobs = [...m.container.querySelectorAll('h2')].find((x) => x.textContent === 'Big knobs')!.closest('section')!.getBoundingClientRect();
+    expect(knobs.top).toBeGreaterThan(inst.bottom);
+    expect(Math.abs(knobs.left - inst.left)).toBeLessThan(2);
   });
 });

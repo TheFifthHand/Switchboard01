@@ -5,6 +5,10 @@
  *
  * The backdrop is a light veil so the instrument stays visible; clicking it
  * closes the dialog unless `dismissible` is false (e.g. during an export).
+ *
+ * The header and footer are plain groups, not banner/contentinfo landmarks
+ * (the page has those already). While any dialog is open, body carries
+ * `data-modal-open` (toasts hide their action keys then).
  */
 import { useEffect, useId, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
@@ -38,6 +42,12 @@ function focusables(root: HTMLElement): HTMLElement[] {
 /** Open dialogs, innermost last: only the top one traps focus and handles Escape. */
 const stack: HTMLElement[] = [];
 
+/** body[data-modal-open] while at least one dialog is open. */
+function markModalOpen(): void {
+  if (typeof document === 'undefined') return;
+  document.body.toggleAttribute('data-modal-open', stack.length > 0);
+}
+
 export function Dialog(props: DialogProps) {
   if (!props.open) return null;
   return createPortal(<DialogFrame {...props} />, document.body);
@@ -61,11 +71,13 @@ function DialogFrame({ onClose, title, description, children, actions, size = 'm
     if (!dialog) return;
     const previous = document.activeElement as HTMLElement | null;
     stack.push(dialog);
+    markModalOpen();
     const target = initialFocusRef?.current ?? (bodyRef.current ? focusables(bodyRef.current)[0] : undefined) ?? focusables(dialog)[0] ?? dialog;
     target.focus({ preventScroll: true });
     return () => {
       const i = stack.indexOf(dialog);
       if (i >= 0) stack.splice(i, 1);
+      markModalOpen();
       if (previous && previous.isConnected && typeof previous.focus === 'function') previous.focus({ preventScroll: true });
     };
     // Runs once per opening: the initial focus target is read at open time only.
@@ -145,12 +157,12 @@ function DialogFrame({ onClose, title, description, children, actions, size = 'm
         data-size={size}
         onKeyDown={onKeyDown}
       >
-        <header className={styles.header}>
+        <div className={styles.header}>
           <h2 id={titleId} className={styles.title}>
             {title}
           </h2>
           {dismissible && <IconButton icon="close" label={closeLabel} size="sm" onClick={() => onCloseRef.current()} className={styles.close} />}
-        </header>
+        </div>
         {description && (
           <p id={descId} className={styles.description}>
             {description}
@@ -159,7 +171,7 @@ function DialogFrame({ onClose, title, description, children, actions, size = 'm
         <div ref={bodyRef} className={styles.body}>
           {children}
         </div>
-        {actions && <footer className={styles.footer}>{actions}</footer>}
+        {actions && <div className={styles.footer}>{actions}</div>}
       </div>
     </div>
   );

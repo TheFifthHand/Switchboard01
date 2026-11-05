@@ -96,7 +96,7 @@ describe('Mix view on the real engine', () => {
     const fader = strip(root, 't1').querySelector<HTMLElement>(`[role="slider"][aria-label="${name} level"]`)!;
     fader.focus();
     key(fader, 'keydown', { key: 'Home' });
-    expect(fader.getAttribute('aria-valuetext')).toMatch(/^Silent/);
+    expect(fader.getAttribute('aria-valuetext')).toBe('−60.0 dB, silent');
     await act(async () => wait(120));
     expect(await peakOver(500, 't1')).toBeLessThan(1e-3);
     fire(fader, new MouseEvent('dblclick', { bubbles: true }));
@@ -158,13 +158,17 @@ describe('Mix view on the real engine', () => {
     pointer(b, 'pointerdown', pointIn(b));
     await act(async () => wait(300));
     const without = await rmsOver(800);
+    session.readMeters(frame);
+    const trim = frame.compareTrimDb ?? 0;
     pointer(b, 'pointerup', pointIn(b));
     expect(session.store.getState()).toBe(before);
     expect(session.store.getState().mastering.enabled).toBe(true);
-    // At least 4 dB quieter without the Loudness push.
-    expect(20 * Math.log10(mastered / without)).toBeGreaterThan(4);
+    // The A/B is level-matched (engine round 4): the un-mastered sound is played louder to compare tone,
+    // not volume, but only as far as it adds little limiting, so +9 dB of Loudness stays clearly louder.
+    expect(trim).toBeGreaterThan(0);
+    expect(20 * Math.log10(mastered / without)).toBeGreaterThan(1.5);
     await act(async () => wait(300));
     const back = await rmsOver(800);
-    expect(20 * Math.log10(back / without)).toBeGreaterThan(4);
+    expect(20 * Math.log10(back / without)).toBeGreaterThan(1.5);
   });
 });

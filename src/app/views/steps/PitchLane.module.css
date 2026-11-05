@@ -23,19 +23,48 @@
 }
 .octNav .octBtn[data-size] {
   --h: 32px;
+  flex: none;
 }
+/* The key the rows follow: a 32 px target, the full name where it fits ('G Dorian'), else the short one ('G Dor'). */
 .keyInfo {
-  min-width: 0;
-  margin-left: 4px;
-  padding: 2px 5px;
-  border-radius: 4px;
+  position: relative;
+  flex: 1 1 0;
+  min-width: 32px;
+  height: 32px;
+  margin-left: 2px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  /* Centred while it fits; never centred past its edges (which would cut the root letter off). */
+  justify-content: safe center;
+  border-radius: 6px;
   box-shadow: inset 0 0 0 1px var(--line);
   font-size: var(--fs-xs);
-  font-weight: 500;
+  font-weight: 560;
   color: var(--ink-2);
   white-space: nowrap;
   overflow: hidden;
+}
+.keyInfo:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    0 0 0 2px var(--shell-hi),
+    0 0 0 4px var(--teal);
+}
+/* Measures the full name, unseen. */
+.keyText {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+.keyMeasure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 /* ---------- roll ---------- */
@@ -51,12 +80,14 @@
     inset 0 0 0 1px rgba(20, 24, 28, 0.06);
 }
 
+/* A finger swipe up or down scrolls the roll; taps and holds edit (PitchLane.tsx). */
 .roll {
   position: relative;
   padding: 0;
-  touch-action: none;
+  touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .rowLabel {
@@ -156,8 +187,22 @@
   background: linear-gradient(180deg, var(--amber-hi), var(--amber));
   opacity: calc(0.5 + 0.5 * var(--vel, 1));
   box-shadow:
-    inset 0 0 0 1px rgba(122, 72, 0, 0.35),
+    inset 0 0 0 1px color-mix(in srgb, var(--amber-ink) 35%, transparent),
     0 0 6px rgba(242, 166, 52, calc(0.2 + 0.4 * var(--vel, 1)));
+}
+/* Selected notes: a teal ring (and the "N notes selected" line under the roll). */
+.note[data-selected] .noteBody {
+  opacity: 1;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--amber-ink) 35%, transparent),
+    0 0 0 2px var(--teal),
+    0 0 8px var(--teal-glow);
+}
+.note[data-selected] {
+  z-index: 3;
+}
+.note[data-note-id='__draw'] .noteBody {
+  opacity: 0.85;
 }
 .note[data-from-prev] .noteBody {
   border-top-left-radius: 0;
@@ -169,6 +214,8 @@
 }
 .noteName {
   position: relative;
+  /* Starts where the note sounds (a note off the grid fills only part of its first cell). */
+  margin-left: calc(var(--from, 0) * 100%);
   padding-left: 5px;
   font-family: var(--font-mono);
   font-size: 10px;
@@ -213,12 +260,22 @@
   right: 5px;
   width: 2px;
   border-radius: 1px;
-  background: rgba(122, 72, 0, 0.45);
+  background: color-mix(in srgb, var(--amber-ink) 45%, transparent);
   opacity: 0;
   transition: opacity var(--t-fast) var(--ease);
 }
 .note:hover .handle::after {
   opacity: 1;
+}
+
+/* ---------- selection box ---------- */
+.box {
+  position: absolute;
+  z-index: 4;
+  border-radius: 3px;
+  background: var(--teal-wash);
+  box-shadow: inset 0 0 0 1.5px var(--teal);
+  pointer-events: none;
 }
 
 /* ---------- keyboard cursor ---------- */
@@ -243,6 +300,13 @@
 .velocity {
   flex: none;
   height: clamp(44px, 6.4vh, 92px);
+}
+.selHint {
+  display: block;
+  white-space: normal;
+  line-height: 13px;
+  color: var(--teal-ink);
+  font-weight: 600;
 }
 
 /* Short surfaces (high zoom): a roll of about a dozen rows; the editor scrolls (see StepEditor.module.css). */

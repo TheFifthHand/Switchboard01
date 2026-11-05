@@ -467,6 +467,14 @@ export const PRESETS: Record<string, PresetData> = {
     { toneAlso: [{ param: 'drive', dark: 0.05, bright: 0.8 }, { param: 'sub', dark: 0.8, bright: 0.15 }], lfo: { wave: LFO.triangle, division: DIV.bar1, centre: 700, depth: 0.6 } },
   ),
 
+  // Sine with a quick +7 st drop into pitch and a 2:1 FM knock that dies in
+  // 70 ms, a short decay and almost no sustain: the woody, pitched thump of a
+  // log drum. Tone moves the knock and the saturation.
+  'bass-log-drum': bass(
+    { wave: W.sine, sub: 0.2, subWave: SUB.sine, pitchEnv: 7, pitchDecay: 0.035, fmAmount: 0.4, fmRatio: 2, fmDecay: 0.07, cutoff: 1800, resonance: 0.1, envAmount: 0.3, filterDecay: 0.08, attack: 0.001, decay: 0.38, sustain: 0.05, release: 0.12, glide: 0, drive: 0.35, velocity: 0.6, level: -3 },
+    { toneAlso: [{ param: 'fmAmount', dark: 0.08, bright: 0.85 }, { param: 'drive', dark: 0.05, bright: 0.8 }], lfo: { wave: LFO.triangle, division: DIV.eighth, centre: 900, depth: 0.5 } },
+  ),
+
   /* ---------------- Keys ---------------- */
 
   // Sine carrier with a 1:1 FM modulator decaying over 1.2 s, velocity-scaled:
@@ -531,6 +539,21 @@ export const PRESETS: Record<string, PresetData> = {
   'poly-felt-piano': poly(
     { osc1Wave: W.triangle, osc2Wave: W.sine, osc2Semi: 12, detune: 3, osc2Level: 0.18, noise: 0, width: 0.5, fmAmount: 0.12, fmRatio: 1, fmDecay: 0.4, drift: 0.2, cutoff: 1400, resonance: 0.05, filterEnv: 0.25, filterDecay: 0.5, attack: 0.006, decay: 2.5, sustain: 0.15, release: 0.8, velocity: 0.6, level: -9.9 },
     { bright: 3, toneAlso: [{ param: 'osc2Level', dark: 0.04, bright: 0.6 }, { param: 'fmAmount', dark: 0.02, bright: 0.65 }], lfo: { wave: LFO.sine, division: DIV.half, centre: 1800, depth: 0.45 } },
+  ),
+
+  // Triangle with a quiet octave saw for the string brightness, a short 1:1
+  // FM strike and a burst of bright noise for the hammer, a long decay to a
+  // low sustain: a clear, bright piano for pop chords.
+  'poly-bright-piano': poly(
+    { osc1Wave: W.triangle, osc2Wave: W.saw, osc2Semi: 12, detune: 3, osc2Level: 0.14, noise: 0.05, noiseColor: 0.8, width: 0.55, fmAmount: 0.18, fmRatio: 1, fmDecay: 0.35, cutoff: 3200, resonance: 0.05, filterEnv: 0.4, filterDecay: 0.35, attack: 0.001, decay: 2.6, sustain: 0.12, release: 0.7, velocity: 0.7, level: -8.5 },
+    { bright: 3, toneAlso: [{ param: 'osc2Level', dark: 0.01, bright: 0.45 }, { param: 'fmAmount', dark: 0.02, bright: 0.6 }], lfo: { wave: LFO.sine, division: DIV.quarter, centre: 3000, depth: 0.45 } },
+  ),
+
+  // Sine tine piano behind a dark filter, with heavy drift, a slow tape-wow
+  // vibrato and a little dark hiss: an electric piano sampled from worn tape.
+  'poly-dusty-keys': poly(
+    { osc1Wave: W.sine, osc2Wave: W.sine, osc2Semi: 12, detune: 6, osc2Level: 0.1, noise: 0.05, noiseColor: 0.25, width: 0.4, fmAmount: 0.28, fmRatio: 1, fmDecay: 0.7, vibrato: 0.08, vibratoRate: 1.2, drift: 0.65, cutoff: 1100, resonance: 0.08, filterEnv: 0.2, filterDecay: 0.4, attack: 0.004, decay: 1.8, sustain: 0.3, release: 0.45, velocity: 0.55, level: -8 },
+    { bright: 3, toneAlso: [{ param: 'fmAmount', dark: 0.03, bright: 0.85 }, { param: 'osc2Level', dark: 0.01, bright: 0.5 }], lfo: { wave: LFO.sine, division: DIV.half, centre: 1600, depth: 0.45 }, drive: { character: CHARACTER.warm, tone: 0.4 }, macros: { drive: 0.1 } },
   ),
 
   /* ---------------- Pads & strings ---------------- */
@@ -711,6 +734,14 @@ export const PRESETS: Record<string, PresetData> = {
     { bright: 4, lfo: { wave: LFO.triangle, division: DIV.eighth, centre: 2000, depth: 0.5 } },
   ),
 
+  // Three softly detuned triangles with a quiet octave sine, spread wide, a
+  // gentle filter glow that closes in 180 ms and no sustain: a round,
+  // friendly, slightly chorused pluck for chords and arpeggios.
+  'poly-soft-pluck': poly(
+    { osc1Wave: W.triangle, osc2Wave: W.sine, osc2Semi: 12, detune: 7, osc2Level: 0.28, noise: 0.01, width: 0.85, unison: 3, unisonDetune: 10, cutoff: 1300, resonance: 0.2, filterEnv: 0.5, filterDecay: 0.18, attack: 0.003, decay: 0.5, sustain: 0, release: 0.45, velocity: 0.5, level: -2 },
+    { bright: 4, toneAlso: [{ param: 'osc2Level', dark: 0.04, bright: 0.7 }, { param: 'filterEnv', dark: 0.15, bright: 0.85 }], lfo: { wave: LFO.triangle, division: DIV.eighth, centre: 2200, depth: 0.5 } },
+  ),
+
   /* ---------------- Textures & FX ---------------- */
 
   // Saws and bright noise rising from two octaves below over a 6 s pitch
@@ -841,7 +872,8 @@ function setModuleParams(project: Project, trackId: Id, slot: 'lfo' | 'filter' |
  *
  * Writes: the instrument (registry defaults + preset params), the macro map
  * (defaults + preset overrides), the preset's LFO/filter/drive settings, and
- * the Tone/Motion/Drive positions (the preset's suggestion, else the default).
+ * the Tone/Motion/Drive positions (the preset's suggestion, else the default),
+ * which also become those big knobs' designed positions (Track.macroHome).
  * Space, Echo and Pump positions, channel level/pan/sends, clips and
  * connections are left as the user set them. Throws for unknown ids.
  */
@@ -862,7 +894,14 @@ export function applyPresetToProject(project: Project, trackId: Id, presetId: st
   for (const slot of ['lfo', 'filter', 'drive'] as const) setModuleParams(project, trackId, slot, data.modules?.[slot], true);
 
   const defaults = defaultMacros();
-  for (const m of ['tone', 'motion', 'drive'] as const) track.macros[m] = data.macros?.[m] ?? defaults[m];
+  // The positions the sound was designed with are also where its big knobs return to (macroHome);
+  // Space, Echo and Pump keep theirs (they belong to the part's mix, not to the sound).
+  const home = { ...(track.macroHome ?? {}) };
+  for (const m of ['tone', 'motion', 'drive'] as const) {
+    track.macros[m] = data.macros?.[m] ?? defaults[m];
+    home[m] = track.macros[m];
+  }
+  track.macroHome = home;
 }
 
 /**

@@ -9,6 +9,7 @@ import { ChorusModule } from '../../src/audio/modules/chorus';
 import { DelayModule } from '../../src/audio/modules/delay';
 import { DriveModule } from '../../src/audio/modules/drive';
 import { FilterModule } from '../../src/audio/modules/filter';
+import { clearImpulseCache, impulseCacheStats } from '../../src/audio/modules/fxutil';
 import { PhaserModule } from '../../src/audio/modules/phaser';
 import { ReverbModule } from '../../src/audio/modules/reverb';
 import type { ModuleEnv, ModuleNode } from '../../src/audio/modules/types';
@@ -51,12 +52,10 @@ describe('live contexts', () => {
     const seconds = 3;
     const ctx = new OfflineAudioContext(2, frames(seconds), SR);
     const { env, pending } = liveEnv(ctx);
-    let irs = 0;
-    const createBuffer = ctx.createBuffer.bind(ctx);
-    ctx.createBuffer = (c: number, n: number, sr: number) => {
-      irs++;
-      return createBuffer(c, n, sr);
-    };
+    // Rooms are built once per (size, seed, rate) for the whole page: count builds from an empty cache.
+    clearImpulseCache();
+    const builds0 = impulseCacheStats().builds;
+    const irsBuilt = () => impulseCacheStats().builds - builds0;
     const m = new ReverbModule(env, 'r', { decay: 0.5, predelay: 0, mix: 1 });
     const x = noise(seconds, 0.5, 5, 0.6, 0.65);
     play(ctx, m, x);
@@ -66,9 +65,9 @@ describe('live contexts', () => {
       m.setParams({ decay: 2, predelay: 0, mix: 1 }, ctx.currentTime);
       m.setParams({ decay: 3.5, predelay: 0, mix: 1 }, ctx.currentTime);
       m.setParams({ decay: 5, predelay: 0, mix: 1 }, ctx.currentTime);
-      seen.push(irs, pending.size);
+      seen.push(irsBuilt(), pending.size);
       await sleep(400);
-      seen.push(irs);
+      seen.push(irsBuilt());
       void ctx.resume();
     });
     const out = await ctx.startRendering();

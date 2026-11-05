@@ -138,6 +138,8 @@ export async function render<M extends ModuleNode>(spec: RenderSpec<M>): Promise
     c.connect(target);
     c.start(0);
   }
+  // As the engine does after wiring: the module learns which mod inputs are patched.
+  m.setModulated?.(new Set(Object.keys(spec.mods ?? {})), 0);
   spec.setup?.(m, ctx);
   for (const [time, fn] of spec.at ?? []) {
     void ctx.suspend(time).then(() => {
