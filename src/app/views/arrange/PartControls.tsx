@@ -77,6 +77,9 @@ export interface LevelSliderProps {
   tip: string;
 }
 
+/** Width of the slider's value zone (its dB text, at the left); the level travels in the rest, so the two never cross. Matches --level-value in SongView.module.css. */
+const LEVEL_VALUE_PX = 52;
+
 /** A horizontal level slider in dB (see the file comment for its keys and gestures). */
 export function LevelSlider({ spec, value, label, onChange, controlledBy, disabled, tip }: LevelSliderProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -128,7 +131,7 @@ export function LevelSlider({ spec, value, label, onChange, controlledBy, disabl
     } catch {
       /* the pointer is gone */
     }
-    drag.current = { pointerId, lastX: x, pos: faderPosition(spec, latest.current), width: Math.max(24, el.getBoundingClientRect().width), gesture: newGestureId('song-level'), raf: 0, pending: null };
+    drag.current = { pointerId, lastX: x, pos: faderPosition(spec, latest.current), width: Math.max(24, el.getBoundingClientRect().width - LEVEL_VALUE_PX), gesture: newGestureId('song-level'), raf: 0, pending: null };
     setDragging(true);
   };
 
@@ -271,7 +274,6 @@ export function LevelSlider({ spec, value, label, onChange, controlledBy, disabl
           aria-readonly={readOnly || undefined}
           aria-disabled={disabled || undefined}
           style={style}
-          data-side={pos > 0.55 ? 'left' : 'right'}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerEnd}
