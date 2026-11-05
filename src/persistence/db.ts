@@ -640,8 +640,8 @@ export function listSampleIds(): Promise<Id[]> {
 }
 
 /**
- * Every sample id a project refers to: its metadata, sampler parts, clips that
- * play their own recording (`clip.sample.id`), and the same in takes' starting
+ * Every sample id a project refers to: its metadata, sampler parts, clips (pad
+ * and song) that play their own recording (`clip.sample.id`), and the same in takes' starting
  * states.
  */
 export function sampleIdsOf(p: Project | undefined | null): Set<Id> {
@@ -651,7 +651,8 @@ export function sampleIdsOf(p: Project | undefined | null): Set<Id> {
   const fromTracks = (tracks: Project['tracks'] | undefined) => {
     for (const t of tracks ?? []) {
       if (t?.instrument?.kind === 'sampler' && t.instrument.sampleId) ids.add(t.instrument.sampleId);
-      for (const c of t?.clips ?? []) {
+      // Song clips (schema v5) play recordings too: a stored recording only they use must stay.
+      for (const c of [...(t?.clips ?? []), ...(t?.songClips ?? [])]) {
         // Per-clip recordings (schema v3); read loosely so older and newer projects both work.
         const own = (c as { sample?: { id?: unknown } } | null)?.sample?.id;
         if (typeof own === 'string' && own) ids.add(own);

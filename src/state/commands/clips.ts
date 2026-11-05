@@ -8,15 +8,22 @@
  * takes them over), a clip moved to another part takes its regions to that
  * part's row, and a new length keeps the regions' bars. A copy never adds
  * loops to the song.
+ *
+ * Edits of what is in a clip (rename, length, double, repeat, replace notes,
+ * clear, its recording) work on pad clips and song clips alike (a song slot,
+ * see project/clips.ts). The pad-grid edits (create on a pad, delete, move,
+ * copy to another pad, paste onto a pad, clear all pads) take pad rows only
+ * and refuse a song slot with nothing changed.
  */
 import { builtinSampleInfo } from '../../content/catalog';
 import { cloneClip, cloneClipWithNewIds, reIdNotes } from '../../project/clone';
 import { createClip as makeClip } from '../../project/factory';
 import { SAMPLER_PARAMS, clampParam, specById } from '../../project/params';
+import { isSongSlot } from '../../project/clips';
 import { MAX_CLIP_BARS, TICKS_PER_BAR, type Clip, type ClipBars, type ClipSample, type Id, type Note, type Project, type Track, type VariationInfo } from '../../project/types';
 import { VALIDATION_LIMITS, sanitizeClip } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
-import { NOT_FOUND, clipAt, cleanName, deepEqual, draftClip, draftTrack, findTrack, isFiniteNumber, isSlot, refuse, run, type CommandResult } from './common';
+import { NOT_FOUND, SONG_SLOT_REFUSAL, clipAt, cleanName, deepEqual, draftClip, draftTrack, findTrack, isFiniteNumber, isSlot, refuse, run, type CommandResult } from './common';
 
 /** Clips are 1 to MAX_CLIP_BARS (8) bars. */
 export function isClipBars(bars: number): bars is ClipBars {
@@ -25,16 +32,19 @@ export function isClipBars(bars: number): bars is ClipBars {
 
 const LENGTH_MESSAGE = `Clips are 1 to ${MAX_CLIP_BARS} bars.`;
 
-/** Default clip name: the scene (row) name. */
+/** Default name of a new pad clip: the scene (row) name. */
 export function defaultClipName(p: Project, slot: number): string {
   return p.scenes[slot]?.name ?? `Clip ${slot + 1}`;
 }
+
+const DELETE_SONG_LOOP = 'That loop lives in the song: delete it in the Song view.';
 
 /** Create an empty clip in an empty slot. */
 export function createClip(store: ProjectStore, trackId: Id, slot: number, bars: ClipBars = 1, name?: string): CommandResult & { clipId?: Id } {
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
+  if (isSongSlot(slot)) return SONG_SLOT_REFUSAL('New clips go on a pad. To add a loop to the song, use the Song view.');
   if (!isSlot(slot, t)) return refuse('invalid', 'There is no clip slot there.');
   if (!isClipBars(bars)) return refuse('invalid', LENGTH_MESSAGE);
   if (t.clips[slot]) return refuse('occupied', 'That slot already has a clip.');
@@ -46,6 +56,7 @@ export function createClip(store: ProjectStore, trackId: Id, slot: number, bars:
 }
 
 export function deleteClip(store: ProjectStore, trackId: Id, slot: number): CommandResult {
+  if (isSongSlot(slot)) return SONG_SLOT_REFUSAL(DELETE_SONG_LOOP);
   if (!clipAt(store.getState(), trackId, slot)) return NOT_FOUND('clip');
   return run(store, 'clip:Delete clip', (d) => {
     draftTrack(d, trackId).clips[slot] = null;
@@ -209,8 +220,9 @@ export function setClipSampleRegion(store: ProjectStore, trackId: Id, slot: numb
   }, gesture);
 }
 
-/** Copy a clip into another slot of the same part (replacing what is there). */
+/** Copy a pad clip onto another pad of the same part (replacing what is there). Song loops use copyLoopToPad. */
 export function duplicateClipToSlot(store: ProjectStore, trackId: Id, fromSlot: number, toSlot: number): CommandResult & { clipId?: Id } {
+  if (isSongSlot(fromSlot) || isSongSlot(toSlot)) return SONG_SLOT_REFUSAL();
   const clip = clipAt(store.getState(), trackId, fromSlot);
   if (!clip) return NOT_FOUND('clip');
   if (!isSlot(toSlot, findTrack(store.getState(), trackId)) || toSlot === fromSlot) return refuse('invalid', 'Choose a different slot.');
@@ -230,6 +242,7 @@ export function pasteClip(store: ProjectStore, trackId: Id, slot: number, clip: 
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
+  if (isSongSlot(slot)) return SONG_SLOT_REFUSAL('A copied clip is pasted onto a pad, not over a loop in the song.');
   if (!isSlot(slot, t)) return refuse('invalid', 'Unknown clip slot.');
   const { clip: clean } = sanitizeClip(clip, t.instrument.kind, new Set(p.samples.map((s) => s.id)));
   if (!clean) return refuse('invalid', 'The copied clip could not be pasted.');
@@ -257,7 +270,7 @@ export function copyClip(project: Project, trackId: Id, slot: number): Clip | nu
   return clip ? cloneClip(clip) : null;
 }
 
-/** Remove every clip of a part in one undo step. */
+/** Remove every pad clip of a part in one undo step (its song loops stay: they belong to the song). */
 export function clearTrackClips(store: ProjectStore, trackId: Id): CommandResult {
   const t = findTrack(store.getState(), trackId);
   if (!t) return NOT_FOUND('part');
@@ -310,6 +323,7 @@ export interface ClipMoveResult extends CommandResult {
  * there.
  */
 export function moveClip(store: ProjectStore, fromTrackId: Id, fromSlot: number, toTrackId: Id, toSlot: number): ClipMoveResult {
+  if (isSongSlot(fromSlot) || isSongSlot(toSlot)) return SONG_SLOT_REFUSAL();
   const p = store.getState();
   const clip = clipAt(p, fromTrackId, fromSlot);
   if (!clip) return NOT_FOUND('clip');
@@ -341,6 +355,7 @@ export interface ClipCopyResult extends CommandResult {
  * kind of clip.
  */
 export function copyClipTo(store: ProjectStore, fromTrackId: Id, fromSlot: number, toTrackId: Id, toSlot: number): ClipCopyResult {
+  if (isSongSlot(fromSlot) || isSongSlot(toSlot)) return SONG_SLOT_REFUSAL();
   const p = store.getState();
   const clip = clipAt(p, fromTrackId, fromSlot);
   if (!clip) return NOT_FOUND('clip');

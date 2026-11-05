@@ -16,6 +16,7 @@
  */
 import { chordAt, getProgression, harmonicParent, resolveProgression, voiceLeadLoop } from '../../music/chords';
 import { keyLabel, pitchClass, snapToScale, transposeInScale, type MusicalKey } from '../../music/scales';
+import { clipAtSlot, trackClips } from '../../project/clips';
 import { uid } from '../../project/factory';
 import { Rng, subSeed } from '../../project/rng';
 import {
@@ -38,7 +39,7 @@ import { SCALE_IDS, VALIDATION_LIMITS } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
 import type { StepGrid } from '../uiStore';
 import { defaultClipName } from './clips';
-import { NOT_FOUND, clamp, clipAt, clipTicks, draftClip, draftTrack, findTrack, isFiniteNumber, isSlot, refuse, run, type CommandResult } from './common';
+import { NOT_FOUND, clamp, clipAt, clipTicks, draftClip, draftTrack, findTrack, isClipSlotOf, isFiniteNumber, refuse, run, type CommandResult } from './common';
 
 export const DEFAULT_STEP_VELOCITY = 0.8;
 const MAX_NOTES = VALIDATION_LIMITS.maxNotesPerClip;
@@ -120,8 +121,8 @@ interface Target {
 function target(p: Project, trackId: Id, slot: number): Target | CommandResult {
   const track = findTrack(p, trackId);
   if (!track) return NOT_FOUND('part');
-  if (!isSlot(slot, track)) return refuse('invalid', 'There is no clip slot there.');
-  const clip = track.clips[slot];
+  if (!isClipSlotOf(slot, track)) return refuse('invalid', 'There is no clip slot there.');
+  const clip = clipAtSlot(track, slot);
   if (!clip) return NOT_FOUND('clip');
   return { track, clip, len: clipTicks(clip) };
 }
@@ -165,10 +166,10 @@ export function toggleStep(store: ProjectStore, trackId: Id, slot: number, stepI
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
-  if (!isSlot(slot, t)) return refuse('invalid', 'There is no clip slot there.');
+  if (!isClipSlotOf(slot, t)) return refuse('invalid', 'There is no clip slot there.');
   if (!validPitch(t.instrument.kind, pitch)) return refuse('invalid', 'That pitch cannot be played by this part.');
   if (!isFiniteNumber(velocity)) return refuse('invalid', 'Velocity must be a number.');
-  const clip = t.clips[slot];
+  const clip = clipAtSlot(t, slot);
   const maxSteps = clip ? clip.bars * STEPS_PER_BAR : MAX_CLIP_BARS * STEPS_PER_BAR;
   if (!Number.isInteger(stepIndex) || stepIndex < 0 || stepIndex >= maxSteps) return refuse('invalid', 'That step is outside the clip.');
 
@@ -423,13 +424,13 @@ export function addRecordedNotes(store: ProjectStore, trackId: Id, slot: number,
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
-  if (!isSlot(slot, t)) return refuse('invalid', 'There is no clip slot there.');
+  if (!isClipSlotOf(slot, t)) return refuse('invalid', 'There is no clip slot there.');
   if (!(opts.quantize in QUANTIZE_TICKS)) return refuse('invalid', 'Unknown quantize setting.');
   // Negative ticks (played just before the downbeat) wrap into the loop like any other position.
   const valid = notes.filter((n) => [n.tick, n.pitch, n.velocity, n.duration].every(isFiniteNumber) && validPitch(t.instrument.kind, Math.round(n.pitch)));
   if (valid.length === 0) return { changed: false, added: 0 };
 
-  const existingClip = t.clips[slot];
+  const existingClip = clipAtSlot(t, slot);
   let lastTick = 0;
   for (const n of valid) lastTick = Math.max(lastTick, quantizeTick(n.tick, opts.quantize));
   const bars = existingClip ? existingClip.bars : (clamp(Math.ceil((lastTick + 1) / TICKS_PER_BAR), 1, MAX_CLIP_BARS) as ClipBars);
@@ -917,11 +918,11 @@ export function paintSteps(
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return { ...NOT_FOUND('part'), painted: 0 };
-  if (!isSlot(slot, t)) return { ...refuse('invalid', 'There is no clip slot there.'), painted: 0 };
+  if (!isClipSlotOf(slot, t)) return { ...refuse('invalid', 'There is no clip slot there.'), painted: 0 };
   if (!validPitch(t.instrument.kind, pitch)) return { ...refuse('invalid', 'That pitch cannot be played by this part.'), painted: 0 };
   const velocity = opts.velocity ?? DEFAULT_STEP_VELOCITY;
   if (!isFiniteNumber(velocity)) return { ...refuse('invalid', 'Velocity must be a number.'), painted: 0 };
-  const clip = t.clips[slot];
+  const clip = clipAtSlot(t, slot);
   const made = paintCreated.get(store);
   const grows = !clip || (gesture !== undefined && made !== undefined && made.gesture === gesture && made.clipId === clip.id);
   const max = (grows ? MAX_CLIP_BARS : clip.bars) * STEPS_PER_BAR;
@@ -980,12 +981,12 @@ export function fillSound(
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return { ...NOT_FOUND('part'), added: 0 };
-  if (!isSlot(slot, t)) return { ...refuse('invalid', 'There is no clip slot there.'), added: 0 };
+  if (!isClipSlotOf(slot, t)) return { ...refuse('invalid', 'There is no clip slot there.'), added: 0 };
   if (!validPitch(t.instrument.kind, pitch)) return { ...refuse('invalid', 'That pitch cannot be played by this part.'), added: 0 };
   if (every !== 1 && every !== 2 && every !== 4) return { ...refuse('invalid', 'Fill every beat, 8th or 16th.'), added: 0 };
   const velocity = opts.velocity ?? DEFAULT_STEP_VELOCITY;
   if (!isFiniteNumber(velocity)) return { ...refuse('invalid', 'Velocity must be a number.'), added: 0 };
-  const clip = t.clips[slot];
+  const clip = clipAtSlot(t, slot);
   const total = (clip ? clip.bars : 1) * STEPS_PER_BAR;
   const add: number[] = [];
   for (let s = 0; s < total; s += every) if (!clip || notesAtStep(clip, s, pitch).length === 0) add.push(s);
@@ -1088,7 +1089,7 @@ export interface ProgressionOptions {
 
 /** Middle of the register a part plays in: the median of its notes, else a default for its role. */
 function partCentre(track: Track): number {
-  const pitches = track.clips.flatMap((c) => (c ? c.notes.map((n) => n.pitch) : [])).sort((a, b) => a - b);
+  const pitches = trackClips(track).flatMap(({ clip }) => clip.notes.map((n) => n.pitch)).sort((a, b) => a - b);
   if (track.instrument.kind === 'bass') {
     return pitches.length ? clamp(pitches[Math.floor(pitches.length / 2)], 28, 52) : 40;
   }
@@ -1134,7 +1135,7 @@ export function createProgressionClip(
   if (!t) return { ...NOT_FOUND('part'), ...none };
   if (t.instrument.kind === 'drums') return { ...refuse('invalid', 'Drum parts play sounds, not chords: choose a melodic part for a progression.'), ...none };
   if (t.instrument.kind === 'sampler') return { ...refuse('invalid', 'Sampler parts play a recording, which keeps its own pitch: choose a synth part for a progression.'), ...none };
-  if (!isSlot(slot, t)) return { ...refuse('invalid', 'There is no clip slot there.'), ...none };
+  if (!isClipSlotOf(slot, t)) return { ...refuse('invalid', 'There is no clip slot there.'), ...none };
   const prog = opts ? getProgression(opts.progressionId) : undefined;
   if (!prog) return { ...refuse('invalid', 'Unknown progression.'), ...none };
   if (!RHYTHMS.includes(opts.rhythm)) return { ...refuse('invalid', 'Choose held, stabs or off-beats.'), ...none };
@@ -1171,7 +1172,7 @@ export function createProgressionClip(
     }
   }
   const display = { display: `Write the ${prog.name} progression` };
-  const existing = t.clips[slot];
+  const existing = clipAtSlot(t, slot);
   const clipId = existing?.id ?? uid('clip');
   const r = existing
     ? run(store, 'notes:Write progression', (d) => {

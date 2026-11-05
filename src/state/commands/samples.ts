@@ -4,13 +4,14 @@
  */
 import { builtinSampleInfo } from '../../content/catalog';
 import { applySamplerToProject } from '../../content/presets';
+import { clipAtSlot, isSongSlot, trackClips } from '../../project/clips';
 import { createClip as makeClip } from '../../project/factory';
 import { SAMPLER_PARAMS, clampParam, readParam, specById } from '../../project/params';
 import { MAX_CLIP_BARS, TICKS_PER_BAR, type ClipBars, type Id, type Project, type SampleMeta, type Track } from '../../project/types';
 import { VALIDATION_LIMITS, sanitizeSampleMeta } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
 import { isClipBars } from './clips';
-import { NOT_FOUND, clamp, cleanName, draftTrack, findTrack, isFiniteNumber, isSlot, partName, refuse, run, type CommandResult } from './common';
+import { NOT_FOUND, SONG_SLOT_REFUSAL, clamp, cleanName, draftTrack, findTrack, isClipSlotOf, isFiniteNumber, isSlot, partName, refuse, run, type CommandResult } from './common';
 
 /** A clip that plays a recording itself (Clip.sample). */
 export interface ClipUse {
@@ -27,9 +28,9 @@ export function sampleUsage(p: Project, sampleId: Id): { tracks: Id[]; clips: Cl
   const parts = (tracks: Project['tracks']) => tracks.filter((t) => t.instrument.kind === 'sampler' && t.instrument.sampleId === sampleId).map((t) => t.id);
   const clips = (tracks: Project['tracks']) => {
     const out: ClipUse[] = [];
-    for (const t of tracks) t.clips.forEach((c, slot) => {
-      if (c?.sample?.id === sampleId) out.push({ trackId: t.id, slot, clipId: c.id });
-    });
+    for (const t of tracks) for (const { slot, clip: c } of trackClips(t)) {
+      if (c.sample?.id === sampleId) out.push({ trackId: t.id, slot, clipId: c.id });
+    }
     return out;
   };
   return {
@@ -43,7 +44,7 @@ export function sampleUsage(p: Project, sampleId: Id): { tracks: Id[]; clips: Cl
 export function clipSampleIds(p: Pick<Project, 'tracks' | 'performances'>): Set<Id> {
   const ids = new Set<Id>();
   const add = (tracks: readonly Track[]) => {
-    for (const t of tracks) for (const c of t.clips) if (c?.sample) ids.add(c.sample.id);
+    for (const t of tracks) for (const { clip: c } of trackClips(t)) if (c.sample) ids.add(c.sample.id);
   };
   add(p.tracks);
   for (const perf of p.performances) add(perf.snapshot.tracks);
@@ -69,7 +70,8 @@ export function removeSampleMeta(store: ProjectStore, sampleId: Id): CommandResu
   if (usage.tracks.length) return refuse('in-use', 'This recording is used by a part. Choose another sound for that part first.');
   if (usage.clips.length) {
     const c = usage.clips[0];
-    const clip = findTrack(p, c.trackId)?.clips[c.slot];
+    const t = findTrack(p, c.trackId);
+    const clip = t ? clipAtSlot(t, c.slot) : null;
     const more = usage.clips.length > 1 ? ` and ${usage.clips.length - 1} more` : '';
     return refuse('in-use', `This recording plays in a clip (${clip?.name ?? 'a clip'} on ${partName(p, c.trackId)}${more}). Delete that clip or give it another recording first.`);
   }
@@ -135,7 +137,7 @@ export interface RecordedTake {
  */
 function recordingBecomesPart(t: Track, slot: number): boolean {
   if (t.instrument.kind !== 'sampler' || !t.instrument.sampleId) return true;
-  return !t.clips.some((c, i) => i !== slot && !!c && c.notes.length > 0);
+  return !trackClips(t).some((c) => c.slot !== slot && c.clip.notes.length > 0);
 }
 
 /**
@@ -197,6 +199,7 @@ export function addRecordedTake(store: ProjectStore, take: RecordedTake): Record
   const p = store.getState();
   const t = findTrack(p, take.trackId);
   if (!t) return NOT_FOUND('part');
+  if (isSongSlot(take.slot)) return SONG_SLOT_REFUSAL('Audio recordings go on a pad: record the audio in Play, then put it in the song.');
   if (!isSlot(take.slot, t) || !isClipBars(take.bars)) return refuse('invalid', `A recorded take fills a clip of 1 to ${MAX_CLIP_BARS} bars in one of the part’s slots.`);
   const clean = sanitizeSampleMeta(take.meta);
   if (!clean) return refuse('invalid', 'The recording information is incomplete.');
@@ -241,7 +244,7 @@ export function importRecordingAsClip(
   const known = meta !== null || (sampleId.startsWith('builtin:') ? !!builtinSampleInfo(sampleId) : p.samples.some((s) => s.id === sampleId));
   if (!known) return refuse('invalid', 'That recording is not in this project.');
   if (!isFiniteNumber(opts.durationSeconds) || opts.durationSeconds <= 0) return refuse('invalid', 'The recording has no length.');
-  const from = opts.slot ?? 0;
+  const from = opts.slot === undefined || isSongSlot(opts.slot) ? 0 : opts.slot;
   if (!isSlot(from, t)) return refuse('invalid', 'Unknown clip slot.');
   const rows = t.clips.length;
   let slot = -1;
@@ -286,7 +289,7 @@ export function addSampleVersion(
   if (!t) return NOT_FOUND('part');
   const slot = opts.slot;
   if (slot !== undefined) {
-    const c = isSlot(slot, t) ? t.clips[slot] : null;
+    const c = isClipSlotOf(slot, t) ? clipAtSlot(t, slot) : null;
     if (!c?.sample || c.sample.id !== fromSampleId) return refuse('invalid', 'The clip plays another recording now, so the edit was not applied. Try again.');
   } else if (t.instrument.kind !== 'sampler' || t.instrument.sampleId !== fromSampleId) return refuse('invalid', 'The part plays another recording now, so the edit was not applied. Try again.');
   const clean = sanitizeSampleMeta(meta);
@@ -301,7 +304,7 @@ export function addSampleVersion(
   return run(store, `sample:${opts.label}`, (d) => {
     d.samples.push(clean);
     const track = draftTrack(d, trackId);
-    const own = slot !== undefined ? track.clips[slot]?.sample : undefined;
+    const own = slot !== undefined ? clipAtSlot(track, slot)?.sample : undefined;
     if (own) {
       own.id = clean.id;
       if (region) {
@@ -319,8 +322,8 @@ export function addSampleVersion(
         inst.params.start = region.start;
         inst.params.end = region.end;
       }
-      for (const c of track.clips) {
-        if (c?.sample?.id !== fromSampleId) continue;
+      for (const { clip: c } of trackClips(track)) {
+        if (c.sample?.id !== fromSampleId) continue;
         if (!region) {
           c.sample.id = clean.id;
           continue;

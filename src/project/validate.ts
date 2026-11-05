@@ -15,6 +15,7 @@
  */
 import { BUILTIN_SAMPLES, KITS } from '../content/catalog';
 import { tidyRegions, tidySections } from './arrangement';
+import { clipById } from './clips';
 import { DEFAULT_ROLES, MASTER_ID, ROLE_LABELS, defaultArp, defaultMacros, uid } from './factory';
 import { validateConnection } from './graph';
 import { migrateProject } from './migrate';
@@ -39,6 +40,7 @@ import {
   MAX_SCENES,
   MAX_SECTION_NAME,
   MAX_SONG_BARS,
+  MAX_SONG_CLIPS,
   MAX_TRACKS,
   MIN_SCENES,
   PROJECT_SCHEMA,
@@ -608,6 +610,8 @@ function validateMacroMap(raw: unknown, patch: Patch, kinds: ReadonlyMap<Id, Ins
 interface TrackDraft {
   track: Omit<Track, 'macroMap'>;
   rawMacroMap: unknown;
+  /** Checked after every part's pad clips, so a pad clip keeps its id when a song clip repeats it. */
+  rawSongClips: unknown;
 }
 
 /** Designed macro positions: known macros only, each 0..1; nothing usable leaves it out. */
@@ -685,7 +689,40 @@ function validateTrack(raw: unknown, index: number, rows: number | null, trackId
       ...(macroHome ? { macroHome } : {}),
     },
     rawMacroMap: raw.macroMap,
+    rawSongClips: raw.songClips,
   };
+}
+
+/**
+ * A part's song clips (schema v5): each checked like a pad clip, ids unique
+ * across the project's clips (a repeated id gets a new one: regions keep
+ * playing the first clip with it), at most MAX_SONG_CLIPS. A damaged song
+ * clip is removed with a warning instead of failing the project: only the
+ * song plays it, and its loops leave the song with it. Which of them the song
+ * still plays is checked with the song (see pruneSongClips).
+ */
+function validateSongClips(raw: unknown, clipIds: Set<Id>, sampleIds: ReadonlySet<Id>, issues: Issues): Clip[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) {
+    issues.warn('Removed a damaged list of loops from the song.');
+    return [];
+  }
+  const out: Clip[] = [];
+  for (const c of raw as unknown[]) {
+    if (out.length >= MAX_SONG_CLIPS) {
+      issues.warn(`Removed loops beyond the limit of ${MAX_SONG_CLIPS} for one part from the song.`);
+      break;
+    }
+    const own = new Issues();
+    const clip = validateClipInner(c, MIDI_RANGE, clipIds, sampleIds, own);
+    if (!clip || own.failed) {
+      issues.warn('Removed a damaged loop from the song.');
+      continue;
+    }
+    issues.merge(own);
+    out.push(clip);
+  }
+  return out;
 }
 
 function validateScenes(raw: unknown, issues: Issues): Scene[] | null {
@@ -831,7 +868,11 @@ interface MusicCore {
   patch: Patch;
 }
 
-function validateMusicCore(raw: Obj, sampleIds: ReadonlySet<Id>, issues: Issues): MusicCore | null {
+/**
+ * Parts, scenes and patch. `songClips`: the parts keep their song clips (the
+ * project); a take's starting state leaves them out (only its pads play).
+ */
+function validateMusicCore(raw: Obj, sampleIds: ReadonlySet<Id>, issues: Issues, songClips: boolean): MusicCore | null {
   const scenes = validateScenes(raw.scenes, issues);
   if (!Array.isArray(raw.tracks) || raw.tracks.length !== MAX_TRACKS) {
     issues.error(`The project must have exactly ${MAX_TRACKS} parts.`);
@@ -846,6 +887,12 @@ function validateMusicCore(raw: Obj, sampleIds: ReadonlySet<Id>, issues: Issues)
     drafts.push(d);
   }
   if (!scenes) return null;
+  if (songClips) {
+    for (const d of drafts) {
+      const list = validateSongClips(d.rawSongClips, clipIds, sampleIds, issues);
+      if (list.length) d.track.songClips = list;
+    }
+  }
   const patch = validatePatch(raw.patch, trackIds, issues);
   if (!patch) return null;
   const kinds = new Map<Id, InstrumentKind>(drafts.map((d) => [d.track.id, d.track.instrument.kind]));
@@ -936,10 +983,10 @@ function validateRegion(raw: unknown, tracks: readonly Track[], ids: Set<Id>, is
     return null;
   }
   const track = tracks.find((t) => t.id === raw.trackId);
-  const clip = track ? track.clips.find((c) => c !== null && c.id === raw.clipId) : undefined;
+  const clip = track && typeof raw.clipId === 'string' ? clipById(track, raw.clipId) : null;
   if (!track || !clip) {
     // Said as it is: a loop plays a clip of its own part only.
-    const elsewhere = typeof raw.clipId === 'string' && tracks.some((t) => t !== track && t.clips.some((c) => c !== null && c.id === raw.clipId));
+    const elsewhere = typeof raw.clipId === 'string' && tracks.some((t) => t !== track && clipById(t, raw.clipId as string) !== null);
     issues.warn(!track ? 'Removed a loop of a part that does not exist from the song.' : elsewhere ? 'Removed a loop that played another part’s clip.' : 'Removed a loop whose clip no longer exists from the song.');
     return null;
   }
@@ -1055,6 +1102,18 @@ function validateArrangement(raw: unknown, tracks: Track[], issues: Issues): Arr
   return { regions: tidy.regions, sections: tidySecs.sections, tailSeconds };
 }
 
+/** Song clips no region plays leave their part (an empty list is left out), each said in plain words. */
+function pruneSongClips(tracks: Track[], arrangement: Arrangement, issues: Issues): void {
+  const played = new Set(arrangement.regions.map((r) => `${r.trackId}|${r.clipId}`));
+  for (const t of tracks) {
+    if (!t.songClips) continue;
+    const keep = t.songClips.filter((c) => played.has(`${t.id}|${c.id}`));
+    for (let i = keep.length; i < t.songClips.length; i++) issues.warn('Removed a loop that nothing in the song played.');
+    if (keep.length) t.songClips = keep;
+    else delete t.songClips;
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Performances                                                        */
 /* ------------------------------------------------------------------ */
@@ -1119,7 +1178,7 @@ function validateSnapshot(raw: unknown, sampleIds: ReadonlySet<Id>, issues: Issu
     issues.error('missing snapshot');
     return null;
   }
-  const core = validateMusicCore(raw, sampleIds, issues);
+  const core = validateMusicCore(raw, sampleIds, issues, false);
   if (!core) return null;
   const trackIds = new Set(core.tracks.map((t) => t.id));
   const launcher: LauncherSnapshotEntry[] = [];
@@ -1292,8 +1351,10 @@ function validateProjectInner(input: unknown, issues: Issues): Project | null {
   }
   const sampleIds = new Set(samples.map((s) => s.id));
 
-  const core = validateMusicCore(raw, sampleIds, issues);
+  const core = validateMusicCore(raw, sampleIds, issues, true);
   if (!core || issues.failed) return null;
+  const arrangement = validateArrangement(raw.arrangement, core.tracks, issues);
+  pruneSongClips(core.tracks, arrangement, issues);
 
   const performances: Performance[] = [];
   if (raw.performances !== undefined && !Array.isArray(raw.performances)) issues.warn('Reset a damaged list of recorded performances.');
@@ -1343,7 +1404,7 @@ function validateProjectInner(input: unknown, issues: Issues): Project | null {
     tracks: core.tracks,
     scenes: core.scenes,
     patch: core.patch,
-    arrangement: validateArrangement(raw.arrangement, core.tracks, issues),
+    arrangement,
     performances,
     samples,
     seed,

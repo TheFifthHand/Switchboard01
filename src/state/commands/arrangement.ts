@@ -44,6 +44,7 @@ import {
   type Edge,
   type NewId,
 } from '../../project/arrangement';
+import { clipById } from '../../project/clips';
 import { uid } from '../../project/factory';
 import {
   MAX_SECTION_NAME,
@@ -125,10 +126,10 @@ function findSection(p: Project, id: Id): SongSection | undefined {
   return p.arrangement.sections.find((s) => s.id === id);
 }
 
-/** A clip anywhere in the project, with its part (clip ids are unique in a project). */
+/** A clip anywhere in the project, pad or song, with its part (clip ids are unique in a project). */
 function findClip(p: Project, clipId: Id): { track: Track; clip: Clip } | null {
   for (const track of p.tracks) {
-    const clip = track.clips.find((c) => c?.id === clipId);
+    const clip = clipById(track, clipId);
     if (clip) return { track, clip };
   }
   return null;

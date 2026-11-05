@@ -1,5 +1,6 @@
 /** Project-wide edits: name, tempo, swing, key (and moving the song to a new key), Musical Assist, master volume, settings. */
 import { keyLabel, keyRootName, moveToKey, pitchClass, type MusicalKey } from '../../music/scales';
+import { trackClips } from '../../project/clips';
 import { BPM_SPEC, MASTER_VOLUME_SPEC, SWING_SPEC } from '../../project/params';
 import type { Id, Note, ProjectSettings, ScaleId } from '../../project/types';
 import { QUANTIZE_GRIDS, SCALE_IDS } from '../../project/validate';
@@ -98,8 +99,7 @@ export function transposeSong(store: ProjectStore, to: MusicalKey, opts: { sampl
     const kind = t.instrument.kind;
     if (kind === 'drums' || (kind === 'sampler' && !samplers.has(t.id))) continue;
     const [lo, hi] = pitchRangeFor(kind);
-    t.clips.forEach((clip, slot) => {
-      if (!clip) return;
+    for (const { slot, clip } of trackClips(t)) {
       let changed = 0;
       const seen = new Map<string, number>();
       const out: Note[] = [];
@@ -122,19 +122,19 @@ export function transposeSong(store: ProjectStore, to: MusicalKey, opts: { sampl
           out[at] = moved;
         }
       }
-      if (changed === 0 && out.length === clip.notes.length) return;
+      if (changed === 0 && out.length === clip.notes.length) continue;
       notes += changed;
       moves.set(`${t.id}|${slot}`, out);
-    });
+    }
   }
   const r = run(store, 'project:Move the song', (d) => {
     d.root = root;
     d.scale = to.scale;
     for (const t of d.tracks) {
-      t.clips.forEach((c, slot) => {
-        const next = c ? moves.get(`${t.id}|${slot}`) : undefined;
-        if (c && next) c.notes = next;
-      });
+      for (const { slot, clip } of trackClips(t)) {
+        const next = moves.get(`${t.id}|${slot}`);
+        if (next) clip.notes = next;
+      }
     }
   }, undefined, { display: `Move the song to ${songKeyWords(root, to.scale)}` });
   const takesKept = p.performances.filter((perf) => perf.snapshot.root !== root || perf.snapshot.scale !== to.scale).length;

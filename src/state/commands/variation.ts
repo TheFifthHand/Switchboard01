@@ -5,11 +5,12 @@
  */
 import { describeVariation, diffNotes, varyClip, type NoteDiff } from '../../music/variation';
 import { uniqueNoteIds } from '../../project/clone';
+import { clipAtSlot } from '../../project/clips';
 import { uid } from '../../project/factory';
 import type { Id, Note } from '../../project/types';
 import { VALIDATION_LIMITS } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
-import { NOT_FOUND, clamp, clipTicks, draftClip, findTrack, isFiniteNumber, isSlot, refuse, run, type CommandResult } from './common';
+import { NOT_FOUND, clamp, clipTicks, draftClip, findTrack, isClipSlotOf, isFiniteNumber, refuse, run, type CommandResult } from './common';
 import { pitchRangeFor } from './notes';
 
 /** How much one press changes: Subtle or Bold (pass as `intensity`; the default, 0.5, sits between). */
@@ -80,8 +81,8 @@ export function applyVariation(
   const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
   if (t.locked) return refuse('locked', 'This part is locked, so Variation leaves it unchanged.');
-  if (!isSlot(slot, t)) return refuse('invalid', 'There is no clip slot there.');
-  const clip = t.clips[slot];
+  if (!isClipSlotOf(slot, t)) return refuse('invalid', 'There is no clip slot there.');
+  const clip = clipAtSlot(t, slot);
   if (!clip) return refuse('empty', 'There is no clip here to vary.');
   if (intensity !== undefined && !isFiniteNumber(intensity)) return refuse('invalid', 'Variation strength must be a number.');
   const len = clipTicks(clip);
