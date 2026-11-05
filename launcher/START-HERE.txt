@@ -86,17 +86,24 @@ Use headphones or speakers; start with a moderate volume.
       every control. Switching never changes your music.
     * Mix (top left) has a fader per part and mastering: pick a preset
       such as Warm or Punchy and a loudness target for your finished song.
-    * Record a performance: press "Performance" (under "Record" at the
-      top), play for a while, then press it again to stop. To save it as
-      a WAV file you can listen to anywhere, press "Export" (top right),
-      choose your performance under "What to export" and press
-      "Export WAV".
+    * Save your song as a file you can listen to anywhere: press
+      "Export" (top right). The whole song is chosen for you; pick a
+      format (WAV is the best quality) and press the export button.
     * Build a song in Song (top left): every part has its own row, like
-      GarageBand. Drag scenes and loops in from the Loops panel, drag a
+      GarageBand. Drag loops in from the loop browser (+ Add loops), drag a
       loop along its row to move it, drag its right edge to make it
       repeat longer. Everything snaps to the bars. Click the ruler to
       move the playhead; drag along it to loop a stretch. Hold Alt while
       dragging to copy; right-click a loop for more. Space plays the song.
+    * New in 2.4: "Make a beat from scratch" on the first screen, with
+      52 ready beats (Start from a beat...); a loop library of 164 loops
+      in Song (+ Add loops > Library) that fit your song's key; press
+      "Record" in Song to record straight into the song; double-click a
+      loop to edit it under the song; volume and pan on every song row;
+      insert or remove bars (right-click the bar numbers); five new
+      starters (Trap, Lo-fi Hip Hop, Pop, Afrobeats, Boom Bap); export as
+      WAV, a smaller file for sharing, separate parts or MIDI, as loud as
+      streaming songs.
     * New in 2.3: the Song view above, the in-key keyboard, Play / Stop
       words on the pads and a Pause button beside them. Songs made with
       earlier versions open as they were, on the new rows.

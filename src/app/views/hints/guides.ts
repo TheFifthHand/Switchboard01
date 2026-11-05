@@ -63,6 +63,17 @@ export interface ReleaseNotes {
 /** What changed in this version, newest first (only the first entry is shown). */
 export const WHATS_NEW: readonly ReleaseNotes[] = [
   {
+    version: '2.4.0',
+    notes: [
+      'Make a beat from scratch (on the first screen): a drum grid that plays while you click, and Start from a beat… with 52 ready beats in many styles.',
+      'A loop library in Song (+ Add loops → Library): 164 loops for every part, in your song’s key. Press ▶ to hear one, drag it onto a row.',
+      'Press ● Record in Song to record straight into the song from the playhead. Double-click a loop (or press E) to edit it under the song; Make this one different gives one place its own copy.',
+      'Song rows have volume and pan; right-click the bar numbers to insert or remove bars; drag a section to reorder the song without cutting anything.',
+      'Export the whole song as loud as streaming songs, as WAV, a smaller file for sharing, separate parts or a MIDI file.',
+      'Five new starters (Trap, Lo-fi Hip Hop, Pop, Afrobeats, Boom Bap), new sounds, and simpler Mix and Shape in Simple mode. Clips are now called loops everywhere.',
+    ],
+  },
+  {
     version: '2.3.0',
     notes: [
       'Song works like GarageBand: every part has its own row. Press Add loops and drag loops and scenes in, move them along their row, and drag a loop’s right edge to make it repeat longer. Everything snaps to the bars.',

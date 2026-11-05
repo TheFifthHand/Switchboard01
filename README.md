@@ -6,7 +6,7 @@ WAV file. Everything runs on your own device: no account, no uploads, no interne
 loaded. All sounds are synthesized by the app itself.
 
 Omni Song is the app that was called **SWITCHBOARD / 01**, renamed with version 2.0; this is version
-2.3. Projects, settings and project files from 1.0 carry over (see
+2.4. Projects, settings and project files from 1.0 carry over (see
 [Coming from SWITCHBOARD / 01](#coming-from-switchboard--01)).
 
 ## What it does
@@ -73,6 +73,22 @@ Knobs: drag up or down (hold Shift for fine steps), double-click to reset (in Sh
 sound had it), or click the value and type (`2.5k`, `-6`); in Shape, right-click a knob to give it
 to a big knob. Arrow keys, Page Up/Down and Home/End work once a knob has focus. Space plays and
 pauses, Shift+Space stops, M mutes the selected part, Ctrl+Z undoes, Ctrl+S saves, ? opens Help.
+
+### New in 2.4: make beats and songs faster
+
+- **Make a beat from scratch** on the first screen: a drum grid that plays while you click, and
+  **Start from a beat…** with 52 ready beats in many styles.
+- **A loop library** in Song: 164 original loops for every part, played in your song's key; hear
+  one with ▶ and drag it onto a row. Songs can hold loops of their own (schema v5), not only the
+  pads' loops.
+- **Record into the song** with ● Record, **edit a loop under the song** (double-click or E), and
+  **Make this one different** for one place's own copy.
+- **Song rows with volume and pan**, insert and remove bars from the ruler, and sections that
+  reorder by drag without cutting anything.
+- **Export** the whole song as loud as streaming songs, as WAV, a smaller file for sharing,
+  separate parts or MIDI.
+- **Five new starters** (Trap, Lo-fi Hip Hop, Pop, Afrobeats, Boom Bap), new sounds, simpler Mix
+  and Shape in Simple, and one word, "loop", for a piece of music everywhere.
 
 ### New in 2.3: songs like GarageBand
 
