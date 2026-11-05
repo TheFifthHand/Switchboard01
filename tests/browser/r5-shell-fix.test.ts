@@ -269,10 +269,12 @@ describe('The keyboard names the part it plays', () => {
     expect(name.getBoundingClientRect().top).toBeGreaterThanOrEqual(sr.top);
     expect(strip().querySelector('[role="group"][aria-label^="Keyboard playing"]')!.getBoundingClientRect().left).toBeGreaterThanOrEqual(name.getBoundingClientRect().right);
 
-    for (const view of ['Song', 'Shape']) {
-      await clickEl(tab('View', view));
-      expect(keyText(keysPart()!), view).toBe('Keys play Bass');
-    }
+    await clickEl(tab('View', 'Shape'));
+    expect(keyText(keysPart()!), 'Shape').toBe('Keys play Bass');
+    // Song starts with the keyboard folded (round 6): the slim bar names the part.
+    await clickEl(tab('View', 'Song'));
+    expect(strip().hasAttribute('data-collapsed')).toBe(true);
+    expect(strip().textContent).toContain('Computer keys play Bass.');
     // Mix starts with the keyboard folded: the slim bar names the part.
     await clickEl(tab('View', 'Mix'));
     expect(strip().hasAttribute('data-collapsed')).toBe(true);

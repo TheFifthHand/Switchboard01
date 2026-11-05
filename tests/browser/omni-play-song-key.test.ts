@@ -188,14 +188,14 @@ describe('Play and Space in the Song view', () => {
     expect(dialog()!.querySelector<HTMLSelectElement>('select')!.value).toBe('song');
     await real(() => userEvent.keyboard('{Escape}'));
     await until(() => !dialog(), 'the dialog to close');
-    // In Play, Export offers what plays now (no takes yet), not the song.
+    // In Play too, Export offers the whole song when the song has loops (round 6: never a choice that exports silence).
     act(() => setView('play'));
     await act(async () => {
       await wait(40);
     });
     await real(() => userEvent.click(exportKey));
     await until(() => !!dialog()?.querySelector('select'), 'the export dialog');
-    expect(dialog()!.querySelector<HTMLSelectElement>('select')!.value).toBe('now');
+    expect(dialog()!.querySelector<HTMLSelectElement>('select')!.value).toBe('song');
     await real(() => userEvent.keyboard('{Escape}'));
   });
 });

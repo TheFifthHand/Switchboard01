@@ -229,6 +229,6 @@ describe('Starting starters from the Library', () => {
     await click(await until(() => buttonNamed(/^Start Blank project/), 'Blank card'), 'Blank card');
     await until(() => loaded.length === 2, 'Blank loaded');
     const name = session.store.getState().name;
-    expect(runtimeStore.getState().notice?.text).toBe(`Started “${name}”. “House Starter 2” is still in My projects. Tap a pad to make a clip, then press Edit steps.`);
+    expect(runtimeStore.getState().notice?.text).toBe(`Started “${name}”. “House Starter 2” is still in My projects. Tap a pad to make a loop and fill it in.`);
   });
 });

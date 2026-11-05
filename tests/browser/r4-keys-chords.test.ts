@@ -164,7 +164,7 @@ describe('chord pads', () => {
     const slot = slotFor(uiStore.getState(), 't4');
     const before = new Set(track('t4').clips[slot]!.notes.map((n) => n.id));
     const chord = notesOf(4);
-    const rec = [...document.querySelectorAll<HTMLButtonElement>('header[aria-label="Transport"] button')].find((b) => b.textContent?.trim() === 'Notes')!;
+    const rec = [...document.querySelectorAll<HTMLButtonElement>('header[aria-label="Transport"] button')].find((b) => b.getAttribute('aria-label') === 'Record Notes')!;
     await clickEl(rec);
     await until(() => runtimeStore.getState().recording === 'notes' && runtimeStore.getState().recordStartsAtTick == null, 'recording to start', 10000);
     await mouse('mouseMoved', centre(pad(4)));
