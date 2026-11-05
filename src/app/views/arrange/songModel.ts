@@ -8,7 +8,8 @@
  * browser's scenes and loops. Bars are 0-based in the data and 1-based in
  * every word a person reads.
  */
-import { rowBars } from '../../../project/arrangement';
+import { regionEnd, rowBars } from '../../../project/arrangement';
+import { trackClips } from '../../../project/clips';
 import type { Id, Project, SongRegion, SongSection, Track } from '../../../project/types';
 import { INSTRUMENT_LABEL, soundName } from '../../labels';
 
@@ -213,15 +214,88 @@ export function sceneCardText(c: Pick<SceneCard, 'name' | 'bars' | 'parts'>): st
 export interface LoopChip {
   trackId: Id;
   clipId: Id;
+  /** A pad's slot (its scene row), or a song slot (100 + n) for a loop of the song's own. */
   slot: number;
   name: string;
   bars: number;
+  /** A loop of the song's own (not on a pad). */
+  inSong?: boolean;
 }
 
-/** A part's clips, in scene order (for its chips, the picker and "Use another loop"). */
+/** A part's loops: its pads' clips in scene order, then the song's own loops (for its chips, the picker and "Use another loop"). */
 export function partLoops(p: Pick<Project, 'tracks'>, trackId: Id): LoopChip[] {
   const t = p.tracks.find((x) => x.id === trackId);
   if (!t) return [];
-  return t.clips.flatMap((c, slot) => (c ? [{ trackId, clipId: c.id, slot, name: c.name || `Loop ${slot + 1}`, bars: c.bars }] : []));
+  return trackClips(t).map(({ slot, clip, inSong }) => ({ trackId, clipId: clip.id, slot, name: clip.name || `Loop ${slot + 1}`, bars: clip.bars, ...(inSong ? { inSong: true } : {}) }));
+}
+
+/* ------------------------------------------------------------------ */
+/* Loops used in several places                                        */
+/* ------------------------------------------------------------------ */
+
+const useCounts = new WeakMap<readonly SongRegion[], Map<string, number>>();
+
+/** How many regions play each loop ("<trackId> <clipId>"), worked out once per song. */
+function countsOf(regions: readonly SongRegion[]): Map<string, number> {
+  let m = useCounts.get(regions);
+  if (!m) {
+    m = new Map();
+    for (const r of regions) m.set(`${r.trackId} ${r.clipId}`, (m.get(`${r.trackId} ${r.clipId}`) ?? 0) + 1);
+    useCounts.set(regions, m);
+  }
+  return m;
+}
+
+/** How many places the song plays a part's loop (its regions). */
+export function loopPlaces(p: Pick<Project, 'arrangement'>, trackId: Id, clipId: Id): number {
+  return countsOf(p.arrangement.regions).get(`${trackId} ${clipId}`) ?? 0;
+}
+
+/** The badge on a region whose loop plays in several places: "×3" (null: it plays only here). */
+export function placesBadge(places: number): string | null {
+  return places > 1 ? `×${places}` : null;
+}
+
+/** The same in words: "this loop plays in 3 places". */
+export function placesWords(places: number): string {
+  return `this loop plays in ${places} places`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Where a scene plays in the song                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Where the song plays scene `row`: each bar where loops of that scene (the
+ * other parts' pad clips in its row) start, as long as the longest of them
+ * there, in song order (a place overlapping an earlier one is left out).
+ * With `freeFor`, only places where that part plays nothing yet.
+ */
+export function scenePlaces(p: Pick<Project, 'tracks' | 'arrangement'>, row: number, freeFor?: Id): { start: number; bars: number }[] {
+  const sceneClips = new Set<string>();
+  for (const t of p.tracks) {
+    const c = t.clips[row];
+    if (c && t.id !== freeFor) sceneClips.add(`${t.id} ${c.id}`);
+  }
+  const byStart = new Map<number, number>();
+  for (const r of p.arrangement.regions) {
+    if (!sceneClips.has(`${r.trackId} ${r.clipId}`)) continue;
+    byStart.set(r.start, Math.max(byStart.get(r.start) ?? 0, r.bars));
+  }
+  const out: { start: number; bars: number }[] = [];
+  let end = -1;
+  for (const [start, bars] of [...byStart].sort((a, b) => a[0] - b[0])) {
+    if (start < end) continue;
+    out.push({ start, bars });
+    end = start + bars;
+  }
+  if (freeFor === undefined) return out;
+  const own = p.arrangement.regions.filter((r) => r.trackId === freeFor);
+  return out.filter((pl) => !own.some((r) => r.start < pl.start + pl.bars && regionEnd(r) > pl.start));
+}
+
+/** The offer after a pad clip is made in a scene the song uses: "Add Bass 2 to the song where Groove plays (2 places)?" */
+export function sceneOfferText(loopName: string, sceneName: string, places: number): string {
+  return `Add ${loopName} to the song where ${sceneName} plays (${places === 1 ? '1 place' : `${places} places`})?`;
 }
 

@@ -132,7 +132,8 @@ describe('the loop picker', () => {
     await doubleClickAt({ x: barX(6) + 10, y: rowY(chords.id) });
     const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
     expect(menu).toBeTruthy();
-    const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    // The part's loops (after them: "New empty loop" 1 · 2 · 4 · 8, r6-lanelib).
+    const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]:not([data-row="new-loop"])')];
     const loops = chords.clips.filter((c) => c);
     expect(items.length).toBe(loops.length);
     await clickAt(centre(items[0]));

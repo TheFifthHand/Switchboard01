@@ -12,6 +12,10 @@
  * plays gets `data-playing` from the playhead's frame loop (a subtle amber
  * edge), never through React.
  *
+ * A loop the song plays in several places carries a small "×3" at its top
+ * right (and says "this loop plays in 3 places"): editing it changes all of
+ * them, until "Make this one different" gives one its own copy.
+ *
  * Pointer and key handling is the timeline's (event delegation); a region is
  * a focusable button in the lane's single Tab stop.
  */
@@ -19,8 +23,10 @@ import { memo, useMemo, type CSSProperties } from 'react';
 import { ClipSketch } from '../../../ui/components';
 import { TICKS_PER_BAR, type Clip, type SongRegion } from '../../../project/types';
 import { useStore } from '../../../state/store';
+import { useProject } from '../../instance';
 import { selectionStore, useSelected } from './laneStore';
-import { notches, regionLabel } from './songModel';
+import { loopPlaces, notches, placesBadge, placesWords, regionLabel } from './songModel';
+import libStyles from './library/Library.module.css';
 import styles from './SongView.module.css';
 
 export interface RegionFaceProps {
@@ -73,6 +79,8 @@ export function RegionFace({ region, clip, kind, lifted, slide, className }: Omi
 export const RegionView = memo(function RegionView({ region, clip, partName, kind }: Omit<RegionFaceProps, 'lifted' | 'slide' | 'className'>) {
   const selected = useSelected(region.id);
   const tabbable = useStore(selectionStore, (s) => s.focus === region.id);
+  const places = useProject((p) => loopPlaces(p, region.trackId, region.clipId));
+  const badge = placesBadge(places);
   const clipBars = clip?.bars ?? 1;
   const name = clip?.name || 'Loop';
   const marks = useMemo(() => notches(region, clipBars), [region, clipBars]);
@@ -83,7 +91,7 @@ export const RegionView = memo(function RegionView({ region, clip, partName, kin
       style={style}
       role="button"
       tabIndex={tabbable ? 0 : -1}
-      aria-label={regionLabel(name, partName, region, clipBars)}
+      aria-label={`${regionLabel(name, partName, region, clipBars)}${badge ? `, ${placesWords(places)}` : ''}`}
       aria-pressed={selected}
       aria-keyshortcuts="Shift+F10"
       data-region-id={region.id}
@@ -93,10 +101,16 @@ export const RegionView = memo(function RegionView({ region, clip, partName, kin
       data-selected={selected || undefined}
       data-offset={region.offset > 0 || undefined}
       data-notches={marks.length || undefined}
+      data-places={badge ? places : undefined}
     >
       <span className={styles.regionName} aria-hidden="true">
         {name}
       </span>
+      {badge && (
+        <span className={libStyles.places} aria-hidden="true">
+          {badge}
+        </span>
+      )}
       {clip && (
         <span className={styles.regionSketch} aria-hidden="true">
           <ClipSketch notes={clip.notes} lengthTicks={clipBars * TICKS_PER_BAR} kind={kind} span={region.bars * TICKS_PER_BAR} offset={region.offset * TICKS_PER_BAR} />

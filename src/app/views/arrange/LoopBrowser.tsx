@@ -1,6 +1,11 @@
 /**
- * The loop browser beside the timeline (like GarageBand's loop browser, but
- * with this project's own music):
+ * The loop browser beside the timeline (like GarageBand's loop browser), in
+ * two tabs: "This song" (the project's own music, below) and "Library" (the
+ * app's loops for any song: library/LibraryPanel). It opens on the Library
+ * while the project has few loops of its own, on This song otherwise; the
+ * person's choice is kept for the project.
+ *
+ * This song:
  *
  *   SCENES                         each scene as a card: "Groove · 4 bars ·
  *   [▶ Groove · 4 bars · 4 parts]   4 parts" with a dot in each part's colour;
@@ -19,16 +24,36 @@
  * pads already play it joins them at the next bar; while the song plays it is
  * unavailable and says why.
  */
-import { memo, useEffect, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { memo, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { ClipSketch, Icon, Tooltip } from '../../../ui/components';
+import { clipById } from '../../../project/clips';
 import { TICKS_PER_BAR, type Id, type Project } from '../../../project/types';
-import { shallowEqual } from '../../../state/store';
+import { createStore, shallowEqual, useStore } from '../../../state/store';
 import { session, useProject } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import type { Carry } from './laneController';
 import { addLoop, addScene } from './songActions';
 import { barsText, partHue, partLoops, sceneCardText, sceneCards, type SceneCard } from './songModel';
+import { LibraryGhost } from './library/LibraryGhost';
+import { LibraryPanel } from './library/LibraryPanel';
+import { defaultTab, type BrowserTab } from './library/libraryModel';
+import libStyles from './library/Library.module.css';
 import styles from './SongView.module.css';
+
+/** The tab the person chose, for the project it was chosen in (else the default for the project). */
+export const browserTabStore = createStore<{ projectId: Id; tab: BrowserTab } | null>(null);
+
+function useBrowserTab(): [BrowserTab, (tab: BrowserTab) => void] {
+  const projectId = useProject((p) => p.id);
+  const fallback = useProject(defaultTab);
+  const chosen = useStore(browserTabStore, (s) => (s && s.projectId === projectId ? s.tab : null));
+  return [chosen ?? fallback, (tab) => browserTabStore.setState({ projectId, tab })];
+}
+
+const TABS: { id: BrowserTab; name: string }[] = [
+  { id: 'song', name: 'This song' },
+  { id: 'library', name: 'Library' },
+];
 
 /* ------------------------------------------------------------------ */
 /* Audition                                                            */
@@ -154,12 +179,15 @@ function sameCards(a: SceneCard[], b: SceneCard[]): boolean {
 }
 
 /** The notes of a clip (for a chip's picture). */
-function useClipNotes(trackId: Id, slot: number) {
-  return useProject((p) => p.tracks.find((t) => t.id === trackId)?.clips[slot]?.notes ?? null);
+function useClipNotes(trackId: Id, clipId: Id) {
+  return useProject((p) => {
+    const t = p.tracks.find((x) => x.id === trackId);
+    return (t && clipById(t, clipId)?.notes) ?? null;
+  });
 }
 
-function ChipSketch({ trackId, slot, bars, kind }: { trackId: Id; slot: number; bars: number; kind: 'notes' | 'drums' }) {
-  const notes = useClipNotes(trackId, slot);
+function ChipSketch({ trackId, clipId, bars, kind }: { trackId: Id; clipId: Id; bars: number; kind: 'notes' | 'drums' }) {
+  const notes = useClipNotes(trackId, clipId);
   if (!notes) return null;
   return (
     <span className={styles.chipSketch} aria-hidden="true">
@@ -177,6 +205,57 @@ export interface LoopBrowserProps {
 }
 
 export const LoopBrowser = memo(function LoopBrowser({ onCarry, playheadBar, onClose }: LoopBrowserProps) {
+  const [tab, setTab] = useBrowserTab();
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const j = e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length;
+    setTab(TABS[j].id);
+    tabRefs.current[j]?.focus();
+  };
+  return (
+    <aside className={styles.browser} aria-label="Loops: drag a scene or a loop onto the song" data-testid="loop-browser" data-tab={tab}>
+      <div className={styles.browserHead}>
+        <h3 className={styles.browserTitle}>Loops</h3>
+        <Tooltip name="Hide the loops" tip="Hide this panel to give the song more room. The Loops key above brings it back.">
+          <button type="button" className={styles.browserClose} aria-label="Hide the loops" onClick={onClose}>
+            <Icon name="close" size={13} />
+          </button>
+        </Tooltip>
+      </div>
+      <div className={libStyles.tabs} role="tablist" aria-label="Which loops">
+        {TABS.map((t, i) => (
+          <button
+            key={t.id}
+            ref={(el) => {
+              tabRefs.current[i] = el;
+            }}
+            type="button"
+            role="tab"
+            id={`loops-tab-${t.id}`}
+            aria-controls="loops-tab-panel"
+            aria-selected={tab === t.id}
+            tabIndex={tab === t.id ? 0 : -1}
+            className={libStyles.tab}
+            data-testid={`loops-tab-${t.id}`}
+            onClick={() => setTab(t.id)}
+            onKeyDown={(e) => onTabKey(e, i)}
+          >
+            {t.name}
+          </button>
+        ))}
+      </div>
+      <div className={styles.browserBody} role="tabpanel" id="loops-tab-panel" aria-labelledby={`loops-tab-${tab}`}>
+        {tab === 'song' ? <SongLoops onCarry={onCarry} playheadBar={playheadBar} /> : <LibraryPanel playheadBar={playheadBar} />}
+      </div>
+      <LibraryGhost />
+    </aside>
+  );
+});
+
+/** The "This song" tab: the project's scenes and each part's loops. */
+function SongLoops({ onCarry, playheadBar }: Pick<LoopBrowserProps, 'onCarry' | 'playheadBar'>) {
   const cards = useProject(sceneCards, sameCards);
   const parts = useProject(selectParts, sameParts);
   const a = useAudition();
@@ -193,16 +272,7 @@ export const LoopBrowser = memo(function LoopBrowser({ onCarry, playheadBar, onC
     addScene(c.row, playheadBar());
   };
   return (
-    <aside className={styles.browser} aria-label="Loops: drag a scene or a loop onto the song" data-testid="loop-browser">
-      <div className={styles.browserHead}>
-        <h3 className={styles.browserTitle}>Loops</h3>
-        <Tooltip name="Hide the loops" tip="Hide this panel to give the song more room. The Loops key above brings it back.">
-          <button type="button" className={styles.browserClose} aria-label="Hide the loops" onClick={onClose}>
-            <Icon name="close" size={13} />
-          </button>
-        </Tooltip>
-      </div>
-      <div className={styles.browserBody}>
+    <>
         <h4 className={styles.browserGroup}>Scenes</h4>
         {cards.length === 0 && <p className={styles.browserNote}>No scenes with loops yet: make some on the pads in Play.</p>}
         <ul className={styles.cards}>
@@ -273,7 +343,7 @@ export const LoopBrowser = memo(function LoopBrowser({ onCarry, playheadBar, onC
                     addLoop(part.trackId, l.clipId, playheadBar());
                   }}
                 >
-                  <ChipSketch trackId={part.trackId} slot={l.slot} bars={l.bars} kind={part.kind} />
+                  <ChipSketch trackId={part.trackId} clipId={l.clipId} bars={l.bars} kind={part.kind} />
                   <span className={styles.chipName}>{l.name}</span>
                   <span className={styles.chipBars}>{barsText(l.bars)}</span>
                 </li>
@@ -281,7 +351,6 @@ export const LoopBrowser = memo(function LoopBrowser({ onCarry, playheadBar, onC
             </ul>
           </div>
         ))}
-      </div>
-    </aside>
+    </>
   );
-});
+}

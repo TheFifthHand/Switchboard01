@@ -4,26 +4,36 @@
  *
  * - Region menu (right-click, ⋯ on hover, Shift+F10): Play from here, Loop
  *   this, Duplicate, Split at playhead / Split here, Delete, Use another
- *   loop ▸, Edit notes, Make it 2× longer, Name these bars as a section.
- * - Section menu: Rename, Duplicate, Delete section (the label) / Delete
- *   section and its music, the song moves (checked when on), Build up /
- *   Strip down / Breakdown (unavailable with the reason when they would do
- *   nothing), Loop this section, Play from here.
+ *   loop ▸, Edit notes, Make this one different (when its loop plays in
+ *   other places too, or is also a pad's clip), Put on a pad (a loop of the
+ *   song's own), Make it 2× longer, Name these bars as a section.
+ * - Section menu: Rename, Duplicate, Move earlier / Move later, Delete
+ *   section (the label) / Delete section and its music, the song moves
+ *   (checked when on), Build up / Strip down / Breakdown (unavailable with
+ *   the reason when they would do nothing), Loop this section, Play from here.
  * - Loop picker (double-click an empty spot on a row): the part's loops with
- *   their length and a picture of their notes; choosing one places it there.
+ *   their length and a picture of their notes (choosing one places it
+ *   there), a new empty loop of 1, 2, 4 or 8 bars, and on drum parts "Start
+ *   from a beat…": the beats by style, each with ▶ to hear it on the part.
  */
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ClipSketch, Icon } from '../../../ui/components';
 import { regionEnd, sectionAt } from '../../../project/arrangement';
-import { SONG_MOVE_KINDS, TICKS_PER_BAR, type Id, type SongRegion, type SongSection } from '../../../project/types';
+import { clipById } from '../../../project/clips';
+import { SONG_MOVE_KINDS, TICKS_PER_BAR, type ClipBars, type Id, type SongRegion, type SongSection } from '../../../project/types';
 import { shapeProblem, type ShapeKind } from '../../../state/commands';
 import { session, useProject } from '../../instance';
+import { startPreview, stopPreview, usePreviewKey } from '../../preview';
+import { useRuntime } from '../../runtime';
 import { MenuHeader, MenuItem, MenuSeparator, Popover, LOCKED_REASON, MOD_KEY, useEditLocked, type MenuAnchor } from '../ClipMenu';
 import menuStyles from '../ClipMenu.module.css';
 import { LaneIcon, type LaneIconName } from './laneIcons';
+import { moveSectionStepNow } from './laneEdits';
+import { beatMeta, beatsByStyle, libraryLoop, realizeFor } from './library/libraryModel';
+import libStyles from './library/Library.module.css';
 import { MOVE_ICON, MOVE_WORDS } from './SectionStrip';
 import * as act from './songActions';
-import { barsText, partLoops, rangeText, sectionLabel } from './songModel';
+import { barsText, loopPlaces, partLoops, rangeText, sectionLabel } from './songModel';
 import styles from './SongView.module.css';
 
 /** Reasons longer than this wrap under the label (a hint on the right would be cut off). */
@@ -101,7 +111,10 @@ export function RegionMenu(props: {
   const locked = useEditLocked();
   const loops = useProject((p) => partLoops(p, region.trackId));
   const partName = useProject((p) => p.tracks.find((t) => t.id === region.trackId)?.name ?? 'part');
-  const clipName = loops.find((l) => l.clipId === region.clipId)?.name ?? 'Loop';
+  const loop = loops.find((l) => l.clipId === region.clipId);
+  const clipName = loop?.name ?? 'Loop';
+  const places = useProject((p) => loopPlaces(p, region.trackId, region.clipId));
+  const padsFull = useProject((p) => !p.tracks.find((t) => t.id === region.trackId)?.clips.some((c) => c === null));
   const hasSection = useProject((p) => p.arrangement.sections.some((s) => s.start < regionEnd(region) && regionEnd(s) > region.start));
   const many = targets.length > 1;
   const what = many ? `${targets.length} loops` : clipName;
@@ -178,6 +191,22 @@ export function RegionMenu(props: {
           Edit notes
         </MenuItem>
       )}
+      {!many && loop && (places > 1 || !loop.inSong) && (
+        <MenuItem
+          icon="copy"
+          hint={places > 1 ? `Plays in ${places} places` : 'Also on a pad'}
+          disabled={locked}
+          disabledReason={reason}
+          onSelect={run(() => act.makeLoopDifferent(region.id))}
+        >
+          Make this one different
+        </MenuItem>
+      )}
+      {!many && loop?.inSong && (
+        <MenuItem icon="paste" disabled={locked || padsFull} disabledReason={reason ?? `Every ${partName} pad has a clip`} onSelect={run(() => act.putLoopOnPad(region.trackId, region.clipId))}>
+          Put on a pad
+        </MenuItem>
+      )}
       {!many && (
         <MenuItem icon="plus" hint={barsText(region.bars * 2)} disabled={locked} disabledReason={reason} onSelect={run(() => act.doubleLoop(region.id))}>
           Make it 2× longer
@@ -218,6 +247,11 @@ export function SectionMenu(props: { section: SongSection; anchor: MenuAnchor; r
     fn();
   };
   const moves = new Set((live.moves ?? []).map((m) => m.kind));
+  const order = useProject((p) => {
+    const sorted = [...p.arrangement.sections].sort((a, b) => a.start - b.start);
+    const i = sorted.findIndex((x) => x.id === section.id);
+    return { first: i <= 0, last: i < 0 || i === sorted.length - 1 };
+  }, (a, b) => a.first === b.first && a.last === b.last);
   return (
     <Popover anchor={anchor} label={`Actions for the section ${live.name}`} onClose={onClose} returnFocus={returnFocus} className={styles.sectionMenu}>
       <MenuHeader eyebrow="Section" title={sectionLabel(live)} />
@@ -233,6 +267,12 @@ export function SectionMenu(props: { section: SongSection; anchor: MenuAnchor; r
       </MenuItem>
       <MenuItem icon="duplicate" disabled={locked} disabledReason={reason} onSelect={run(() => act.duplicateSectionNow(live.id))}>
         Duplicate
+      </MenuItem>
+      <MenuItem icon="chevronLeft" hint="Alt+←" disabled={locked || order.first} disabledReason={reason ?? 'Already the first section'} onSelect={run(() => moveSectionStepNow(live.id, -1))}>
+        Move earlier
+      </MenuItem>
+      <MenuItem icon="chevronRight" hint="Alt+→" disabled={locked || order.last} disabledReason={reason ?? 'Already the last section'} onSelect={run(() => moveSectionStepNow(live.id, 1))}>
+        Move later
       </MenuItem>
       <MenuItem icon="close" disabled={locked} disabledReason={reason} onSelect={run(() => act.removeSectionNow(live.id, false))}>
         Delete section (keep the music)
@@ -263,17 +303,22 @@ export function SectionMenu(props: { section: SongSection; anchor: MenuAnchor; r
 /* Loop picker                                                         */
 /* ------------------------------------------------------------------ */
 
+/** Lengths "New empty loop" offers (bars). */
+export const NEW_LOOP_BARS: readonly ClipBars[] = [1, 2, 4, 8];
+
 export function LoopPicker(props: { trackId: Id; bar: number; anchor: MenuAnchor; returnFocus: HTMLElement | null; onClose(): void }) {
   const { trackId, bar, anchor, returnFocus, onClose } = props;
+  const [view, setView] = useState<'main' | 'beats'>('main');
   const locked = useEditLocked();
   const loops = useProject((p) => partLoops(p, trackId));
   const track = useProject((p) => p.tracks.find((t) => t.id === trackId) ?? null);
   const kind = track?.instrument.kind === 'drums' ? 'drums' : 'notes';
   const section = useProject((p) => sectionAt(p.arrangement.sections, bar)?.name ?? null);
+  const eyebrow = `${track?.name ?? 'Part'} · bar ${bar + 1}${section ? ` · ${section}` : ''}`;
+  if (view === 'beats' && track) return <BeatPicker trackId={trackId} bar={bar} eyebrow={eyebrow} anchor={anchor} returnFocus={returnFocus} onBack={() => setView('main')} onClose={onClose} />;
   return (
     <Popover anchor={anchor} label={`Add a loop to ${track?.name ?? 'this part'} at bar ${bar + 1}`} onClose={onClose} returnFocus={returnFocus} className={styles.picker}>
-      <MenuHeader eyebrow={`${track?.name ?? 'Part'} · bar ${bar + 1}${section ? ` · ${section}` : ''}`} title={loops.length ? 'Add a loop here' : 'No loops yet'} />
-      {loops.length === 0 && <p className={styles.pickerEmpty}>Make a loop for this part on the pads in Play first.</p>}
+      <MenuHeader eyebrow={eyebrow} title="Add a loop here" />
       {loops.map((l) => (
         <button
           key={l.clipId}
@@ -290,12 +335,131 @@ export function LoopPicker(props: { trackId: Id; bar: number; anchor: MenuAnchor
           }}
         >
           <span className={styles.pickerSketch} aria-hidden="true">
-            <ClipSketch notes={track?.clips[l.slot]?.notes ?? []} lengthTicks={l.bars * TICKS_PER_BAR} kind={kind} />
+            <ClipSketch notes={(track && clipById(track, l.clipId)?.notes) || []} lengthTicks={l.bars * TICKS_PER_BAR} kind={kind} />
           </span>
           <span className={menuStyles.itemText}>{l.name}</span>
           <span className={menuStyles.itemHint}>{locked ? LOCKED_REASON : barsText(l.bars)}</span>
         </button>
       ))}
+      {loops.length > 0 && <MenuSeparator />}
+      <div className={libStyles.newLoop} data-testid="new-empty-loop">
+        <span className={libStyles.newLoopLabel}>New empty loop</span>
+        {NEW_LOOP_BARS.map((n) => (
+          <button
+            key={n}
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            data-row="new-loop"
+            className={libStyles.barsKey}
+            aria-label={`New empty loop, ${barsText(n)}`}
+            aria-disabled={locked || undefined}
+            title={locked ? LOCKED_REASON : `An empty loop of ${barsText(n)} here, opened below to add notes`}
+            data-bars={n}
+            onClick={() => {
+              if (locked) return;
+              onClose();
+              act.newEmptyLoop(trackId, bar, n);
+            }}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+      {kind === 'drums' && (
+        <LaneMenuItem icon="layers" submenu disabled={locked} disabledReason={LOCKED_REASON} onSelect={() => setView('beats')}>
+          Start from a beat…
+        </LaneMenuItem>
+      )}
+    </Popover>
+  );
+}
+
+/** "Start from a beat…": the beats by style; ▶ hears one on the part, choosing one places it at the bar. */
+function BeatPicker(props: { trackId: Id; bar: number; eyebrow: string; anchor: MenuAnchor; returnFocus: HTMLElement | null; onBack(): void; onClose(): void }) {
+  const { trackId, bar, eyebrow, anchor, returnFocus, onBack, onClose } = props;
+  const locked = useEditLocked();
+  const hearing = usePreviewKey();
+  const block = useRuntime((s) => (s.playing || s.paused ? 'Stop playback to hear a beat' : s.recording !== 'off' ? 'Stop recording to hear a beat' : null));
+  const quiet = useProject((p) => {
+    const t = p.tracks.find((x) => x.id === trackId);
+    if (!t) return null;
+    return t.mute ? `${t.name} is muted` : p.tracks.some((x) => x.solo) && !t.solo ? `${t.name} is not soloed` : null;
+  });
+  // Stop hearing a beat when the menu closes.
+  useEffect(() => () => stopPreview(), []);
+  const hear = (id: string) => {
+    if (hearing === id) {
+      stopPreview();
+      return;
+    }
+    const p = session.store.getState();
+    const t = p.tracks.find((x) => x.id === trackId);
+    const loop = libraryLoop(id);
+    const notes = t && loop ? realizeFor(p, loop, t) : null;
+    if (notes) void startPreview(id, trackId, notes.notes, notes.bars);
+  };
+  const why = block ?? quiet;
+  return (
+    <Popover anchor={anchor} label="Start from a beat" onClose={onClose} returnFocus={returnFocus} className={styles.picker}>
+      <MenuHeader eyebrow={eyebrow} title="Start from a beat" />
+      <MenuItem icon="chevronLeft" onSelect={onBack}>
+        Back
+      </MenuItem>
+      <MenuSeparator />
+      <div className={libStyles.beatList} data-testid="beat-picker">
+        {beatsByStyle().map((g) => (
+          <div key={g.genre} role="group" aria-label={g.name}>
+            <p className={libStyles.beatStyle} aria-hidden="true">
+              {g.name}
+            </p>
+            {g.beats.map((b) => {
+              const on = hearing === b.id;
+              const off = !on && why !== null;
+              return (
+                <div key={b.id} className={libStyles.beatRow}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    tabIndex={-1}
+                    data-row={b.id}
+                    data-beat={b.id}
+                    className={menuStyles.item}
+                    aria-disabled={locked || undefined}
+                    aria-label={`${b.name}, ${g.name}, ${beatMeta(b)}`}
+                    onClick={() => {
+                      if (locked) return;
+                      onClose();
+                      act.addLibraryLoop(b.id, trackId, bar, { say: true });
+                    }}
+                  >
+                    <span className={menuStyles.itemText}>{b.name}</span>
+                    <span className={menuStyles.itemHint}>{locked ? LOCKED_REASON : beatMeta(b)}</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    tabIndex={-1}
+                    data-row={b.id}
+                    data-beat-hear={b.id}
+                    className={libStyles.beatHear}
+                    data-hearing={on || undefined}
+                    aria-pressed={on}
+                    aria-disabled={off || undefined}
+                    aria-label={on ? `Stop hearing ${b.name}` : off ? `Hear ${b.name} (${why})` : `Hear ${b.name}`}
+                    title={on ? `Stop ${b.name}` : (why ?? `Hear ${b.name} once on this part`)}
+                    onClick={() => {
+                      if (!off) hear(b.id);
+                    }}
+                  >
+                    <Icon name={on ? 'stop' : 'play'} size={11} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
     </Popover>
   );
 }

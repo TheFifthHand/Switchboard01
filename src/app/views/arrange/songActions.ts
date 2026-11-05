@@ -13,13 +13,17 @@
  * Ctrl+V puts copies at the playhead on the same parts.
  */
 import { regionEnd } from '../../../project/arrangement';
-import type { Id, SongMoveKind } from '../../../project/types';
+import { clipById, isSongSlot, slotOfClip } from '../../../project/clips';
+import type { ClipBars, Id, SongMoveKind } from '../../../project/types';
+import { uiStore } from '../../../state/uiStore';
 import { session } from '../../instance';
 import { notify, runtimeStore } from '../../runtime';
 import * as songCmd from '../../../state/commands';
 import type { Edge, RegionClipboard, ShapeKind, SongEditResult } from '../../../state/commands';
+import { editorStore } from './editorStore';
 import { clearSelection, setSelection } from './laneStore';
-import { barsText } from './songModel';
+import { freshName, libraryLoop, loopTarget, partProblem, realizeFor } from './library/libraryModel';
+import { barsText, scenePlaces } from './songModel';
 
 const project = () => session.store.getState();
 const regions = () => project().arrangement.regions;
@@ -37,13 +41,13 @@ function lockedNow(): boolean {
   return true;
 }
 
-/** A loop's name: its clip's name. */
+/** A loop's name: its clip's name (a pad's clip or a loop of the song's own). */
 export function regionName(id: Id): string {
   const p = project();
   const r = p.arrangement.regions.find((x) => x.id === id);
   if (!r) return 'loop';
   const t = p.tracks.find((x) => x.id === r.trackId);
-  return t?.clips.find((c) => c?.id === r.clipId)?.name || 'loop';
+  return (t && clipById(t, r.clipId)?.name) || 'loop';
 }
 
 /** "Four Floor", or "3 loops". */
@@ -155,6 +159,126 @@ export function addScene(row: number, bar: number): SongEditResult | null {
   const r = run(songCmd.addSceneToSong(session.store, row, bar), { select: false });
   if (r.changed) clearSelection();
   return r;
+}
+
+/* ------------------------------------------------------------------ */
+/* Loops of the song's own (library loops, new empty loops, copies)    */
+/* ------------------------------------------------------------------ */
+
+const partNameOf = (trackId: Id) => project().tracks.find((t) => t.id === trackId)?.name ?? 'the part';
+
+/**
+ * A library loop (or a beat) put on part `trackId` from `bar`: its notes in
+ * the song's key (on the part's kit), as a new loop of the song's own, in one
+ * undo step "Add <name>". Refused in plain words when the part cannot play
+ * it. The new loop is selected; `say` (Enter, a menu) says where it went.
+ */
+export function addLibraryLoop(loopId: string, trackId: Id, bar: number, opts: { say?: boolean } = {}): (songCmd.CommandResult & { regionId?: Id }) | null {
+  if (lockedNow()) return null;
+  const p = project();
+  const loop = libraryLoop(loopId);
+  const t = p.tracks.find((x) => x.id === trackId);
+  if (!loop || !t) return null;
+  const problem = partProblem(loop, t);
+  if (problem) {
+    notify(problem, 'warn');
+    return null;
+  }
+  const notes = realizeFor(p, loop, t);
+  if (!notes) return null;
+  const name = freshName(t, notes.name);
+  const r = songCmd.addLoopToSong(session.store, trackId, bar, { name, bars: notes.bars, notes: notes.notes }, { display: `Add ${name}` });
+  if (!session.accepted(r)) return r;
+  select(r.regionId ? [r.regionId] : undefined);
+  const placed = r.regionId ? regions().find((x) => x.id === r.regionId) : undefined;
+  if (opts.say) said(`Added ${name} to ${t.name}${placed ? ` at bar ${placed.start + 1}` : ''}`, r);
+  return r;
+}
+
+/** Enter on a library loop: it goes to its kind of part (see loopTarget) at `bar`, said with Undo. */
+export function addLibraryLoopHere(loopId: string, bar: number): (songCmd.CommandResult & { regionId?: Id }) | null {
+  const loop = libraryLoop(loopId);
+  if (!loop) return null;
+  const target = loopTarget(project(), loop, uiStore.getState().selectedTrackId);
+  if ('problem' in target) {
+    notify(target.problem, 'warn');
+    return null;
+  }
+  return addLibraryLoop(loopId, target.trackId, bar, { say: true });
+}
+
+/** "New empty loop" (a row's empty spot): a loop `bars` long with no notes at `bar`, opened in the editor below to fill. */
+export function newEmptyLoop(trackId: Id, bar: number, bars: ClipBars): (songCmd.CommandResult & { regionId?: Id }) | null {
+  if (lockedNow()) return null;
+  const r = songCmd.addLoopToSong(session.store, trackId, bar, { bars });
+  if (!session.accepted(r) || !r.regionId || !r.clipId) return r;
+  select([r.regionId]);
+  editorStore.setState({ trackId, clipId: r.clipId, regionId: r.regionId });
+  const name = clipById(project().tracks.find((t) => t.id === trackId)!, r.clipId)?.name ?? 'a new loop';
+  said(`Added ${name}, an empty ${barsText(bars).replace(/s$/, '')} loop on ${partNameOf(trackId)}: add notes in the editor below`, r);
+  return r;
+}
+
+/** How many places the song plays a region's loop (its regions). */
+export function loopUses(regionId: Id): number {
+  const p = project();
+  const r = p.arrangement.regions.find((x) => x.id === regionId);
+  return r ? songCmd.loopUse(p, r.trackId, r.clipId) : 0;
+}
+
+/**
+ * "Make this one different": the region gets its own copy of its loop (a
+ * loop of the song's own), so editing it leaves the other places (and the
+ * pad) as they are. An editor open on the region follows the copy.
+ */
+export function makeLoopDifferent(regionId: Id): (songCmd.CommandResult & { clipId?: Id }) | null {
+  if (lockedNow()) return null;
+  const before = regions().find((x) => x.id === regionId);
+  if (!before) return null;
+  const r = songCmd.makeLoopUnique(session.store, regionId);
+  if (!session.accepted(r) || !r.clipId) return r;
+  const e = editorStore.getState();
+  if (e && e.regionId === regionId) editorStore.setState({ ...e, clipId: r.clipId });
+  select([regionId]);
+  said(`This loop now plays its own copy, ${regionName(regionId)}: edits to it change only ${before.bars === 1 ? `bar ${before.start + 1}` : `bars ${before.start + 1}–${regionEnd(before)}`}`, r);
+  return r;
+}
+
+/** "Put on a pad": a copy of a loop of the song's own on the part's first empty pad, to play it live. */
+export function putLoopOnPad(trackId: Id, clipId: Id): (songCmd.CommandResult & { slot?: number }) | null {
+  if (lockedNow()) return null;
+  const p = project();
+  const t = p.tracks.find((x) => x.id === trackId);
+  const slot = t ? slotOfClip(t, clipId) : -1;
+  if (!t || !isSongSlot(slot)) return null;
+  const name = clipById(t, clipId)?.name ?? 'the loop';
+  const r = songCmd.copyLoopToPad(session.store, trackId, slot);
+  if (!session.accepted(r) || r.slot === undefined) return r;
+  const scene = p.scenes[r.slot]?.name || `scene ${r.slot + 1}`;
+  said(`Put a copy of ${name} on the ${t.name} pad in ${scene}: play it live in Play`, r);
+  return r;
+}
+
+/**
+ * A pad clip made in a scene the song uses, added where that scene plays
+ * (each place where this part has nothing yet), as one undo step "Add
+ * <Loop> where <Scene> plays". Null when there is no such place.
+ */
+export function addClipWhereScenePlays(trackId: Id, row: number): SongEditResult | null {
+  if (lockedNow()) return null;
+  const p = project();
+  const t = p.tracks.find((x) => x.id === trackId);
+  const clip = t?.clips[row];
+  if (!t || !clip) return null;
+  const places = scenePlaces(p, row, trackId);
+  if (!places.length) return null;
+  const scene = p.scenes[row]?.name || `Scene ${row + 1}`;
+  const r = songCmd.addRegions(
+    session.store,
+    places.map((pl) => ({ trackId, clipId: clip.id, start: pl.start, bars: pl.bars })),
+    { display: `Add ${clip.name} where ${scene} plays` },
+  );
+  return run(r, { select: false, text: `Added ${clip.name} where ${scene} plays (${places.length === 1 ? '1 place' : `${places.length} places`})` });
 }
 
 export function fillFromScenes(): SongEditResult | null {
