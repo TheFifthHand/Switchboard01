@@ -198,11 +198,42 @@ export const HAND = {
 } as const;
 export type HandVoice = keyof typeof HAND;
 
+/**
+ * Slot names of the 'afro-latin' kit: one djembe (bass, tone and slap
+ * strokes), talking drum, shakers, claves, surdo, timbales, agogo, cuica,
+ * bell, udu and a hand clap.
+ */
+export const AFRO = {
+  djembeBass: 0,
+  djembeTone: 1,
+  djembeSlap: 2,
+  talkingDrum: 3,
+  shekere: 4,
+  caxixi: 5,
+  ganza: 6,
+  claves: 7,
+  surdo: 8,
+  timbaleLo: 9,
+  timbaleHi: 10,
+  agogo: 11,
+  cuica: 12,
+  bell: 13,
+  udu: 14,
+  handClap: 15,
+} as const;
+export type AfroVoice = keyof typeof AFRO;
+
 export type DrumGrid = Partial<Record<DrumVoice, string>>;
 export type HandGrid = Partial<Record<HandVoice, string>>;
+export type AfroGrid = Partial<Record<AfroVoice, string>>;
 
-function gridNotes(bars: number, slots: Readonly<Record<string, number>>, grid: Readonly<Record<string, string | undefined>>): NoteData[] {
-  const total = bars * STEPS_PER_BAR;
+/**
+ * Notes from one grid per voice. `stepsPerBar` is the grid resolution: 16
+ * (16ths, the default) or 32 (32nds, for hi-hat rolls).
+ */
+export function gridNotes(bars: number, slots: Readonly<Record<string, number>>, grid: Readonly<Record<string, string | undefined>>, stepsPerBar = STEPS_PER_BAR): NoteData[] {
+  const total = bars * stepsPerBar;
+  const ticks = TICKS_PER_BAR / stepsPerBar;
   const out: NoteData[] = [];
   for (const voice of Object.keys(grid)) {
     const pattern = grid[voice];
@@ -210,7 +241,7 @@ function gridNotes(bars: number, slots: Readonly<Record<string, number>>, grid: 
     const slot = slots[voice];
     if (slot === undefined) throw new Error(`Starter DSL: unknown drum voice "${voice}".`);
     for (const h of tileHits(pattern, total)) {
-      out.push({ tick: h.step * TICKS_PER_STEP, pitch: slot, velocity: h.velocity, duration: h.len * TICKS_PER_STEP });
+      out.push({ tick: h.step * ticks, pitch: slot, velocity: h.velocity, duration: h.len * ticks });
     }
   }
   return out;
@@ -228,6 +259,16 @@ export function drums(bars: number, grid: DrumGrid): NoteData[] {
 /** Like `drums`, with the hand-percussion kit's slot names. */
 export function hand(bars: number, grid: HandGrid): NoteData[] {
   return gridNotes(bars, HAND, grid);
+}
+
+/** Like `drums`, with the afro-latin kit's slot names. */
+export function afro(bars: number, grid: AfroGrid): NoteData[] {
+  return gridNotes(bars, AFRO, grid);
+}
+
+/** Like `drums`, at 32nd-note resolution (32 characters per bar): hi-hat rolls. */
+export function drums32(bars: number, grid: DrumGrid): NoteData[] {
+  return gridNotes(bars, DRUM, grid, 2 * STEPS_PER_BAR);
 }
 
 /* ------------------------------------------------------------------ */

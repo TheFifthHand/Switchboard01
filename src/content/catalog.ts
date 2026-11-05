@@ -148,6 +148,7 @@ export const SYNTH_PRESETS: readonly PresetInfo[] = [
   preset('bass-growl', 'Growl', 'bass', 'bass', ['bass'], 'Aggressive, gritty FM-and-saw bass with a vocal filter edge.', ['growl', 'fm', 'dubstep', 'aggressive', 'distorted']),
   preset('bass-zap', 'Zap Bass', 'bass', 'bass', ['bass'], 'Electro bass with a laser zap at the start of every note.', ['electro', 'zap', 'laser', 'square', 'retro']),
   preset('bass-deep-pulse', 'Deep Pulse', 'bass', 'bass', ['bass'], 'Soft, rounded minimal-techno bass with a gentle filter bloom and slide.', ['minimal', 'techno', 'deep', 'round', 'slide']),
+  preset('bass-log-drum', 'Log Drum', 'bass', 'bass', ['bass'], 'Woody, pitched log-drum bass: a knock that drops into a short, round tone.', ['log drum', 'afrobeats', 'amapiano', 'woody', 'percussive']),
 
   /* ---------------- Keys ---------------- */
   preset('poly-glass-keys', 'Glass Keys', 'poly', 'keys', ['chords', 'lead'], 'Bell-like electric-piano keys.', ['electric piano', 'bell', 'glassy', 'chords']),
@@ -160,6 +161,8 @@ export const SYNTH_PRESETS: readonly PresetInfo[] = [
   preset('poly-reed-piano', 'Reed Piano', 'poly', 'keys', ['chords'], 'Buzzy, warm reed-style electric piano that growls when played hard.', ['electric piano', 'wurlitzer', 'soul', 'warm']),
   preset('poly-harpsichord', 'Harpsichord', 'poly', 'keys', ['chords', 'lead'], 'Bright, plucked baroque keys with a crisp jangle.', ['harpsichord', 'baroque', 'plucked', 'classical']),
   preset('poly-felt-piano', 'Felt Piano', 'poly', 'keys', ['chords'], 'Soft, muted, intimate piano tone for lo-fi and ambient chords.', ['piano', 'felt', 'soft', 'lofi', 'ambient']),
+  preset('poly-bright-piano', 'Bright Piano', 'poly', 'keys', ['chords', 'lead'], 'Clear, bright piano with a little hammer knock, for pop chords and ballads.', ['piano', 'bright', 'pop', 'ballad', 'acoustic']),
+  preset('poly-dusty-keys', 'Dusty Keys', 'poly', 'keys', ['chords'], 'Worn electric piano that wobbles and hisses like an old tape.', ['electric piano', 'lofi', 'tape', 'dusty', 'hip hop']),
 
   /* ---------------- Pads & strings ---------------- */
   preset('poly-lumen-chords', 'Lumen Chords', 'poly', 'pads', ['chords', 'pad'], 'Luminous detuned saw chords.', ['chords', 'saw', 'detuned', 'bright']),
@@ -199,6 +202,7 @@ export const SYNTH_PRESETS: readonly PresetInfo[] = [
   preset('poly-harp', 'Harp', 'poly', 'plucks', ['chords', 'lead'], 'Gentle plucked harp strings that ring out softly.', ['harp', 'plucked', 'strings', 'gentle', 'arpeggio']),
   preset('poly-steel-drum', 'Steel Drum', 'poly', 'plucks', ['lead'], 'Bright Caribbean steel-pan tone with a quick metallic attack.', ['steel drum', 'steelpan', 'caribbean', 'tropical', 'calypso']),
   preset('poly-koto-pluck', 'Koto Pluck', 'poly', 'plucks', ['lead'], 'Twangy plucked string with a tiny pitch snap, inspired by the koto.', ['koto', 'plucked', 'string', 'twang', 'world']),
+  preset('poly-soft-pluck', 'Soft Pluck', 'poly', 'plucks', ['chords', 'lead'], 'Round, gentle pluck with a short glow: friendly chords and arpeggios.', ['pluck', 'soft', 'round', 'pop', 'afrobeats']),
 
   /* ---------------- Textures & FX ---------------- */
   preset('poly-air-grain', 'Air Grain', 'poly', 'textures', ['texture'], 'Filtered noise and tone — wind and air.', ['wind', 'air', 'noise', 'atmosphere']),
