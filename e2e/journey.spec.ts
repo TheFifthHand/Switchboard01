@@ -69,6 +69,9 @@ test('Jump In → groove → switch clips → Tone/Space → keyboard → record
   await expect.poll(() => page.evaluate(() => ((window as any).__switchboard.runtime.getState().held.t3 ?? []).length)).toBe(0);
 
   // 7. Record Performance, play for a while, stop, export something to listen to.
+  // Simple shows ● Record (notes) only; Record Performance is an Advanced control (r6).
+  await expect(page.getByRole('button', { name: 'Record Performance' })).toHaveCount(0);
+  await page.getByRole('radio', { name: 'Advanced', exact: true }).click();
   await page.getByRole('button', { name: 'Record Performance' }).click();
   await expect(page.getByRole('button', { name: 'Stop recording' })).toBeVisible();
   await page.keyboard.down('KeyD');

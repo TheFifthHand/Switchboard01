@@ -29,10 +29,10 @@ async function audit(page: Page, label: string) {
  * visibly changes the control (screenshot of the control + margin, focused vs
  * blurred) — the ring may be drawn on the element or on an inner part.
  */
-async function tabTour(page: Page, presses: number) {
+async function tabTour(page: Page, presses: number, key: 'Tab' | 'Shift+Tab' = 'Tab') {
   const seen: { name: string; ring: boolean; what?: string }[] = [];
   for (let i = 0; i < presses; i++) {
-    await page.keyboard.press('Tab');
+    await page.keyboard.press(key);
     const info = await page.evaluate(() => {
       const el = document.activeElement as HTMLElement | null;
       if (!el || el === document.body) return null;
@@ -87,8 +87,9 @@ test('keyboard only: Jump In, reach every essential control, play a note, change
   reach(/Tempo|BPM/);
   // Swing is an Advanced control; the Simple · Advanced switch is on the strip at 1366 px.
   reach(/^Simple$|^Advanced$/);
-  reach(/Notes/);
-  reach(/Performance/);
+  // Simple records notes with ● Record; Record Performance is an Advanced control (r6, checked below).
+  reach(/^Record Notes$/);
+  expect(names.filter((n) => /Performance/.test(n)), 'Simple shows no Record Performance').toEqual([]);
   reach(/Master/);
   reach(/Mute All/);
   reach(/^Drums, |Groove: /);
@@ -98,6 +99,24 @@ test('keyboard only: Jump In, reach every essential control, play a note, change
   // Every stop in the tour shows a focus indicator.
   const missing = tour.filter((t) => t.name && !t.ring).map((t) => t.name);
   expect(missing, `no visible focus ring on: ${missing.join(', ')}`).toEqual([]);
+
+  // Advanced from the keyboard: Tab to the Simple · Advanced switch, arrow to Advanced; then Record
+  // Performance is a Tab stop (it sits before the switch on the strip) with a visible focus ring.
+  let onSwitch = false;
+  for (let i = 0; i < 200 && !onSwitch; i++) {
+    await page.keyboard.press('Tab');
+    onSwitch = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      return el?.getAttribute('role') === 'radio' && el.textContent?.trim() === 'Simple';
+    });
+  }
+  expect(onSwitch, 'the Simple · Advanced switch is a Tab stop').toBe(true);
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('radio', { name: 'Advanced', exact: true })).toHaveAttribute('aria-checked', 'true');
+  const back = await tabTour(page, 30, 'Shift+Tab');
+  const perf = back.find((t) => /^Record Performance$/.test(t.name));
+  expect(perf, `Record Performance not reachable by Tab in Advanced. Seen: ${back.map((t) => t.name).join(' / ')}`).toBeTruthy();
+  expect(perf!.ring, 'Record Performance shows a focus ring').toBe(true);
 
   // Knobs work with arrow keys.
   const tone = page.getByRole('slider', { name: 'Tone' });

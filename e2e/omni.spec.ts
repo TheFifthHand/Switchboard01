@@ -46,7 +46,7 @@ test('after Jump In, "Try this" hints suggest one thing at a time, follow what y
   await page.getByRole('button', { name: 'Mute Drums', exact: true }).click();
   await expect(hint).toContainText('The Drums part is muted. Press Mute again to bring it back.');
   await page.getByRole('button', { name: 'Mute Drums', exact: true }).click();
-  await expect(hint).toContainText('Drag a clip onto another pad.');
+  await expect(hint).toContainText('Drag a loop onto another pad.');
 
   // Hidden is remembered: not even a new groove brings it back. (Pressed with the keyboard: right
   // after the chip changes, mouse clicks on it are ignored for a moment so a double-click elsewhere

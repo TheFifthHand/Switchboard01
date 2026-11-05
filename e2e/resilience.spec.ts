@@ -97,6 +97,8 @@ test('Play after a stall plays the song on from the bar where it stopped, and a 
 
   // A take: record a short one, replay it, stall.
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  // Record Performance is an Advanced control (r6).
+  await page.getByRole('radio', { name: 'Advanced', exact: true }).click();
   await page.getByRole('button', { name: 'Record Performance' }).click();
   await page.waitForTimeout(1500);
   await page.getByRole('button', { name: 'Stop recording performance' }).click();
