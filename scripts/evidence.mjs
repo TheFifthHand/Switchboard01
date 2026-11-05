@@ -6,7 +6,7 @@ import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 
 const base = process.argv[2] ?? 'http://127.0.0.1:4173/';
-const exe = process.env.SB_CHROMIUM ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+const exe = process.env.SB_CHROMIUM ?? ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome', '/opt/pw-browsers/chromium'].find((p) => existsSync(p)) ?? '';
 mkdirSync('docs/screenshots', { recursive: true });
 mkdirSync('evidence/wav', { recursive: true });
 
