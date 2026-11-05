@@ -31,7 +31,7 @@ wording sweep and the version bump were merged.
 | Typecheck (`tsc --noEmit`, app + tests) | — | — | clean |
 | Unit (`tests/unit`, Node) | 110 | 1769 | **1767 passed, 2 skipped** (the 2 need PowerShell, which this container no longer has) |
 | Browser (`tests/browser`, real Chromium) | 201 | 1766 | **1763 passed, 3 failed** in the full run (19.0 min). The 3 are hover tests in `r5-pads-pad-action` (2) and `r5-shell-fix` (1); both files pass alone (14/14). The same files failed this way in the 2.3 full run (see below): they depend on the order tests run in, not on round 6 |
-| End-to-end (`e2e`, production build) | 23 | 57 | **57 passed**, one worker, 10.6 min (after the specs followed round 6's intended changes: Performance is an Advanced control, "loop" wording, the new toast place) |
+| End-to-end (`e2e`, production build) | 21 | 57 | **57 passed**, one worker, 10.6 min (after the specs followed round 6's intended changes: Performance is an Advanced control, "loop" wording, the new toast place) |
 | Launcher smoke (Node launcher, 2.3.0 zip running, then the 2.4.0 zip, under a path with spaces) | — | — | 2.4 named the running 2.3.0, waited, started on 127.0.0.1:4173 once 2.3 stopped, and served `omni-song-version` 2.4.0, the manifest and the service worker (200). PowerShell was not available in this container, so the `.bat`/PowerShell path was not re-run for 2.4 |
 
 Reviews: a code-correctness review (4 major, 3 minor) and a hands-on review as a GarageBand user
