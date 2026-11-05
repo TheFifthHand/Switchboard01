@@ -1,0 +1,101 @@
+/* "Start from a beat…": styles as chips, the style's beats as rows, Keep at the foot. */
+.picker {
+  width: min(400px, calc(100vw - 16px));
+  max-width: min(400px, calc(100vw - 16px));
+  display: flex;
+  flex-direction: column;
+}
+
+.note {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  white-space: normal;
+}
+
+.styles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 6px 8px;
+}
+.style {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.style:hover {
+  border-color: var(--teal);
+}
+/* The chosen style: teal (selection), with the check of aria-checked spoken. */
+.style[aria-checked='true'] {
+  border-color: var(--teal);
+  background: var(--teal-wash);
+  color: var(--ink);
+}
+.style:focus-visible,
+.beat:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0 2px;
+  max-height: 232px;
+  overflow: auto;
+}
+.beat {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px 0 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-md);
+  text-align: left;
+}
+.beat:hover {
+  background: var(--shell-lo);
+}
+.beatIcon {
+  color: var(--ink-3);
+}
+.beatName {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.beatMeta {
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+/* The beat in the loop now plays: amber, with a check and the words "In the loop". */
+.beat[data-picked] {
+  background: var(--amber-wash);
+}
+.beat[data-picked] .beatIcon,
+.beat[data-picked] .beatMeta {
+  color: var(--amber-ink);
+}
+
+.foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 6px 2px;
+  margin-top: 4px;
+  border-top: 1px solid var(--line-soft);
+}

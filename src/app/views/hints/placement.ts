@@ -173,10 +173,11 @@ const CONTROLS = 'button, a[href], input, select, textarea, [role="slider"], [ro
 const GRAPHICS = 'canvas, svg, img, [role="img"], [role="meter"], [role="progressbar"]';
 /**
  * Readouts people watch (meters, the spectrum, other graphics a view names)
- * and anything a view marks with data-hint-avoid: checked by the quick check
+ * and anything a view marks with data-hint-avoid, and the song's loops and
+ * section names (the chip docks in the Song header, never over the music): checked by the quick check
  * too, so the chip moves off a readout that appears under it later.
  */
-const READOUTS = '[role="meter"], [role="img"], [data-hint-avoid]';
+const READOUTS = '[role="meter"], [role="img"], [data-hint-avoid], [data-region-id], [data-section-id]';
 /** Room kept between the chip and what it avoids. */
 const MARGIN = 6;
 /**
@@ -247,7 +248,7 @@ export function readObstacles(chip: Element | null, vw: number, vh: number, opts
   for (const el of document.querySelectorAll(CONTROLS)) add(el, WEIGHT_CONTROL, MARGIN, true);
   // What a view asks the chip to keep clear of counts like a status line, and is never covered; meters and the spectrum like other text.
   for (const el of document.querySelectorAll(READOUTS)) {
-    const avoid = el.hasAttribute('data-hint-avoid');
+    const avoid = el.hasAttribute('data-hint-avoid') || el.hasAttribute('data-region-id') || el.hasAttribute('data-section-id');
     add(el, avoid ? WEIGHT_KEY_TEXT : WEIGHT_INFO, 2, avoid);
   }
   const range = document.createRange();

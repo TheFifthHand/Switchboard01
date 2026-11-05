@@ -96,11 +96,10 @@ describe('what counts as doing a step', () => {
     expect(seen).toEqual(['master']);
   });
 
-  it('recording: a performance take started and stopped; recording notes does not count', () => {
+  // r6: the step is the transport's ● Record (notes); a performance (Advanced) counts too.
+  it('recording: a recording started and stopped (notes, or a performance)', () => {
     const { rt, seen } = setup();
     rt.setState((s) => ({ ...s, recording: 'notes' }));
-    rt.setState((s) => ({ ...s, recording: 'off' }));
-    rt.setState((s) => ({ ...s, recording: 'performance' }));
     expect(seen).toEqual([]);
     rt.setState((s) => ({ ...s, recording: 'off' }));
     expect(seen).toEqual(['record']);

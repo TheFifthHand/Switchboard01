@@ -19,6 +19,10 @@
  *   narrowing to 440 or 360 px if it must (its real height at that width is
  *   measured), so it never covers what is about to be pressed; it is placed
  *   each time the stack changes and again after a scroll or resize.
+ *   Guidance on screen (the quick guide's card, the "Try this" chip: shown
+ *   elements marked `[data-toast-below][data-ready]`) is never covered: the
+ *   stack goes just below it, and moves again when such guidance appears,
+ *   moves or goes while toasts show.
  *
  * Tone is shown by an icon and wording, not colour alone: coral marks
  * warnings and errors (attention); info/success are neutral.
@@ -172,9 +176,18 @@ export function ToastProvider({ children, max = 4 }: ToastProviderProps) {
     };
     window.addEventListener('resize', later);
     window.addEventListener('scroll', later, { capture: true, passive: true });
+    // The guide or the hint chip may appear, move or go while toasts show: place again when they do.
+    let lastGuidance = guidanceKey();
+    const watch = window.setInterval(() => {
+      const key = guidanceKey();
+      if (key === lastGuidance) return;
+      lastGuidance = key;
+      later();
+    }, 400);
     return () => {
       cancelAnimationFrame(frame);
       window.clearTimeout(timer);
+      window.clearInterval(watch);
       window.removeEventListener('resize', later);
       window.removeEventListener('scroll', later, { capture: true });
     };
@@ -204,8 +217,43 @@ const ROW_PX = 14;
 
 function resetPlacement(el: HTMLElement): void {
   el.style.removeProperty('left');
+  el.style.removeProperty('top');
   el.style.removeProperty('width');
   el.style.removeProperty('transform');
+}
+
+/** Guidance the stack never covers: it goes below (the quick guide's card, the hint chip, once shown). */
+const STACK_BELOW = '[data-toast-below][data-ready]';
+
+/** The boxes of the guidance on screen (see STACK_BELOW). */
+function guidanceBoxes(): DOMRect[] {
+  const out: DOMRect[] = [];
+  for (const g of document.querySelectorAll(STACK_BELOW)) {
+    const r = g.getBoundingClientRect();
+    if (r.width > 2 && r.height > 2) out.push(r);
+  }
+  return out;
+}
+
+/**
+ * Where the stack's top must be so that it covers none of `boxes` in its
+ * band (`left`..`right`, `height` tall, from `top`): below each one it would
+ * overlap, in turn. Pure geometry.
+ */
+export function topBelowGuidance(top: number, left: number, right: number, height: number, boxes: readonly { left: number; right: number; top: number; bottom: number }[]): number {
+  let t = top;
+  const sorted = [...boxes].sort((a, b) => a.top - b.top);
+  for (const b of sorted) {
+    if (b.left < right && b.right > left && b.top < t + height && b.bottom > t) t = b.bottom + 8;
+  }
+  return t;
+}
+
+/** A key for the guidance's place now: placement runs again when it changes. */
+function guidanceKey(): string {
+  return guidanceBoxes()
+    .map((r) => `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.right)},${Math.round(r.bottom)}`)
+    .join('|');
 }
 
 /**
@@ -218,8 +266,19 @@ function resetPlacement(el: HTMLElement): void {
  */
 function placeClearOfControls(el: HTMLElement): void {
   resetPlacement(el);
+  const first = el.getBoundingClientRect();
+  if (first.height === 0) return;
+  // Below the guide or the hint chip when the stack would cover one (it never hides guidance).
+  const guidance = guidanceBoxes();
+  const below = topBelowGuidance(first.top, first.left, first.right, first.height, guidance);
+  if (below !== first.top) {
+    el.style.top = `${Math.round(below)}px`;
+    // Still nothing over the guidance at the stack's real height.
+    const now = el.getBoundingClientRect();
+    const again = topBelowGuidance(now.top, now.left, now.right, now.height, guidance);
+    if (again !== now.top) el.style.top = `${Math.round(again)}px`;
+  }
   const box = el.getBoundingClientRect();
-  if (box.height === 0) return;
   const vw = document.documentElement.clientWidth;
   const sizes = [{ w: box.width, h: box.height }];
   for (const w of NARROWER_PX) {
@@ -227,7 +286,7 @@ function placeClearOfControls(el: HTMLElement): void {
     el.style.width = `${w}px`;
     sizes.push({ w, h: el.getBoundingClientRect().height });
   }
-  resetPlacement(el);
+  el.style.removeProperty('width');
   const top = box.top;
   const cols = Math.floor(vw / COL_PX) + 1;
   const maxControl = vw * 0.6;

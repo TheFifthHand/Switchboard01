@@ -513,6 +513,8 @@ function GuideCoach({ onClose, focusNext }: { onClose(): void; focusNext?: boole
         aria-label={`Quick guide, step ${step + 1} of ${GUIDE_STEPS.length}: ${def.title}`}
         aria-describedby={bodyId}
         data-guide-step={def.id}
+        // Toasts go below the card, never over its words (Toast.tsx).
+        data-toast-below=""
         data-layout={missing ? (view === 'play' ? 'card' : 'waiting') : def.layout}
         data-side={layout?.side ?? 'over'}
         data-ready={layout ? true : undefined}

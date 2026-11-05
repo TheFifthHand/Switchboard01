@@ -721,6 +721,11 @@ export function App({ boot }: { boot: BootInfo }) {
             onContinued={() => setFocusPlay(true)}
             onBrowse={() => setLibrary({ tab: 'starters', fromWelcome: true })}
             onJumpedIn={jumpedIn}
+            onBeatStarted={() => {
+              // A beat from nothing: the hints start at the step grid (the starter's guide is not for this).
+              startHints();
+              announceReplaced();
+            }}
           />
         )}
         <Library

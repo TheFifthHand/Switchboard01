@@ -87,7 +87,11 @@ describe('the grid while a performance take records (PLAY-06)', () => {
 
       // The empty pad's new-clip keys: off, with the reason.
       act(() => selectSlot('t3', empty));
+      // r6: a tap on an empty pad makes a loop at once; while locked it makes none and says why.
       await clickEl(pad('t3', empty));
+      expect(clipsOf('t3')[empty]).toBeNull();
+      expect(runtimeStore.getState().notice?.text).toContain(LOCK);
+      await clickEl(button(/^Options for empty slot/)!);
       const keys = [...(menu()?.querySelectorAll<HTMLElement>('[role="menuitemradio"]') ?? [])];
       expect(keys.length).toBe(5);
       for (const k of keys) {

@@ -116,18 +116,27 @@ describe('the song steps', () => {
 });
 
 describe('which step comes next', () => {
-  it('without clips, the pad and drag steps are passed over', () => {
-    const blank = ctx({ hasClips: false, bassHasClips: false });
-    const first = currentHint([], blank)!;
-    expect(first.step.id).toBe('mute');
-    expect(first).toMatchObject({ position: 1, total: 5 });
-    expect(currentHint([], ctx())!).toMatchObject({ position: 1, total: 7 });
+  // r6: steps wait until they can be done (ready) instead of leaving the tour, so the total never changes mid-tour;
+  // drums with no beat yet start at "Click squares…" (the beat step), which a starter's tour leaves out.
+  it('without clips, the pad, mute and drag steps wait; the total stays as the tour began', () => {
+    const blank = ctx({ hasClips: false, bassHasClips: false, drumsHasNotes: false });
+    expect(currentHint([], blank)).toMatchObject({ step: { id: 'beat' }, position: 1, total: 8 });
+    // A beat made (drums have notes now, a loop exists): the bass still has nothing to tap, so Mute comes next.
+    const made = ctx({ hasClips: true, bassHasClips: false, drumsHasNotes: true });
+    expect(currentHint(['beat'], made)).toMatchObject({ step: { id: 'mute' }, position: 2, total: 8 });
+    // A starter: its drums already play, so the tour has the seven basics.
+    expect(currentHint([], ctx())!).toMatchObject({ step: { id: 'pad' }, position: 1, total: 7 });
+    // Nothing that can be done yet comes before what can: with no clips at all, Tone.
+    expect(currentHint(['beat'], ctx({ hasClips: false, bassHasClips: false, drumsHasNotes: true }))).toMatchObject({ step: { id: 'tone' }, position: 2, total: 8 });
   });
 
   it('once offered, the song track comes first in the Song view; then the basics carry on', () => {
-    const arrange = ctx({ view: 'arrange' });
+    const arrange = ctx({ view: 'arrange', hasRegions: false });
     expect(currentHint(['pad'], arrange, { song: true })!.step.id).toBe('song-add');
-    expect(currentHint(['pad', 'song-add'], arrange, { song: true })).toMatchObject({ step: { id: 'song-stretch' }, position: 2, total: 6 });
+    // The loop added: the song has loops now, and the tour keeps its six steps.
+    expect(currentHint(['pad', 'song-add'], ctx({ view: 'arrange' }), { song: true })).toMatchObject({ step: { id: 'song-stretch' }, position: 2, total: 6 });
+    // A song full of loops (a starter) has no "drag a loop in" step: five song steps.
+    expect(currentHint(['pad'], ctx({ view: 'arrange' }), { song: true })).toMatchObject({ step: { id: 'song-stretch' }, position: 1, total: 5 });
     const songDone: HintId[] = ['pad', 'song-add', 'song-stretch', 'song-move', 'song-ruler', 'song-play', 'song-export'];
     expect(currentHint(songDone, ctx(), { song: true })!.step.id).toBe('mute');
     expect(currentHint([...HINT_IDS], ctx(), { song: true })).toBeNull();
@@ -145,14 +154,20 @@ describe('which step comes next', () => {
     expect(currentHint(['pad', 'mute', 'drag', 'tone', 'instrument'], ctx({ view: 'mix' }), { song: true })!.step.id).toBe('master');
     // Nothing of the basics left to do in Play: the song step, collapsed to "Next, in Song".
     const basics = HINT_STEPS.filter((x) => x.track === 'basics').map((x) => x.id);
-    expect(currentHint(basics, ctx(), { song: true })!.step.id).toBe('song-add');
+    expect(currentHint(basics, ctx({ hasRegions: false }), { song: true })!.step.id).toBe('song-add');
+    expect(currentHint(basics, ctx(), { song: true })!.step.id).toBe('song-stretch');
   });
 
-  it('in an empty song the steps about its loops wait: first add one; with no clips at all, only Export is left', () => {
+  // r6: the song steps wait (and still count) instead of leaving the tour, and Export waits for a song to export.
+  it('in an empty song the steps about its loops wait: first add one; with no clips at all, a basics step that can be done comes first', () => {
     const empty = ctx({ view: 'arrange', hasRegions: false });
-    expect(currentHint(['pad'], empty, { song: true })).toMatchObject({ step: { id: 'song-add' }, position: 1, total: 2 });
+    expect(currentHint(['pad'], empty, { song: true })).toMatchObject({ step: { id: 'song-add' }, position: 1, total: 6 });
     const nothing = ctx({ view: 'arrange', hasRegions: false, hasClips: false, bassHasClips: false });
-    expect(currentHint(['pad'], nothing, { song: true })).toMatchObject({ step: { id: 'song-export' }, position: 1, total: 1 });
+    // Nothing to drag in: the Record step (it can be done anywhere) comes first, never "Export" an empty song.
+    expect(currentHint(['pad', 'mute', 'drag', 'tone', 'instrument', 'master'], nothing, { song: true })!.step.id).toBe('record');
+    const exportStep = HINT_STEPS.find((x) => x.id === 'song-export')!;
+    expect(exportStep.ready!(nothing)).toBe(false);
+    expect(exportStep.ready!(ctx())).toBe(true);
   });
 
   it('a step done elsewhere names the view, or the pad tab when its view is open', () => {
@@ -169,7 +184,7 @@ describe('which step comes next', () => {
   it('while the pads play (Play is Pause), the song step points at Play the song instead', () => {
     const play = HINT_STEPS.find((x) => x.id === 'song-play')!;
     expect(play.text(ctx({ view: 'arrange' }))).toBe('Press Play to hear your song.');
-    expect(play.text(ctx({ view: 'arrange', padsPlaying: true }))).toBe('Press Play the song, at the top, to hear your song.');
+    expect(play.text(ctx({ view: 'arrange', padsPlaying: true }))).toBe('Press Play the song instead, above the song, to hear it.');
     expect(play.more?.(ctx({ view: 'arrange', padsPlaying: true }))).toBe('Your pads stop, and the song plays from the playhead.');
   });
 

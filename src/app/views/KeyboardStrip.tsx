@@ -44,13 +44,14 @@ import { Button, IconButton, KEY_ACCENT_VELOCITY, KEY_VELOCITY, MiniKeyboard, OC
 import { getKitVoiceNames } from '../../audio/instruments/kits';
 import { ROOT_NAMES, SCALES, SCALE_ORDER, keyInterval, keyLabel, keyNoteNames, keyRootName, noteName, rootAtOrBelow, scaleKeyboardNotes, scaleMask, stepsPerOctave, type MusicalKey } from '../../music/scales';
 import { setAssist, setKey, transposeSong } from '../../state/commands';
-import { OCTAVE_RANGE, keyboardCollapsedFor, setKeyboardCollapsedFor, setKeyboardOctave, shiftKeyboardOctave } from '../../state/uiStore';
+import { OCTAVE_RANGE, keyboardCollapsedFor, openKeyboardIfDefault, setKeyboardCollapsedFor, setKeyboardOctave, shiftKeyboardOctave } from '../../state/uiStore';
 import { DRUM_VOICES, type Id, type Project, type ScaleId } from '../../project/types';
 import { session, useProject, useUi } from '../instance';
 import { notify, useRuntime } from '../runtime';
 import { ArpStrip } from './ArpPanel';
 import { Popover, anchorFromElement } from './ClipMenu';
 import { kitKeyLabels, playLive } from './DrumPads';
+import { SCALE_MOOD, keyMood } from './keyMood';
 import styles from './KeyboardStrip.module.css';
 
 const SCALE_OPTIONS = SCALE_ORDER.map((id) => ({ value: id, label: SCALES[id].name }));
@@ -430,6 +431,8 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
     onNoteOn: (index, velocity) => {
       release(keyNotes.current, index);
       keyNotes.current.set(index, playLive(trackId, isDrums ? index : baseNote + index, velocity, 'computer'));
+      // Song and Mix start with the keyboard folded: playing a note brings it up (a fold the person chose stays).
+      if (collapsed) openKeyboardIfDefault(view);
     },
     onNoteOff: (index) => release(keyNotes.current, index),
     onOctave: (delta) => {
@@ -444,6 +447,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
       if (pitch === undefined) return;
       release(keyNotes.current, index);
       keyNotes.current.set(index, playLive(trackId, pitch, velocity, 'computer'));
+      if (collapsed) openKeyboardIfDefault(view);
     },
     onNoteOff: (index) => release(keyNotes.current, index),
     onOctave: (delta) => shiftKeyboardOctave(delta),
@@ -518,7 +522,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
         {foldKey}
         <span className={styles.foldedLabel}>Keyboard</span>
         <span className={styles.foldedNote}>
-          {isDrums ? `${trackName}: computer keys play the kit sounds.` : `Computer keys play ${trackName}. ${assist ? `Key: ${keyName}.` : 'Chromatic.'}`}
+          {isDrums ? `${trackName}: computer keys play the kit sounds.` : `Computer keys play ${trackName}. ${assist ? `Key: ${keyMood(root, scale)}.` : 'Chromatic.'}`}
         </span>
         {props.children}
       </section>
@@ -627,9 +631,9 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
           </div>
         ) : (
           // Plain text (not a tab stop: it does nothing); the pointer still gets the explanation.
-          <Tooltip tip={`The project's key is ${keyName}. The Notes pads and Musical Assist use it.`} detail="Advanced shows the key and scale pickers.">
-            <p className={styles.keySummary}>
-              Key: <strong>{keyName}</strong>
+          <Tooltip tip={`The project's key is ${keyName} (${SCALE_MOOD[scale]}). The Notes pads and Musical Assist use it.`} detail="Advanced shows the key and scale pickers.">
+            <p className={styles.keySummary} aria-label={`Key: ${keyMood(root, scale)}, ${keyName}`}>
+              Key: <strong>{keyMood(root, scale)}</strong>
             </p>
           </Tooltip>
         )}

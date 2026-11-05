@@ -17,7 +17,7 @@ import { formatPosition, parsePosition, performanceRows } from '../../src/app/vi
 import { getStarter } from '../../src/content/starters';
 import type { Id, Performance, PerformanceEvent } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
-import { setView } from '../../src/state/uiStore';
+import { setUiMode, setView } from '../../src/state/uiStore';
 import { ticksToSeconds } from '../../src/time/clock';
 import { makeSnapshot } from '../../src/time/snapshot';
 import { songBars } from '../../src/project/arrangement';
@@ -133,6 +133,16 @@ function sampleEvents(start = 768): PerformanceEvent[] {
 }
 
 describe('Performances', () => {
+  // r6: Performances are an Advanced tool; Simple shows the panel only once the project has a take.
+  beforeEach(() => act(() => setUiMode('advanced')));
+  afterEach(() => act(() => setUiMode('simple')));
+
+  it('in Simple, a project with no takes has no Performances panel at all', async () => {
+    act(() => setUiMode('simple'));
+    await setup();
+    expect(document.querySelector('section[aria-labelledby="perf-title"]')).toBeNull();
+  });
+
   it('with no takes it is a one-line bar (the song gets the room); a click opens how to record one', async () => {
     await setup();
     const panel = document.querySelector<HTMLElement>('section[aria-labelledby="perf-title"]')!;

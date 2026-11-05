@@ -186,14 +186,15 @@ describe('Column headers', () => {
 });
 
 describe('Pads', () => {
-  it('empty pads are quiet: a "+" and "Add clip" only on hover or focus; clip pads show the name large and the length small', async () => {
+  // r6: an empty pad's words are "New loop" (a tap makes one).
+  it('empty pads are quiet: a "+" and "New loop" only on hover or focus; clip pads show the name large and the length small', async () => {
     await fonts();
     grid();
     const { empty, full } = emptyAndFull('t3');
     const e = pad('t3', empty);
     expect(e.textContent).not.toContain('Empty');
-    expect(e.getAttribute('aria-label')).toContain('Add clip');
-    const label = [...e.querySelectorAll<HTMLElement>('span')].filter((s) => s.textContent === 'Add clip').at(-1)!;
+    expect(e.getAttribute('aria-label')).toContain('Tap for a new loop');
+    const label = [...e.querySelectorAll<HTMLElement>('span')].filter((s) => s.textContent === 'New loop').at(-1)!;
     expect(getComputedStyle(label).opacity).toBe('0');
     const f = pad('t3', full);
     const leaves = [...f.querySelectorAll<HTMLElement>('span')].filter((s) => s.children.length === 0);
@@ -202,18 +203,21 @@ describe('Pads', () => {
     expect(parseFloat(getComputedStyle(name).fontSize)).toBeGreaterThan(parseFloat(getComputedStyle(length).fontSize));
   });
 
-  it('tapping an empty pad ("+") offers a new clip right there', async () => {
+  // r6 (audit-ease 15): a tap makes a loop as long as its scene's loops and opens it in Steps; the length is in the ⋯ menu.
+  it('tapping an empty pad ("+") makes a loop there and opens it in Steps', async () => {
     grid();
     const { empty } = emptyAndFull('t3');
     const p = pad('t3', empty);
     pointer(p, 'pointerdown', pointIn(p));
     pointer(p, 'pointerup', pointIn(p));
-    const menu = document.querySelector<HTMLElement>('[role="menu"]')!;
-    expect(menu.textContent).toContain('Empty slot');
-    click([...menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((b) => b.getAttribute('aria-label') === 'New clip, 2 bars')!);
-    expect(clips('t3')[empty]).toMatchObject({ bars: 2 });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    const longest = Math.max(1, ...session.store.getState().tracks.map((t) => t.clips[empty]?.bars ?? 0).filter((b) => b > 0));
+    expect(clips('t3')[empty]).toMatchObject({ bars: longest });
     expect(presses).toEqual([]);
     expect(uiStore.getState().selectedSlot.t3).toBe(empty);
+    expect(uiStore.getState().padMode).toBe('steps');
+    act(() => session.undo());
+    act(() => setPadMode('loops'));
   });
 
   it('a tap (less than 6 px of movement) launches the clip; a drag never does', async () => {

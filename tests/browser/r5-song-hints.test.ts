@@ -35,11 +35,10 @@ it('the song steps are done by the real gestures, one after another', async () =
   await chipPlaced();
   // The song track became current when the Song view opened.
   expect(hintsStore.getState().song).toBe(true);
-  expect(hint()).toBe('song-add');
+  // r6: the House song is full of loops, so "drag a loop in" is left out of this tour: it starts at stretching one.
+  expect(hint()).toBe('song-stretch');
   expect(chip()!.hasAttribute('data-ready')).toBe(true);
-  // The loop browser is shut (the House song is long): the step says where its key is.
-  expect(document.querySelector('[data-testid="loops-toggle"]')!.getAttribute('aria-pressed')).not.toBe('true');
-  expect(chip()!.textContent).toContain('Press Add loops (top right)');
+  expect(chip()!.textContent).toContain('/5');
   // It sits in the header row, in one line.
   const head = document.querySelector('header[class*="head"]')!.getBoundingClientRect();
   const c = chip()!.getBoundingClientRect();
@@ -55,7 +54,7 @@ it('the song steps are done by the real gestures, one after another', async () =
   chipEl.scrollIntoView({ block: 'nearest' });
   // The Bass row is empty over bars 1–8 in the House song.
   await dragTo(centre(chipEl), { x: barX(0) + 4, y: rowY(bass.id) });
-  await waitFor(() => hint() === 'song-stretch', 'the stretch step');
+  await waitFor(() => hint() === 'song-stretch', 'still the stretch step');
 
   // 2. Its right edge, two bars longer.
   const added = regions().find((r) => r.trackId === bass.id && r.start === 0)!;

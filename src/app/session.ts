@@ -20,7 +20,7 @@ import { SampleBank } from '../audio/instruments/sampleBank';
 import { BLANK_STARTER, JUMP_IN_SCENE_ROW, JUMP_IN_STARTER_ID, STARTERS, getStarter } from '../content/starters';
 import { snapToScale } from '../music/scales';
 import { songBars } from '../project/arrangement';
-import { clipAtSlot, isSongSlot, slotOfClip, songSlot } from '../project/clips';
+import { clipAtSlot, isSongSlot, slotOfClip, songSlot, trackClips } from '../project/clips';
 import { moduleId, uid } from '../project/factory';
 import { BASS_PARAMS, DRUM_KIT_PARAMS, DRUM_VOICE_PARAM_SPECS, INSTRUMENT_PARAMS, POLY_PARAMS, SAMPLER_PARAMS, clampParam, readParam, specById } from '../project/params';
 import { resolveAllParams, specsForModule } from '../project/resolve';
@@ -359,7 +359,7 @@ export class Session {
 
   private loadPreview(): void {
     const starter = getStarter(JUMP_IN_STARTER_ID) ?? STARTERS[0];
-    this.store.replace(starter.build());
+    this.store.replace(withRecordingDefaults(starter.build()));
     this.setPreview(true);
   }
 
@@ -451,6 +451,41 @@ export class Session {
     const def = starterId === 'blank' ? BLANK_STARTER : getStarter(starterId);
     if (!def) return;
     await this.createFromStarter(def.build(), opts);
+    // A blank project starts on its drums: a beat is the usual first step.
+    if (def === BLANK_STARTER) {
+      const drums = this.store.getState().tracks.find((t) => t.instrument.kind === 'drums');
+      if (drums) selectTrack(drums.id);
+    }
+  }
+
+  /**
+   * Welcome's "Make a beat from scratch": enable audio (inside the click),
+   * keep whatever is open, start a blank project, make a 1-bar loop on its
+   * drums and open it in Play › Steps, looping, so every square clicked is
+   * heard at once. Resolves with the drum part and its pad (null when the
+   * project could not start).
+   */
+  async beatFromScratch(): Promise<{ trackId: Id; slot: number } | null> {
+    const audio = this.startAudio();
+    try {
+      await this.createFromStarter(BLANK_STARTER.build());
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), 'error');
+      return null;
+    }
+    const drums = this.store.getState().tracks.find((t) => t.instrument.kind === 'drums');
+    if (!drums) return null;
+    const slot = 0;
+    if (!this.accepted(cmd.createClip(this.store, drums.id, slot, 1))) return null;
+    selectTrack(drums.id);
+    selectSlot(drums.id, slot);
+    setView('play');
+    setPadMode('steps');
+    if (await audio) {
+      this.transport!.launchClip(drums.id, slot);
+      await this.play();
+    }
+    return { trackId: drums.id, slot };
   }
 
   /**
@@ -470,11 +505,11 @@ export class Session {
     }
     // Even when replacing it anyway, the open project is still kept if storage allows.
     const current = this.previewOnly ? null : this.store.getState();
-    let project = starter;
+    let project = withRecordingDefaults(starter);
     let stored = true;
     let replaced: { id: Id; name: string } | null = null;
     try {
-      ({ project, replaced } = await library.createFromStarter(starter, current));
+      ({ project, replaced } = await library.createFromStarter(project, current));
     } catch (e) {
       stored = false;
       replaced = current ? { id: current.id, name: current.name } : null;
@@ -1995,7 +2030,7 @@ export class Session {
     this.store.beginGroup('Record notes');
     if (!track.clips[slot]) {
       const bars: ClipBars = track.instrument.kind === 'drums' ? 1 : 2;
-      cmd.createClip(this.store, trackId, slot, bars, 'Take');
+      cmd.createClip(this.store, trackId, slot, bars, takeName(track));
     }
     if (chosen === undefined) selectSlot(trackId, slot);
     // The clip heard now (the scheduler may already be past a switch that is not heard yet).
@@ -2972,4 +3007,22 @@ export function formatSeconds(s: number): string {
   const m = Math.floor(s / 60);
   const sec = Math.round(s - m * 60);
   return m > 0 ? `${m}:${String(sec).padStart(2, '0')}` : `${s.toFixed(1)} s`;
+}
+
+/**
+ * A project made now (a starter, Blank, the first-run preview) records with
+ * a one-bar count-in of clicks, so the first take has a beat to come in on.
+ * Projects stored before keep their own settings.
+ */
+export function withRecordingDefaults(p: Project): Project {
+  return p.settings.countIn ? p : { ...p, settings: { ...p.settings, countIn: true } };
+}
+
+/** The name of a take recorded onto an empty pad: "<Part> take 1", the next number the part has free. */
+export function takeName(track: Pick<Track, 'name' | 'clips' | 'songClips'>): string {
+  const used = new Set(trackClips(track).map((c) => c.clip.name));
+  const stem = `${track.name.slice(0, 50) || 'Part'} take`;
+  let n = 1;
+  while (used.has(`${stem} ${n}`)) n++;
+  return `${stem} ${n}`;
 }

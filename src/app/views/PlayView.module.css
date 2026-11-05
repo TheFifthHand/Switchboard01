@@ -77,3 +77,8 @@
     grid-column: auto;
   }
 }
+
+/* "Start from a beat…" at the right of the pad tabs (Steps on an empty drum loop). */
+.beatKey {
+  margin-left: auto;
+}

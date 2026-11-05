@@ -12,8 +12,9 @@
  *   in).
  * - While the song is paused, the word Paused says so (the playhead is not
  *   amber then). While the pads play or are paused (the person came from
- *   Play), a one-line chip offers the song instead: "Your pads are playing ·
- *   [Play the song]"; with an empty song it says that the song is empty.
+ *   Play), a one-line chip offers the song instead: "Pads are playing ·
+ *   [▶ Play the song instead]" (Space and the transport's Play play the song
+ *   here too); with an empty song it says that the song is empty.
  */
 import { useState } from 'react';
 import { Button, IconButton, Tooltip } from '../../../ui/components';
@@ -102,10 +103,10 @@ export function SongHeader({ handle, follow, onFollow, browserOpen, onBrowser, f
       )}
       {pads && !recordingTake && (
         <span className={styles.padsChip} role="status" data-testid="pads-playing" data-paused={pads === 'paused' || undefined}>
-          <span>{!hasRegions ? `The song is empty: your pads are ${pads}` : `Your pads are ${pads}`}</span>
+          <span>{!hasRegions ? `The song is empty: your pads are ${pads}` : `Pads are ${pads}`}</span>
           {hasRegions && (
-            <Button size="sm" variant="secondary" icon="play" onClick={() => void session.playSong()} data-testid="play-the-song" tip="Switch from your pads to the song: it plays from the playhead (or the loop).">
-              Play the song
+            <Button size="sm" variant="secondary" icon="play" onClick={() => void session.playSong()} data-testid="play-the-song" tip="The pads stop and the song plays from the playhead (or the loop). Space does the same here.">
+              Play the song instead
             </Button>
           )}
         </span>

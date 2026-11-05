@@ -19,7 +19,7 @@ import { builtinSampleInfo } from '../../content/catalog';
 import { cloneClip, cloneClipWithNewIds, reIdNotes } from '../../project/clone';
 import { createClip as makeClip } from '../../project/factory';
 import { SAMPLER_PARAMS, clampParam, specById } from '../../project/params';
-import { isSongSlot } from '../../project/clips';
+import { isSongSlot, trackClips } from '../../project/clips';
 import { MAX_CLIP_BARS, TICKS_PER_BAR, type Clip, type ClipBars, type ClipSample, type Id, type Note, type Project, type Track, type VariationInfo } from '../../project/types';
 import { VALIDATION_LIMITS, sanitizeClip } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
@@ -32,9 +32,19 @@ export function isClipBars(bars: number): bars is ClipBars {
 
 const LENGTH_MESSAGE = `Clips are 1 to ${MAX_CLIP_BARS} bars.`;
 
-/** Default name of a new pad clip: the scene (row) name. */
-export function defaultClipName(p: Project, slot: number): string {
-  return p.scenes[slot]?.name ?? `Clip ${slot + 1}`;
+/**
+ * Default name of a new loop: the part's name and the first number no loop
+ * of the part uses ("Drums 1", "Bass 2"), so two parts never get the same
+ * name. Without a part (or one not found) the scene (row) name, as before.
+ */
+export function defaultClipName(p: Project, slot: number, trackId?: Id): string {
+  const t = trackId === undefined ? undefined : p.tracks.find((x) => x.id === trackId);
+  if (!t) return p.scenes[slot]?.name ?? `Clip ${slot + 1}`;
+  const used = new Set(trackClips(t).map((c) => c.clip.name));
+  const stem = t.name.slice(0, 55) || 'Loop';
+  let n = 1;
+  while (used.has(`${stem} ${n}`)) n++;
+  return `${stem} ${n}`;
 }
 
 const DELETE_SONG_LOOP = 'That loop lives in the song: delete it in the Song view.';
@@ -48,7 +58,7 @@ export function createClip(store: ProjectStore, trackId: Id, slot: number, bars:
   if (!isSlot(slot, t)) return refuse('invalid', 'There is no clip slot there.');
   if (!isClipBars(bars)) return refuse('invalid', LENGTH_MESSAGE);
   if (t.clips[slot]) return refuse('occupied', 'That slot already has a clip.');
-  const clip = makeClip((name !== undefined && cleanName(name)) || defaultClipName(p, slot), bars);
+  const clip = makeClip((name !== undefined && cleanName(name)) || defaultClipName(p, slot, trackId), bars);
   const r = run(store, 'clip:Create clip', (d) => {
     draftTrack(d, trackId).clips[slot] = clip;
   });

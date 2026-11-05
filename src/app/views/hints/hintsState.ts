@@ -17,7 +17,7 @@ import type { KeyValueStorage } from '../../../state/uiStore';
 export const HINTS_STORAGE_KEY = 'omnisong.hints';
 
 /** The basics track, then the song track (see steps.ts). */
-export const HINT_IDS = ['pad', 'mute', 'drag', 'tone', 'instrument', 'master', 'record', 'song-add', 'song-stretch', 'song-move', 'song-ruler', 'song-play', 'song-export'] as const;
+export const HINT_IDS = ['beat', 'pad', 'mute', 'drag', 'tone', 'instrument', 'master', 'record', 'song-add', 'song-stretch', 'song-move', 'song-ruler', 'song-play', 'song-export'] as const;
 export type HintId = (typeof HINT_IDS)[number];
 
 export interface HintsState {
