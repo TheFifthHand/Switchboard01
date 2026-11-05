@@ -126,10 +126,11 @@ function typeInto(input: HTMLInputElement, value: string) {
 }
 
 describe('Project library', () => {
-  it('lists the eight starters and a blank project with tempo and key', async () => {
+  it('lists every starter (the eight of the brief and the five beat-maker ones) and a blank project with tempo and key', async () => {
     open('starters');
     const cards = [...dialog().querySelectorAll<HTMLButtonElement>('ul[aria-label="Starter projects"] button')];
-    expect(cards).toHaveLength(9);
+    expect(cards).toHaveLength(STARTERS.length + 1);
+    expect(STARTERS).toHaveLength(13);
     const expected = [...STARTERS, BLANK_STARTER];
     cards.forEach((card, i) => {
       const def = expected[i];

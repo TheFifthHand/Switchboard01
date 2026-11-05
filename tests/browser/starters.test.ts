@@ -28,7 +28,8 @@ const TOLERANCE_DB = 0.3;
  * trim per character plus a slow level match) instead of lifting quiet
  * parts by a few dB. Downtempo's Intro peak was measured again after the
  * level match became block-wise (its sparse driven drum hits peak 0.6 dB
- * lower; RMS unchanged).
+ * lower; RMS unchanged). The five beat-maker starters (round 6) were
+ * measured when they were added.
  */
 const SHIPPED: Record<string, readonly (readonly [number, number])[]> = {
   house: [[-30.7, -13.3], [-19.3, -5.7], [-18.0, -1.3], [-25.2, -9.5]],
@@ -39,6 +40,12 @@ const SHIPPED: Record<string, readonly (readonly [number, number])[]> = {
   drumAndBass: [[-28.8, -10.7], [-20.0, -4.3], [-18.5, -3.3], [-22.6, -9.2]],
   downtempo: [[-32.0, -15.3], [-21.9, -5.1], [-20.7, -4.5], [-23.6, -10.0]],
   garage: [[-30.3, -11.4], [-20.5, -1.6], [-18.5, -1.0], [-24.3, -6.0]],
+  // Round 6: the beat-maker starters, measured when they were added.
+  trap: [[-28.3, -11.3], [-20.3, -4.3], [-18.4, -3.2], [-22.9, -8.5]],
+  lofi: [[-27.8, -9.9], [-20.7, -3.9], [-19.3, -1.3], [-23.9, -8.7]],
+  pop: [[-26.7, -9.1], [-20.7, -3.7], [-18.9, -1.2], [-25.7, -9.5]],
+  afrobeats: [[-26.5, -8.1], [-20.3, -2.7], [-19.3, -3.6], [-24.9, -6.4]],
+  boomBap: [[-30.4, -12.2], [-20.6, -2.5], [-19.6, -2.7], [-25.9, -8.5]],
 };
 
 async function renderRow(project: ReturnType<(typeof STARTERS)[number]['build']>, row: number, bars: number) {

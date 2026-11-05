@@ -40,7 +40,16 @@ const BRIEF = [
   { id: 'drumAndBass', name: 'Drum and Bass', bpm: 174 },
   { id: 'downtempo', name: 'Downtempo', bpm: 84 },
   { id: 'garage', name: 'Garage', bpm: 136 },
+  // Round 6: starters for beat makers, after the brief's eight.
+  { id: 'trap', name: 'Trap', bpm: 140 },
+  { id: 'lofi', name: 'Lo-fi Hip Hop', bpm: 82 },
+  { id: 'pop', name: 'Pop', bpm: 110 },
+  { id: 'afrobeats', name: 'Afrobeats', bpm: 105 },
+  { id: 'boomBap', name: 'Boom Bap', bpm: 90 },
 ] as const;
+
+/** Starters added after 2.2 (no 2.2 song to compare with). */
+const SINCE_2_3: ReadonlySet<string> = new Set(['trap', 'lofi', 'pop', 'afrobeats', 'boomBap']);
 
 /** Playable ranges per role (MIDI), from the starter content brief. */
 const RANGES: Partial<Record<TrackRole, readonly [number, number]>> = {
@@ -214,7 +223,7 @@ const channelParam = (p: Project, trackId: string, param: string): number => {
 /* Tests */
 
 describe('starter list', () => {
-  it('ships the eight starters of the brief, in order, with their tempos', () => {
+  it('ships the eight starters of the brief, then the five beat-maker starters, in order, with their tempos', () => {
     expect(STARTERS.map((s) => ({ id: s.id, name: s.name, bpm: s.bpm }))).toEqual(BRIEF.map((b) => ({ ...b })));
     for (const s of STARTERS) {
       expect(s.description.length).toBeGreaterThan(20);
@@ -484,6 +493,9 @@ describe.each(STARTERS.map((s) => [s.name, s] as const))('%s starter', (_name, s
 
   it('plays the song it played in 2.2 (the 2.2 build, upgraded, has the same loops and sections)', () => {
     const v3 = (SONGS_2_2 as Record<string, unknown>)[starter.id];
+    // Starters added since have no 2.2 song; every older one must have one.
+    expect(v3 === undefined, starter.id).toBe(SINCE_2_3.has(starter.id));
+    if (v3 === undefined) return;
     const r = validateProject(JSON.parse(JSON.stringify(v3)));
     if (!r.ok) throw new Error(r.errors.join(' '));
     expect(r.warnings).toEqual([]);
