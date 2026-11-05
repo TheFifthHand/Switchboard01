@@ -619,6 +619,8 @@
   width: 2px;
   background: var(--ink-2);
   pointer-events: none;
+  /* Over the value chip: mid-travel (around −15 dB on a narrow header) the chip can reach the cap, which stays in sight. */
+  z-index: 1;
 }
 /* The value on a chip of its own, at the end away from the cap, so the cap stays in sight. */
 .levelValue {
@@ -1137,7 +1139,8 @@
   position: absolute;
   top: calc(var(--row) * var(--row-h) + 5px);
   /* Clear of the end grip: the last 8 px stay the edge's. */
-  left: calc(var(--e) * var(--ppb) * 1px - 36px);
+  /* Left of the region's "Used 2×" badge when it has one (--badge). */
+  left: calc(var(--e) * var(--ppb) * 1px - 36px - var(--badge, 0) * 50px);
   width: 22px;
   height: 18px;
   padding: 0;

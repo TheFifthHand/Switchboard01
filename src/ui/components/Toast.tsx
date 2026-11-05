@@ -7,22 +7,21 @@
  *   centre of the screen, e.g. "Variation applied" [Undo]. Toasts pause while
  *   hovered or focused; errors stay until dismissed unless given a duration
  *   (any caller may pass one, e.g. 3000 ms for "Undid: …").
- * - Placement contract (Toast.module.css): the stack sits at the top centre,
- *   just under the transport (`--transport-h`, written by the TransportBar on
- *   `document.documentElement`: toasts render into body, outside the app
- *   tree), where every view keeps headers rather than anything played or
- *   chosen; while a menu is open (`body[data-popover-open]`, set by Popover)
- *   it goes below the menu; while a modal dialog is open
+ * - Placement contract (Toast.module.css): one place in every view, the
+ *   bottom centre, on the keyboard strip's upper half (the element marked
+ *   `[data-toast-floor]`; with none on screen, just above the window's bottom
+ *   edge). Not above the strip: there every view keeps working controls (the
+ *   pads' action bar, the step and velocity lanes, the last pads). Not at the
+ *   top: there are the headers, tabs, the song's ruler and sections and the
+ *   editing fields. On the strip the keys still play (their lower half, and
+ *   the computer keys), and folded it is a line of words.
+ *   While a menu is open (`body[data-popover-open]`, set by Popover) the
+ *   stack goes below the menu; while a modal dialog is open
  *   (`body[data-modal-open]`, set by Dialog) its action keys are hidden.
- *   When a control (a tab, key, pad, field, song block…) sits under the
- *   centred stack, the stack moves to the nearest spot that covers none,
- *   narrowing to 440 or 360 px if it must (its real height at that width is
- *   measured), so it never covers what is about to be pressed; it is placed
- *   each time the stack changes and again after a scroll or resize.
  *   Guidance on screen (the quick guide's card, the "Try this" chip: shown
  *   elements marked `[data-toast-below][data-ready]`) is never covered: the
- *   stack goes just below it, and moves again when such guidance appears,
- *   moves or goes while toasts show.
+ *   stack goes just above it. It is placed each time the stack changes, after
+ *   a resize, and again when the guidance or the keyboard strip moves.
  *
  * Tone is shown by an icon and wording, not colour alone: coral marks
  * warnings and errors (attention); info/success are neutral.
@@ -147,7 +146,7 @@ export function ToastProvider({ children, max = 4 }: ToastProviderProps) {
 
   const api = useMemo<ToastApi>(() => ({ show, dismiss, clear }), [show, dismiss, clear]);
 
-  // Keep the stack off the controls under its band (see placeClearOfControls).
+  // The stack's place: on the keyboard strip, clear of guidance (see placeStack).
   const viewportRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = viewportRef.current;
@@ -156,40 +155,27 @@ export function ToastProvider({ children, max = 4 }: ToastProviderProps) {
       resetPlacement(el);
       return;
     }
-    placeClearOfControls(el);
-    // A scroll or resize brings other controls under the band: place again on the next frame, or,
-    // when placing proved costly (a crowded band), once the scrolling settles.
+    placeStack(el);
     let frame = 0;
-    let timer = 0;
-    let costly = false;
-    const run = () => {
-      frame = 0;
-      const t0 = performance.now();
-      placeClearOfControls(el);
-      costly = performance.now() - t0 > 6;
-    };
     const later = () => {
-      if (costly) {
-        window.clearTimeout(timer);
-        timer = window.setTimeout(run, 100);
-      } else if (!frame) frame = requestAnimationFrame(run);
+      if (!frame) frame = requestAnimationFrame(() => {
+        frame = 0;
+        placeStack(el);
+      });
     };
     window.addEventListener('resize', later);
-    window.addEventListener('scroll', later, { capture: true, passive: true });
-    // The guide or the hint chip may appear, move or go while toasts show: place again when they do.
-    let lastGuidance = guidanceKey();
+    // The guide or the hint chip may appear, move or go while toasts show, and the keyboard may fold or open: place again when they do.
+    let last = placeKey();
     const watch = window.setInterval(() => {
-      const key = guidanceKey();
-      if (key === lastGuidance) return;
-      lastGuidance = key;
+      const key = placeKey();
+      if (key === last) return;
+      last = key;
       later();
     }, 400);
     return () => {
       cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
       window.clearInterval(watch);
       window.removeEventListener('resize', later);
-      window.removeEventListener('scroll', later, { capture: true });
     };
   }, [toasts]);
 
@@ -208,134 +194,71 @@ export function ToastProvider({ children, max = 4 }: ToastProviderProps) {
   );
 }
 
-const CONTROL =
-  'button, a[href], input, select, textarea, [role="tab"], [role="button"], [role="slider"], [role="switch"], [role="checkbox"], [role="radio"], [role="menuitem"], [role="option"], [role="spinbutton"], [role="combobox"], [contenteditable="true"], [data-region-id], [data-section-id], aside[data-hint]';
-/** Narrower widths the stack may take to clear a control (its default is min(520 px, window − 32 px)). */
-const NARROWER_PX = [440, 360];
-const COL_PX = 12;
-const ROW_PX = 14;
-
 function resetPlacement(el: HTMLElement): void {
-  el.style.removeProperty('left');
-  el.style.removeProperty('top');
-  el.style.removeProperty('width');
-  el.style.removeProperty('transform');
+  el.style.removeProperty('bottom');
 }
 
-/** Guidance the stack never covers: it goes below (the quick guide's card, the hint chip, once shown). */
-const STACK_BELOW = '[data-toast-below][data-ready]';
+/** Guidance the stack never covers: it goes above (the quick guide's card, the hint chip, once shown). */
+const STACK_CLEAR = '[data-toast-below][data-ready]';
+/** What the stack sits on: the keyboard strip (its upper half). */
+const FLOOR = '[data-toast-floor]';
+const GAP_PX = 8;
 
-/** The boxes of the guidance on screen (see STACK_BELOW). */
+/** The boxes of the guidance on screen (see STACK_CLEAR). */
 function guidanceBoxes(): DOMRect[] {
   const out: DOMRect[] = [];
-  for (const g of document.querySelectorAll(STACK_BELOW)) {
+  for (const g of document.querySelectorAll(STACK_CLEAR)) {
     const r = g.getBoundingClientRect();
     if (r.width > 2 && r.height > 2) out.push(r);
   }
   return out;
 }
 
-/**
- * Where the stack's top must be so that it covers none of `boxes` in its
- * band (`left`..`right`, `height` tall, from `top`): below each one it would
- * overlap, in turn. Pure geometry.
- */
-export function topBelowGuidance(top: number, left: number, right: number, height: number, boxes: readonly { left: number; right: number; top: number; bottom: number }[]): number {
-  let t = top;
-  const sorted = [...boxes].sort((a, b) => a.top - b.top);
-  for (const b of sorted) {
-    if (b.left < right && b.right > left && b.top < t + height && b.bottom > t) t = b.bottom + 8;
+/** How far into the keyboard strip the stack's bottom edge reaches (px): a one-line toast covers the strip's upper half. */
+const INTO_FLOOR_PX = 52;
+
+/** The y the stack's bottom edge rests on: on the keyboard strip's upper half, or just above the window's bottom edge. */
+function floorY(): number {
+  const vh = document.documentElement.clientHeight;
+  let y = vh - 12;
+  for (const f of document.querySelectorAll(FLOOR)) {
+    const r = f.getBoundingClientRect();
+    // Only a strip along the lower part of the window counts.
+    if (r.width > 2 && r.height > 2 && r.top > vh * 0.4) y = Math.min(y, r.top + Math.min(INTO_FLOOR_PX, r.height - 4));
   }
-  return t;
+  return y;
 }
 
-/** A key for the guidance's place now: placement runs again when it changes. */
-function guidanceKey(): string {
-  return guidanceBoxes()
+/**
+ * Where the stack's bottom edge must be so that it covers none of `boxes`
+ * in its band (`left`..`right`, `height` tall, ending at `bottom`): above
+ * each one it would overlap, in turn (lowest first). Pure geometry.
+ */
+export function bottomAboveGuidance(bottom: number, left: number, right: number, height: number, boxes: readonly { left: number; right: number; top: number; bottom: number }[]): number {
+  let b = bottom;
+  const sorted = [...boxes].sort((x, y) => y.bottom - x.bottom);
+  for (const g of sorted) {
+    if (g.left < right && g.right > left && g.top < b && g.bottom > b - height) b = g.top - GAP_PX;
+  }
+  return b;
+}
+
+/** A key for the guidance's and the floor's place now: placement runs again when it changes. */
+function placeKey(): string {
+  return `${Math.round(floorY())}|${guidanceBoxes()
     .map((r) => `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.right)},${Math.round(r.bottom)}`)
-    .join('|');
+    .join('|')}`;
 }
 
-/**
- * Centred by default. When a control (a tab, key, pad, field, song block…)
- * lies under the stack as it would be drawn there, try spots further from the
- * centre, then narrower stacks (measuring the height each width really takes,
- * as text wraps), and take the first spot that covers no control. With none,
- * it stays centred. Controls are found by hit-testing a coarse grid of the
- * band once (the cards ignore the pointer while it is measured).
- */
-function placeClearOfControls(el: HTMLElement): void {
-  resetPlacement(el);
-  const first = el.getBoundingClientRect();
-  if (first.height === 0) return;
-  // Below the guide or the hint chip when the stack would cover one (it never hides guidance).
-  const guidance = guidanceBoxes();
-  const below = topBelowGuidance(first.top, first.left, first.right, first.height, guidance);
-  if (below !== first.top) {
-    el.style.top = `${Math.round(below)}px`;
-    // Still nothing over the guidance at the stack's real height.
-    const now = el.getBoundingClientRect();
-    const again = topBelowGuidance(now.top, now.left, now.right, now.height, guidance);
-    if (again !== now.top) el.style.top = `${Math.round(again)}px`;
-  }
+/** Bottom centre, on the keyboard strip; above the guide or the hint chip if it would cover one. */
+function placeStack(el: HTMLElement): void {
+  const vh = document.documentElement.clientHeight;
+  const floor = floorY();
+  el.style.bottom = `${Math.round(vh - floor)}px`;
   const box = el.getBoundingClientRect();
-  const vw = document.documentElement.clientWidth;
-  const sizes = [{ w: box.width, h: box.height }];
-  for (const w of NARROWER_PX) {
-    if (w >= box.width - 8) continue;
-    el.style.width = `${w}px`;
-    sizes.push({ w, h: el.getBoundingClientRect().height });
-  }
-  el.style.removeProperty('width');
-  const top = box.top;
-  const cols = Math.floor(vw / COL_PX) + 1;
-  const maxControl = vw * 0.6;
-  // 0 = not looked at yet, 1 = clear, 2 = a control.
-  const grid = new Map<number, number>();
-  el.setAttribute('data-measuring', '');
-  const blocked = (r: number, c: number): boolean => {
-    const key = r * cols + c;
-    let v = grid.get(key);
-    if (v === undefined) {
-      const hit = document.elementFromPoint(c * COL_PX, top + r * ROW_PX + 4);
-      let control = hit && !el.contains(hit) ? hit.closest(CONTROL) : null;
-      // A field's own frame (the box around its input) counts as the field.
-      if (!control && hit && !el.contains(hit) && hit.getBoundingClientRect().width <= 240) control = hit.querySelector(CONTROL);
-      v = control && control.getBoundingClientRect().width <= maxControl ? 2 : 1;
-      grid.set(key, v);
-    }
-    return v === 2;
-  };
-  const clear = (left: number, w: number, h: number): boolean => {
-    const rows = Math.ceil((h - 4) / ROW_PX);
-    const c0 = Math.floor(left / COL_PX);
-    const c1 = Math.min(cols - 1, Math.ceil((left + w) / COL_PX));
-    for (let r = 0; r <= rows; r++) for (let c = c0; c <= c1; c++) if (blocked(r, c)) return false;
-    return true;
-  };
-  try {
-    const centre = vw / 2;
-    if (clear(box.left, box.width, box.height)) return;
-    for (const { w, h } of sizes) {
-      const min = 16;
-      const max = vw - 16 - w;
-      if (max < min) continue;
-      const mid = Math.min(Math.max(centre - w / 2, min), max);
-      for (let d = 0; mid - d >= min || mid + d <= max; d += 16) {
-        for (const left of d === 0 ? [mid] : [mid - d, mid + d]) {
-          if (left < min || left > max) continue;
-          if (clear(left, w, h)) {
-            el.style.left = `${Math.round(left)}px`;
-            el.style.width = `${Math.round(w)}px`;
-            el.style.transform = 'none';
-            return;
-          }
-        }
-      }
-    }
-  } finally {
-    el.removeAttribute('data-measuring');
-  }
+  if (box.height === 0) return;
+  const b = bottomAboveGuidance(floor, box.left, box.right, box.height, guidanceBoxes());
+  if (b !== floor) el.style.bottom = `${Math.round(vh - Math.max(box.height + GAP_PX, b))}px`;
 }
 
 /** Toast API from the nearest ToastProvider. */

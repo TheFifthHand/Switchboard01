@@ -125,7 +125,7 @@ function canRestore(clip: Clip | null): boolean {
 
 /** Why Back to original has nothing to do (shown on the row). */
 function restoreReason(clip: Clip | null): string {
-  if (!clip) return 'No clip selected';
+  if (!clip) return 'No loop selected';
   const k = originals.get(clip.id);
   const sig = notesSig(clip.notes);
   // Varied once, then edited some other way (Steps, a recording): those edits are the original now.
@@ -152,7 +152,7 @@ function vary(trackId: Id, strength: Strength): void {
   const { p, track, slot, clip } = selectedClip(trackId);
   if (!track) return;
   if (!clip) {
-    notify(`Slot ${slot + 1} of ${track.name} is empty. Select a clip with notes: Variation changes a pattern.`, 'warn');
+    notify(`Slot ${slot + 1} of ${track.name} is empty. Select a loop with notes: Variation changes a pattern.`, 'warn');
     return;
   }
   const original = originalFor(clip);
@@ -221,8 +221,8 @@ function VariationKey({ trackId, partName, keep, locked }: { trackId: Id; partNa
         icon="dice"
         onClick={() => vary(trackId, 'subtle')}
         disabled={off}
-        tip={off ? why : 'A subtle variation of the selected clip (the one ringed on the pads): a few notes change. Press again for another one; Undo brings the last one back.'}
-        detail="Each press varies the clip's original notes, so it never drifts far. Deterministic: the seed is stored, so saved projects and exports reproduce it."
+        tip={off ? why : 'A subtle variation of the selected loop (the one ringed on the pads): a few notes change. Press again for another one; Undo brings the last one back.'}
+        detail="Each press varies the loop's original notes, so it never drifts far. Deterministic: the seed is stored, so saved projects and exports reproduce it."
         className={styles.splitMain}
       >
         Variation

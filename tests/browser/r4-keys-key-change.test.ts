@@ -89,7 +89,7 @@ describe('a key change asks once', () => {
     expect(pitches('t3')).toEqual(bass.map((c) => c && c.map((p) => p + 2)));
     expect(pitches('t1')).toEqual(drums);
     expect(pitches('t8')).toEqual(vocal);
-    expect(notice()).toMatch(/^Moved the song to A Dorian: \d+ notes in \d+ clips\. Drums stayed\. Vocal kept its pitch\./);
+    expect(notice()).toMatch(/^Moved the song to A Dorian: \d+ notes in \d+ loops\. Drums stayed\. Vocal kept its pitch\./);
     expect(session.store.undoLabel()).toBe('Move the song to A Dorian');
     // One Undo takes it all back.
     await press('{Control>}z{/Control}');
@@ -141,7 +141,7 @@ describe('a key change asks once', () => {
     await clickEl(inPopover('Only what I play'));
     expect(project().root).toBe(9);
     expect(project().tracks.map((t) => pitches(t.id))).toEqual(all);
-    expect(notice()).toBe("Key: A Dorian for what you play. The song's clips stay in G Dorian.");
+    expect(notice()).toBe("Key: A Dorian for what you play. The song's loops stay in G Dorian.");
   });
 
   it('Escape keeps the old key; changing it again while asking updates the question; a scale change maps degrees', async () => {

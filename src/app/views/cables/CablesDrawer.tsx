@@ -54,7 +54,7 @@ function useDrawerMax(ref: RefObject<HTMLElement | null>, open: boolean): number
       const cs = getComputedStyle(view);
       const inner = v.height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - (parseFloat(cs.rowGap) || 0);
       const surface = view.querySelector<HTMLElement>('section[aria-label="Pads"]');
-      const grid = surface?.querySelector<HTMLElement>('[aria-label^="Clip pads"]') ?? null;
+      const grid = surface?.querySelector<HTMLElement>('[aria-label^="Loop pads"]') ?? null;
       const pad = grid?.querySelector<HTMLElement>('[id^="pad-"][id$="-0"]') ?? null;
       let leaves = DRAWER_LEAVES_PX;
       if (surface && grid && pad) {

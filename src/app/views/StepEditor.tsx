@@ -52,7 +52,7 @@ function EmptySlot({ trackId, slot, locked, onOpen }: { trackId: Id; slot: numbe
     setStepPage(trackId, 0);
     onOpen();
   };
-  const lockTip = 'Locked while a performance records. Stop the take to create a clip.';
+  const lockTip = 'Locked while a performance records. Stop the take to create a loop.';
   return (
     <div className={styles.empty}>
       <div className={styles.emptyCard}>
@@ -63,32 +63,32 @@ function EmptySlot({ trackId, slot, locked, onOpen }: { trackId: Id; slot: numbe
           <span />
         </div>
         <h3 className={styles.emptyTitle}>
-          {trackName} has no clip in {sceneName}
+          {trackName} has no loop in {sceneName}
         </h3>
         {locked ? (
           <p className={styles.emptyLock} role="status">
             <span className={styles.lockDot} aria-hidden="true" />
-            Locked while a performance records. Stop the take to create a clip.
+            Locked while a performance records. Stop the take to create a loop.
           </p>
         ) : (
-          <p className={styles.emptyText}>Create a clip here, then click steps to write a pattern. It plays when you launch the {sceneName} pad or scene.</p>
+          <p className={styles.emptyText}>Create a loop here, then click steps to write a pattern. It plays when you launch the {sceneName} pad or scene.</p>
         )}
-        <div className={styles.emptyActions} role="group" aria-label="Create a clip here">
+        <div className={styles.emptyActions} role="group" aria-label="Create a loop here">
           <Button icon="plus" onClick={() => create(1)} disabled={locked} tip={locked ? lockTip : 'A one-bar loop: 16 steps.'}>
-            Create a 1-bar clip
+            Create a 1-bar loop
           </Button>
           <Button icon="plus" onClick={() => create(2)} disabled={locked} tip={locked ? lockTip : 'A two-bar loop: 2 pages of 16 steps.'}>
-            2-bar clip
+            2-bar loop
           </Button>
           <Button icon="plus" onClick={() => create(4)} disabled={locked} tip={locked ? lockTip : 'A four-bar loop: 4 pages of 16 steps.'}>
-            4-bar clip
+            4-bar loop
           </Button>
           <Button icon="plus" onClick={() => create(8)} disabled={locked} tip={locked ? lockTip : 'An eight-bar phrase: 8 pages of 16 steps.'}>
-            8-bar clip
+            8-bar loop
           </Button>
         </div>
         {others.length > 0 && (
-          <div className={styles.others} role="group" aria-label={`Edit another ${trackName} clip`}>
+          <div className={styles.others} role="group" aria-label={`Edit another ${trackName} loop`}>
             <span className={styles.othersLabel}>Or edit</span>
             {others.map((o) => {
               const [i, scene, name] = o.split('\u0001');

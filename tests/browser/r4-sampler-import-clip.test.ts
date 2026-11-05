@@ -92,7 +92,7 @@ describe('Import a loop as a new clip (shape-05)', () => {
     expect(editor()!.textContent).toContain('Vocal’s settings change how this recording sounds: Loop mode (it repeats while its note lasts, and stops with it).');
     // The toast carries the session's message, tied to the import's undo step.
     const notice = runtimeStore.getState().notice!;
-    expect(notice.text).toMatch(/^Imported “Loop 100” as a new clip on Vocal · Intro\. /);
+    expect(notice.text).toMatch(/^Imported “Loop 100” as a new loop on Vocal · Intro\. /);
     expect(notice.action).toBe('undo');
     expect(notice.entry).toBe(session.store.undoEntryId());
 
@@ -126,8 +126,8 @@ describe('Import a loop as a new clip (shape-05)', () => {
     await chooseFile(dialog()!.querySelector<HTMLInputElement>('input[type="file"]'), loopWav('Full.wav'));
     await until(() => !!dialog()!.querySelector('[role="alert"]'), 'the refusal');
     const alert = dialog()!.querySelector('[role="alert"]')!.textContent ?? '';
-    expect(alert).toContain('Vocal has no empty pad: all 4 of its rows hold clips, and an import makes a new clip.');
-    expect(alert).toContain('Delete or move a clip on Vocal, or add a scene in Play for a new row, then import again.');
+    expect(alert).toContain('Vocal has no empty pad: all 4 of its rows hold loops, and an import makes a new loop.');
+    expect(alert).toContain('Delete or move a loop on Vocal, or add a scene in Play for a new row, then import again.');
     expect(project()).toBe(before);
     await new Promise((r) => setTimeout(r, 50));
     expect(new Set(await db.listSampleIds())).toEqual(stored);
@@ -200,7 +200,7 @@ describe('Import a loop as a new clip (shape-05)', () => {
     await until(() => track('t4').instrument.kind === 'sampler', 'Chords to be a sampler', 15000);
     expect(track('t4').clips.find((c) => c?.sample)?.name).toBe('Here');
     // The dialog says what happened (no toast over its keys).
-    await until(() => !!dialog()!.textContent?.includes('Chords plays recordings now, so its other clips play this one at their notes’ pitches.'), 'the result in the dialog');
+    await until(() => !!dialog()!.textContent?.includes('Chords plays recordings now, so its other loops play this one at their notes’ pitches.'), 'the result in the dialog');
     await clickEl(button('Done', dialog()!));
     act(() => session.undo());
     expect(track('t4').instrument).toEqual(chords.instrument);

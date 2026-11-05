@@ -41,7 +41,7 @@ import { session, useProject } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { songPlayheadBar, useSongPlaying } from '../../songPlayback';
 import { MoreIcon, anchorFromContextEvent, anchorFromElement, isEchoOfKeyboardMenu, noteKeyboardMenu, useToastsIfAny, type MenuAnchor } from '../ClipMenu';
-import { rangeText } from './songModel';
+import { loopPlaces, rangeText } from './songModel';
 import { isMac } from '../hints/shortcuts';
 import { DragOverlay } from './DragOverlay';
 import { EmptySong } from './library/EmptySong';
@@ -330,9 +330,10 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
   /* Edit notes                                                       */
   /* ---------------------------------------------------------------- */
 
-  const editNotes = useCallback((id: Id) => {
-    // The editor opens under the rows (LoopEditorPane); the song stays in view. The loop is chosen and keeps focus.
-    if (!openLoopEditor(session.store.getState(), id)) return;
+  const editNotes = useCallback((id: Id, focusPane = true) => {
+    // The editor opens under the rows (LoopEditorPane); the song stays in view and the loop is chosen.
+    // From the menu, keyboard focus goes into the editor; a double-click leaves it on the loop.
+    if (!openLoopEditor(session.store.getState(), id, { focus: focusPane })) return;
     setSelection({ ids: [id], focus: id });
   }, []);
 
@@ -556,7 +557,7 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
     const t = document.elementFromPoint(e.clientX, e.clientY) ?? (e.target as Element);
     const region = t.closest<HTMLElement>('[data-region-id]');
     if (region) {
-      editNotes(region.dataset.regionId!);
+      editNotes(region.dataset.regionId!, false);
       return;
     }
     const section = t.closest<HTMLElement>('[data-section-id]');
@@ -919,7 +920,10 @@ function HoverMore({ menuFor, onToggle, buttonRef }: { menuFor: Id | null; onTog
   const region = useProject((p) => (id ? (p.arrangement.regions.find((r) => r.id === id) ?? null) : null));
   const rowIndex = useProject((p) => (region ? p.tracks.findIndex((t) => t.id === region.trackId) : -1));
   const ppb = usePxPerBar();
+  const shared = useProject((p) => (region ? loopPlaces(p, region.trackId, region.clipId) > 1 : false));
   if (!region || rowIndex < 0 || region.bars * ppb < 56) return null;
+  // Left of the "Used 2×" badge where the region shows one (Library.module.css .places: wider than 120 px).
+  const beforeBadge = shared && region.bars * ppb > 120;
   return (
     <button
       ref={buttonRef}
@@ -930,7 +934,7 @@ function HoverMore({ menuFor, onToggle, buttonRef }: { menuFor: Id | null; onTog
       aria-label={`Actions for this loop`}
       aria-haspopup="menu"
       aria-expanded={menuFor === region.id}
-      style={{ '--row': rowIndex, '--e': regionEnd(region) } as CSSProperties}
+      style={{ '--row': rowIndex, '--e': regionEnd(region), '--badge': beforeBadge ? 1 : 0 } as CSSProperties}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => onToggle(region.id, e.currentTarget)}
     >

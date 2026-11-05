@@ -7,7 +7,7 @@
  * - the keys widen to the strip: wider than 1200 px at 1920 x 1080 (a third octave), and still
  *   one row at 1366 x 768;
  * - --keyboard-h on :root is the strip's height while it is docked, 0 when folded or when the
- *   page scrolls (960 x 540 at 200 %), and toasts sit above the keys;
+ *   page scrolls (960 x 540 at 200 %), and toasts sit on the strip's upper half (r6), the keys' lower half free;
  * - folding is remembered per view: Mix starts folded, the other views keep their own choice.
  */
 import { act } from 'react';
@@ -91,14 +91,17 @@ describe('size', () => {
 });
 
 describe('--keyboard-h and toasts', () => {
-  it('is the docked strip’s height, toasts sit above the keys, and 0 when folded', async () => {
+  it('is the docked strip’s height, toasts sit on the strip’s upper half, and 0 when folded', async () => {
     await openApp(1366, 768);
     const h = Math.round(strip().getBoundingClientRect().height);
     expect(keyboardH()).toBe(`${h}px`);
     act(() => notify('A message to show'));
     await until(() => [...document.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]')].some((el) => el.textContent?.includes('A message to show')), 'the toast');
     const toast = [...document.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]')].find((el) => el.textContent?.includes('A message to show'))!;
-    expect(toast.getBoundingClientRect().bottom).toBeLessThanOrEqual(strip().getBoundingClientRect().top);
+    const s = strip().getBoundingClientRect();
+    expect(toast.getBoundingClientRect().top).toBeGreaterThanOrEqual(s.top - 16);
+    // (52 px into the strip at rest; up to 8 px more while it slides in.)
+    expect(toast.getBoundingClientRect().bottom).toBeLessThanOrEqual(s.top + 60);
     await clickEl(button('Hide the keyboard', strip()));
     expect(keyboardH()).toBe('0px');
     await clickEl(button('Show the keyboard', strip()));

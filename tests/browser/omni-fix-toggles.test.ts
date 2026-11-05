@@ -275,7 +275,7 @@ describe('engaged toggles keep their on-look', () => {
     await settle();
     const bar = document.querySelector<HTMLElement>('header[aria-label="Transport"]')!;
     const panel = document.querySelector<HTMLElement>('section[aria-labelledby="part-title"]')!;
-    const grid = document.querySelector<HTMLElement>('[aria-label^="Clip pads"]')!;
+    const grid = document.querySelector<HTMLElement>('[aria-label^="Loop pads"]')!;
 
     // Mute All, engaged: the deep coral key with its white MUTED.
     const muteAll = named(/^(Mute All|MUTED)$/, bar);
@@ -343,7 +343,7 @@ describe('engaged toggles keep their on-look', () => {
 /** Page positions of every pad, the part panel's controls and the transport's keys. */
 function boxes(): Map<string, string> {
   const out = new Map<string, string>();
-  const sel = ['[data-pad-cell]', '[aria-label^="Clip pads"] button', 'section[aria-labelledby="part-title"] button', 'section[aria-labelledby="part-title"] [role="slider"]', 'header[aria-label="Transport"] button'];
+  const sel = ['[data-pad-cell]', '[aria-label^="Loop pads"] button', 'section[aria-labelledby="part-title"] button', 'section[aria-labelledby="part-title"] [role="slider"]', 'header[aria-label="Transport"] button'];
   let i = 0;
   for (const s of sel) {
     for (const el of document.querySelectorAll<HTMLElement>(s)) {

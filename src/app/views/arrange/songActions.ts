@@ -17,6 +17,7 @@ import { clipById, isSongSlot, slotOfClip } from '../../../project/clips';
 import type { ClipBars, Id, SongMoveKind } from '../../../project/types';
 import { uiStore } from '../../../state/uiStore';
 import { session } from '../../instance';
+import { replacedLoopsText } from '../../replacedLoops';
 import { notify, runtimeStore } from '../../runtime';
 import * as songCmd from '../../../state/commands';
 import type { Edge, RegionClipboard, ShapeKind, SongEditResult } from '../../../state/commands';
@@ -188,11 +189,14 @@ export function addLibraryLoop(loopId: string, trackId: Id, bar: number, opts: {
   const notes = realizeFor(p, loop, t);
   if (!notes) return null;
   const name = freshName(t, notes.name);
+  const before = project();
   const r = songCmd.addLoopToSong(session.store, trackId, bar, { name, bars: notes.bars, notes: notes.notes }, { display: `Add ${name}` });
   if (!session.accepted(r)) return r;
   select(r.regionId ? [r.regionId] : undefined);
   const placed = r.regionId ? regions().find((x) => x.id === r.regionId) : undefined;
-  if (opts.say) said(`Added ${name} to ${t.name}${placed ? ` at bar ${placed.start + 1}` : ''}`, r);
+  // A loop it covered up on the row is named (Undo brings it back).
+  const replaced = replacedLoopsText(before, project(), trackId);
+  if (opts.say) said(`Added ${name} to ${t.name}${placed ? ` at bar ${placed.start + 1}` : ''}${replaced ? `. ${replaced.replace(/\.$/, '')}` : ''}`, r);
   return r;
 }
 

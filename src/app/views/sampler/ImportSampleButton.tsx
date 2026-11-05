@@ -39,7 +39,7 @@ export const IMPORT_LIMITS_TEXT = `WAV or MP3, up to ${Math.round(IMPORT_LIMITS.
 export const IMPORT_PRIVACY_TEXT = 'Files stay on this device: decoded and kept in this browser, never uploaded.';
 export const IMPORT_PITCH_TEXT = 'Imported recordings keep their pitch unless you change Pitch.';
 /** What an import makes. */
-export const IMPORT_CLIP_TEXT = 'Each import gets its own clip on an empty pad; other clips keep their recordings.';
+export const IMPORT_CLIP_TEXT = 'Each import gets its own loop on an empty pad; other loops keep their recordings.';
 const TAKE_LOCK_TEXT = 'A performance is recording, so the sound can’t change. Stop recording to import.';
 
 function hasFiles(e: { dataTransfer: DataTransfer | null }): boolean {
@@ -260,11 +260,11 @@ export function ImportConfirm(props: { trackId: Id; className?: string }) {
       </p>
       <div className={styles.confirmKeys}>
         {alt && (
-          <Button ref={firstRef} size="sm" variant="primary" icon="upload" onClick={() => void resolveImport(trackId, 'alternative')} tip={`Puts the recording in a new clip on ${alt.name}, a sampler part with an empty pad. ${partName} stays as it is.`}>
+          <Button ref={firstRef} size="sm" variant="primary" icon="upload" onClick={() => void resolveImport(trackId, 'alternative')} tip={`Puts the recording in a new loop on ${alt.name}, a sampler part with an empty pad. ${partName} stays as it is.`}>
             Put it on {alt.name} instead
           </Button>
         )}
-        <Button ref={alt ? undefined : firstRef} size="sm" variant={alt ? 'secondary' : 'primary'} onClick={() => void resolveImport(trackId, 'here')} tip={`Makes ${partName} a sampler with the recording in a new clip. Undo brings its sound back.`}>
+        <Button ref={alt ? undefined : firstRef} size="sm" variant={alt ? 'secondary' : 'primary'} onClick={() => void resolveImport(trackId, 'here')} tip={`Makes ${partName} a sampler with the recording in a new loop. Undo brings its sound back.`}>
           Import onto {partName} anyway
         </Button>
         <Button size="sm" variant="ghost" onClick={() => void resolveImport(trackId, 'cancel')} tip="Nothing is imported.">

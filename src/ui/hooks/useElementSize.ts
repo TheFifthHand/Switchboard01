@@ -28,7 +28,12 @@ function measure(el: Element): ElementSize {
   return { width: Math.round(r.width), height: Math.round(r.height) };
 }
 
-export function useElementSize<T extends Element>(ref: RefObject<T | null>): ElementSize {
+/**
+ * `element`: anything that changes when `ref` gets another element (a block shown again after it was
+ * hidden): the new element is measured and observed. Without it, an element mounted later than the
+ * component would keep the size of the first one (or none).
+ */
+export function useElementSize<T extends Element>(ref: RefObject<T | null>, element?: unknown): ElementSize {
   const [size, setSize] = useState<ElementSize>({ width: 0, height: 0 });
 
   useLayoutEffect(() => {
@@ -51,7 +56,7 @@ export function useElementSize<T extends Element>(ref: RefObject<T | null>): Ele
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [ref]);
+  }, [ref, element]);
 
   return size;
 }

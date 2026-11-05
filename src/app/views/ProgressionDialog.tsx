@@ -92,7 +92,7 @@ export function ProgressionDialog(props: { trackId: Id; onClose(): void }) {
   }, [project, trackId, slot, progressionId, rhythm, bars, size]);
   const heard = useMemo(() => chordsOf(preview.notes, bars, chosen.prog.degrees.length), [preview.notes, bars, chosen.prog.degrees.length]);
 
-  const target = clip ? `“${clip.name}”` : `a new clip in ${sceneName}`;
+  const target = clip ? `“${clip.name}”` : `a new loop in ${sceneName}`;
   const replaces = clip && clip.notes.length > 0 ? `Replaces the ${clip.notes.length} note${clip.notes.length === 1 ? '' : 's'} in “${clip.name}” (Undo brings them back).` : null;
 
   const write = () => {
@@ -120,7 +120,7 @@ export function ProgressionDialog(props: { trackId: Id; onClose(): void }) {
             Cancel
           </Button>
           <Button variant="primary" onClick={write} disabled={!preview.ok || locked} icon="pencil">
-            Write into {clip ? `“${clip.name}”` : 'a new clip'}
+            Write into {clip ? `“${clip.name}”` : 'a new loop'}
           </Button>
         </>
       }

@@ -65,7 +65,7 @@ export function RecordOptionsPanel() {
         <span className={styles.label} aria-hidden="true">
           Record Notes timing
         </span>
-        <SegmentedControl<QuantizeGrid> label="Record Notes quantize" size="sm" block options={QUANTIZE_OPTIONS} value={quantize} onChange={(v) => change({ recordQuantize: v })} />
+        <SegmentedControl<QuantizeGrid> label="Record Notes timing" size="sm" block options={QUANTIZE_OPTIONS} value={quantize} onChange={(v) => change({ recordQuantize: v })} />
         <p className={styles.help} aria-live="polite">
           <strong>{quantize === 'off' ? 'Off' : quantize}:</strong> {QUANTIZE_EXPLAINED[quantize]}
         </p>
@@ -81,7 +81,7 @@ export function RecordOptions() {
   const quantize = useProject((p) => p.settings.recordQuantize);
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
-  const state = `metronome ${metronome ? 'on' : 'off'}, count-in ${countIn ? 'on' : 'off'}, Record Notes quantize ${quantizeWord(quantize)}`;
+  const state = `metronome ${metronome ? 'on' : 'off'}, count-in ${countIn ? 'on' : 'off'}, Record Notes timing ${quantizeWord(quantize)}`;
   return (
     <>
       <Tooltip name="Recording options" tip="Metronome, one-bar count-in and how Record Notes lines up your timing." detail={`Now: ${state}.`}>

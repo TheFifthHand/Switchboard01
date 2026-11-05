@@ -385,7 +385,7 @@ describe('Part panel macros and Variation', () => {
     act(() => selectSlot('t3', 0));
     click(variation());
     expect(JSON.stringify(track('t3').clips)).toBe(before);
-    expect(runtimeStore.getState().notice).toMatchObject({ tone: 'warn', text: 'Slot 1 of Bass is empty. Select a clip with notes: Variation changes a pattern.' });
+    expect(runtimeStore.getState().notice).toMatchObject({ tone: 'warn', text: 'Slot 1 of Bass is empty. Select a loop with notes: Variation changes a pattern.' });
   });
 
   it('a part selected with no clip chosen yet gets its playing clip: the ring, Variation and Steps all act on it', () => {

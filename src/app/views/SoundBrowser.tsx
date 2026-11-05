@@ -700,12 +700,12 @@ function SoundBrowserDialog({ trackId: openedFor, onClose }: { trackId: Id; onCl
           )}
           {crossToDrums && (
             <Notice tone="info" className={styles.notice}>
-              The clips on {info.name} hold melody notes. A drum kit plays only drum hits, so they stay silent until you add drum steps. Undo switches back.
+              The loops on {info.name} hold melody notes. A drum kit plays only drum hits, so they stay silent until you add drum steps. Undo switches back.
             </Notice>
           )}
           {crossFromDrums && (
             <Notice tone="info" className={styles.notice}>
-              The clips on {info.name} hold drum hits, which a {melodicWord} would play as very low notes. Write new notes after switching; Undo switches back.
+              The loops on {info.name} hold drum hits, which a {melodicWord} would play as very low notes. Write new notes after switching; Undo switches back.
             </Notice>
           )}
 
@@ -794,7 +794,7 @@ function SoundBrowserDialog({ trackId: openedFor, onClose }: { trackId: Id; onCl
                   size="sm"
                   onClick={() => fileRef.current?.click()}
                   disabled={importBusy || takeLocked}
-                  tip={`${IMPORT_LIMITS.description} It goes into a new clip on ${info.name} (an empty pad), at its recorded pitch.`}
+                  tip={`${IMPORT_LIMITS.description} It goes into a new loop on ${info.name} (an empty pad), at its recorded pitch.`}
                 >
                   {importing ? 'Importing…' : 'Import WAV or MP3…'}
                 </Button>

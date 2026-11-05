@@ -105,7 +105,7 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
     onClose();
     if (!session.accepted(r)) return;
     const gone = r.regions ?? 0;
-    notify(`Deleted the scene ${info.name} and its clips${gone ? `, and the song’s ${loopsText(gone)} that played them` : ''}.`, 'info', 'undo');
+    notify(`Deleted the scene ${info.name} and its loops${gone ? `, and the song’s ${loopsText(gone)} that played them` : ''}.`, 'info', 'undo');
     // Focus goes to the scene that took its place (the one above, when it was the last).
     focusScene(Math.min(row, session.store.getState().scenes.length - 1));
   };
@@ -117,7 +117,7 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
       <Popover key="confirm" anchor={anchor} label={`Delete scene ${info.name}?`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
         <MenuHeader eyebrow={eyebrow} title={`Delete ${info.name}?`}>
           <p className={styles.warn}>
-            {info.name} is in the song: {n === 1 ? '1 loop plays' : `${n} loops play`} its clips. Deleting it takes {n === 1 ? 'that loop' : 'them'} out of the song. Undo brings it all back.
+            {info.name} is in the song: {n === 1 ? '1 loop plays' : `${n} loops play`} its loops. Deleting it takes {n === 1 ? 'that loop' : 'them'} out of the song. Undo brings it all back.
           </p>
         </MenuHeader>
         <MenuItem icon="trash" tone="danger" onSelect={remove}>
@@ -198,13 +198,13 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
         icon="duplicate"
         disabled={full || locked}
         disabledReason={why(FULL_REASON)}
-        hint="copies its clips"
+        hint="copies its loops"
         onSelect={() => {
           const r = duplicateScene(session.store, row);
           onClose();
           if (!session.accepted(r)) return;
           const at = r.row ?? row + 1;
-          notify(`Duplicated ${info.name} as ${session.store.getState().scenes[at]?.name ?? 'a copy'}, with copies of its clips.`, 'info', 'undo');
+          notify(`Duplicated ${info.name} as ${session.store.getState().scenes[at]?.name ?? 'a copy'}, with copies of its loops.`, 'info', 'undo');
           focusScene(at);
         }}
       >
@@ -222,7 +222,7 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
           const p = session.store.getState();
           const at = r.row ?? p.scenes.length - 1;
           const parts = p.tracks.filter((t) => t.clips[at]).length;
-          notify(`New scene ${p.scenes[at]?.name ?? ''} from what's playing: copies of ${parts === 1 ? '1 clip' : `${parts} clips`}.`, 'info', 'undo');
+          notify(`New scene ${p.scenes[at]?.name ?? ''} from what's playing: copies of ${parts === 1 ? '1 loop' : `${parts} loops`}.`, 'info', 'undo');
           focusScene(at);
         }}
       >
@@ -233,7 +233,7 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
         icon="plus"
         hint={info.parts === 0 ? undefined : 'at the end'}
         disabled={locked || info.parts === 0}
-        disabledReason={locked ? LOCKED_REASON : 'No clips in this row'}
+        disabledReason={locked ? LOCKED_REASON : 'No loops in this row'}
         onSelect={() => {
           const at = songBars(session.store.getState());
           if (session.accepted(addSceneToSong(session.store, row, at))) notify(`Added ${info.name} to the end of the song, from bar ${at + 1}. Shape it in the Song view.`, 'info', 'undo');
@@ -245,7 +245,7 @@ export function SceneMenu({ row, anchor, returnFocus, ignore, startInRename, onC
       <MenuItem
         icon="download"
         disabled={info.parts === 0}
-        disabledReason="No clips in this row"
+        disabledReason="No loops in this row"
         onSelect={() => {
           onClose();
           window.dispatchEvent(new CustomEvent('sb:open-export', { detail: { source: `scene:${row}` } }));

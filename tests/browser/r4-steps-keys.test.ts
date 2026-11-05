@@ -54,7 +54,7 @@ describe('keys move the selection (PLAY-08)', () => {
     expect(byId(first.id).tick).toBe(0);
     await press('{ArrowLeft}');
     expect(byId(first.id).tick).toBe(0);
-    expect(notice()?.text).toMatch(/already at the start of the clip/);
+    expect(notice()?.text).toMatch(/already at the start of the loop/);
     expect(bounce().length).toBe(count);
   });
 

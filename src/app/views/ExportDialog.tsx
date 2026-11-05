@@ -82,10 +82,13 @@ export function nameLosesCharacters(s: string): boolean {
   return /[\\/:*?"<>|]/.test(s);
 }
 
-/** "about 40 s left" from how far the render is and how long it has taken (null while too early to say). */
-export function timeLeftText(fraction: number, elapsedMs: number): string | null {
+/**
+ * "about 40 s left" from how far the render is and how long it has taken (null while too early to say).
+ * `passesAfter`: renders still to come after this one, each about as long (the loudness pass of a loud export).
+ */
+export function timeLeftText(fraction: number, elapsedMs: number, passesAfter = 0): string | null {
   if (!(fraction > 0.02) || elapsedMs < 1000 || fraction >= 1) return null;
-  const left = (elapsedMs * (1 - fraction)) / fraction / 1000;
+  const left = ((elapsedMs / fraction) * (1 - fraction + passesAfter)) / 1000;
   if (left < 8) return 'a few seconds left';
   if (left < 60) return `about ${Math.max(10, Math.round(left / 5) * 5)} s left`;
   const min = Math.round(left / 60);
@@ -352,8 +355,8 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
     if (r) raise(r);
   };
 
-  /** Progress of one phase, with the time left once it can be told. */
-  const tracker = (phase: string) => {
+  /** Progress of one phase, with the time left once it can be told (`passesAfter`: renders still to come). */
+  const tracker = (phase: string, passesAfter = 0) => {
     const started = performance.now();
     let shownAt = 0;
     let left: string | null = null;
@@ -363,21 +366,21 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
       // The estimate settles if it is not redrawn on every chunk.
       if (now - shownAt >= 500) {
         shownAt = now;
-        left = timeLeftText(f, now - started);
+        left = timeLeftText(f, now - started, passesAfter);
       }
       setBusy({ phase, fraction: f, left });
     };
   };
 
   /** Render the chosen source at `sampleRate` (`project`: a part on its own). */
-  const renderMix = (signal: AbortSignal, sampleRate: 44100 | 48000, phase: string, opts: { project?: Project; mastering?: boolean } = {}) =>
+  const renderMix = (signal: AbortSignal, sampleRate: 44100 | 48000, phase: string, opts: { project?: Project; mastering?: boolean; passesAfter?: number } = {}) =>
     session.renderAudio({
       source: renderSourceOf(source),
       sampleRate,
       tailSeconds: tail,
       mastering: opts.mastering ?? output === 'mix',
       signal,
-      onProgress: tracker(phase),
+      onProgress: tracker(phase, opts.passesAfter),
       project: opts.project,
     });
 
@@ -387,7 +390,8 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
    * Mix does) and render again, until within LOUD_TOLERANCE_DB or after LOUD_PASSES.
    */
   const renderLoud = async (signal: AbortSignal, sampleRate: 44100 | 48000, loudOn: boolean): Promise<{ buffer: AudioBuffer; loud?: string }> => {
-    let buffer = await renderMix(signal, sampleRate, loudOn ? 'Checking loudness' : 'Exporting');
+    // A loud export usually renders twice (measure, then at the new drive): its time left counts both.
+    let buffer = await renderMix(signal, sampleRate, loudOn ? 'Checking loudness' : 'Exporting', { passesAfter: loudOn ? 1 : 0 });
     if (!loudOn) return { buffer };
     const read = (b: AudioBuffer) => measureLoudness(b.getChannelData(0), b.numberOfChannels > 1 ? b.getChannelData(1) : null, b.sampleRate, { truePeak: false }).integrated;
     let reading = read(buffer);

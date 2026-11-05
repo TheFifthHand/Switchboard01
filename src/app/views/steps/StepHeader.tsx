@@ -91,7 +91,7 @@ function SlotPicker({ trackId, slot }: { trackId: Id; slot: number }) {
   return (
     <div className={styles.field}>
       <span className={styles.fieldLabel} id={`steps-slot-label-${trackId}`}>
-        Clip
+        Loop
       </span>
       <div className={styles.slots} role="radiogroup" aria-labelledby={`steps-slot-label-${trackId}`} onKeyDown={onKey}>
         {slots.map((s, i) => {
@@ -188,7 +188,7 @@ function ClipName({ trackId, slot, name, locked }: { trackId: Id; slot: number; 
         spellCheck={false}
         readOnly={locked}
         title={locked ? 'Locked while a performance records' : undefined}
-        aria-label="Clip name"
+        aria-label="Loop name"
         onFocus={(e) => {
           editing.current = true;
           e.currentTarget.select();
@@ -221,7 +221,7 @@ function LengthPicker({ trackId, slot, bars, locked }: { trackId: Id; slot: numb
     const before = clipIn(session.store.getState(), trackId, slot)?.notes.length ?? 0;
     if (!session.accepted(cmd.setClipBars(session.store, trackId, slot, b))) return;
     const after = clipIn(session.store.getState(), trackId, slot)?.notes.length ?? 0;
-    if (after < before) notify(`Clip shortened to ${barsLabel(b)}: ${before - after} note${before - after === 1 ? '' : 's'} past the end removed.`, 'info', 'undo');
+    if (after < before) notify(`Loop shortened to ${barsLabel(b)}: ${before - after} note${before - after === 1 ? '' : 's'} past the end removed.`, 'info', 'undo');
   };
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (locked) return;
@@ -359,7 +359,7 @@ export function BarStrip({ trackId, slot, bars, page, kind }: { trackId: Id; slo
         pressed={follow}
         tone="amber"
         onClick={() => setStepsFollow(!follow)}
-        tip={follow ? 'Following: the shown bar turns with the playhead while this clip plays.' : 'Turn the shown bar with the playhead while this clip plays.'}
+        tip={follow ? 'Following: the shown bar turns with the playhead while this loop plays.' : 'Turn the shown bar with the playhead while this loop plays.'}
         detail="It waits while you drag or draw."
       >
         Follow
@@ -450,7 +450,7 @@ function TransposeStepper({ trackId, slot, clipName, unit, text, keyName }: { tr
   const tip = (dir: string) =>
     unit === 'step' ? `Move every note of ${clipName} ${dir} one step of ${keyName}, so it stays in key. Shift-click: an octave.` : `Move every note of ${clipName} ${dir} a semitone. Shift-click: an octave.`;
   return (
-    <div className={styles.transpose} role="group" aria-label={unit === 'step' ? 'Transpose clip in key' : 'Transpose clip by semitones'} data-unit={unit}>
+    <div className={styles.transpose} role="group" aria-label={unit === 'step' ? 'Transpose loop in key' : 'Transpose loop by semitones'} data-unit={unit}>
       <IconButton icon="minus" size="sm" variant="ghost" label={`Transpose down ${words}`} tip={tip('down')} onClick={(e) => transposeClip(trackId, slot, unit, -1, e.shiftKey)} />
       <span className={styles.transposeText} aria-hidden="true">
         {text}
@@ -577,7 +577,7 @@ function Tools({ trackId, slot, page, clip, kind, trackName, fold }: { trackId: 
     if (!session.accepted(cmd.duplicatePage(session.store, trackId, slot, page))) return;
     setStepPage(trackId, page + 1);
     handOffFocus(toNextRef.current);
-    notify(`Bar ${bar} copied to bar ${bar + 1}${lengthened ? ` — the clip is now ${barsLabel(page + 2)}` : ''}.`, 'info', 'undo');
+    notify(`Bar ${bar} copied to bar ${bar + 1}${lengthened ? ` — the loop is now ${barsLabel(page + 2)}` : ''}.`, 'info', 'undo');
   };
   const clear = () => {
     if (!session.accepted(cmd.clearPage(session.store, trackId, slot, page))) return;
@@ -628,7 +628,7 @@ function Tools({ trackId, slot, page, clip, kind, trackName, fold }: { trackId: 
             icon="duplicate"
             onClick={toNext}
             disabled={lastPage}
-            tip={lastPage ? `Clips are at most ${MAX_CLIP_BARS} bars.` : `Copy bar ${bar} onto bar ${bar + 1}${page + 1 >= clip.bars ? ' (the clip gets longer)' : ''}.`}
+            tip={lastPage ? `Loops are at most ${MAX_CLIP_BARS} bars.` : `Copy bar ${bar} onto bar ${bar + 1}${page + 1 >= clip.bars ? ' (the loop gets longer)' : ''}.`}
           >
             {lastPage ? 'To next bar' : `To bar ${bar + 1}`}
           </Button>
@@ -640,16 +640,16 @@ function Tools({ trackId, slot, page, clip, kind, trackName, fold }: { trackId: 
           className={styles.more}
           size="sm"
           variant="ghost"
-          aria-label={fold >= 2 ? `Bar ${bar} and clip tools` : `Bar ${bar} tools`}
+          aria-label={fold >= 2 ? `Bar ${bar} and loop tools` : `Bar ${bar} tools`}
           aria-haspopup="menu"
           aria-expanded={menu?.kind === 'more'}
           onClick={open('more')}
-          tip={fold >= 2 ? `Copy, paste or clear bar ${bar}; double the clip; tighten or loosen its timing.` : `Copy, paste or clear bar ${bar}, or copy it to the next bar.`}
+          tip={fold >= 2 ? `Copy, paste or clear bar ${bar}; double the loop; tighten or loosen its timing.` : `Copy, paste or clear bar ${bar}, or copy it to the next bar.`}
         >
           <MoreIcon />
         </Button>
       )}
-      <div className={styles.group} role="group" aria-label="Clip tools">
+      <div className={styles.group} role="group" aria-label="Loop tools">
         {fold < 2 && (
           <Button
             ref={doubleRef}
@@ -658,7 +658,7 @@ function Tools({ trackId, slot, page, clip, kind, trackName, fold }: { trackId: 
             variant="ghost"
             onClick={double}
             disabled={longest}
-            tip={longest ? `The clip is already ${MAX_CLIP_BARS} bars, the longest a clip can be.` : `Repeat the clip to make it ${barsLabel(Math.min(MAX_CLIP_BARS, clip.bars * 2))} long.`}
+            tip={longest ? `The loop is already ${MAX_CLIP_BARS} bars, the longest a loop can be.` : `Repeat the loop to make it ${barsLabel(Math.min(MAX_CLIP_BARS, clip.bars * 2))} long.`}
           >
             <span className={styles.times} aria-hidden="true">
               ×2
@@ -685,7 +685,7 @@ function Tools({ trackId, slot, page, clip, kind, trackName, fold }: { trackId: 
         </Popover>
       )}
       {menu?.kind === 'more' && (
-        <Popover anchor={menu.anchor} label={fold >= 2 ? `Bar ${bar} and clip tools` : `Bar ${bar} tools`} onClose={() => setMenu(null)} returnFocus={menu.el}>
+        <Popover anchor={menu.anchor} label={fold >= 2 ? `Bar ${bar} and loop tools` : `Bar ${bar} tools`} onClose={() => setMenu(null)} returnFocus={menu.el}>
           <MenuHeader eyebrow={clip.name} title={`Bar ${bar}`} />
           <MenuItem icon="copy" onSelect={after(copy)}>
             Copy bar {bar}
@@ -693,7 +693,7 @@ function Tools({ trackId, slot, page, clip, kind, trackName, fold }: { trackId: 
           <MenuItem icon="paste" disabled={!canPaste} disabledReason={clipboard ? 'Copied from another kind of part' : 'Copy a bar first'} onSelect={after(paste)}>
             Paste onto bar {bar}
           </MenuItem>
-          <MenuItem icon="duplicate" disabled={lastPage} disabledReason={`Clips are at most ${MAX_CLIP_BARS} bars`} onSelect={after(toNext)}>
+          <MenuItem icon="duplicate" disabled={lastPage} disabledReason={`Loops are at most ${MAX_CLIP_BARS} bars`} onSelect={after(toNext)}>
             {lastPage ? 'Copy to the next bar' : `Copy bar ${bar} to bar ${bar + 1}`}
           </MenuItem>
           <MenuItem icon="trash" disabled={!hasNotes} disabledReason="Already empty" onSelect={after(clear)}>
@@ -703,7 +703,7 @@ function Tools({ trackId, slot, page, clip, kind, trackName, fold }: { trackId: 
             <>
               <MenuSeparator />
               <MenuItem disabled={longest} disabledReason={`Already ${MAX_CLIP_BARS} bars`} onSelect={after(double)}>
-                Double the clip (×2)
+                Double the loop (×2)
               </MenuItem>
               <MenuItem icon="clock" disabled={!clipHasNotes} disabledReason="No notes yet" onSelect={() => then('tighten')}>
                 Tighten timing…

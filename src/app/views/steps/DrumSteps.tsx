@@ -4,8 +4,9 @@
  * toggles that sound at that step and selects the sound; pressing a cell and
  * dragging along the row paints (or erases, when the first cell was on)
  * every step it crosses, as one undo step. It is one ARIA grid with one Tab
- * stop: arrow keys move (up/down also choose the sound), Space or Enter
- * toggles the focused step, and on a sound's name plays it. The large
+ * stop: arrow keys move (up/down also choose the sound), Enter toggles the
+ * focused step, and on a sound's name plays it. Space stays Play / Pause
+ * here (data-space-plays), as everywhere a pattern is edited. The large
  * numbered pads below edit the selected sound, with its velocity; they paint
  * the same way. A sound's menu (right-click its name, Shift+F10, or the ⋯ by
  * the selected sound) clears it, fills it on every beat, 8th or 16th, or
@@ -233,11 +234,11 @@ function SoundMenu(props: { trackId: Id; slot: number; voice: number; name: stri
 
 /**
  * One kit sound: its name (row header) and this bar's 16 steps (cells). The focusable parts
- * are buttons inside the cells (a toggle per step, aria-pressed), so a key press on them reads
- * as a press on a control everywhere in the app (Space included).
+ * are buttons inside the cells (a toggle per step, aria-pressed), so Enter on them reads as a
+ * press on a control everywhere in the app. Space is the transport's (the grid has data-space-plays).
  */
-const VoiceRow = memo(function VoiceRow(props: { voice: number; index: number; name: string; pattern: string; selected: boolean; page: number; span: number; focusCol: number | null }) {
-  const { voice, index, name, pattern, selected, page, span, focusCol } = props;
+const VoiceRow = memo(function VoiceRow(props: { voice: number; index: number; name: string; pattern: string; selected: boolean; page: number; span: number; focusCol: number | null; numbered: boolean }) {
+  const { voice, index, name, pattern, selected, page, span, focusCol, numbered } = props;
   const hits = pattern.replace(/0/g, '').length;
   return (
     <div
@@ -259,9 +260,12 @@ const VoiceRow = memo(function VoiceRow(props: { voice: number; index: number; n
           aria-label={`${name}, ${hitWords(hits)}${selected ? ', editing' : ''}`}
           aria-keyshortcuts="Shift+F10"
         >
-          <span className={`${styles.voiceNum} mono`} aria-hidden="true">
-            {voice + 1}
-          </span>
+          {/* The kit's pad number (Advanced); Simple shows a subset of the kit, where gaps in the numbers would only puzzle. */}
+          {numbered && (
+            <span className={`${styles.voiceNum} mono`} aria-hidden="true">
+              {voice + 1}
+            </span>
+          )}
           <span className={styles.voiceText} aria-hidden="true">
             {name}
           </span>
@@ -298,7 +302,7 @@ const StepPad = memo(function StepPad(props: { step: number; span: number; veloc
   const { step, span, velocity, voiceName, tabbable, onToggle, onFocusStep } = props;
   const inBar = step % STEPS_PER_BAR;
   const on = velocity >= 0;
-  // Pointer presses paint (handled by the lane); clicks from Space/Enter (detail 0) toggle here.
+  // Pointer presses paint (handled by the lane); clicks from Enter (detail 0) toggle here.
   const onClick = (e: MouseEvent<HTMLButtonElement>) => {
     if (e.detail === 0) onToggle(step);
   };
@@ -612,7 +616,7 @@ export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = t
       case 'End':
         col = lastCol;
         break;
-      // Space and Enter press the focused button: its click (detail 0) toggles the step or plays the sound.
+      // Enter presses the focused button: its click (detail 0) toggles the step or plays the sound. Space is Play / Pause.
       default:
         return;
     }
@@ -630,7 +634,7 @@ export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = t
   const soundsHead = advanced ? (
     <span className={styles.colHead}>Sounds</span>
   ) : (
-    <Tooltip tip={showAll ? 'Show only the eight main sounds (and any sound this clip uses).' : `Show all ${DRUM_VOICES} sounds of the kit.`}>
+    <Tooltip tip={showAll ? 'Show only the eight main sounds (and any sound this loop uses).' : `Show all ${DRUM_VOICES} sounds of the kit.`}>
       <button type="button" className={styles.allSounds} aria-pressed={showAll} onClick={() => setAllSounds(!showAll)}>
         {showAll ? 'Main sounds' : `Show all ${DRUM_VOICES}`}
       </button>
@@ -645,7 +649,8 @@ export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = t
         className={styles.overview}
         style={{ ...gridStyle(spec), '--rows': String(visible.length) } as CSSProperties}
         role="grid"
-        aria-label={`Kit sounds, ${where}: click a step to add or remove a hit, drag along a row to paint. Arrow keys move, Space toggles, Shift+F10 opens a sound's actions.${hidden ? ` ${hidden} more sounds are hidden: Show all ${DRUM_VOICES} shows them.` : ''}`}
+        data-space-plays=""
+        aria-label={`Kit sounds, ${where}: click a step to add or remove a hit, drag along a row to paint. Arrow keys move, Enter toggles, Shift+F10 opens a sound's actions.${hidden ? ` ${hidden} more sounds are hidden: Show all ${DRUM_VOICES} shows them.` : ''}`}
         aria-rowcount={visible.length}
         aria-colcount={lastCol + 1}
         onPointerDown={onGridPointerDown}
@@ -661,7 +666,7 @@ export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = t
         onKeyDown={onGridKey}
       >
         {visible.map((v, i) => (
-          <VoiceRow key={v} voice={v} index={i} name={nameOf(v)} pattern={patterns[v]} selected={v === voice} page={page} span={span} focusCol={tabCell.voice === v ? tabCell.col : null} />
+          <VoiceRow key={v} voice={v} index={i} name={nameOf(v)} pattern={patterns[v]} selected={v === voice} page={page} span={span} focusCol={tabCell.voice === v ? tabCell.col : null} numbered={advanced} />
         ))}
       </div>
       {pads && (
@@ -670,7 +675,8 @@ export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = t
           className={`${grid.cols} ${styles.lane}`}
           style={gridStyle(spec)}
           role="group"
-          aria-label={`${voiceName} steps, ${where}. Arrow keys move, Space toggles, Up and Down change velocity.`}
+          data-space-plays=""
+          aria-label={`${voiceName} steps, ${where}. Arrow keys move, Enter toggles, Up and Down change velocity.`}
           onKeyDown={onLaneKey}
           onPointerDown={onLanePointerDown}
           onPointerMove={(e) => painter.move(e.pointerId, e.clientX)}

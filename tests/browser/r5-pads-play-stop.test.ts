@@ -139,7 +139,7 @@ describe('Clip pads say what a click does', () => {
     expect(rr.width).toBeGreaterThan(0);
     expect(rr.bottom).toBeLessThanOrEqual(waiting.getBoundingClientRect().bottom);
     expect(rr.right).toBeLessThanOrEqual(action(waiting)!.getBoundingClientRect().left);
-    expect(described(waiting)).toContain('Tap to play this clip from the next bar');
+    expect(described(waiting)).toContain('Tap to play this loop from the next bar');
 
     // An empty pad has no such key (it offers Add clip).
     if (emptySlot >= 0) {

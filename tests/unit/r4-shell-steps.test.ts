@@ -75,26 +75,38 @@ describe('the song steps', () => {
       r.bars = 1;
     });
     expect(seen).toEqual([]);
-    // Added: a second loop later on.
+    // Added: a second loop later on. The song had loops already, so the tour left "add a loop" out:
+    // it is not counted (counting it would make the tour's total grow, 1/5 to 2/6).
     store.apply('test:Add', (d) => {
       d.arrangement.regions.push({ id: 'r2', trackId: D, clipId, start: 16, bars, offset: 0 });
     });
-    expect(seen).toEqual(['song-add']);
+    expect(seen).toEqual([]);
     // A trimmed start is not a stretch.
     store.apply('test:Trim', (d) => {
       const r = d.arrangement.regions.find((x) => x.id === 'r2')!;
       r.start += 1;
       r.bars -= 1;
     });
-    expect(seen).toEqual(['song-add']);
+    expect(seen).toEqual([]);
     store.apply('test:Stretch', (d) => {
       d.arrangement.regions.find((x) => x.id === 'r2')!.bars += 4;
     });
-    expect(seen).toEqual(['song-add', 'song-stretch']);
+    expect(seen).toEqual(['song-stretch']);
     store.apply('test:Move', (d) => {
       d.arrangement.regions.find((x) => x.id === 'r2')!.start += 8;
     });
-    expect(seen).toEqual(['song-add', 'song-stretch', 'song-move']);
+    expect(seen).toEqual(['song-stretch', 'song-move']);
+  });
+
+  it('a loop added to an empty song counts (the tour has that step then)', () => {
+    const { store, seen } = setup();
+    store.apply('test:Empty', (d) => {
+      d.arrangement.regions = [];
+      d.arrangement.sections = [];
+    });
+    seen.length = 0;
+    withLoop(store);
+    expect(seen).toEqual(['song-add']);
   });
 
   it('the song cursor moved (a click on the ruler), not Play or Stop setting it', () => {

@@ -63,7 +63,7 @@ describe('Import a recording as a clip (shape-05)', () => {
     // 2 bars at 120 BPM (4 s).
     const r = await s.importSample(wavFile('Loop 1.wav', 4), 't8');
     expect(r.ok, r.message).toBe(true);
-    expect(r.message).toBe(`Imported “Loop 1” as a new clip on Sampler · ${before.scenes[1].name}. It plays at its recorded pitch.`);
+    expect(r.message).toBe(`Imported “Loop 1” as a new loop on Sampler · ${before.scenes[1].name}. It plays at its recorded pitch.`);
     const p = s.store.getState();
     const meta = p.samples.find((x) => x.name === 'Loop 1')!;
     expect(meta).toBeTruthy();
@@ -111,7 +111,7 @@ describe('Import a recording as a clip (shape-05)', () => {
     selectSlot('t3', 1);
     const r = await s.importSample(wavFile('Loop 5.wav', 2), 't3');
     expect(r.ok, r.message).toBe(true);
-    expect(r.message).toMatch(/^Imported “Loop 5” as a new clip on Bass · .*\. It plays at its recorded pitch\. Bass plays recordings now, so its other clips play this one at their notes’ pitches\.$/);
+    expect(r.message).toMatch(/^Imported “Loop 5” as a new loop on Bass · .*\. It plays at its recorded pitch\. Bass plays recordings now, so its other loops play this one at their notes’ pitches\.$/);
     expect(s.store.getState().tracks.find((t) => t.id === 't3')!.instrument.kind).toBe('sampler');
   });
 

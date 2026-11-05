@@ -20,6 +20,8 @@ import { SampleBank } from '../audio/instruments/sampleBank';
 import { BLANK_STARTER, JUMP_IN_SCENE_ROW, JUMP_IN_STARTER_ID, STARTERS, getStarter } from '../content/starters';
 import { snapToScale } from '../music/scales';
 import { songBars } from '../project/arrangement';
+import { projectView, rememberProjectView } from './projectViews';
+import { replacedLoopsText } from './replacedLoops';
 import { clipAtSlot, isSongSlot, slotOfClip, songSlot, trackClips } from '../project/clips';
 import { moduleId, uid } from '../project/factory';
 import { BASS_PARAMS, DRUM_KIT_PARAMS, DRUM_VOICE_PARAM_SPECS, INSTRUMENT_PARAMS, POLY_PARAMS, SAMPLER_PARAMS, clampParam, readParam, specById } from '../project/params';
@@ -129,7 +131,7 @@ function isRecordablePath(path: readonly (string | number)[]): boolean {
 export const PAUSE_UNAVAILABLE_MESSAGE = 'Pause is not available while a performance records: a take cannot hold a pause. Stop ends the take and keeps it.';
 
 export const TAKE_LOCK_MESSAGE =
-  'Recording a performance: cables, clips, sounds, the song and saved takes are locked until you stop. Knob, macro, mute and tempo changes are recorded, and so is undoing them. Mastering is locked too: it applies to the whole song, not the take.';
+  'Recording a performance: cables, loops, sounds, the song and saved takes are locked until you stop. Knob, macro, mute and tempo changes are recorded, and so is undoing them. Mastering is locked too: it applies to the whole song, not the take.';
 
 interface HeldNote {
   trackId: Id;
@@ -217,6 +219,9 @@ const EXPORT_LOOKAHEAD_S = 2;
  * or a paused audio device stops it. In a visible tab a busy moment never
  * stops playback (it skips ahead in time, see SKIP_NOTICE).
  */
+/** The name a project started with Make a beat from scratch gets (the library adds " 2", " 3"… to keep names apart). */
+export const BEAT_PROJECT_NAME = 'My beat';
+
 export const STALL_MESSAGE = 'Playback stopped because the tab was in the background or the audio device paused. Press Play to continue.';
 /** A quiet notice, at most once a minute, when a busy moment made playback skip ahead to stay in time (no banner). */
 export const SKIP_NOTICE = 'Omni Song was busy for a moment, so a few notes were skipped to stay in time.';
@@ -467,8 +472,11 @@ export class Session {
    */
   async beatFromScratch(): Promise<{ trackId: Id; slot: number } | null> {
     const audio = this.startAudio();
+    // Named for what the person set out to do ("My beat", "My beat 2"… as the library keeps names apart), never "Blank".
+    const fresh = BLANK_STARTER.build();
+    fresh.name = BEAT_PROJECT_NAME;
     try {
-      await this.createFromStarter(BLANK_STARTER.build());
+      await this.createFromStarter(fresh);
     } catch (e) {
       notify(e instanceof Error ? e.message : String(e), 'error');
       return null;
@@ -529,8 +537,12 @@ export class Session {
     this.brace();
     await this.autosaver?.flush();
     const opened = await library.openProject(id);
+    // The project left behind keeps its view; the one opened lands in the view it was last in (projectViews.ts).
+    rememberProjectView(this.store.getState().id, uiStore.getState().view);
     // A rescue copy that could not be stored opens as unsaved: autosave keeps trying to store it.
     await this.loadProject(opened.project, { unsaved: !!opened.unsaved });
+    const last = projectView(opened.project.id);
+    if (last) setView(last);
     for (const w of opened.warnings) notify(w, 'warn');
   }
 
@@ -1576,7 +1588,7 @@ export class Session {
    */
   moveClip(from: { trackId: Id; slot: number }, to: { trackId: Id; slot: number }, copy = false): boolean {
     if (this.noteRec) {
-      notify(`Stop recording notes first, then ${copy ? 'copy' : 'move'} clips.`, 'warn');
+      notify(`Stop recording notes first, then ${copy ? 'copy' : 'move'} loops.`, 'warn');
       return false;
     }
     const p = this.store.getState();
@@ -1615,7 +1627,7 @@ export class Session {
     // Each part's chosen clip stays the same clip (followScenes, also on undo and redo).
     const r = cmd.moveScene(this.store, fromRow, toRow);
     if (!this.accepted(r)) return false;
-    notify(`Moved the scene “${scene.name}” to row ${toRow + 1}; its clips moved with it.`, 'info', 'undo', this.store.undoEntryId());
+    notify(`Moved the scene “${scene.name}” to row ${toRow + 1}; its loops moved with it.`, 'info', 'undo', this.store.undoEntryId());
     return true;
   }
 
@@ -2101,7 +2113,7 @@ export class Session {
     const done = { recordTarget: null, recordStartsAtTick: null, recordTargetAudible: true } as const;
     if (runtimeStore.getState().recording === 'notes') patchRuntime({ recording: 'off', ...done });
     else patchRuntime(done);
-    if (added > 0) notify(`Recorded ${added} note${added === 1 ? '' : 's'} into the clip. Undo removes the whole pass, with any knob moves made during it.`, 'info', 'undo', this.store.undoEntryId());
+    if (added > 0) notify(`Recorded ${added} note${added === 1 ? '' : 's'} into the loop. Undo removes the whole pass, with any knob moves made during it.`, 'info', 'undo', this.store.undoEntryId());
   }
 
   private commitRecordedNote(n: HeldNote): void {
@@ -2303,6 +2315,7 @@ export class Session {
       maxBars: into.maxBars,
     });
     let r: cmd.CommandResult;
+    const before = this.store.getState();
     try {
       r = cmd.recordTakeIntoSong(this.store, take);
     } catch (e) {
@@ -2312,7 +2325,9 @@ export class Session {
     if (!this.accepted(r)) return;
     const name = this.partName(rec.trackId);
     const count = take.notes.length;
-    notify(`Recorded ${count} note${count === 1 ? '' : 's'} on ${name} in the song, from bar ${into.startBar + 1} (${take.bars} bar${take.bars === 1 ? '' : 's'}).`, 'info', 'undo', this.store.undoEntryId());
+    // What the take covered up on the row is said too (Undo brings it back).
+    const replaced = replacedLoopsText(before, this.store.getState(), rec.trackId);
+    notify(`Recorded ${count} note${count === 1 ? '' : 's'} on ${name} in the song, from bar ${into.startBar + 1} (${take.bars} bar${take.bars === 1 ? '' : 's'}).${replaced ? ` ${replaced}` : ''}`, 'info', 'undo', this.store.undoEntryId());
   }
 
   /* ------------------------------------------------------------------ */
@@ -2548,10 +2563,10 @@ export class Session {
     const after = this.store.getState();
     const part = after.tracks.find((t) => t.id === trackId);
     const where = `${part?.name ?? 'the part'} · ${after.scenes[r.slot]?.name ?? `row ${r.slot + 1}`}`;
-    let message = `Imported “${res.meta.name}” as a new clip on ${where}. ${importPitchWords(part, r.partRecording === true)}`;
+    let message = `Imported “${res.meta.name}” as a new loop on ${where}. ${importPitchWords(part, r.partRecording === true)}`;
     // A synth or drum part became a sampler: its other clips now play the recording at their notes' pitches.
     if (track && track.instrument.kind !== 'sampler' && track.clips.some((c, i) => i !== r.slot && !!c && c.notes.length > 0)) {
-      message += ` ${part?.name ?? 'The part'} plays recordings now, so its other clips play this one at their notes’ pitches.`;
+      message += ` ${part?.name ?? 'The part'} plays recordings now, so its other loops play this one at their notes’ pitches.`;
     }
     return { ok: true, message };
   }

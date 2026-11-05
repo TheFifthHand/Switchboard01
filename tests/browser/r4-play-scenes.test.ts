@@ -43,7 +43,7 @@ describe('the scene menu (PLAY-10)', () => {
     expect(sceneNames()[2]).toBe('Groove');
     expect(project().tracks.every((t) => t.clips.length === 5 && t.clips[1] === null)).toBe(true);
     expect(sceneButtons()).toHaveLength(5);
-    expect(grid().getAttribute('aria-label')).toBe('Clip pads: eight parts by five scenes');
+    expect(grid().getAttribute('aria-label')).toBe('Loop pads: eight parts by five scenes');
     act(() => session.undo());
     expect(sceneNames()).toEqual(['Intro', 'Groove', 'Lift', 'Break']);
 
@@ -87,7 +87,7 @@ describe('the scene menu (PLAY-10)', () => {
     await sceneMenu('Groove');
     await clickEl(item('Delete scene'));
     expect(sceneNames()).toHaveLength(4);
-    expect(menu()?.textContent).toContain(`${using} loops play its clips`);
+    expect(menu()?.textContent).toContain(`${using} loops play its loops`);
     await clickEl(item(`Delete scene and ${using} loops`));
     expect(sceneNames()).toEqual(['Intro', 'Lift', 'Break']);
     expect(project().arrangement.regions).toHaveLength(loops - using);
@@ -183,10 +183,10 @@ describe('the pad menu uses every row and the longer lengths', () => {
     // PLAY-21: the next step is to fill it. Focus goes to the pad actions' Edit steps, and the toast offers Edit steps too.
     await until(() => (document.activeElement?.textContent ?? '') === 'Edit steps', 'focus on Edit steps');
     expect(document.activeElement!.closest('[data-pad-actions]')).not.toBeNull();
-    const toast = [...document.querySelectorAll<HTMLElement>('[role="status"]')].find((t) => t.textContent?.includes('New 8-bar clip'))!;
+    const toast = [...document.querySelectorAll<HTMLElement>('[role="status"]')].find((t) => t.textContent?.includes('New 8-bar loop'))!;
     expect(toast).toBeDefined();
     await clickEl(button('Edit steps', toast));
-    await until(() => !!document.querySelector('input[aria-label="Clip name"]'), 'Steps on the new clip');
+    await until(() => !!document.querySelector('input[aria-label="Loop name"]'), 'Steps on the new clip');
     expect(uiStore.getState().padMode).toBe('steps');
     act(() => setPadMode('loops'));
     act(() => session.undo());
@@ -198,12 +198,12 @@ describe('the pad menu uses every row and the longer lengths', () => {
       selectTrack('t3');
       selectSlot('t3', two);
     });
-    await clickEl(button(/^Options for clip/));
+    await clickEl(button(/^Options for loop/));
     expect([...menu()!.querySelectorAll('[role="menuitemradio"]')].map((k) => k.getAttribute('aria-label'))).toEqual(['Length 1 bar', 'Length 2 bars', 'Length 3 bars', 'Length 4 bars', 'Length 8 bars']);
     await clickEl(item('Double (repeat)'));
     expect(clipsOf('t3')[two]!.bars).toBe(4);
     expect(clipsOf('t3')[two]!.notes.length).toBe(notes * 2);
-    await clickEl(button(/^Options for clip/));
+    await clickEl(button(/^Options for loop/));
     await clickEl(item('Repeat to 8 bars'));
     expect(clipsOf('t3')[two]!.bars).toBe(8);
     expect(clipsOf('t3')[two]!.notes.length).toBe(notes * 4);

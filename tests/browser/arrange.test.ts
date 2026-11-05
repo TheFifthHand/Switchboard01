@@ -152,7 +152,7 @@ describe('Performances', () => {
     const open = panel.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!;
     click(open);
     expect(panel.hasAttribute('data-collapsed')).toBe(false);
-    expect(panel.textContent).toContain('captures clip launches, notes and knob moves, and replays them exactly');
+    expect(panel.textContent).toContain('captures loop launches, notes and knob moves, and replays them exactly');
     expect(panel.textContent).toContain('saved with the project');
     expect(panel.textContent).toContain('No performances yet');
     // Hide folds it back into one line.

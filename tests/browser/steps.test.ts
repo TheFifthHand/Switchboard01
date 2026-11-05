@@ -88,8 +88,8 @@ describe('empty slot', () => {
     selectTrack('t1');
     selectSlot('t1', 1);
     const m = mountEditor(NARROW);
-    expect(m.container.textContent).toContain('has no clip in');
-    const create = buttonByText(m.container, '2-bar clip');
+    expect(m.container.textContent).toContain('has no loop in');
+    const create = buttonByText(m.container, '2-bar loop');
     create.focus();
     fire(create, new MouseEvent('click', { bubbles: true, detail: 0 }));
     const c = clip('t1', 1);
@@ -107,7 +107,7 @@ describe('empty slot', () => {
     selectTrack('t3');
     selectSlot('t3', 0);
     const m = mountEditor();
-    fire(buttonByText(m.container, 'Create a 1-bar clip'), new MouseEvent('click', { bubbles: true, detail: 0 }));
+    fire(buttonByText(m.container, 'Create a 1-bar loop'), new MouseEvent('click', { bubbles: true, detail: 0 }));
     expect(clip('t3')?.bars).toBe(1);
     expect(document.activeElement?.getAttribute('aria-label')).toMatch(/^Note grid, bar 1\./);
   });
@@ -121,7 +121,7 @@ describe('empty slot', () => {
     try {
       const m = mountEditor();
       await actFrame();
-      expect(m.container.textContent).not.toContain('has no clip in');
+      expect(m.container.textContent).not.toContain('has no loop in');
       // It becomes the part's selected slot, so Loops and Record Notes agree.
       expect(uiStore.getState().selectedSlot.t1).toBe(2);
       expect(m.container.querySelector('[role="radio"][aria-checked="true"]')?.getAttribute('aria-label')).toMatch(new RegExp(`^${scenes[2].name}: `));
@@ -142,7 +142,7 @@ describe('empty slot', () => {
     const m = mountEditor();
     fire(byLabel(m.container, 'Edit '), new MouseEvent('click', { bubbles: true }));
     expect(uiStore.getState().selectedSlot.t1).toBe(2);
-    expect(m.container.textContent).not.toContain('has no clip in');
+    expect(m.container.textContent).not.toContain('has no loop in');
     expect(document.activeElement?.getAttribute('aria-label')).toBe(`Step 1, ${KICK}, off`);
   });
 });
@@ -169,7 +169,7 @@ describe('drum steps', () => {
     expect(step5.getAttribute('aria-label')).toBe(`Step 5, ${KICK}, off`);
   });
 
-  it('Space/Enter (a keyboard click) toggles the focused step; arrows move focus', () => {
+  it('Enter (a keyboard click) toggles the focused step; arrows move focus', () => {
     makeClip('t1', 1);
     const m = mountEditor();
     const step1 = byLabel(m.container, `Step 1, ${KICK}`);
@@ -283,7 +283,7 @@ describe('drum steps', () => {
     fire(m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label="4 bars"]')!, new MouseEvent('click', { bubbles: true }));
     expect(clip('t1')?.bars).toBe(4);
 
-    const input = m.container.querySelector<HTMLInputElement>('input[aria-label="Clip name"]')!;
+    const input = m.container.querySelector<HTMLInputElement>('input[aria-label="Loop name"]')!;
     input.focus();
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
     setter.call(input, 'Floor Tom Fill');
@@ -565,13 +565,13 @@ describe('undo and playhead', () => {
       expect(notes('t1')).toHaveLength(0);
       // The notice takes the editing tools' place; name and length cannot change.
       expect(() => buttonByText(m.container, 'To bar 2')).toThrow();
-      expect(m.container.querySelector<HTMLInputElement>('input[aria-label="Clip name"]')!.readOnly).toBe(true);
+      expect(m.container.querySelector<HTMLInputElement>('input[aria-label="Loop name"]')!.readOnly).toBe(true);
       fire(m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label="2 bars"]')!, new MouseEvent('click', { bubbles: true }));
       expect(clip('t1')?.bars).toBe(1);
       // An empty slot of the part says so too, and its create buttons are off.
       fire(m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label$=": empty"]')!, new MouseEvent('click', { bubbles: true }));
-      expect(m.container.querySelector('[role="status"]')?.textContent).toContain('Stop the take to create a clip');
-      expect(buttonByText(m.container, 'Create a 1-bar clip').disabled).toBe(true);
+      expect(m.container.querySelector('[role="status"]')?.textContent).toContain('Stop the take to create a loop');
+      expect(buttonByText(m.container, 'Create a 1-bar loop').disabled).toBe(true);
     } finally {
       session.store.setLock(null);
     }

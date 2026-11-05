@@ -12,7 +12,7 @@
  * plays gets `data-playing` from the playhead's frame loop (a subtle amber
  * edge), never through React.
  *
- * A loop the song plays in several places carries a small "×3" at its top
+ * A loop the song plays in several places carries a small "Used 3×" at its top
  * right (and says "this loop plays in 3 places"): editing it changes all of
  * them, until "Make this one different" gives one its own copy.
  *
@@ -25,7 +25,7 @@ import { TICKS_PER_BAR, type Clip, type SongRegion } from '../../../project/type
 import { useStore } from '../../../state/store';
 import { useProject } from '../../instance';
 import { selectionStore, useSelected } from './laneStore';
-import { loopPlaces, notches, placesBadge, placesWords, regionLabel } from './songModel';
+import { loopPlaces, notches, placesBadge, placesTip, placesWords, regionLabel } from './songModel';
 import libStyles from './library/Library.module.css';
 import styles from './SongView.module.css';
 
@@ -107,7 +107,8 @@ export const RegionView = memo(function RegionView({ region, clip, partName, kin
         {name}
       </span>
       {badge && (
-        <span className={libStyles.places} aria-hidden="true">
+        // Its tooltip says what the number means (the region's own name says it too, for screen readers).
+        <span className={libStyles.places} aria-hidden="true" title={placesTip(places)}>
           {badge}
         </span>
       )}

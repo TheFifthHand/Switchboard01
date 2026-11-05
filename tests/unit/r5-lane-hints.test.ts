@@ -84,11 +84,15 @@ describe('done by the action, never by Undo, Redo or a side effect', () => {
     expect(only(seen, 'song-move')).toBe(1);
   });
 
-  it('loops added count; Undo of a delete bringing them back does not', () => {
+  it('loops added to an empty song count; Undo of a delete bringing them back does not; a song with loops leaves the step out', () => {
     const { store, seen, clip } = setup();
     removeRegions(store, ['r2']);
     store.undo();
     expect(only(seen, 'song-add')).toBe(0);
+    // The song has loops: the tour left this step out, so it is not counted (its total never grows).
+    addClipToSong(store, 't1', clip, 20);
+    expect(only(seen, 'song-add')).toBe(0);
+    removeRegions(store, store.getState().arrangement.regions.map((r) => r.id));
     addClipToSong(store, 't1', clip, 20);
     expect(only(seen, 'song-add')).toBe(1);
   });

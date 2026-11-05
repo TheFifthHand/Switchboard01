@@ -6,7 +6,7 @@
  *   pad's '⋯' open, clicking the Rolling pad does not queue it, and clicking
  *   Stop does not stop; the trigger still toggles; keys are never swallowed;
  * - while any popover is open body carries data-popover-open (counted), and
- *   a toast moves to the top, clear of the menu;
+ *   a menu opened over a toast is above it (the toast never covers it);
  * - the menu's length keys are at least 32 px; hints are words in the UI
  *   font and shortcuts are key caps; Rename has the pencil in the pad, part
  *   and scene menus.
@@ -33,7 +33,7 @@ describe('a press outside a menu only closes it (shell-20)', () => {
       const playingBass = runtimeStore.getState().tracks.t3?.playingSlot;
       expect(rolling).not.toBe(playingBass);
       // The selected pad's '⋯' (Chords, after Jump In).
-      const more = () => button(/^Options for clip /)!;
+      const more = () => button(/^Options for loop /)!;
       await clickEl(more());
       expect(menu()).not.toBeNull();
       expect(open()).toBe(true);
@@ -84,7 +84,7 @@ describe('a press outside a menu only closes it (shell-20)', () => {
 });
 
 describe('popovers and toasts (arrange-toast-covers-block-menu)', () => {
-  it('body[data-popover-open] is counted across popovers; a toast sits at the top under the transport and never covers an open menu', async () => {
+  it('body[data-popover-open] is counted across popovers; a toast sits on the keyboard strip and never covers an open menu', async () => {
     await openApp(1366, 768);
     // Counted: two popovers, the attribute stays until the last one closes.
     const anchor = { left: 100, top: 100, width: 10, height: 10 };
@@ -96,20 +96,20 @@ describe('popovers and toasts (arrange-toast-covers-block-menu)', () => {
     b.unmount();
     expect(open()).toBe(false);
 
-    // A toast sits just under the transport (toasts no longer start at the bottom), and a menu opened while it shows
-    // (the last scene's, low on the screen) is never covered: the toast stays clear of it and below it.
+    // A toast sits at the bottom centre, on the keyboard strip, and a menu opened while it shows
+    // (the last scene's, low on the screen) is never covered: the menu is above the toast.
     act(() => notify('Something happened.', 'info'));
     const toast = await (async () => {
       await until(() => [...document.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]')].some((t) => t.textContent?.includes('Something happened.')), 'the toast');
       return [...document.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]')].find((t) => t.textContent?.includes('Something happened.'))!;
     })();
-    const transport = document.querySelector<HTMLElement>('header[aria-label="Transport"]')!.getBoundingClientRect();
+    const keyboard = document.querySelector<HTMLElement>('section[aria-label="Keyboard"]')!.getBoundingClientRect();
     // Measured at rest (it slides in).
     await act(async () => {
       await new Promise((r) => setTimeout(r, 400));
     });
-    expect(toast.getBoundingClientRect().top).toBeGreaterThanOrEqual(transport.bottom);
-    expect(toast.getBoundingClientRect().top).toBeLessThan(transport.bottom + 40);
+    expect(toast.getBoundingClientRect().top).toBeGreaterThanOrEqual(keyboard.top - 1);
+    expect(toast.getBoundingClientRect().bottom).toBeLessThanOrEqual(keyboard.top + 56);
     await clickEl(button('Options for scene Break'));
     expect(menu()).not.toBeNull();
     await act(async () => {
@@ -117,9 +117,15 @@ describe('popovers and toasts (arrange-toast-covers-block-menu)', () => {
     });
     const t = toast.getBoundingClientRect();
     const m = menu()!.getBoundingClientRect();
-    expect(t.top).toBeLessThan(140);
-    const overlap = t.left < m.right && m.left < t.right && t.top < m.bottom && m.top < t.bottom;
-    expect(overlap).toBe(false);
+    // Wherever the two meet, the menu is on top.
+    const x0 = Math.max(t.left, m.left);
+    const x1 = Math.min(t.right, m.right);
+    const y0 = Math.max(t.top, m.top);
+    const y1 = Math.min(t.bottom, m.bottom);
+    if (x0 < x1 && y0 < y1) {
+      const hit = document.elementFromPoint((x0 + x1) / 2, (y0 + y1) / 2);
+      expect(menu()!.contains(hit)).toBe(true);
+    }
     expect(open()).toBe(true);
   });
 });
@@ -132,7 +138,7 @@ describe('menu keys, hints and icons (design-10, design-14, design-15)', () => {
       selectTrack('t3');
       selectSlot('t3', full);
     });
-    await clickEl(button(/^Options for clip /));
+    await clickEl(button(/^Options for loop /));
     for (const k of menu()!.querySelectorAll<HTMLElement>('[role="menuitemradio"]')) {
       const r = k.getBoundingClientRect();
       expect(r.width).toBeGreaterThanOrEqual(32);

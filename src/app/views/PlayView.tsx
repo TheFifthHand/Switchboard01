@@ -65,22 +65,24 @@ function openPadMode(mode: PadMode): void {
 }
 
 /**
- * Steps on a drum part whose loop is empty (or whose pad has none yet):
- * "Start from a beat…" next to the pad tabs, so the first step is one press.
- * It stays while its picker is open, so beats can be tried one after another.
+ * Steps on a drum part: "Start from a beat…" next to the pad tabs, so the
+ * first step is one press. It stays once the loop has notes, so another beat
+ * can be tried later ("Replace with a beat…", as it then takes the place of
+ * the loop's notes; Undo brings them back), and while its picker is open.
  */
 function StartFromBeat() {
   const trackId = useUi((s) => s.selectedTrackId);
   const slot = useUi((s) => slotFor(s, s.selectedTrackId));
-  const empty = useProject((p) => {
+  // null: not a drum loop a beat can go in; else whether the loop has notes yet.
+  const filled = useProject((p) => {
     const t = p.tracks.find((x) => x.id === trackId);
-    if (!t || t.instrument.kind !== 'drums') return false;
+    if (!t || t.instrument.kind !== 'drums') return null;
     const clip = clipAtSlot(t, slot);
-    return clip ? clip.notes.length === 0 : !isSongSlot(slot);
+    return clip ? clip.notes.length > 0 : isSongSlot(slot) ? null : false;
   });
   const [open, setOpen] = useState<{ trackId: Id; slot: number } | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
-  if (!empty && !open) return null;
+  if (filled === null && !open) return null;
   return (
     <>
       <Button
@@ -92,9 +94,13 @@ function StartFromBeat() {
         aria-haspopup="dialog"
         aria-expanded={!!open}
         onClick={() => setOpen((o) => (o ? null : { trackId, slot }))}
-        tip="Pick a ready-made beat by style and hear it in this loop at once. Then change any square."
+        tip={
+          filled
+            ? 'Swap this loop’s notes for a ready-made beat, picked by style and heard at once. Undo brings your notes back.'
+            : 'Pick a ready-made beat by style and hear it in this loop at once. Then change any square.'
+        }
       >
-        Start from a beat…
+        {filled ? 'Replace with a beat…' : 'Start from a beat…'}
       </Button>
       {open && <BeatPicker trackId={open.trackId} slot={open.slot} anchor={anchorFromElement(btnRef.current)} returnFocus={btnRef.current} ignore={btnRef.current} onClose={() => setOpen(null)} />}
     </>

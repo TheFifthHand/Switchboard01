@@ -476,7 +476,7 @@ function EventList(props: { perf: Performance; replaying: boolean; listId: strin
         {replaying && <strong className={styles.replayNote}> Edits apply the next time you replay this take.</strong>}
       </p>
       {rows.length === 0 ? (
-        <p className={styles.noEvents}>No recorded actions. Replay plays the clips that were running when the take started, for {formatSeconds(performanceSeconds(perf))}.</p>
+        <p className={styles.noEvents}>No recorded actions. Replay plays the loops that were running when the take started, for {formatSeconds(performanceSeconds(perf))}.</p>
       ) : (
         <div className={styles.table} role="table" aria-label={`Events of ${perf.name}`} aria-rowcount={rows.length + 1}>
           <div className={styles.headRow} role="row">
@@ -864,7 +864,7 @@ export function PerformancesPanel(props: PerformancesPanelProps = {}) {
           Performances
           {performances.length > 0 && <span className={`${styles.count} mono`}>{performances.length}</span>}
         </h2>
-        <p className={styles.explain}>Record Performance captures clip launches, notes and knob moves, and replays them exactly. Takes are saved with the project.</p>
+        <p className={styles.explain}>Record Performance captures loop launches, notes and knob moves, and replays them exactly. Takes are saved with the project.</p>
         {recordingChip}
         <button
           type="button"

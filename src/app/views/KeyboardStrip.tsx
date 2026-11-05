@@ -295,12 +295,12 @@ function KeyChange(props: { pending: MusicalKey; anchor: HTMLElement | null; onD
     ]
       .filter(Boolean)
       .join(' ');
-    notify(`Moved the song to ${newKey}: ${r.notes} note${r.notes === 1 ? '' : 's'} in ${r.clips} clip${r.clips === 1 ? '' : 's'}.${extra ? ` ${extra}` : ''}`, 'info', 'undo');
+    notify(`Moved the song to ${newKey}: ${r.notes} note${r.notes === 1 ? '' : 's'} in ${r.clips} loop${r.clips === 1 ? '' : 's'}.${extra ? ` ${extra}` : ''}`, 'info', 'undo');
   };
   const onlyMine = () => {
     const r = setKey(session.store, pending.root, pending.scale);
     onDone();
-    if (session.accepted(r)) notify(`Key: ${newKey} for what you play. The song's clips stay in ${oldKey}.`, 'info', 'undo');
+    if (session.accepted(r)) notify(`Key: ${newKey} for what you play. The song's loops stay in ${oldKey}.`, 'info', 'undo');
   };
 
   return (
@@ -376,7 +376,8 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   const stripRef = useRef<HTMLElement>(null);
   const keysRef = useRef<HTMLDivElement>(null);
   const keyRowRef = useRef<HTMLDivElement>(null);
-  const keysBox = useElementSize(keysRef);
+  // The keys are not there while the strip is folded: measured again when it unfolds (else they keep one octave).
+  const keysBox = useElementSize(keysRef, collapsed);
   const [pending, setPending] = useState<MusicalKey | null>(null);
 
   useKeyboardHeightVar(stripRef, collapsed);
@@ -481,7 +482,8 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
         ? `Musical Assist is on: the keyboard shows only the notes of ${keyName}, each key its own note. ${trackName} plays its recording at the pitch of the key you press (Assist never re-pitches a recording). Turn Assist off for the full piano.`
         : `Musical Assist is on: the keyboard shows only the notes of ${keyName}, so every key plays a different note in the key. Turn Assist off for the full piano.`;
   // One short line that fits the column whole (the tip says more).
-  const assistNote = isDrums ? 'Each key plays one kit sound.' : scaleBoard ? `Only ${keyName} notes are shown.` : 'All 12 notes, like a piano.';
+  // Simple says it without the scale's name (that is on hover); Advanced names it.
+  const assistNote = isDrums ? 'Each key plays one kit sound.' : scaleBoard ? (advanced ? `Only ${keyName} notes are shown.` : 'Only notes that fit the song are shown.') : 'All 12 notes, like a piano.';
   // The part the keys play (the selected part), above the octave keys in every view.
   const partLine = (
     <Tooltip tip={`The keyboard plays ${trackName}, the selected part.`} detail="To play another part, select it: its column in Play, its row in Song or its channel in Mix.">
@@ -518,7 +520,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
 
   if (collapsed) {
     return (
-      <section ref={stripRef} className={styles.strip} data-collapsed="" aria-label="Keyboard">
+      <section ref={stripRef} className={styles.strip} data-collapsed="" data-toast-floor="" aria-label="Keyboard">
         {foldKey}
         <span className={styles.foldedLabel}>Keyboard</span>
         <span className={styles.foldedNote}>
@@ -530,7 +532,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   }
 
   return (
-    <section ref={stripRef} className={styles.strip} aria-label="Keyboard">
+    <section ref={stripRef} className={styles.strip} data-toast-floor="" aria-label="Keyboard">
       {foldKey}
       {isDrums ? (
         <div className={styles.octave} data-kit="">
@@ -638,9 +640,12 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
           </Tooltip>
         )}
         {assistSwitch}
-        <p className={styles.assistNote} aria-live="polite">
-          {arpNote ?? assistNote}
-        </p>
+        {/* In Simple the scale's name is on hover. */}
+        <Tooltip tip={`The song’s key is ${keyName} (${SCALE_MOOD[scale]}): the keys are its notes.`} detail="Turn Musical Assist off for all 12 notes." disabled={!scaleBoard || advanced || !!arpNote}>
+          <p className={styles.assistNote} aria-live="polite">
+            {arpNote ?? assistNote}
+          </p>
+        </Tooltip>
       </div>
       {advanced && <ArpStrip trackId={trackId} stripRef={stripRef} />}
       {advanced && pending && <KeyChange pending={pending} anchor={keyRowRef.current} onDone={() => setPending(null)} />}

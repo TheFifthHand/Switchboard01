@@ -93,7 +93,7 @@ describe('Assist on: only the notes of the key, one key each', () => {
     expect(getComputedStyle(ks[7], '::before').width).toBe('2px');
     expect(getComputedStyle(ks[0], '::before').content).toBe('none');
     // The strip says what is happening.
-    expect(line()).toBe('Only G Dorian notes are shown.');
+    expect(line()).toBe('Only notes that fit the song are shown.');
     expect(described(assistSwitch().closest('[aria-describedby]')!)).toMatch(/shows only the notes of G Dorian, so every key plays a different note/);
     expect(lowest()).toBe('G3');
     expect(reset().textContent?.replace(/\s+/g, ' ').trim()).toBe('↺ G3');
@@ -120,7 +120,7 @@ describe('Assist on: only the notes of the key, one key each', () => {
     setProjectKey(9, 'blues');
     await settleFrames(2);
     expect(names().slice(0, 7)).toEqual(['A3 (root)', 'C4', 'D4', 'E♭4', 'E4', 'G4', 'A4 (root)']);
-    expect(line()).toBe('Only A blues notes are shown.');
+    expect(line()).toBe('Only notes that fit the song are shown.');
     expect(new Set(midis()).size).toBe(keys().length);
   });
 
@@ -130,7 +130,7 @@ describe('Assist on: only the notes of the key, one key each', () => {
     act(() => selectTrack(sampler.id));
     await settleFrames(2);
     expect(isPiano()).toBe(false);
-    expect(line()).toBe('Only G Dorian notes are shown.');
+    expect(line()).toBe('Only notes that fit the song are shown.');
     act(() => selectTrack('t1'));
     await settleFrames(2);
     expect(keys()).toHaveLength(16);
@@ -296,7 +296,7 @@ describe('Assist off, or the Chromatic scale: the piano', () => {
     await click(centre(assistSwitch()));
     expect(project().assist).toBe(true);
     expect(isPiano()).toBe(false);
-    expect(line()).toBe('Only G Dorian notes are shown.');
+    expect(line()).toBe('Only notes that fit the song are shown.');
   });
 
   it('the Chromatic scale has every note: the piano, with Assist still on', async () => {

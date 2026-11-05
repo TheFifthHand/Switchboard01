@@ -165,7 +165,7 @@ describe('loop progress (PLAY-11, design-12)', () => {
     await act(async () => {
       await wait(300);
     });
-    const grid = document.querySelector<HTMLElement>('[aria-label^="Clip pads"]')!;
+    const grid = document.querySelector<HTMLElement>('[aria-label^="Loop pads"]')!;
     let styleWrites = 0;
     const mo = new MutationObserver((ms) => {
       for (const m of ms) if (m.attributeName === 'style') styleWrites++;

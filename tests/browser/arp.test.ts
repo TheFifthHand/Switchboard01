@@ -387,7 +387,7 @@ describe('Keyboard strip: held keys, drum parts and recordings', () => {
     await appFonts();
     act(() => selectTrack('t8'));
     const m = strip();
-    expect(m.container.textContent).toContain('Only G Dorian notes are shown.');
+    expect(m.container.textContent).toContain('Only notes that fit the song are shown.');
     // The whole line is readable (it is not cut off with an ellipsis).
     const note = [...m.container.querySelectorAll<HTMLElement>('p[aria-live="polite"]')].find((p) => p.textContent?.startsWith('Only'))!;
     expect(note.scrollWidth).toBeLessThanOrEqual(note.clientWidth + 1);
@@ -395,7 +395,7 @@ describe('Keyboard strip: held keys, drum parts and recordings', () => {
     const tip = () => (tipped.getAttribute('aria-describedby') ?? '').split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? '').join(' ');
     expect(tip()).toMatch(/plays its recording at the pitch of the key you press \(Assist never re-pitches a recording\)/);
     act(() => selectTrack('t4'));
-    expect(m.container.textContent).toContain('Only G Dorian notes are shown.');
+    expect(m.container.textContent).toContain('Only notes that fit the song are shown.');
     expect(tip()).toMatch(/every key plays a different note in the key/);
   });
 });

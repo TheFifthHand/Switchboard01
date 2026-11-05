@@ -66,8 +66,8 @@ describe('one selected clip (PLAY-01)', () => {
       // Steps opens Bell Hook and leaves the selection where it was.
       const steps = [...document.querySelectorAll<HTMLElement>('[role="tab"]')].find((t) => t.textContent === 'Steps')!;
       await clickEl(steps);
-      await until(() => !!document.querySelector('input[aria-label="Clip name"]'), 'the Steps editor');
-      expect(document.querySelector<HTMLInputElement>('input[aria-label="Clip name"]')!.value).toBe('Bell Hook');
+      await until(() => !!document.querySelector('input[aria-label="Loop name"]'), 'the Steps editor');
+      expect(document.querySelector<HTMLInputElement>('input[aria-label="Loop name"]')!.value).toBe('Bell Hook');
       expect(slotFor(uiStore.getState(), 't5')).toBe(bell);
     });
   }

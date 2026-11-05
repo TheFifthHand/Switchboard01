@@ -20,7 +20,7 @@ type BarsValue = `${RecordBars}`;
 const BAR_OPTIONS = RECORD_BAR_CHOICES.map((b) => ({ value: String(b) as BarsValue, label: String(b), tip: `Record ${b} bar${b === 1 ? '' : 's'}.` }));
 
 /** What Record audio does with the take (its tooltip). */
-export const TAKE_CLIP_TEXT = 'The take goes into its own clip on this part; other clips keep their recordings.';
+export const TAKE_CLIP_TEXT = 'The take goes into its own loop on this part; other loops keep their recordings.';
 
 /** "Count-in: 3 beats" / "Recording: bar 2 of 4" and a bar that fills, from the transport position (display only). */
 function TakeProgress(props: { take: TakeInfo }) {
@@ -125,7 +125,7 @@ export function RecordAudio(props: { trackId: Id }) {
             aria-describedby={hintId}
             onClick={() => void audioInput.record(trackId)}
             tip={`Record ${st.bars} bar${st.bars === 1 ? '' : 's'} from the microphone or instrument${st.countIn ? ' after a one-bar count-in' : ''}, in time with the music. ${TAKE_CLIP_TEXT}`}
-            detail="It goes on the selected pad when that is empty, else on the first empty one (with every pad taken it replaces the selected clip). Playback starts if it is stopped; while it plays, the take starts at the next bar. Undo removes the whole result."
+            detail="It goes on the selected pad when that is empty, else on the first empty one (with every pad taken it replaces the selected loop). Playback starts if it is stopped; while it plays, the take starts at the next bar. Undo removes the whole result."
           >
             Record audio
           </Button>

@@ -23,7 +23,7 @@ export const WALKTHROUGHS: readonly Walkthrough[] = [
       'Press Mute on Drums: the column dims and the drums go silent. Press it again to bring them back. Solo plays one part on its own.',
       'Select a part, press Change instrument and pick a sound. Undo (Ctrl+Z) brings the old one back.',
       'Turn the big knobs: Tone, Space, Echo, Motion, Drive and Pump. Drag up or down; double-click resets.',
-      'Drag a clip onto another pad to move it; hold Ctrl while you drop to copy it.',
+      'Drag a loop onto another pad to move it; hold Ctrl while you drop to copy it.',
       'Press Pause (or Space) to hold the music where it is; Stop (Shift+Space) goes back to the start.',
     ],
   },
@@ -47,7 +47,7 @@ export const WALKTHROUGHS: readonly Walkthrough[] = [
     time: 'about three minutes',
     steps: [
       'With music playing, press Performance to record what you do. Press it again to stop; the take appears in Song.',
-      'Notes records what you play into the selected clip. One Undo removes the whole pass.',
+      'Notes records what you play into the selected loop. One Undo removes the whole pass.',
       'Open Mix, try a mastering preset in Finish, then Make it as loud as streaming songs.',
       'Press Export (or ⋯ → Export…). The whole song is chosen for you: pick a format, then press Export.',
       'For a portable copy, open Projects → Export this project. The .omnisong.zip file opens in any browser.',
