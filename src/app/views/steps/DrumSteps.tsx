@@ -10,8 +10,15 @@
  * the same way. A sound's menu (right-click its name, Shift+F10, or the ⋯ by
  * the selected sound) clears it, fills it on every beat, 8th or 16th, or
  * shifts it a step earlier or later.
+ *
+ * A short clip shows all its bars side by side (`span`, chosen by the editor
+ * from the room it has); the columns then run on across the bars. In Simple
+ * the grid shows the eight main kit sounds (and any sound the clip uses)
+ * with "Show all 16"; Advanced always shows all 16. The voice ids never
+ * change, only which rows are drawn.
  */
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
+import { createStore, useStore } from '../../../state/store';
 import { getKitVoiceNames } from '../../../audio/instruments/kits';
 import { DRUM_VOICES, STEPS_PER_BAR, type Clip, type Id } from '../../../project/types';
 import * as cmd from '../../../state/commands';
@@ -20,22 +27,55 @@ import { TOUCH_SLOP_PX, Tooltip, newGestureId } from '../../../ui/components';
 import { session, useUi } from '../../instance';
 import { notify } from '../../runtime';
 import { LOCKED_REASON, MenuHeader, MenuItem, MenuSeparator, MoreIcon, Popover, anchorFromContextEvent, anchorFromElement, isEchoOfKeyboardMenu, isMenuKey, noteKeyboardMenu, useEditLocked, type MenuAnchor } from '../ClipMenu';
-import { STEP_INDICES, clampVelocity, drumPageGrid, noteIdsAt, percent, stepColumn, velocityBucket } from './model';
+import { STEP_GRID, barsWords, cellColumn, cellIndices, clampVelocity, drumPageGrid, noteIdsAt, percent, spanSpec, velocityBucket } from './model';
 import { auditionBlip, useKeyBurst } from './shared';
-import { StepNumbers, VelocityLane } from './StepLanes';
+import { StepNumbers, VelocityLane, gridStyle } from './StepLanes';
 import grid from './StepGrid.module.css';
 import styles from './DrumSteps.module.css';
 
 const VOICES = Array.from({ length: DRUM_VOICES }, (_, i) => i);
-/** Overview columns: 0 = the sound's name, 1..16 = its steps. */
-const LAST_COL = STEPS_PER_BAR;
+
+/**
+ * The eight main kit sounds Simple shows (Kick, Snare, Clap, Closed Hat, Open
+ * Hat, Rim, Low Tom, Crash): voice ids of every kit.
+ */
+export const CORE_VOICES: readonly number[] = [0, 2, 3, 4, 5, 7, 8, 12];
+
+const ALL_SOUNDS_KEY = 'switchboard01.stepsAllSounds';
+function readAllSounds(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(ALL_SOUNDS_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+/** Simple: all 16 sounds shown (the person's choice, remembered on this device). */
+const allSoundsStore = createStore<boolean>(readAllSounds());
+export function setAllSounds(on: boolean): void {
+  allSoundsStore.setState(on);
+  try {
+    globalThis.localStorage?.setItem(ALL_SOUNDS_KEY, on ? '1' : '0');
+  } catch {
+    /* storage unavailable: the choice lasts this session */
+  }
+}
 
 export interface DrumStepsProps {
   trackId: Id;
   slot: number;
+  /** The first bar shown. */
   page: number;
   clip: Clip;
   kitId: string;
+  /** Bars shown side by side from `page` (default 1). */
+  span?: number;
+  /** The big pads of the selected sound under the grid (default on; the Song view's editor leaves them out). */
+  pads?: boolean;
+}
+
+/** "step 5" on one bar; "bar 2, step 5" with bars side by side. */
+function stepWords(s: number, span: number): string {
+  return span > 1 ? `bar ${Math.floor(s / STEPS_PER_BAR) + 1}, step ${(s % STEPS_PER_BAR) + 1}` : `step ${s + 1}`;
 }
 
 const hitWords = (n: number) => (n === 0 ? 'no hits' : `${n} hit${n === 1 ? '' : 's'}`);
@@ -79,7 +119,7 @@ function stepAt(cols: Paint['cols'], x: number): number {
  * on), and every step the pointer then enters along the row gets that state
  * (steps skipped by a fast drag included). One gesture id: one undo step.
  */
-function usePaint(cur: { current: { trackId: Id; slot: number; page: number; clip: Clip } }) {
+function usePaint(cur: { current: { trackId: Id; slot: number; page: number; span: number; clip: Clip } }) {
   const paint = useRef<Paint | null>(null);
   /** Paint the steps not painted yet in this drag; false when the edit was refused (the drag then stops, saying why once). */
   const apply = useCallback((p: Paint, steps: number[]): boolean => {
@@ -94,7 +134,7 @@ function usePaint(cur: { current: { trackId: Id; slot: number; page: number; cli
   const start = useCallback(
     (pointerId: number, voice: number, step: number, cols: Paint['cols']) => {
       const c = cur.current;
-      const was = drumPageGrid(c.clip.notes, c.page, DRUM_VOICES)[voice]?.[step] ?? -1;
+      const was = drumPageGrid(c.clip.notes, c.page, DRUM_VOICES, c.span)[voice]?.[step] ?? -1;
       const on = was < 0;
       session.store.endGesture();
       const p: Paint = { pointerId, voice, on, gesture: newGestureId('steps-paint'), done: new Set(), last: step, cols };
@@ -196,8 +236,8 @@ function SoundMenu(props: { trackId: Id; slot: number; voice: number; name: stri
  * are buttons inside the cells (a toggle per step, aria-pressed), so a key press on them reads
  * as a press on a control everywhere in the app (Space included).
  */
-const VoiceRow = memo(function VoiceRow(props: { voice: number; name: string; pattern: string; selected: boolean; page: number; focusCol: number | null }) {
-  const { voice, name, pattern, selected, page, focusCol } = props;
+const VoiceRow = memo(function VoiceRow(props: { voice: number; index: number; name: string; pattern: string; selected: boolean; page: number; span: number; focusCol: number | null }) {
+  const { voice, index, name, pattern, selected, page, span, focusCol } = props;
   const hits = pattern.replace(/0/g, '').length;
   return (
     <div
@@ -206,8 +246,8 @@ const VoiceRow = memo(function VoiceRow(props: { voice: number; name: string; pa
       data-selected={selected || undefined}
       data-voice={voice}
       aria-selected={selected}
-      aria-rowindex={voice + 1}
-      aria-label={`${name}: ${hitWords(hits)} in bar ${page + 1}${selected ? ', editing' : ''}`}
+      aria-rowindex={index + 1}
+      aria-label={`${name}: ${hitWords(hits)} in ${barsWords(page, span)}${selected ? ', editing' : ''}`}
     >
       <div role="rowheader" className={styles.voiceHead}>
         <button
@@ -227,10 +267,10 @@ const VoiceRow = memo(function VoiceRow(props: { voice: number; name: string; pa
           </span>
         </button>
       </div>
-      {STEP_INDICES.map((s) => {
+      {cellIndices(pattern.length).map((s) => {
         const on = pattern[s] !== '0';
         return (
-          <div key={s} role="gridcell" className={styles.cellWrap} style={{ gridColumn: stepColumn(s) }}>
+          <div key={s} role="gridcell" className={styles.cellWrap} style={{ gridColumn: cellColumn(s, 4) }}>
             <button
               type="button"
               className={styles.cell}
@@ -239,7 +279,7 @@ const VoiceRow = memo(function VoiceRow(props: { voice: number; name: string; pa
               data-beat={s % 4 === 0 || undefined}
               tabIndex={focusCol === s + 1 ? 0 : -1}
               aria-pressed={on}
-              aria-label={`${name}, step ${s + 1}`}
+              aria-label={`${name}, ${stepWords(s, span)}`}
             >
               <span className={styles.cellBox} aria-hidden="true" />
             </button>
@@ -254,8 +294,9 @@ const VoiceRow = memo(function VoiceRow(props: { voice: number; name: string; pa
 /* Step pads                                                           */
 /* ------------------------------------------------------------------ */
 
-const StepPad = memo(function StepPad(props: { step: number; velocity: number; voiceName: string; tabbable: boolean; onToggle(step: number): void; onFocusStep(step: number): void }) {
-  const { step, velocity, voiceName, tabbable, onToggle, onFocusStep } = props;
+const StepPad = memo(function StepPad(props: { step: number; span: number; velocity: number; voiceName: string; tabbable: boolean; onToggle(step: number): void; onFocusStep(step: number): void }) {
+  const { step, span, velocity, voiceName, tabbable, onToggle, onFocusStep } = props;
+  const inBar = step % STEPS_PER_BAR;
   const on = velocity >= 0;
   // Pointer presses paint (handled by the lane); clicks from Space/Enter (detail 0) toggle here.
   const onClick = (e: MouseEvent<HTMLButtonElement>) => {
@@ -265,7 +306,7 @@ const StepPad = memo(function StepPad(props: { step: number; velocity: number; v
     <button
       type="button"
       className={styles.step}
-      style={{ gridColumn: stepColumn(step), '--vel': String(on ? velocity : 0) } as CSSProperties}
+      style={{ gridColumn: cellColumn(step, 4), '--vel': String(on ? velocity : 0) } as CSSProperties}
       data-on={on || undefined}
       data-beat={step % 4 === 0 || undefined}
       data-step={step}
@@ -273,12 +314,12 @@ const StepPad = memo(function StepPad(props: { step: number; velocity: number; v
       tabIndex={tabbable ? 0 : -1}
       data-steps-entry={tabbable ? '' : undefined}
       aria-pressed={on}
-      aria-label={`Step ${step + 1}, ${voiceName}, ${on ? `on, velocity ${percent(velocity)}` : 'off'}`}
+      aria-label={`Step ${inBar + 1}, ${span > 1 ? `bar ${Math.floor(step / STEPS_PER_BAR) + 1}, ` : ''}${voiceName}, ${on ? `on, velocity ${percent(velocity)}` : 'off'}`}
       onClick={onClick}
       onFocus={() => onFocusStep(step)}
     >
       <span className={styles.light} aria-hidden="true" />
-      <span className={`${styles.stepNum} mono`}>{step + 1}</span>
+      <span className={`${styles.stepNum} mono`}>{inBar + 1}</span>
       <span className={`${styles.stepVel} mono`} aria-hidden="true">
         {on ? Math.round(velocity * 100) : ''}
       </span>
@@ -290,10 +331,13 @@ const StepPad = memo(function StepPad(props: { step: number; velocity: number; v
 /* Editor                                                              */
 /* ------------------------------------------------------------------ */
 
-export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) {
+export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = true }: DrumStepsProps) {
   const voice = useUi((s) => drumVoiceFor(s, trackId));
   const names = useMemo(() => getKitVoiceNames(kitId), [kitId]);
-  const hits = useMemo(() => drumPageGrid(clip.notes, page, DRUM_VOICES), [clip.notes, page]);
+  const spec = useMemo(() => spanSpec(STEP_GRID, span), [span]);
+  const cells = spec.cells;
+  const lastCol = cells;
+  const hits = useMemo(() => drumPageGrid(clip.notes, page, DRUM_VOICES, span), [clip.notes, page, span]);
   const patterns = useMemo(() => hits.map((row) => row.map((v) => velocityBucket(v)).join('')), [hits]);
   const lane = hits[voice] ?? [];
   const voiceName = names[voice] ?? `Sound ${voice + 1}`;
@@ -307,9 +351,28 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
   const moreRef = useRef<HTMLButtonElement>(null);
   const burst = useKeyBurst();
 
+  // Which sounds get a row: all 16 (Advanced, or Simple with Show all), else the main eight, every sound the clip
+  // uses and the selected one. A row shown once for this clip stays while it is open (clearing a sound's last hit
+  // does not pull its row away).
+  const advanced = useUi((s) => s.uiMode === 'advanced');
+  const allSounds = useStore(allSoundsStore, (s) => s);
+  const showAll = advanced || allSounds;
+  const sticky = useRef<{ clipId: Id; voices: Set<number> }>({ clipId: '', voices: new Set() });
+  if (sticky.current.clipId !== clip.id) sticky.current = { clipId: clip.id, voices: new Set() };
+  const usedKey = useMemo(() => [...new Set(clip.notes.map((n) => Math.round(n.pitch)))].sort((x, y) => x - y).join(','), [clip.notes]);
+  const visible = useMemo(() => {
+    if (showAll) return VOICES;
+    const keep = sticky.current.voices;
+    for (const v of CORE_VOICES) keep.add(v);
+    if (usedKey) for (const v of usedKey.split(',').map(Number)) if (v >= 0 && v < DRUM_VOICES) keep.add(v);
+    keep.add(voice);
+    return VOICES.filter((v) => keep.has(v));
+  }, [showAll, usedKey, voice]);
+  const hidden = DRUM_VOICES - visible.length;
+
   // Latest values for stable callbacks.
-  const cur = useRef({ trackId, slot, page, voice, clip });
-  cur.current = { trackId, slot, page, voice, clip };
+  const cur = useRef({ trackId, slot, page, span, voice, clip, cells, visible });
+  cur.current = { trackId, slot, page, span, voice, clip, cells, visible };
   const painter = usePaint(cur);
 
   // While the overview does not have focus, its tab stop follows the selected sound.
@@ -356,7 +419,7 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
     laneRef.current?.querySelector<HTMLButtonElement>(`[data-step="${step}"]`)?.focus();
   };
 
-  const laneCols = (): Paint['cols'] => STEP_INDICES.map((s) => laneRef.current?.querySelector(`[data-step="${s}"]`)?.getBoundingClientRect() ?? { left: 0, right: 0 });
+  const laneCols = (): Paint['cols'] => cellIndices(cur.current.cells).map((s) => laneRef.current?.querySelector(`[data-step="${s}"]`)?.getBoundingClientRect() ?? { left: 0, right: 0 });
 
   const onLanePointerDown = (e: PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -380,7 +443,7 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
     let delta = 0;
     switch (e.key) {
       case 'ArrowRight':
-        focusPad(Math.min(15, step + 1));
+        focusPad(Math.min(cells - 1, step + 1));
         break;
       case 'ArrowLeft':
         focusPad(Math.max(0, step - 1));
@@ -389,7 +452,7 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
         focusPad(0);
         break;
       case 'End':
-        focusPad(15);
+        focusPad(cells - 1);
         break;
       case 'ArrowUp':
       case '+':
@@ -429,7 +492,7 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
   };
 
   const rowCols = (v: number): Paint['cols'] =>
-    STEP_INDICES.map((s) => overviewRef.current?.querySelector(`[data-voice="${v}"] [data-col="${s + 1}"]`)?.getBoundingClientRect() ?? { left: 0, right: 0 });
+    cellIndices(cur.current.cells).map((s) => overviewRef.current?.querySelector(`[data-voice="${v}"] [data-col="${s + 1}"]`)?.getBoundingClientRect() ?? { left: 0, right: 0 });
 
   // A finger waits until it shows a sideways drag (paint) or lifts (tap); moving up or down scrolls instead
   // (the browser then cancels the pointer). On a sound's name only a tap chooses and plays it. col 0 = the name.
@@ -528,15 +591,17 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     let v = at.voice;
     let col = at.col;
+    // Up and down go through the rows shown.
+    const shownAt = visible.indexOf(v);
     switch (e.key) {
       case 'ArrowDown':
-        v = Math.min(DRUM_VOICES - 1, v + 1);
+        v = visible[Math.min(visible.length - 1, shownAt + 1)] ?? v;
         break;
       case 'ArrowUp':
-        v = Math.max(0, v - 1);
+        v = visible[Math.max(0, shownAt - 1)] ?? v;
         break;
       case 'ArrowRight':
-        col = Math.min(LAST_COL, col + 1);
+        col = Math.min(lastCol, col + 1);
         break;
       case 'ArrowLeft':
         col = Math.max(0, col - 1);
@@ -545,7 +610,7 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
         col = 0;
         break;
       case 'End':
-        col = LAST_COL;
+        col = lastCol;
         break;
       // Space and Enter press the focused button: its click (detail 0) toggles the step or plays the sound.
       default:
@@ -561,16 +626,28 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
   const velocities = useMemo(() => lane.map((v) => (v >= 0 ? v : null)), [lane]);
   const tabCell = cell;
 
+  const where = barsWords(page, span);
+  const soundsHead = advanced ? (
+    <span className={styles.colHead}>Sounds</span>
+  ) : (
+    <Tooltip tip={showAll ? 'Show only the eight main sounds (and any sound this clip uses).' : `Show all ${DRUM_VOICES} sounds of the kit.`}>
+      <button type="button" className={styles.allSounds} aria-pressed={showAll} onClick={() => setAllSounds(!showAll)}>
+        {showAll ? 'Main sounds' : `Show all ${DRUM_VOICES}`}
+      </button>
+    </Tooltip>
+  );
+
   return (
-    <div className={styles.drums}>
-      <StepNumbers label={<span className={styles.colHead}>Sounds</span>} />
+    <div className={styles.drums} data-pads={pads || undefined}>
+      <StepNumbers grid={spec} label={soundsHead} />
       <div
         ref={overviewRef}
         className={styles.overview}
+        style={{ ...gridStyle(spec), '--rows': String(visible.length) } as CSSProperties}
         role="grid"
-        aria-label={`Kit sounds, bar ${page + 1}: click a step to add or remove a hit, drag along a row to paint. Arrow keys move, Space toggles, Shift+F10 opens a sound's actions.`}
-        aria-rowcount={DRUM_VOICES}
-        aria-colcount={LAST_COL + 1}
+        aria-label={`Kit sounds, ${where}: click a step to add or remove a hit, drag along a row to paint. Arrow keys move, Space toggles, Shift+F10 opens a sound's actions.${hidden ? ` ${hidden} more sounds are hidden: Show all ${DRUM_VOICES} shows them.` : ''}`}
+        aria-rowcount={visible.length}
+        aria-colcount={lastCol + 1}
         onPointerDown={onGridPointerDown}
         onPointerMove={onGridPointerMove}
         onPointerUp={onGridPointerUp}
@@ -583,48 +660,51 @@ export function DrumSteps({ trackId, slot, page, clip, kitId }: DrumStepsProps) 
         onContextMenu={onGridContextMenu}
         onKeyDown={onGridKey}
       >
-        {VOICES.map((v) => (
-          <VoiceRow key={v} voice={v} name={nameOf(v)} pattern={patterns[v]} selected={v === voice} page={page} focusCol={tabCell.voice === v ? tabCell.col : null} />
+        {visible.map((v, i) => (
+          <VoiceRow key={v} voice={v} index={i} name={nameOf(v)} pattern={patterns[v]} selected={v === voice} page={page} span={span} focusCol={tabCell.voice === v ? tabCell.col : null} />
         ))}
       </div>
-      <div
-        ref={laneRef}
-        className={`${grid.cols} ${styles.lane}`}
-        role="group"
-        aria-label={`${voiceName} steps, bar ${page + 1}. Arrow keys move, Space toggles, Up and Down change velocity.`}
-        onKeyDown={onLaneKey}
-        onPointerDown={onLanePointerDown}
-        onPointerMove={(e) => painter.move(e.pointerId, e.clientX)}
-        onPointerUp={(e) => painter.end(e.pointerId)}
-        onPointerCancel={(e) => painter.end(e.pointerId)}
-        onLostPointerCapture={(e) => {
-          if (e.target === e.currentTarget) painter.end(e.pointerId);
-        }}
-      >
-        <div className={styles.laneLabel}>
-          <div className={styles.laneHead}>
-            <span className={styles.laneName}>{voiceName}</span>
-            <Tooltip name={`${voiceName} actions`} tip="Clear this sound, fill it on every beat, 8th or 16th, or shift it a step.">
-              <button
-                ref={moreRef}
-                type="button"
-                className={styles.more}
-                aria-label={`${voiceName} actions`}
-                aria-haspopup="menu"
-                aria-expanded={menu !== null}
-                onClick={() => (menu ? setMenu(null) : openMenu(voice, anchorFromElement(moreRef.current), moreRef.current))}
-              >
-                <MoreIcon size={16} />
-              </button>
-            </Tooltip>
+      {pads && (
+        <div
+          ref={laneRef}
+          className={`${grid.cols} ${styles.lane}`}
+          style={gridStyle(spec)}
+          role="group"
+          aria-label={`${voiceName} steps, ${where}. Arrow keys move, Space toggles, Up and Down change velocity.`}
+          onKeyDown={onLaneKey}
+          onPointerDown={onLanePointerDown}
+          onPointerMove={(e) => painter.move(e.pointerId, e.clientX)}
+          onPointerUp={(e) => painter.end(e.pointerId)}
+          onPointerCancel={(e) => painter.end(e.pointerId)}
+          onLostPointerCapture={(e) => {
+            if (e.target === e.currentTarget) painter.end(e.pointerId);
+          }}
+        >
+          <div className={styles.laneLabel}>
+            <div className={styles.laneHead}>
+              <span className={styles.laneName}>{voiceName}</span>
+              <Tooltip name={`${voiceName} actions`} tip="Clear this sound, fill it on every beat, 8th or 16th, or shift it a step.">
+                <button
+                  ref={moreRef}
+                  type="button"
+                  className={styles.more}
+                  aria-label={`${voiceName} actions`}
+                  aria-haspopup="menu"
+                  aria-expanded={menu !== null}
+                  onClick={() => (menu ? setMenu(null) : openMenu(voice, anchorFromElement(moreRef.current), moreRef.current))}
+                >
+                  <MoreIcon size={16} />
+                </button>
+              </Tooltip>
+            </div>
+            <span className={styles.laneMeta}>{laneHits === 0 ? `No hits yet · ${where}` : `${hitWords(laneHits)} · ${where}`}</span>
           </div>
-          <span className={styles.laneMeta}>{laneHits === 0 ? `No hits yet · bar ${page + 1}` : `${hitWords(laneHits)} · bar ${page + 1}`}</span>
+          {cellIndices(cells).map((s) => (
+            <StepPad key={s} step={s} span={span} velocity={lane[s] ?? -1} voiceName={voiceName} tabbable={s === focusStep} onToggle={onToggle} onFocusStep={setFocusStep} />
+          ))}
         </div>
-        {STEP_INDICES.map((s) => (
-          <StepPad key={s} step={s} velocity={lane[s] ?? -1} voiceName={voiceName} tabbable={s === focusStep} onToggle={onToggle} onFocusStep={setFocusStep} />
-        ))}
-      </div>
-      <VelocityLane className={styles.velocity} values={velocities} onSet={setVelocity} title="Velocity" hint="Drag a bar ↕" />
+      )}
+      <VelocityLane className={styles.velocity} grid={spec} values={velocities} onSet={setVelocity} title={pads ? 'Velocity' : voiceName} hint={pads ? 'Drag a bar ↕' : 'Velocity · drag ↕'} />
       {menu && <SoundMenu trackId={trackId} slot={slot} voice={menu.voice} name={nameOf(menu.voice)} clip={clip} anchor={menu.anchor} returnFocus={menu.returnFocus} onClose={() => setMenu(null)} />}
     </div>
   );

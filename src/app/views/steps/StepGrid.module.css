@@ -12,12 +12,16 @@
   --beat-gap: 5px;
   --cell-gap: 3px;
   display: grid;
+  /* Bars side by side: --span-cols (set by gridStyle, inherited by the rows) holds the cell columns. */
   grid-template-columns:
     var(--label-w)
-    repeat(var(--per-beat, 4), minmax(0, 1fr)) var(--beat-gap)
-    repeat(var(--per-beat, 4), minmax(0, 1fr)) var(--beat-gap)
-    repeat(var(--per-beat, 4), minmax(0, 1fr)) var(--beat-gap)
-    repeat(var(--per-beat, 4), minmax(0, 1fr));
+    var(
+      --span-cols,
+      repeat(var(--per-beat, 4), minmax(0, 1fr)) var(--beat-gap)
+      repeat(var(--per-beat, 4), minmax(0, 1fr)) var(--beat-gap)
+      repeat(var(--per-beat, 4), minmax(0, 1fr)) var(--beat-gap)
+      repeat(var(--per-beat, 4), minmax(0, 1fr))
+    );
   column-gap: var(--cell-gap);
 }
 /* Finer grids: thinner gaps so the cells keep their width. */
@@ -65,6 +69,18 @@
 .num[data-beat] {
   color: var(--ink);
   font-weight: 600;
+}
+/* Bars side by side: each bar's name over its numbers, with a line along the bar. */
+.barLabel {
+  min-width: 0;
+  padding: 0 0 1px 2px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  line-height: 14px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
 }
 .cols[data-cells='24'] .num,
 .cols[data-cells='32'] .num {

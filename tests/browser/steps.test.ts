@@ -37,10 +37,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mountEditor() {
-  const m = mount(h('div', { style: { width: '960px', height: '470px', display: 'flex', flexDirection: 'column' } }, h(StepEditor)), { width: 1000 });
+/**
+ * The editor in a box `width` px wide. At 960 px a 2-bar clip shows both bars side by side; the tests of
+ * one bar per page (what a longer clip, or a narrower window, gets) use NARROW.
+ */
+function mountEditor(width = 960) {
+  const m = mount(h('div', { style: { width: `${width}px`, height: '470px', display: 'flex', flexDirection: 'column' } }, h(StepEditor)), { width: width + 40 });
   return m;
 }
+/** Too narrow for two bars side by side: one bar per page. */
+const NARROW = 700;
 
 function clip(trackId: string, slot = 0): Clip | null {
   return session.store.getState().tracks.find((t) => t.id === trackId)?.clips[slot] ?? null;
@@ -81,7 +87,7 @@ describe('empty slot', () => {
   it('offers to create a 1, 2 or 4 bar clip right here', () => {
     selectTrack('t1');
     selectSlot('t1', 1);
-    const m = mountEditor();
+    const m = mountEditor(NARROW);
     expect(m.container.textContent).toContain('has no clip in');
     const create = buttonByText(m.container, '2-bar clip');
     create.focus();
@@ -191,11 +197,11 @@ describe('drum steps', () => {
     expect(snareRow.querySelectorAll('[data-v="2"]')).toHaveLength(1);
     expect(snareRow.getAttribute('aria-label')).toContain('1 hit in bar 1');
 
-    // Arrow keys in the sound list move the selection.
+    // Arrow keys in the sound list move the selection, through the rows shown (Simple: Kick 2 is not one of them).
     snareRow.focus();
     key(snareRow, 'keydown', { key: 'ArrowUp' });
-    expect(uiStore.getState().selectedDrumVoice.t1).toBe(1);
-    expect(document.activeElement?.getAttribute('data-voice')).toBe('1');
+    expect(uiStore.getState().selectedDrumVoice.t1).toBe(0);
+    expect(document.activeElement?.getAttribute('data-voice')).toBe('0');
   });
 
   it('Up/Down on a focused step and dragging the velocity lane change velocity (one undo step per drag)', () => {
@@ -227,7 +233,7 @@ describe('drum steps', () => {
   it('pages show the right bar; copy/paste, copy to next bar and clear work on the shown bar', async () => {
     makeClip('t1', 2);
     cmd.toggleStep(session.store, 't1', 0, 16, 0); // bar 2, step 1
-    const m = mountEditor();
+    const m = mountEditor(NARROW);
     const tabs = () => [...m.container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
     expect(tabs().map((t) => t.getAttribute('aria-label'))).toEqual(['Bar 1', 'Bar 2']);
     expect(tabs().map((t) => t.textContent?.trim())).toEqual(['1', '2']);
@@ -292,9 +298,9 @@ describe('drum steps', () => {
 /* ------------------------------------------------------------------ */
 
 describe('melodic pitch lane', () => {
-  function setup() {
+  function setup(width = NARROW) {
     makeClip('t3', 2); // bass
-    const m = mountEditor();
+    const m = mountEditor(width);
     const roll = m.container.querySelector<HTMLElement>('[data-testid="pitch-roll"]')!;
     const cell = (step: number, pitch: number) => {
       const col = roll.querySelector<HTMLElement>(`[data-col="${step}"]`)!.getBoundingClientRect();
@@ -495,7 +501,8 @@ describe('melodic pitch lane', () => {
   });
 
   it('transpose: a scale step under Musical Assist (Shift: an octave), with a toast; Advanced adds semitone keys', async () => {
-    const { m, roll, cell } = setup();
+    // Wide enough for every tool on the bar line (both bars side by side).
+    const { m, roll, cell } = setup(960);
     press(roll, cell(0, 48));
     // C minor: C3 up one step is D3.
     fire(byLabel(m.container, 'Transpose up a scale step'), new MouseEvent('click', { bubbles: true }));
@@ -584,7 +591,7 @@ describe('undo and playhead', () => {
     s.sequencer = { getTrackState: () => ({ playing: { slot: 0, clipId: 'x', startTick: 0 }, queued: null }) };
     try {
       patchRuntime({ playing: true, tracks: { t1: { playingSlot: 0, queued: null } } });
-      const m = mountEditor();
+      const m = mountEditor(NARROW);
       const tabs = () => [...m.container.querySelectorAll<HTMLElement>('[role="tab"]')];
       // The frame loop marks it within a few frames (more on a busy machine).
       for (let i = 0; i < 60 && !tabs()[1].hasAttribute('data-live'); i++) await frames(1);

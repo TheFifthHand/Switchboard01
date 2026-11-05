@@ -36,7 +36,6 @@ import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, 
 import { Button, useElementSize, useRafLoop } from '../../../ui/components';
 import { regionEnd, songBars as projectSongBars, timelineBars as projectTimelineBars } from '../../../project/arrangement';
 import type { Id, Project } from '../../../project/types';
-import { selectSlot, selectTrack, setPadMode, setView } from '../../../state/uiStore';
 import { useStore } from '../../../state/store';
 import { session, useProject } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
@@ -45,6 +44,7 @@ import { MoreIcon, anchorFromContextEvent, anchorFromElement, isEchoOfKeyboardMe
 import { rangeText } from './songModel';
 import { isMac } from '../hints/shortcuts';
 import { DragOverlay } from './DragOverlay';
+import { openLoopEditor } from './editorStore';
 import { LaneController, type Carry, type LaneHost } from './laneController';
 import type { BarRange } from './laneGestures';
 import { laneKey } from './laneKeys';
@@ -334,25 +334,11 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   /* Edit notes                                                       */
   /* ---------------------------------------------------------------- */
 
-  const editNotes = useCallback(
-    (id: Id) => {
-      const p = session.store.getState();
-      const r = p.arrangement.regions.find((x) => x.id === id);
-      const t = r ? p.tracks.find((x) => x.id === r.trackId) : undefined;
-      const slot = t && r ? t.clips.findIndex((c) => c?.id === r.clipId) : -1;
-      if (!t || slot < 0) return;
-      selectTrack(t.id);
-      selectSlot(t.id, slot);
-      // Back in Song, the loop is selected and has keyboard focus again.
-      setSelection({ ids: [id], focus: id });
-      kept.focus = id;
-      setPadMode('steps');
-      setView('play');
-      const message = `Editing the notes of ${t.clips[slot]!.name} (${t.name}).`;
-      if (toasts) toasts.show({ id: 'back-to-song', tone: 'info', message, action: { label: 'Back to Song', onAction: () => setView('arrange') }, duration: 20000 });
-    },
-    [toasts],
-  );
+  const editNotes = useCallback((id: Id) => {
+    // The editor opens under the rows (LoopEditorPane); the song stays in view. The loop is chosen and keeps focus.
+    if (!openLoopEditor(session.store.getState(), id)) return;
+    setSelection({ ids: [id], focus: id });
+  }, []);
 
   /* ---------------------------------------------------------------- */
   /* The handle (header keys, loop browser)                           */

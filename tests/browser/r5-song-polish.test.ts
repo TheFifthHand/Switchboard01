@@ -15,7 +15,7 @@
  * - a section placed freely (Alt drag) says "Bar N", a copy (Ctrl drag)
  *   "+ Copy · Bar N", as a loop drag does (a plain drag reorders: r6-lane-*);
  * - Use another loop: its chevron at the right, the loop playing now ticked;
- * - Back to Song after Edit notes: the loop selected and focused again;
+ * - Edit notes keeps the song in view; Esc closes the editor, the loop selected and focused again;
  * - Shape the song… adds an intro or an ending (unavailable, with the
  *   reason, in an empty song); Add loops is the browser's key; the browser's
  *   loops say "2 bars"; part names keep their whole name in a tooltip.
@@ -296,16 +296,19 @@ describe('drags and menus', () => {
     await press('Escape');
   });
 
-  it('Back to Song after Edit notes: the loop is selected and has keyboard focus again, the view where it was', async () => {
+  // Round 6: Edit notes opens the editor under the rows; the view never leaves the song.
+  it('Edit notes keeps the song in view: the loop stays selected, Esc closes the editor and focus is back on the loop', async () => {
     await open(32);
     scroller().scrollLeft = 4 * ppb();
     await settle(100);
     const left = scroller().scrollLeft;
     await doubleClickAt(on('B', 0.5));
-    expect(uiStore.getState().view).toBe('play');
-    const back = [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Back to Song')!;
-    await clickAt(centre(back));
-    await waitFor(() => uiStore.getState().view === 'arrange' && !!document.querySelector('[data-region-id="B"]'), 'the Song view');
+    expect(uiStore.getState().view).toBe('arrange');
+    await waitFor(() => !!document.querySelector('[data-loop-editor]'), 'the editor pane');
+    expect(selectionStore.getState().ids).toEqual(['B']);
+    (document.querySelector<HTMLElement>('[data-loop-editor] [data-steps-entry], [data-loop-editor] [role="grid"] button') ?? document.body).focus();
+    await press('Escape');
+    await waitFor(() => !document.querySelector('[data-loop-editor]'), 'the pane closed');
     await waitFor(() => document.activeElement === regionEl('B'), 'focus on the loop');
     expect(selectionStore.getState().ids).toEqual(['B']);
     expect(Math.abs(scroller().scrollLeft - left)).toBeLessThan(2);

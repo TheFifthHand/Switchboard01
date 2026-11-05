@@ -105,6 +105,9 @@ describe('grid menu', () => {
   it('drum parts keep 16 steps and have no grid menu', async () => {
     await openSteps('t1', 1, { grid: '1/32' });
     expect(gridSelect()).toBeFalsy();
-    expect(document.querySelectorAll('[data-testid="velocity-lane"] [data-step]').length).toBe(16);
+    // 16 a bar (this 2-bar clip shows both bars side by side at 1366).
+    const lane = document.querySelector<HTMLElement>('[data-testid="velocity-lane"]')!;
+    expect(lane.dataset.cells).toBe('16');
+    expect(lane.querySelectorAll('[data-step]').length).toBe(32);
   });
 });

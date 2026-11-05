@@ -1,6 +1,9 @@
 /**
- * Steps mode: the editor for the selected part's selected clip, one bar per
- * page (clips are 1-8 bars; the header's bar strip shows the whole clip).
+ * Steps mode: the editor for the selected part's selected clip (a pad clip,
+ * or a loop that lives in the song, opened from the Song view). A clip whose
+ * bars fit side by side (1-2 bars at 1366 px, up to 4 at 1920) is shown
+ * whole; a longer one a bar per page (the header's bar strip shows the whole
+ * clip, and its keys pick the bar the bar tools act on).
  *
  * - Drum parts: a 16-step grid of the kit's sounds, the large pads of the
  *   chosen sound, velocity underneath.
@@ -14,16 +17,18 @@
  * it. The playhead shows the step that is heard while this clip plays, and
  * with Follow on the shown bar turns with it.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import { clipAtSlot, isSongSlot } from '../../project/clips';
 import { TICKS_PER_STEP, type ClipBars, type Id } from '../../project/types';
 import * as cmd from '../../state/commands';
 import { GRID_TICKS } from '../../state/commands/notes';
 import { selectSlot, setStepPage, stepPageFor } from '../../state/uiStore';
 import { shallowEqual, useStore } from '../../state/store';
-import { Button } from '../../ui/components';
+import { Button, useElementSize } from '../../ui/components';
 import { session, useProject, useUi } from '../instance';
 import { useRuntime } from '../runtime';
 import { DrumSteps } from './steps/DrumSteps';
+import { barsShown } from './steps/model';
 import { PitchLane } from './steps/PitchLane';
 import { StepHeader } from './steps/StepHeader';
 import { usePlayhead } from './steps/shared';
@@ -31,7 +36,7 @@ import styles from './StepEditor.module.css';
 
 function EmptySlot({ trackId, slot, locked, onOpen }: { trackId: Id; slot: number; locked: boolean; onOpen(): void }) {
   const trackName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? 'This part');
-  const sceneName = useProject((p) => p.scenes[slot]?.name ?? `Scene ${slot + 1}`);
+  const sceneName = useProject((p) => (isSongSlot(slot) ? 'the song' : (p.scenes[slot]?.name ?? `Scene ${slot + 1}`)));
   // The part's other clips, so an empty slot is never a dead end.
   const others = useProject(
     (p) => {
@@ -137,6 +142,35 @@ function useEditedSlot(trackId: Id): number {
   return slot;
 }
 
+/** The label column and the gutters next to the step cells (px), at their widest. */
+const LABEL_ROOM = 150;
+
+/**
+ * How many bars the editor in `rootRef` shows side by side for a clip of
+ * `bars` bars (see barsShown), and so the first bar shown for the chosen one.
+ */
+export function useBarsShown(rootRef: RefObject<HTMLElement | null>, bars: number, page: number): { span: number; first: number } {
+  const { width } = useElementSize(rootRef);
+  const span = barsShown(bars, width - LABEL_ROOM);
+  return { span, first: span > 1 ? 0 : page };
+}
+
+/**
+ * With bars side by side, a press in a bar makes it the chosen bar (the one
+ * the bar tools act on): the bar whose name (over the numbers) starts left of
+ * the press.
+ */
+export function pickBarAt(root: HTMLElement | null, trackId: Id, span: number, e: ReactPointerEvent): void {
+  if (!root || span <= 1) return;
+  const label = root.querySelector('[data-bar-label]')?.parentElement;
+  if (!label) return;
+  const lefts = [...label.querySelectorAll<HTMLElement>('[data-bar-label]')].map((el) => Math.round(el.getBoundingClientRect().left)).sort((a, b) => a - b);
+  if (lefts.length < 2 || e.clientX < lefts[0] - 2) return;
+  let bar = 0;
+  for (let i = 0; i < lefts.length; i++) if (e.clientX >= lefts[i] - 6) bar = i;
+  if (bar < span) setStepPage(trackId, bar);
+}
+
 export function StepEditor() {
   const trackId = useUi((s) => s.selectedTrackId);
   const slot = useEditedSlot(trackId);
@@ -149,7 +183,10 @@ export function StepEditor() {
     },
     (a, b) => a === b || (!!a && !!b && shallowEqual(a, b)),
   );
-  const clip = useProject((p) => p.tracks.find((t) => t.id === trackId)?.clips[slot] ?? null);
+  const clip = useProject((p) => {
+    const t = p.tracks.find((x) => x.id === trackId);
+    return t ? clipAtSlot(t, slot) : null;
+  });
   const locked = useStore(session.store.info, (s) => s.lock !== null);
   const follow = useUi((s) => s.stepsFollow);
   const gridName = useUi((s) => s.stepGrid);
@@ -160,10 +197,11 @@ export function StepEditor() {
   useEffect(() => {
     if (clip && storedPage > bars - 1) setStepPage(trackId, bars - 1);
   }, [clip, storedPage, bars, trackId]);
+  const { span, first } = useBarsShown(rootRef, bars, page);
 
   // Drums light 1/16 steps; the piano roll lights the cells of its grid.
   const cellTicks = track?.kind === 'drums' ? TICKS_PER_STEP : GRID_TICKS[gridName];
-  usePlayhead(rootRef, trackId, slot, bars, page, { cellTicks, follow });
+  usePlayhead(rootRef, trackId, slot, bars, first, { cellTicks, follow, span });
 
   // Creating a clip (or opening another one) from the empty slot replaces the
   // focused button: move focus into the new editor instead of losing it.
@@ -182,11 +220,11 @@ export function StepEditor() {
     <div ref={rootRef} className={styles.editor} data-locked={locked || undefined} data-steps-root="">
       <StepHeader trackId={trackId} slot={slot} page={page} clip={headerClip} kind={track.kind} trackName={track.name} locked={locked} />
       {clip ? (
-        <div id="steps-page-panel" className={styles.body} role="tabpanel" aria-labelledby={`steps-page-${page}`}>
+        <div id="steps-page-panel" className={styles.body} role="tabpanel" aria-labelledby={`steps-page-${page}`} data-span={span} onPointerDownCapture={(e) => pickBarAt(rootRef.current, trackId, span, e)}>
           {track.kind === 'drums' ? (
-            <DrumSteps trackId={trackId} slot={slot} page={page} clip={clip} kitId={track.kitId} />
+            <DrumSteps trackId={trackId} slot={slot} page={first} span={span} clip={clip} kitId={track.kitId} />
           ) : (
-            <PitchLane trackId={trackId} slot={slot} page={page} clip={clip} kind={track.kind} />
+            <PitchLane trackId={trackId} slot={slot} page={first} span={span} clip={clip} kind={track.kind} />
           )}
         </div>
       ) : (

@@ -27,7 +27,10 @@ export interface GridSpec {
   grid: StepGrid;
   ticks: number;
   perBeat: number;
+  /** Cells shown: one bar's, or `bars` bars' side by side (spanSpec). */
   cells: number;
+  /** Bars shown side by side (absent: 1). */
+  bars?: number;
 }
 
 export function gridSpec(grid: StepGrid = '1/16'): GridSpec {
@@ -37,6 +40,61 @@ export function gridSpec(grid: StepGrid = '1/16'): GridSpec {
 
 /** The drum grid (and the roll's default): 16 steps a bar. */
 export const STEP_GRID: GridSpec = gridSpec('1/16');
+
+/** `spec` over `bars` bars side by side (cells run on across the bars; a bar's columns follow the last one's). */
+export function spanSpec(spec: GridSpec, bars: number): GridSpec {
+  const n = Math.max(1, Math.floor(bars));
+  const per = barCells(spec);
+  if (n === (spec.bars ?? 1)) return spec;
+  return n === 1 ? { grid: spec.grid, ticks: spec.ticks, perBeat: spec.perBeat, cells: per } : { ...spec, cells: per * n, bars: n };
+}
+
+/** Cells in one bar of `spec`. */
+export function barCells(spec: GridSpec): number {
+  return Math.round(spec.cells / (spec.bars ?? 1));
+}
+
+/** Spacers of a span of bars (px): between beats, and the wider one between bars. */
+export const SPAN_BEAT_GAP = 5;
+export const SPAN_BAR_GAP = 14;
+
+/**
+ * The cell columns for a span of bars (null for one bar, which the
+ * stylesheet's template covers): every beat's cells with a spacer between
+ * beats, a wider one between bars. The label column comes first (the
+ * stylesheet's), so cellColumn() holds across the bars.
+ */
+export function spanColumns(spec: GridSpec): string | null {
+  const bars = spec.bars ?? 1;
+  if (bars <= 1) return null;
+  const beat = `repeat(${spec.perBeat}, minmax(0, 1fr))`;
+  const parts: string[] = [];
+  const beats = bars * 4;
+  for (let b = 0; b < beats; b++) {
+    parts.push(beat);
+    if (b < beats - 1) parts.push(`${(b + 1) % 4 === 0 ? SPAN_BAR_GAP : SPAN_BEAT_GAP}px`);
+  }
+  return parts.join(' ');
+}
+
+/** Narrowest a bar is drawn side by side with others (px of cells, label column excluded). */
+export const MIN_BAR_PX = 400;
+
+/**
+ * How many bars the editor shows side by side for a clip of `bars` bars in
+ * `width` px of cells: the whole clip when its bars fit (at most 4), else one
+ * bar at a time (the bar keys turn the page).
+ */
+export function barsShown(bars: number, width: number, minBarPx = MIN_BAR_PX): number {
+  if (bars <= 1 || !(width > 0)) return 1;
+  const fit = Math.min(4, Math.floor(width / minBarPx));
+  return bars <= fit ? bars : 1;
+}
+
+/** "bar 2" or "bars 1–2" for the bars a view shows from `page`. */
+export function barsWords(page: number, bars = 1): string {
+  return bars > 1 ? `bars ${page + 1}–${page + bars}` : `bar ${page + 1}`;
+}
 
 const INDICES = new Map<number, readonly number[]>();
 /** 0..cells-1 (cached per length, so lists keep their identity across renders). */
@@ -78,16 +136,21 @@ export function stepSpan(first: number, last: number): string {
  * numbers line up with the 1/16 view. `beat` marks the first cell of a beat.
  */
 export function cellLabel(cell: number, spec: GridSpec): { text: string; beat: boolean } {
-  const beat = cell % spec.perBeat === 0;
-  if (spec.grid === '1/32') return { text: cell % 2 === 0 ? String(cell / 2 + 1) : '·', beat };
-  return { text: String(cell + 1), beat };
+  // Bars side by side: each bar counts from 1 again (StepNumbers names the bars above).
+  const inBar = cell % barCells(spec);
+  const beat = inBar % spec.perBeat === 0;
+  if (spec.grid === '1/32') return { text: inBar % 2 === 0 ? String(inBar / 2 + 1) : '·', beat };
+  return { text: String(inBar + 1), beat };
 }
 
 /** A cell for words: "step 5" on the 1/16 grid, "32nd 9 of 32" on finer ones. */
 export function cellWords(cell: number, spec: GridSpec): string {
-  if (spec.grid === '1/16') return `step ${cell + 1}`;
+  const per = barCells(spec);
+  const bar = (spec.bars ?? 1) > 1 ? `bar ${Math.floor(cell / per) + 1}, ` : '';
+  const inBar = cell % per;
+  if (spec.grid === '1/16') return `${bar}step ${inBar + 1}`;
   const unit = spec.grid === '1/32' ? '32nd' : spec.grid === '1/8T' ? 'triplet 8th' : 'triplet 16th';
-  return `${unit} ${cell + 1} of ${spec.cells}`;
+  return `${bar}${unit} ${inBar + 1} of ${per}`;
 }
 
 export function pageStartTick(page: number): number {
@@ -126,10 +189,10 @@ export function plural(n: number, word: string): string {
  * hits[voice][step] = the loudest velocity of that voice on that step of the
  * page, or -1 when the step is off. A note is on the step it starts in.
  */
-export function drumPageGrid(notes: readonly Note[], page: number, voices = 16): number[][] {
-  const grid = Array.from({ length: voices }, () => Array.from({ length: STEPS }, () => -1));
+export function drumPageGrid(notes: readonly Note[], page: number, voices = 16, bars = 1): number[][] {
+  const grid = Array.from({ length: voices }, () => Array.from({ length: STEPS * bars }, () => -1));
   const a = pageStartTick(page);
-  const b = a + TICKS_PER_BAR;
+  const b = a + TICKS_PER_BAR * bars;
   for (const n of notes) {
     if (n.tick < a || n.tick >= b) continue;
     const v = Math.round(n.pitch);
@@ -181,12 +244,13 @@ export interface NoteView {
 
 /**
  * Notes that sound during `page` (a note longer than a page continues onto
- * the next ones), placed on cells of `cellTicks` ticks (default 1/16).
+ * the next ones), placed on cells of `cellTicks` ticks (default 1/16). With
+ * `bars`, the view is that many bars from `page`, side by side.
  */
-export function pageNoteViews(notes: readonly Note[], page: number, clipTicks: number, cellTicks = TICKS_PER_STEP): NoteView[] {
-  const cells = Math.round(TICKS_PER_BAR / cellTicks);
+export function pageNoteViews(notes: readonly Note[], page: number, clipTicks: number, cellTicks = TICKS_PER_STEP, bars = 1): NoteView[] {
+  const cells = Math.round((TICKS_PER_BAR * bars) / cellTicks);
   const a = pageStartTick(page);
-  const b = Math.min(a + TICKS_PER_BAR, clipTicks);
+  const b = Math.min(a + TICKS_PER_BAR * bars, clipTicks);
   const out: NoteView[] = [];
   for (const n of notes) {
     const end = Math.min(n.tick + n.duration, clipTicks);
@@ -227,7 +291,7 @@ export function velocityVoices(notes: readonly Note[], page: number, spec: GridS
   const cols: VelocityVoice[][] = Array.from({ length: spec.cells }, () => []);
   const a = pageStartTick(page);
   for (const n of notes) {
-    if (n.tick < a || n.tick >= a + TICKS_PER_BAR) continue;
+    if (n.tick < a || n.tick >= a + TICKS_PER_BAR * (spec.bars ?? 1)) continue;
     const c = Math.min(spec.cells - 1, Math.floor((n.tick - a) / spec.ticks));
     cols[c].push({ id: n.id, pitch: n.pitch, velocity: n.velocity, selected: selected.has(n.id) });
   }

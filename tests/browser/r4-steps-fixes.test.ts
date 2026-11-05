@@ -19,7 +19,7 @@ import * as cmd from '../../src/state/commands';
 import { setStepPage, setStepsFollow } from '../../src/state/uiStore';
 import { press, setUp, tearDown } from './r4-play-helpers';
 import { click, contrast, mouse, settleFrames, type Pt } from './r4-uikit-input';
-import { BASS, CHORDS, cellPt, col, lane, lanePt, noteEl, notePt, notesOf, notice, openSteps, page, selected, showRow } from './r4-steps-helpers';
+import { BASS, CHORDS, cellPt, col, lane, lanePt, noteEl, notePt, notesOf, notice, openSteps, page, roll, selected, showRow } from './r4-steps-helpers';
 
 beforeEach(setUp);
 afterEach(async () => {
@@ -84,11 +84,13 @@ describe('M1: moves keep to the grid at the clip end', () => {
     const n = bounce().find((x) => x.tick === 432)!; // bar 2, step 4
     await showRow(n.pitch);
     const from = notePt(n.id);
-    const past = { x: col(15).getBoundingClientRect().right + 30, y: from.y };
+    // The last column shown: step 16 of bar 2 (at 1366 both bars of the clip are side by side).
+    const end = roll().querySelectorAll('[data-col]').length - 1;
+    const past = { x: col(end).getBoundingClientRect().right + 30, y: from.y };
     await dragTo(from, past, { release: false });
     // Drawn on the last step while the pointer is past the edge.
     const drawn = noteEl(n.id)!.getBoundingClientRect();
-    const last = col(15).getBoundingClientRect();
+    const last = col(end).getBoundingClientRect();
     expect(drawn.left).toBeGreaterThanOrEqual(last.left - 1);
     expect(drawn.left).toBeLessThan(last.right);
     await mouse('mouseReleased', past);
