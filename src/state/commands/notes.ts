@@ -121,9 +121,9 @@ interface Target {
 function target(p: Project, trackId: Id, slot: number): Target | CommandResult {
   const track = findTrack(p, trackId);
   if (!track) return NOT_FOUND('part');
-  if (!isClipSlotOf(slot, track)) return refuse('invalid', 'There is no clip slot there.');
+  if (!isClipSlotOf(slot, track)) return refuse('invalid', 'There is no loop there.');
   const clip = clipAtSlot(track, slot);
-  if (!clip) return NOT_FOUND('clip');
+  if (!clip) return NOT_FOUND('loop');
   return { track, clip, len: clipTicks(clip) };
 }
 
@@ -166,12 +166,12 @@ export function toggleStep(store: ProjectStore, trackId: Id, slot: number, stepI
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
-  if (!isClipSlotOf(slot, t)) return refuse('invalid', 'There is no clip slot there.');
+  if (!isClipSlotOf(slot, t)) return refuse('invalid', 'There is no loop there.');
   if (!validPitch(t.instrument.kind, pitch)) return refuse('invalid', 'That pitch cannot be played by this part.');
   if (!isFiniteNumber(velocity)) return refuse('invalid', 'Velocity must be a number.');
   const clip = clipAtSlot(t, slot);
   const maxSteps = clip ? clip.bars * STEPS_PER_BAR : MAX_CLIP_BARS * STEPS_PER_BAR;
-  if (!Number.isInteger(stepIndex) || stepIndex < 0 || stepIndex >= maxSteps) return refuse('invalid', 'That step is outside the clip.');
+  if (!Number.isInteger(stepIndex) || stepIndex < 0 || stepIndex >= maxSteps) return refuse('invalid', 'That step is outside the loop.');
 
   const tick = stepIndex * TICKS_PER_STEP;
   const note: Note = { id: uid('n'), tick, pitch, velocity: clamp(velocity, 0, 1), duration: TICKS_PER_STEP };
@@ -192,7 +192,7 @@ export function toggleStep(store: ProjectStore, trackId: Id, slot: number, stepI
     });
     return { ...r, added: false };
   }
-  if (clip.notes.length >= MAX_NOTES) return refuse('limit', 'This clip is full.');
+  if (clip.notes.length >= MAX_NOTES) return refuse('limit', 'This loop is full.');
   const r = run(store, 'notes:Add step', (d) => {
     draftClip(d, trackId, slot).notes.push(note);
   });
@@ -235,13 +235,13 @@ export function addNote(store: ProjectStore, trackId: Id, slot: number, note: Om
   const p = store.getState();
   const t = findTrack(p, trackId);
   const clip = clipAt(p, trackId, slot);
-  if (!t || !clip) return NOT_FOUND('clip');
+  if (!t || !clip) return NOT_FOUND('loop');
   const len = clipTicks(clip);
-  if (![note.tick, note.pitch, note.velocity, note.duration].every(isFiniteNumber) || note.tick < 0 || note.tick >= len) return refuse('invalid', 'That note is outside the clip.');
+  if (![note.tick, note.pitch, note.velocity, note.duration].every(isFiniteNumber) || note.tick < 0 || note.tick >= len) return refuse('invalid', 'That note is outside the loop.');
   const pitch = Math.round(note.pitch);
   if (!validPitch(t.instrument.kind, pitch)) return refuse('invalid', 'That pitch cannot be played by this part.');
   const replaced = clip.notes.filter((n) => n.tick === note.tick && n.pitch === pitch).map((n) => n.id);
-  if (clip.notes.length - replaced.length >= MAX_NOTES) return refuse('limit', 'This clip is full.');
+  if (clip.notes.length - replaced.length >= MAX_NOTES) return refuse('limit', 'This loop is full.');
   const n: Note = { id: uid('n'), tick: note.tick, pitch, velocity: clamp(note.velocity, 0, 1), duration: clamp(note.duration, VALIDATION_LIMITS.minNoteTicks, len) };
   const r = run(store, 'notes:Add note', (d) => {
     const c = draftClip(d, trackId, slot);
@@ -301,7 +301,7 @@ export function moveNote(store: ProjectStore, trackId: Id, slot: number, noteId:
 /** Remove every note of one pitch (a drum sound's row) from the clip. Returns how many went. */
 export function clearNotesForPitch(store: ProjectStore, trackId: Id, slot: number, pitch: number): CommandResult & { removed: number } {
   const clip = clipAt(store.getState(), trackId, slot);
-  if (!clip) return { ...NOT_FOUND('clip'), removed: 0 };
+  if (!clip) return { ...NOT_FOUND('loop'), removed: 0 };
   const removed = clip.notes.filter((n) => n.pitch === pitch).length;
   if (removed === 0) return { changed: false, removed: 0 };
   const r = run(store, 'notes:Clear row', (d) => {
@@ -315,7 +315,7 @@ export function clearNotesForPitch(store: ProjectStore, trackId: Id, slot: numbe
 /* Pages (one bar = 16 steps)                                          */
 /* ------------------------------------------------------------------ */
 
-const PAGES_MESSAGE = `Clips have at most ${MAX_CLIP_BARS} bars.`;
+const PAGES_MESSAGE = `Loops have at most ${MAX_CLIP_BARS} bars.`;
 
 function pageRange(page: number): [number, number] {
   return [page * TICKS_PER_BAR, (page + 1) * TICKS_PER_BAR];
@@ -323,8 +323,8 @@ function pageRange(page: number): [number, number] {
 
 export function clearPage(store: ProjectStore, trackId: Id, slot: number, page: number): CommandResult {
   const clip = clipAt(store.getState(), trackId, slot);
-  if (!clip) return NOT_FOUND('clip');
-  if (!Number.isInteger(page) || page < 0 || page >= clip.bars) return refuse('invalid', 'That page is outside the clip.');
+  if (!clip) return NOT_FOUND('loop');
+  if (!Number.isInteger(page) || page < 0 || page >= clip.bars) return refuse('invalid', 'That page is outside the loop.');
   const [a, b] = pageRange(page);
   if (!clip.notes.some((n) => n.tick >= a && n.tick < b)) return { changed: false };
   return run(store, 'notes:Clear page', (d) => {
@@ -353,7 +353,7 @@ function writePage(store: ProjectStore, label: string, trackId: Id, slot: number
   const p = store.getState();
   const t = findTrack(p, trackId);
   const clip = clipAt(p, trackId, slot);
-  if (!t || !clip) return NOT_FOUND('clip');
+  if (!t || !clip) return NOT_FOUND('loop');
   if (!Number.isInteger(page) || page < 0 || page >= MAX_CLIP_BARS) return refuse('invalid', PAGES_MESSAGE);
   const [a, b] = pageRange(page);
   const placed: Note[] = [];
@@ -363,7 +363,7 @@ function writePage(store: ProjectStore, label: string, trackId: Id, slot: number
     placed.push({ id: uid('n'), tick: n.tick + a, pitch: Math.round(n.pitch), velocity: clamp(n.velocity, 0, 1), duration: clamp(n.duration, VALIDATION_LIMITS.minNoteTicks, VALIDATION_LIMITS.maxNoteTicks) });
   }
   const kept = clip.notes.filter((n) => n.tick < a || n.tick >= b);
-  if (kept.length + placed.length > MAX_NOTES) return refuse('limit', 'The clip would have too many notes.');
+  if (kept.length + placed.length > MAX_NOTES) return refuse('limit', 'The loop would have too many notes.');
   const bars = Math.max(clip.bars, page + 1) as ClipBars;
   return run(store, label, (d) => {
     const c = draftClip(d, trackId, slot);
@@ -376,8 +376,8 @@ function writePage(store: ProjectStore, label: string, trackId: Id, slot: number
 export function duplicatePage(store: ProjectStore, trackId: Id, slot: number, fromPage: number, toPage = fromPage + 1): CommandResult {
   const p = store.getState();
   const clip = clipAt(p, trackId, slot);
-  if (!clip) return NOT_FOUND('clip');
-  if (!Number.isInteger(fromPage) || fromPage < 0 || fromPage >= clip.bars) return refuse('invalid', 'That page is outside the clip.');
+  if (!clip) return NOT_FOUND('loop');
+  if (!Number.isInteger(fromPage) || fromPage < 0 || fromPage >= clip.bars) return refuse('invalid', 'That page is outside the loop.');
   if (!Number.isInteger(toPage) || toPage < 0 || toPage >= MAX_CLIP_BARS || toPage === fromPage) return refuse('invalid', PAGES_MESSAGE);
   return writePage(store, 'notes:Duplicate page', trackId, slot, toPage, copyPage(p, trackId, slot, fromPage));
 }
@@ -387,8 +387,8 @@ export function transposeClip(store: ProjectStore, trackId: Id, slot: number, se
   const p = store.getState();
   const t = findTrack(p, trackId);
   const clip = clipAt(p, trackId, slot);
-  if (!t || !clip) return NOT_FOUND('clip');
-  if (t.instrument.kind === 'drums') return refuse('invalid', 'Drum clips cannot be transposed.');
+  if (!t || !clip) return NOT_FOUND('loop');
+  if (t.instrument.kind === 'drums') return refuse('invalid', 'Drum loops cannot be transposed.');
   if (!Number.isInteger(semitones) || semitones === 0) return { changed: false };
   const fold = (x: number) => {
     let v = x;
@@ -396,7 +396,7 @@ export function transposeClip(store: ProjectStore, trackId: Id, slot: number, se
     while (v < 0) v += 12;
     return v;
   };
-  return run(store, 'notes:Transpose clip', (d) => {
+  return run(store, 'notes:Transpose loop', (d) => {
     for (const n of draftClip(d, trackId, slot).notes) n.pitch = fold(n.pitch + semitones);
   });
 }
@@ -424,7 +424,7 @@ export function addRecordedNotes(store: ProjectStore, trackId: Id, slot: number,
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
-  if (!isClipSlotOf(slot, t)) return refuse('invalid', 'There is no clip slot there.');
+  if (!isClipSlotOf(slot, t)) return refuse('invalid', 'There is no loop there.');
   if (!(opts.quantize in QUANTIZE_TICKS)) return refuse('invalid', 'Unknown quantize setting.');
   // Negative ticks (played just before the downbeat) wrap into the loop like any other position.
   const valid = notes.filter((n) => [n.tick, n.pitch, n.velocity, n.duration].every(isFiniteNumber) && validPitch(t.instrument.kind, Math.round(n.pitch)));
@@ -453,7 +453,7 @@ export function addRecordedNotes(store: ProjectStore, trackId: Id, slot: number,
   let message: string | undefined;
   if (existingNotes.length + fresh.length > MAX_NOTES) {
     fresh = fresh.slice(0, Math.max(0, MAX_NOTES - existingNotes.length));
-    message = 'The clip is full; some recorded notes were not kept.';
+    message = 'The loop is full; some recorded notes were not kept.';
   }
   const added = [...replacing, ...fresh];
   const addedKeys = new Set(added.map(keyOf));
@@ -484,7 +484,7 @@ export type Collide = 'replace' | 'refuse';
 /** Where a refused or shortened move stopped, in words ("the end of the clip", "the highest note (G9)"). */
 function edgeWords(kind: InstrumentKind, time: number, pitch: number): string {
   const parts: string[] = [];
-  if (time) parts.push(time < 0 ? 'the start of the clip' : 'the end of the clip');
+  if (time) parts.push(time < 0 ? 'the start of the loop' : 'the end of the loop');
   if (pitch) {
     if (kind === 'drums') parts.push(pitch < 0 ? 'the first sound of the kit' : 'the last sound of the kit');
     else parts.push(pitch < 0 ? 'the lowest note (C-1)' : 'the highest note (G9)');
@@ -723,13 +723,13 @@ function placeNotes(
     if (tick < 0 || tick >= t.len || !validPitch(t.track.instrument.kind, pitch)) continue;
     placed.push({ id: uid('n'), tick, pitch, velocity: clamp(n.velocity, 0, 1), duration: clamp(n.duration, VALIDATION_LIMITS.minNoteTicks, VALIDATION_LIMITS.maxNoteTicks) });
   }
-  if (placed.length === 0) return { ...refuse('limit', 'None of those notes fit here: they would start past the end of the clip or outside what this part can play.'), ...none, skipped: notes.length };
+  if (placed.length === 0) return { ...refuse('limit', 'None of those notes fit here: they would start past the end of the loop or outside what this part can play.'), ...none, skipped: notes.length };
   const unique = dedupeNotes(placed);
   const landing = new Set(unique.map((n) => noteKey(n.tick, n.pitch)));
   const kept = t.clip.notes.filter((n) => !landing.has(noteKey(n.tick, n.pitch)));
   const replaced = t.clip.notes.length - kept.length;
   if (replaced && collide === 'refuse') return { ...refuse('occupied', 'There is already a note there.'), ...none };
-  if (kept.length + unique.length > MAX_NOTES) return { ...refuse('limit', 'The clip would have too many notes.'), ...none };
+  if (kept.length + unique.length > MAX_NOTES) return { ...refuse('limit', 'The loop would have too many notes.'), ...none };
   const r = run(store, label, (d) => {
     const c = draftClip(d, trackId, slot);
     c.notes = [...c.notes.filter((n) => !landing.has(noteKey(n.tick, n.pitch))), ...unique];
@@ -753,7 +753,7 @@ export function pasteNotes(
   const t = target(store.getState(), trackId, slot);
   if (!isTarget(t)) return { ...t, ...none };
   if (!Array.isArray(notes)) return { ...refuse('invalid', 'The notes could not be read.'), ...none };
-  if (!isFiniteNumber(atTick) || atTick < 0 || atTick >= t.len) return { ...refuse('invalid', 'That position is outside the clip.'), ...none };
+  if (!isFiniteNumber(atTick) || atTick < 0 || atTick >= t.len) return { ...refuse('invalid', 'That position is outside the loop.'), ...none };
   return placeNotes(store, trackId, slot, t, notes, atTick, opts.collide ?? 'replace', 'notes:Paste notes', 'Paste');
 }
 
@@ -781,7 +781,7 @@ export function duplicateNotes(
   const end = Math.max(...sel.map((n) => n.tick + n.duration));
   const offset = opts.offsetTicks ?? Math.max(TICKS_PER_STEP, Math.ceil((end - start) / TICKS_PER_STEP) * TICKS_PER_STEP);
   if (!isFiniteNumber(offset) || offset === 0) return { ...refuse('invalid', 'A copy needs a distance to move.'), ...none };
-  if (start + offset < 0 || start + offset >= t.len) return { ...refuse('limit', 'There is no room for a copy there in this clip.'), ...none };
+  if (start + offset < 0 || start + offset >= t.len) return { ...refuse('limit', 'There is no room for a copy there in this loop.'), ...none };
   return placeNotes(store, trackId, slot, t, copyNotes(store.getState(), trackId, slot, ids), start + offset, opts.collide ?? 'replace', 'notes:Duplicate notes', 'Duplicate');
 }
 
@@ -836,7 +836,7 @@ export function quantizeClip(store: ProjectStore, trackId: Id, slot: number, opt
   });
   if (touched === 0) return { changed: false, moved: 0 };
   const notes = dedupeNotes(next);
-  const r = run(store, 'notes:Quantize clip', (d) => {
+  const r = run(store, 'notes:Quantize loop', (d) => {
     draftClip(d, trackId, slot).notes = notes;
   }, undefined, { display: `Quantize ${plural(touched, 'note')} to ${opts.grid}` });
   return { ...r, moved: r.changed ? moved : 0 };
@@ -881,7 +881,7 @@ export function humanizeClip(store: ProjectStore, trackId: Id, slot: number, opt
   });
   if (touched === 0) return { changed: false, moved: 0, notes: 0 };
   const notes = dedupeNotes(next);
-  const r = run(store, 'notes:Humanize clip', (d) => {
+  const r = run(store, 'notes:Humanize loop', (d) => {
     draftClip(d, trackId, slot).notes = notes;
   }, undefined, { display: `Humanize ${plural(touched, 'note')}` });
   return r.changed ? { ...r, moved, notes: touched } : { ...r, moved: 0, notes: 0 };
@@ -918,7 +918,7 @@ export function paintSteps(
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return { ...NOT_FOUND('part'), painted: 0 };
-  if (!isClipSlotOf(slot, t)) return { ...refuse('invalid', 'There is no clip slot there.'), painted: 0 };
+  if (!isClipSlotOf(slot, t)) return { ...refuse('invalid', 'There is no loop there.'), painted: 0 };
   if (!validPitch(t.instrument.kind, pitch)) return { ...refuse('invalid', 'That pitch cannot be played by this part.'), painted: 0 };
   const velocity = opts.velocity ?? DEFAULT_STEP_VELOCITY;
   if (!isFiniteNumber(velocity)) return { ...refuse('invalid', 'Velocity must be a number.'), painted: 0 };
@@ -926,13 +926,13 @@ export function paintSteps(
   const made = paintCreated.get(store);
   const grows = !clip || (gesture !== undefined && made !== undefined && made.gesture === gesture && made.clipId === clip.id);
   const max = (grows ? MAX_CLIP_BARS : clip.bars) * STEPS_PER_BAR;
-  if (!Array.isArray(steps) || steps.some((s) => !Number.isInteger(s) || s < 0 || s >= max)) return { ...refuse('invalid', 'That step is outside the clip.'), painted: 0 };
+  if (!Array.isArray(steps) || steps.some((s) => !Number.isInteger(s) || s < 0 || s >= max)) return { ...refuse('invalid', 'That step is outside the loop.'), painted: 0 };
   const wanted = [...new Set(steps)].sort((a, b) => a - b);
   const display = { display: on ? 'Paint steps' : 'Erase steps' };
   if (on) {
     const add = wanted.filter((s) => !clip || notesAtStep(clip, s, pitch).length === 0);
     if (add.length === 0) return { changed: false, painted: 0 };
-    if ((clip?.notes.length ?? 0) + add.length > MAX_NOTES) return { ...refuse('limit', 'This clip is full.'), painted: 0 };
+    if ((clip?.notes.length ?? 0) + add.length > MAX_NOTES) return { ...refuse('limit', 'This loop is full.'), painted: 0 };
     const fresh = add.map((s): Note => ({ id: uid('n'), tick: s * TICKS_PER_STEP, pitch, velocity: clamp(velocity, 0, 1), duration: TICKS_PER_STEP }));
     const reach = clamp(Math.ceil((add[add.length - 1] + 1) / STEPS_PER_BAR), 1, MAX_CLIP_BARS) as ClipBars;
     if (clip) {
@@ -981,7 +981,7 @@ export function fillSound(
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return { ...NOT_FOUND('part'), added: 0 };
-  if (!isClipSlotOf(slot, t)) return { ...refuse('invalid', 'There is no clip slot there.'), added: 0 };
+  if (!isClipSlotOf(slot, t)) return { ...refuse('invalid', 'There is no loop there.'), added: 0 };
   if (!validPitch(t.instrument.kind, pitch)) return { ...refuse('invalid', 'That pitch cannot be played by this part.'), added: 0 };
   if (every !== 1 && every !== 2 && every !== 4) return { ...refuse('invalid', 'Fill every beat, 8th or 16th.'), added: 0 };
   const velocity = opts.velocity ?? DEFAULT_STEP_VELOCITY;
@@ -991,7 +991,7 @@ export function fillSound(
   const add: number[] = [];
   for (let s = 0; s < total; s += every) if (!clip || notesAtStep(clip, s, pitch).length === 0) add.push(s);
   if (add.length === 0) return { changed: false, added: 0 };
-  if ((clip?.notes.length ?? 0) + add.length > MAX_NOTES) return { ...refuse('limit', 'This clip is full.'), added: 0 };
+  if ((clip?.notes.length ?? 0) + add.length > MAX_NOTES) return { ...refuse('limit', 'This loop is full.'), added: 0 };
   const fresh = add.map((s): Note => ({ id: uid('n'), tick: s * TICKS_PER_STEP, pitch, velocity: clamp(velocity, 0, 1), duration: TICKS_PER_STEP }));
   const display = { display: `Fill every ${FILL_WORDS[every]}` };
   const r = clip
@@ -1015,7 +1015,7 @@ export function shiftSound(store: ProjectStore, trackId: Id, slot: number, pitch
   if (!isTarget(t)) return { ...t, ...none };
   if (dir !== 1 && dir !== -1) return { ...refuse('invalid', 'Shift by one step, later or earlier.'), ...none };
   const row = t.clip.notes.filter((n) => n.pitch === pitch);
-  if (row.length === 0) return { ...refuse('empty', 'This sound has no hits in the clip.'), ...none };
+  if (row.length === 0) return { ...refuse('empty', 'This sound has no hits in the loop.'), ...none };
   const len = t.len;
   const to = new Map<Id, number | null>();
   for (const n of row) {
@@ -1049,7 +1049,7 @@ export function transposeClipInScale(store: ProjectStore, trackId: Id, slot: num
   const p = store.getState();
   const t = target(p, trackId, slot);
   if (!isTarget(t)) return { ...t, moved: 0 };
-  if (t.track.instrument.kind === 'drums') return { ...refuse('invalid', 'Drum clips cannot be transposed.'), moved: 0 };
+  if (t.track.instrument.kind === 'drums') return { ...refuse('invalid', 'Drum loops cannot be transposed.'), moved: 0 };
   if (!Number.isInteger(steps) || Math.abs(steps) > MAX_TRANSPOSE_STEPS) return { ...refuse('invalid', 'Transpose by a whole number of steps.'), moved: 0 };
   if (steps === 0 || t.clip.notes.length === 0) return { changed: false, moved: 0 };
   const key: MusicalKey = { root: p.root, scale: p.scale };
@@ -1063,9 +1063,9 @@ export function transposeClipInScale(store: ProjectStore, trackId: Id, slot: num
   });
   if (moved === 0) return { changed: false, moved: 0 };
   const notes = dedupeNotes(next);
-  const r = run(store, 'notes:Transpose clip', (d) => {
+  const r = run(store, 'notes:Transpose loop', (d) => {
     draftClip(d, trackId, slot).notes = notes;
-  }, undefined, { display: `Transpose clip ${steps > 0 ? 'up' : 'down'} ${plural(Math.abs(steps), 'scale step')}` });
+  }, undefined, { display: `Transpose loop ${steps > 0 ? 'up' : 'down'} ${plural(Math.abs(steps), 'scale step')}` });
   return { ...r, moved: r.changed ? moved : 0 };
 }
 
@@ -1135,11 +1135,11 @@ export function createProgressionClip(
   if (!t) return { ...NOT_FOUND('part'), ...none };
   if (t.instrument.kind === 'drums') return { ...refuse('invalid', 'Drum parts play sounds, not chords: choose a melodic part for a progression.'), ...none };
   if (t.instrument.kind === 'sampler') return { ...refuse('invalid', 'Sampler parts play a recording, which keeps its own pitch: choose a synth part for a progression.'), ...none };
-  if (!isClipSlotOf(slot, t)) return { ...refuse('invalid', 'There is no clip slot there.'), ...none };
+  if (!isClipSlotOf(slot, t)) return { ...refuse('invalid', 'There is no loop there.'), ...none };
   const prog = opts ? getProgression(opts.progressionId) : undefined;
   if (!prog) return { ...refuse('invalid', 'Unknown progression.'), ...none };
   if (!RHYTHMS.includes(opts.rhythm)) return { ...refuse('invalid', 'Choose held, stabs or off-beats.'), ...none };
-  if (!Number.isInteger(opts.bars) || opts.bars < 1 || opts.bars > MAX_CLIP_BARS) return { ...refuse('invalid', `Clips are 1 to ${MAX_CLIP_BARS} bars.`), ...none };
+  if (!Number.isInteger(opts.bars) || opts.bars < 1 || opts.bars > MAX_CLIP_BARS) return { ...refuse('invalid', `Loops are 1 to ${MAX_CLIP_BARS} bars.`), ...none };
   if (opts.size !== 3 && opts.size !== 4) return { ...refuse('invalid', 'Choose three-note or four-note chords.'), ...none };
 
   const resolved = resolveProgression(p.root, p.scale, prog, opts.size);

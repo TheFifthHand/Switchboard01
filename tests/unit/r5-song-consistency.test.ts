@@ -35,7 +35,7 @@ describe('the song follows the clips, in the same undo step', () => {
     cmd.deleteClip(store, 't3', 0);
     expect(sketch(store.getState())).toEqual(['t1:Beat@0+8~0', 't4:Stabs@4+4~0', 't3:Walk@8+4~0', 't5:Hook@8+4~0']);
     expect(store.historySize().undo).toBe(1);
-    expect(store.undoLabel()).toBe('Delete clip');
+    expect(store.undoLabel()).toBe('Delete loop');
     expectValid(store.getState());
     store.undo();
     expect(store.getState().arrangement).toEqual(before.arrangement);

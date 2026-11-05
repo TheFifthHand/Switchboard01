@@ -89,7 +89,7 @@ describe('build up, strip down, breakdown', () => {
     expect(cmd.shapeProblem(none.store.getState(), none.id, 'build')).toBe('No part plays here.');
     // Two 4-bar clips in a 4-bar section: no clip boundary to bring the second in at.
     const short = drop([['t3', 'Bounce'], ['t4', 'Stabs']], 4);
-    expect(cmd.shapeProblem(short.store.getState(), short.id, 'build')).toBe('The clips here are as long as the section, so the parts cannot come in one at a time: make the section longer first.');
+    expect(cmd.shapeProblem(short.store.getState(), short.id, 'build')).toBe('The loops here are as long as the section, so the parts cannot come in one at a time: make the section longer first.');
     expectRefused(short.store, () => cmd.shapeSection(short.store, short.id, 'build'), 'invalid');
     expect(cmd.shapeProblem(short.store.getState(), 'sec_gone', 'build')).toBe('That section no longer exists.');
     expectRefused(short.store, () => cmd.shapeSection(short.store, 'sec_gone', 'build'), 'not-found');

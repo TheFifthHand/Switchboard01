@@ -73,7 +73,7 @@ export function removeSampleMeta(store: ProjectStore, sampleId: Id): CommandResu
     const t = findTrack(p, c.trackId);
     const clip = t ? clipAtSlot(t, c.slot) : null;
     const more = usage.clips.length > 1 ? ` and ${usage.clips.length - 1} more` : '';
-    return refuse('in-use', `This recording plays in a clip (${clip?.name ?? 'a clip'} on ${partName(p, c.trackId)}${more}). Delete that clip or give it another recording first.`);
+    return refuse('in-use', `This recording plays in a loop (${clip?.name ?? 'a loop'} on ${partName(p, c.trackId)}${more}). Delete that loop or give it another recording first.`);
   }
   if (usage.performances.length) return refuse('in-use', 'This recording is used by a recorded performance. Delete that performance first.');
   return run(store, 'sample:Remove recording', (d) => {
@@ -200,7 +200,7 @@ export function addRecordedTake(store: ProjectStore, take: RecordedTake): Record
   const t = findTrack(p, take.trackId);
   if (!t) return NOT_FOUND('part');
   if (isSongSlot(take.slot)) return SONG_SLOT_REFUSAL('Audio recordings go on a pad: record the audio in Play, then put it in the song.');
-  if (!isSlot(take.slot, t) || !isClipBars(take.bars)) return refuse('invalid', `A recorded take fills a clip of 1 to ${MAX_CLIP_BARS} bars in one of the part’s slots.`);
+  if (!isSlot(take.slot, t) || !isClipBars(take.bars)) return refuse('invalid', `A recorded take fills a loop of 1 to ${MAX_CLIP_BARS} bars on one of the part’s pads.`);
   const clean = sanitizeSampleMeta(take.meta);
   if (!clean) return refuse('invalid', 'The recording information is incomplete.');
   if (p.samples.some((s) => s.id === clean.id)) return refuse('occupied', 'This recording is already in the project.');
@@ -245,17 +245,17 @@ export function importRecordingAsClip(
   if (!known) return refuse('invalid', 'That recording is not in this project.');
   if (!isFiniteNumber(opts.durationSeconds) || opts.durationSeconds <= 0) return refuse('invalid', 'The recording has no length.');
   const from = opts.slot === undefined || isSongSlot(opts.slot) ? 0 : opts.slot;
-  if (!isSlot(from, t)) return refuse('invalid', 'Unknown clip slot.');
+  if (!isSlot(from, t)) return refuse('invalid', 'That pad does not exist.');
   const rows = t.clips.length;
   let slot = -1;
   for (let k = 0; k < rows && slot < 0; k++) if (!t.clips[(from + k) % rows]) slot = (from + k) % rows;
-  if (slot < 0) return refuse('occupied', `No empty pad on ${partName(p, trackId)}: delete or move a clip first.`);
+  if (slot < 0) return refuse('occupied', `No empty pad on ${partName(p, trackId)}: delete or move a loop first.`);
   const barSeconds = 240 / p.bpm;
   const bars = Math.min(MAX_CLIP_BARS, Math.max(1, Math.round(opts.durationSeconds / barSeconds))) as ClipBars;
   const name = meta?.name ?? p.samples.find((s) => s.id === sampleId)?.name ?? builtinSampleInfo(sampleId)?.name ?? 'Recording';
   const clip = recordingClip(cleanName(name) ?? 'Recording', bars, sampleId);
   const partRecording = recordingBecomesPart(t, slot);
-  const r = run(store, 'sample:Import recording as a clip', (d) => {
+  const r = run(store, 'sample:Import recording as a loop', (d) => {
     if (meta) d.samples.push(meta);
     if (partRecording) playAsRecorded(d, trackId, sampleId);
     draftTrack(d, trackId).clips[slot] = clip;
@@ -290,7 +290,7 @@ export function addSampleVersion(
   const slot = opts.slot;
   if (slot !== undefined) {
     const c = isClipSlotOf(slot, t) ? clipAtSlot(t, slot) : null;
-    if (!c?.sample || c.sample.id !== fromSampleId) return refuse('invalid', 'The clip plays another recording now, so the edit was not applied. Try again.');
+    if (!c?.sample || c.sample.id !== fromSampleId) return refuse('invalid', 'The loop plays another recording now, so the edit was not applied. Try again.');
   } else if (t.instrument.kind !== 'sampler' || t.instrument.sampleId !== fromSampleId) return refuse('invalid', 'The part plays another recording now, so the edit was not applied. Try again.');
   const clean = sanitizeSampleMeta(meta);
   if (!clean) return refuse('invalid', 'The recording information is incomplete.');

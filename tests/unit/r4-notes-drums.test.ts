@@ -156,7 +156,7 @@ describe('clip slots and lengths (wave-1 hand-off, capability-07)', () => {
     // Bar 8 is a page a paste or duplicate can reach.
     expect(duplicatePage(store, 't5', 0, 6, 7).changed).toBe(true);
     expect(store.getState().tracks[4].clips[0]!.bars).toBe(MAX_CLIP_BARS);
-    expect(pastePage(store, 't5', 0, 8, [{ tick: 0, pitch: 60, velocity: 1, duration: 24 }])).toMatchObject({ changed: false, message: 'Clips have at most 8 bars.' });
+    expect(pastePage(store, 't5', 0, 8, [{ tick: 0, pitch: 60, velocity: 1, duration: 24 }])).toMatchObject({ changed: false, message: 'Loops have at most 8 bars.' });
     // An empty slot toggled on step 100 gets a 7-bar clip.
     expect(toggleStep(store, DRUMS, 0, 100, 0).changed).toBe(true);
     expect(store.getState().tracks[0].clips[0]!.bars).toBe(7);

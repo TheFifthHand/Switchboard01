@@ -161,7 +161,7 @@ describe('transpose a clip by steps of the key', () => {
       expect(p - before[i]).toBeGreaterThanOrEqual(1);
       expect(p - before[i]).toBeLessThanOrEqual(2);
     });
-    expect(store.undoLabel()).toBe('Transpose clip up 1 scale step');
+    expect(store.undoLabel()).toBe('Transpose loop up 1 scale step');
     store.undo();
     transposeClipInScale(store, chords.id, slot, 7);
     expect(store.getState().tracks.find((t) => t.id === chords.id)!.clips[slot]!.notes.map((n) => n.pitch)).toEqual(before.map((p) => p + 12));

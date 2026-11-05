@@ -81,9 +81,9 @@ export function applyVariation(
   const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
   if (t.locked) return refuse('locked', 'This part is locked, so Variation leaves it unchanged.');
-  if (!isClipSlotOf(slot, t)) return refuse('invalid', 'There is no clip slot there.');
+  if (!isClipSlotOf(slot, t)) return refuse('invalid', 'There is no loop there.');
   const clip = clipAtSlot(t, slot);
-  if (!clip) return refuse('empty', 'There is no clip here to vary.');
+  if (!clip) return refuse('empty', 'There is no loop here to vary.');
   if (intensity !== undefined && !isFiniteNumber(intensity)) return refuse('invalid', 'Variation strength must be a number.');
   const len = clipTicks(clip);
   const [lo, hi] = pitchRangeFor(t.instrument.kind);
@@ -95,7 +95,7 @@ export function applyVariation(
         .filter((n) => n && [n.tick, n.pitch, n.velocity, n.duration].every(isFiniteNumber) && n.tick >= 0 && n.tick < len && Math.round(n.pitch) >= lo && Math.round(n.pitch) <= hi)
         .map((n) => ({ id: typeof n.id === 'string' && n.id ? n.id : uid('n'), tick: n.tick, pitch: Math.round(n.pitch), velocity: clamp(n.velocity, 0, 1), duration: clamp(n.duration, VALIDATION_LIMITS.minNoteTicks, len) })),
     ).slice(0, VALIDATION_LIMITS.maxNotesPerClip);
-    if (base.length === 0) return refuse('empty', 'The original notes do not fit this clip any more.');
+    if (base.length === 0) return refuse('empty', 'The original notes do not fit this loop any more.');
   }
   if (base.length === 0) return refuse('empty', 'Add some notes first; Variation reshapes an existing pattern.');
   const s = Math.trunc(Number.isFinite(seed) ? seed : 0) >>> 0;

@@ -164,7 +164,7 @@ export function projectFacts(p: Project): Required<ProjectFacts> {
 }
 
 /** Undo labels of the clip drag-and-drop edits. */
-const CLIP_DROP_LABELS: ReadonlySet<string> = new Set(['Move clip', 'Swap clips', 'Copy clip']);
+const CLIP_DROP_LABELS: ReadonlySet<string> = new Set(['Move loop', 'Swap loops', 'Copy loop']);
 
 function soundKey(t: Track): string {
   const i = t.instrument;

@@ -104,7 +104,7 @@ describe('versions before bulk edits (capability-06)', () => {
     return snapshotBefore;
   }
 
-  it('keeps the state before a Variation, Delete clip or Delete scene, once per kind every 2 minutes; not for small edits, undo or redo', () => {
+  it('keeps the state before a Variation, Delete loop or Delete scene, once per kind every 2 minutes; not for small edits, undo or redo', () => {
     const s = session();
     const snap = fakeAutosaver(s);
     const before = s.store.getState();
@@ -123,7 +123,7 @@ describe('versions before bulk edits (capability-06)', () => {
     const beforeDelete = s.store.getState();
     expect(s.accepted(cmd.deleteClip(s.store, 't3', 1))).toBe(true);
     expect(snap).toHaveBeenCalledTimes(2);
-    expect(snap.mock.calls[1]).toEqual([beforeDelete, 'Delete clip']);
+    expect(snap.mock.calls[1]).toEqual([beforeDelete, 'Delete loop']);
   });
 });
 

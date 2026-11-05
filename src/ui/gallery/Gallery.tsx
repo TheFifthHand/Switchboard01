@@ -598,8 +598,8 @@ function GalleryPage({ tips, setTips }: { tips: boolean; setTips(v: boolean): vo
               </div>
               <div className={styles.line}>
                 <IconButton icon="dice" label="Variation" variant="secondary" tip="Makes a new take on this pattern. Undo brings the old one back." />
-                <IconButton icon="copy" label="Copy clip" variant="secondary" />
-                <IconButton icon="paste" label="Paste clip" variant="secondary" />
+                <IconButton icon="copy" label="Copy loop" variant="secondary" />
+                <IconButton icon="paste" label="Paste loop" variant="secondary" />
                 <IconButton icon="cable" label="Cables" variant="secondary" pressed tone="teal" />
                 <IconButton icon="settings" label="Settings" />
                 <IconButton icon="trash" label="Clear" variant="danger" />
@@ -618,7 +618,7 @@ function GalleryPage({ tips, setTips }: { tips: boolean; setTips(v: boolean): vo
               <div className={styles.line}>
                 <Select label="Drum kit" value={kit} onChange={setKit} options={KIT_OPTIONS} width={180} tip="The set of drum sounds this part plays." />
                 <Select label="Scale" value={scale} onChange={setScale} options={SCALE_OPTIONS} width={170} />
-                <NumberField label="Clip length" value={bars} min={1} max={4} step={1} fineStep={1} unit="bars" chars={2} onChange={(v) => setBars(v)} />
+                <NumberField label="Loop length" value={bars} min={1} max={4} step={1} fineStep={1} unit="bars" chars={2} onChange={(v) => setBars(v)} />
               </div>
               <div className={styles.line}>
                 <Led on tone="amber" label="Playing" />

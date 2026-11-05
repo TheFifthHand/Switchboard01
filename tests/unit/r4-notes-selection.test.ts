@@ -134,10 +134,10 @@ describe('moving a selection', () => {
       ];
     });
     expect(moveNotes(drums, 't1', 0, ['k', 'h'], 0, 3)).toMatchObject({ changed: false, reason: 'limit', message: 'The notes are already at the last sound of the kit.' });
-    expect(moveNotes(drums, 't1', 0, ['k', 'h'], -24, 0)).toMatchObject({ changed: false, reason: 'limit', message: 'The notes are already at the start of the clip.' });
-    expect(moveNotes(drums, 't1', 0, ['k', 'h'], -24, 3)).toMatchObject({ changed: false, message: 'The notes are already at the start of the clip and the last sound of the kit.' });
+    expect(moveNotes(drums, 't1', 0, ['k', 'h'], -24, 0)).toMatchObject({ changed: false, reason: 'limit', message: 'The notes are already at the start of the loop.' });
+    expect(moveNotes(drums, 't1', 0, ['k', 'h'], -24, 3)).toMatchObject({ changed: false, message: 'The notes are already at the start of the loop and the last sound of the kit.' });
     // A move that goes part of the way says where it stopped.
-    expect(moveNotes(drums, 't1', 0, ['k'], 1000, 0)).toMatchObject({ changed: true, dTick: 383, message: 'The move stopped at the end of the clip.' });
+    expect(moveNotes(drums, 't1', 0, ['k'], 1000, 0)).toMatchObject({ changed: true, dTick: 383, message: 'The move stopped at the end of the loop.' });
     const store = setup();
     expect(moveNotes(store, CHORDS, 0, ['c4'], 0, 100)).toMatchObject({ changed: true, dPitch: 58, message: 'The move stopped at the highest note (G9).' });
     expect(moveNotes(store, CHORDS, 0, ['c4'], 0, 1)).toMatchObject({ changed: false, message: 'The notes are already at the highest note (G9).' });

@@ -65,9 +65,9 @@ describe('song validation', () => {
     const r = check(raw);
     expect(sketch(r.project)).toEqual(['t1:Beat@0+2~0']);
     expect(r.warnings).toEqual([
-      'Removed a loop that played another part’s clip.',
+      'Removed a loop from the song that played another part’s music.',
       'Removed a loop of a part that does not exist from the song.',
-      'Removed a loop whose clip no longer exists from the song.',
+      'Removed a loop from the song: the music it played no longer exists.',
       'Removed a damaged loop from the song. (3 times)',
       'Removed a loop with no length from the song.',
     ]);
@@ -88,7 +88,7 @@ describe('song validation', () => {
       'Moved a loop onto the bar lines.',
       'Cut a loop that started before the song.',
       'Shortened the song to 512 bars, the longest a song can be. (2 times)',
-      'Adjusted where a loop starts in its clip.',
+      'Adjusted where a loop starts in its music.',
     ]);
   });
 

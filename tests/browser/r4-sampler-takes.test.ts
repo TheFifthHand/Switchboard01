@@ -171,7 +171,7 @@ describe('Per-clip recordings in the sampler editor (capability-01)', () => {
     expect(own.start).toBeLessThan(0.35);
     expect((track('t8').instrument as SamplerInstrument).params.start).toBe(partBefore.start);
     // One undo step for the drag.
-    expect(session.store.undoLabel()).toBe('Trim clip recording');
+    expect(session.store.undoLabel()).toBe('Trim loop recording');
     // Root: the clip's own key.
     const root = [...document.querySelectorAll<HTMLSelectElement>('select')].find((s) => s.labels?.[0]?.textContent === 'Root')!;
     await pick(root, '64');

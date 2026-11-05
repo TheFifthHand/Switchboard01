@@ -117,6 +117,6 @@ describe('a take made into song loops', () => {
     cmd.deleteClip(gone, 't1', 0);
     const r = cmd.songFromTake(gone, 'perf_1');
     expect(r).toMatchObject({ changed: false, reason: 'empty', missing: 1 });
-    expect(r.message).toBe('This take makes no song: the clips it played have been deleted since.');
+    expect(r.message).toBe('This take makes no song: the loops it played have been deleted since.');
   });
 });

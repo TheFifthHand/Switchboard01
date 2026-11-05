@@ -254,7 +254,7 @@ describe('Drag and drop', () => {
     expect(clips('t3')[full]).toBeNull();
     expect(notice()).toContain(`Moved “${name}”`);
     expect(presses).toEqual([]);
-    expect(session.store.undoLabel()).toBe('Move clip');
+    expect(session.store.undoLabel()).toBe('Move loop');
     act(() => session.undo());
     expect(names('t3')).toEqual(before);
     // Selection follows the clip.
@@ -270,7 +270,7 @@ describe('Drag and drop', () => {
     await drag(pad('t4', a), pad('t4', b));
     expect(names('t4')[a]).toBe(before[b]);
     expect(names('t4')[b]).toBe(before[a]);
-    expect(session.store.undoLabel()).toBe('Swap clips');
+    expect(session.store.undoLabel()).toBe('Swap loops');
     act(() => session.undo());
     expect(names('t4')).toEqual(before);
     await drag(pad('t4', a), pad('t4', b), { ctrl: true });
@@ -278,7 +278,7 @@ describe('Drag and drop', () => {
     expect(names('t4')[a]).toBe(before[a]);
     expect(clips('t4')[b]!.id).not.toBe(clips('t4')[a]!.id);
     expect(notice()).toContain('replacing');
-    expect(session.store.undoLabel()).toBe('Copy clip');
+    expect(session.store.undoLabel()).toBe('Copy loop');
     act(() => session.undo());
     expect(names('t4')).toEqual(before);
   });
@@ -336,7 +336,7 @@ describe('Keyboard move and the pad action bar', () => {
     key(document.activeElement!, 'keydown', { key: 'Enter' });
     expect(clips('t3')[empty]!.id).toBe(id);
     expect(presses).toEqual([]);
-    expect(session.store.undoLabel()).toBe('Move clip');
+    expect(session.store.undoLabel()).toBe('Move loop');
 
     // Copy with Ctrl+Enter, onto the Chords part (both melodic).
     act(() => selectSlot('t3', empty));
@@ -348,7 +348,7 @@ describe('Keyboard move and the pad action bar', () => {
     key(document.activeElement!, 'keydown', { key: 'Enter', ctrlKey: true });
     expect(clips('t4')[empty]!.name).toBe(clips('t3')[empty]!.name);
     expect(clips('t3')[empty]!.id).toBe(id);
-    expect(session.store.undoLabel()).toBe('Copy clip');
+    expect(session.store.undoLabel()).toBe('Copy loop');
   });
 
   it('the bar renames, duplicates and deletes the selected clip; right-click offers the same actions', async () => {

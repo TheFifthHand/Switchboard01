@@ -207,7 +207,7 @@ describe('the pad menu uses every row and the longer lengths', () => {
     await clickEl(item('Repeat to 8 bars'));
     expect(clipsOf('t3')[two]!.bars).toBe(8);
     expect(clipsOf('t3')[two]!.notes.length).toBe(notes * 4);
-    expect(session.store.undoLabel()).toBe('Repeat clip to 8 bars');
+    expect(session.store.undoLabel()).toBe('Repeat loop to 8 bars');
     act(() => {
       session.undo();
       session.undo();

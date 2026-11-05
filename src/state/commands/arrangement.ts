@@ -301,7 +301,7 @@ function regionFromDraft(p: Project, dr: RegionDraft): SongRegion | CommandResul
   if (!dr || typeof dr !== 'object') return refuse('invalid', 'The loop could not be read.');
   if (!p.tracks.some((t) => t.id === dr.trackId)) return NOT_FOUND('part');
   const rc = regionClip(p, dr);
-  if (!rc) return NOT_FOUND('clip');
+  if (!rc) return NOT_FOUND('loop');
   const offset = dr.offset ?? 0;
   if (!isInt(dr.start) || dr.start < 0 || !isInt(dr.bars) || dr.bars < 1 || !isInt(offset)) return refuse('invalid', WHOLE_BARS);
   if (dr.start + dr.bars > MAX_SONG_BARS) return refuse('limit', TOO_LONG);
@@ -343,7 +343,7 @@ export function addClipToSong(store: ProjectStore, trackId: Id, clipId: Id, star
   const p = store.getState();
   if (!p.tracks.some((t) => t.id === trackId)) return NOT_FOUND('part');
   const rc = regionClip(p, { trackId, clipId });
-  if (!rc) return NOT_FOUND('clip');
+  if (!rc) return NOT_FOUND('loop');
   return addRegions(store, [{ trackId, clipId, start, bars: bars ?? rc.clip.bars }], { display: `Add ${rc.clip.name}` });
 }
 
@@ -362,7 +362,7 @@ export function addSceneToSong(store: ProjectStore, row: number, start: number, 
   if (!isInt(start) || start < 0 || !isInt(bars) || bars < 1) return refuse('invalid', WHOLE_BARS);
   if (start + bars > MAX_SONG_BARS) return refuse('limit', TOO_LONG);
   const placed = sceneRegions(p, row, start, newRegionId, bars);
-  if (!placed.length) return refuse('empty', `${scene.name} has no clips yet: make some in Play first.`);
+  if (!placed.length) return refuse('empty', `${scene.name} has no loops yet: make some in Play first.`);
   const res = landRegions(p, placed);
   let sections = p.arrangement.sections;
   let sectionId: Id | undefined;
@@ -393,7 +393,7 @@ export function fillSongFromScenes(store: ProjectStore): SongEditResult {
     sections.push({ id: newSectionId(), name: sectionName(scene.name), start: at, bars });
     at += bars;
   });
-  if (!regions.length) return refuse('empty', 'Your scenes have no clips yet: make some in Play first.');
+  if (!regions.length) return refuse('empty', 'Your scenes have no loops yet: make some in Play first.');
   const r = commit(store, p, 'arrange:Make a song from scenes', 'Make a song from my scenes', { regions: sortRegions(p, regions), sections });
   return edited(r, { ids: regions.map((x) => x.id) });
 }
@@ -554,7 +554,7 @@ export function pasteRegions(store: ProjectStore, clip: RegionClipboard, atBar: 
     if (start + it.bars > MAX_SONG_BARS) return refuse('limit', `There is no room to paste there: ${TOO_LONG}`);
     placed.push({ id: newRegionId(), trackId: where.trackId, clipId: where.clip.id, start, bars: it.bars, offset: mod(it.offset, where.clip.bars) });
   }
-  if (!placed.length) return { ...refuse('empty', 'The copied loops played clips that have been deleted since.'), skipped };
+  if (!placed.length) return { ...refuse('empty', 'The music the copied loops played has been deleted since.'), skipped };
   if (!remade.size) {
     const res = landRegions(p, placed);
     const r = commit(store, p, 'arrange:Paste loops', `Paste ${loopsWords(p, placed)}`, { regions: res.regions });
@@ -578,9 +578,9 @@ export function setRegionClip(store: ProjectStore, id: Id, clipId: Id): SongEdit
   const region = p.arrangement.regions.find((r) => r.id === id);
   if (!region) return NOT_FOUND('loop');
   const rc = regionClip(p, { trackId: region.trackId, clipId });
-  if (!rc) return refuse('invalid', `That clip is not one of ${partName(p, region.trackId)}’s: a loop plays a clip of its own part.`);
+  if (!rc) return refuse('invalid', `That loop is not one of ${partName(p, region.trackId)}’s: a part’s row only plays its own loops.`);
   if (clipId === region.clipId) return { changed: false };
-  const r = commit(store, p, 'arrange:Change loop clip', `Play ${rc.clip.name} instead of ${regionWords(p, region)}`, { regions: swapRegionClip(p.arrangement.regions, id, clipId) });
+  const r = commit(store, p, 'arrange:Change loop music', `Play ${rc.clip.name} instead of ${regionWords(p, region)}`, { regions: swapRegionClip(p.arrangement.regions, id, clipId) });
   return edited(r, { ids: [id] });
 }
 
@@ -922,7 +922,7 @@ function shapeProblemFor(p: Project, regions: readonly SongRegion[], from: numbe
   }
   if (order.length === 1) return `Only one part plays here: there is nothing to ${kind === 'build' ? 'bring in' : 'drop out'} one at a time.`;
   if (!shapePlan(p, regions, from, to, kind).parts.length) {
-    return `The clips here are as long as the section, so the parts cannot ${kind === 'build' ? 'come in' : 'drop out'} one at a time: make the section longer first.`;
+    return `The loops here are as long as the section, so the parts cannot ${kind === 'build' ? 'come in' : 'drop out'} one at a time: make the section longer first.`;
   }
   return null;
 }
@@ -1156,7 +1156,7 @@ export function songFromTake(store: ProjectStore, takeId: Id, opts: { at?: numbe
   const at = opts.at ?? songBars(p);
   if (!isInt(at) || at < 0) return refuse('invalid', WHOLE_BARS);
   if (!plan.regions.length) {
-    const why = plan.missing ? 'the clips it played have been deleted since' : 'nothing played in it for a whole bar';
+    const why = plan.missing ? 'the loops it played have been deleted since' : 'nothing played in it for a whole bar';
     return { ...refuse('empty', `This take makes no song: ${why}.`), rounded: plan.rounded, missing: plan.missing };
   }
   const end = Math.max(...plan.regions.map((r) => r.start + r.bars));

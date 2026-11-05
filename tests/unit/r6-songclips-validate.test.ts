@@ -53,7 +53,7 @@ describe('validating song clips', () => {
     const data = raw([loop('a'), loop('a', { name: 'second' })], ['a']);
     // The second clip gets a new id that no loop plays, so it leaves the part too.
     const r = load(data);
-    expect(r.warnings).toContain('Gave a clip a new id.');
+    expect(r.warnings).toContain('Gave a loop a new id.');
     expect(r.project.tracks[2].songClips?.map((c) => c.name)).toEqual(['a']);
     // A pad clip with the same id as a song clip keeps its id: pads are checked first.
     const d2 = raw([loop('pad')], ['pad']);
@@ -67,7 +67,7 @@ describe('validating song clips', () => {
   it('checks notes like a pad clip and drops a damaged song clip instead of failing the project', () => {
     const r = load(raw([loop('a', { notes: [{ id: 'x', tick: 9999, pitch: 48, velocity: 1, duration: 24 }] }), { id: 'bad', bars: 99, notes: [] }, 'junk'], ['a', 'bad']));
     expect(r.project.tracks[2].songClips?.map((c) => [c.id, c.notes.length])).toEqual([['a', 0]]);
-    expect(r.warnings).toContain('Removed a note outside its clip.');
+    expect(r.warnings).toContain('Removed a note outside its loop.');
     expect(r.warnings.some((w) => w.startsWith('Removed a damaged loop from the song.'))).toBe(true);
     expect(r.project.arrangement.regions.map((x) => x.clipId)).toEqual(['a']);
     expect(load(raw('nope', [])).warnings).toContain('Removed a damaged list of loops from the song.');
@@ -90,7 +90,7 @@ describe('validating song clips', () => {
     const data = raw([loop('a')], []);
     (data.arrangement as Project['arrangement']).regions = [region('rg', 'a', 0, 't5')];
     const r = load(data);
-    expect(r.warnings).toContain('Removed a loop that played another part’s clip.');
+    expect(r.warnings).toContain('Removed a loop from the song that played another part’s music.');
     expect(r.project.tracks[2].songClips).toBeUndefined();
   });
 

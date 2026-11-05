@@ -532,7 +532,7 @@ is the timing notes in `src/time/contracts.ts` and the header of `src/time/seque
   than the stored project (`RESCUE_WARNING` "Recovered your last edits."); it is cleared once the
   project saves. If storage is full the project still opens with the edits, flagged unsaved.
 - **Versions** (`versions.ts`): kept automatically after about ten minutes of active editing, before
-  bulk edits (the session calls `snapshotBefore` before Variation, Clear, Delete clip or scene,
+  bulk edits (the session calls `snapshotBefore` before Variation, Clear, Delete loop or scene,
   Replace, Build up / Strip down / Breakdown, Make a song from my scenes, Make song from a take,
   Remove bars, Delete a section and its music, a kit, sound or recording change, an import or Move
   the song (`BULK_EDIT`, matched on the undo words): at most once per kind of edit every 2

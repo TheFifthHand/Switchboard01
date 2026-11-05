@@ -241,7 +241,7 @@ describe('carrying a clip pad', () => {
     expect(names('t3')[a]).toBe(nameB);
     expect(names('t3')[b]).toBe(nameA);
     expect(undoCount()).toBe(before + 1);
-    expect(session.store.undoLabel()).toBe('Swap clips');
+    expect(session.store.undoLabel()).toBe('Swap loops');
     // Both clips are travelling: the carried one from where it was let go, the other from its pad toward the old place.
     expect(moving(cell('t3', b))).toBe(true);
     expect(moving(cell('t3', a))).toBe(true);
@@ -363,7 +363,7 @@ describe('carrying a clip pad', () => {
     expect(names('t3')[a]).toBe(nameA);
     expect(clips('t4')[a]!.id).not.toBe(clips('t3')[a]!.id);
     expect(notice()).toContain(`replacing “${chords}”`);
-    expect(session.store.undoLabel()).toBe('Copy clip');
+    expect(session.store.undoLabel()).toBe('Copy loop');
     expect(undoCount()).toBe(before + 1);
     expect(moving(cell('t4', a))).toBe(true);
   });
