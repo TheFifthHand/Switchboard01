@@ -376,9 +376,9 @@ describe('During a performance take', () => {
 /* ------------------------------------------------------------------ */
 
 describe('Mastering', () => {
-  it('the On/Off switch turns the chain off and on (undoable)', async () => {
+  it('the On/Off switch turns the chain off and on (undoable), in Simple’s Finish card too', async () => {
     const m = await setup();
-    const sw = section(m.container, 'Mastering').querySelector<HTMLButtonElement>('[role="switch"]')!;
+    const sw = section(m.container, 'Finish').querySelector<HTMLButtonElement>('[role="switch"]')!;
     expect(sw.getAttribute('aria-checked')).toBe('true');
     click(sw);
     expect(project().mastering.enabled).toBe(false);
@@ -432,12 +432,37 @@ describe('Mastering', () => {
     expect(mastering('glue')).toBe(0);
   });
 
-  it('Simple hides the individual mastering controls', async () => {
+  it('Simple shows one Finish card: presets, “Make it as loud as streaming songs” and the switch; no readings, A/B, spectrum or knobs', async () => {
     const m = await setup('simple');
-    const panel = section(m.container, 'Mastering');
+    const panel = section(m.container, 'Finish');
     expect(panel.querySelector('[role="slider"][aria-label="Air"]')).toBeNull();
-    expect(panel.textContent).toContain('Match target');
-    expect(panel.querySelector('canvas')).not.toBeNull();
+    expect(button(panel, /^Make it as loud as streaming songs/)).toBeTruthy();
+    expect(panel.querySelectorAll('[data-section="presets"] button').length).toBeGreaterThanOrEqual(8);
+    expect(panel.querySelector('[role="switch"]')).not.toBeNull();
+    expect(panel.querySelector('canvas')).toBeNull();
+    expect(panel.querySelector('[data-testid^="loudness-momentary"]')).toBeNull();
+    expect(panel.textContent).not.toMatch(/Compare A\/B|Spectrum|Momentary|True peak|LUFS ·/);
+    expect(panel.textContent).toContain('Play your song: it is measured while it plays.');
+  });
+
+  it('Simple’s loudness line says in words how far the song is from streaming songs, and the key matches it', async () => {
+    fakeMeters({ momentary: -17, shortTerm: -17.2, integrated: -17.5, truePeakDb: -3 });
+    patchRuntime({ playing: true });
+    const m = await setup('simple');
+    await settle();
+    const status = m.container.querySelector<HTMLElement>('[data-testid="loudness-status"]')!;
+    expect(status.textContent).toBe('About 3.5 dB quieter than streaming songs.');
+    const before = mastering('loudness');
+    click(button(section(m.container, 'Finish'), /^Make it as loud as streaming songs/));
+    await settle();
+    expect(mastering('loudness')).toBeCloseTo(before + 3.5, 1);
+    // Still the same preset, made louder: its chip stays lit and the note says so.
+    const finish = section(m.container, 'Finish');
+    expect([...finish.querySelectorAll('button[aria-pressed="true"]')].map((b) => b.textContent)).toEqual(['Clean']);
+    expect(finish.querySelector('[data-testid="preset-note"]')!.textContent).toMatch(/^Clean, at the loudness target:/);
+    act(() => session.undo());
+    expect(mastering('loudness')).toBeCloseTo(before, 5);
+    patchRuntime({ playing: false });
   });
 
   it('the Glue indicator shows the real gain reduction, or a dash without one', async () => {
@@ -456,7 +481,7 @@ describe('Mastering', () => {
 
 describe('Loudness', () => {
   it('without a measurement: dashes, “Start playback to measure”, and Match does nothing', async () => {
-    const m = await setup();
+    const m = await setup('advanced');
     await settle();
     const panel = section(m.container, 'Loudness target');
     for (const k of ['momentary', 'shortTerm', 'integrated', 'truePeak']) expect(panel.querySelector(`[data-testid="loudness-${k}"]`)!.textContent).toBe('—');
@@ -470,7 +495,7 @@ describe('Loudness', () => {
   it('shows the live readings and how far the target is; Match moves Loudness drive by the difference (one undo step)', async () => {
     fakeMeters({ momentary: -12.4, shortTerm: -13.1, integrated: -20, truePeakDb: -0.6 });
     const reset = vi.spyOn(session, 'resetLoudness');
-    const m = await setup();
+    const m = await setup('advanced');
     await settle();
     const panel = section(m.container, 'Loudness target');
     const value = (k: string) => panel.querySelector<HTMLElement>(`[data-testid="loudness-${k}"]`)!;
@@ -514,7 +539,7 @@ describe('Loudness', () => {
 
   it('uses the short-term reading when there is no integrated one yet', async () => {
     fakeMeters({ momentary: -15, shortTerm: -16, integrated: Number.NEGATIVE_INFINITY, truePeakDb: -3 });
-    const m = await setup();
+    const m = await setup('advanced');
     await settle();
     const panel = section(m.container, 'Loudness target');
     expect(panel.querySelector('[data-testid="loudness-status"]')!.textContent).toMatch(/^Short-term: 2\.0 dB quieter/);
@@ -525,7 +550,7 @@ describe('Loudness', () => {
 
   it('the target can be changed (remembered in this browser) and Match aims for it', async () => {
     fakeMeters({ momentary: -15, shortTerm: -15, integrated: -15, truePeakDb: -3 });
-    const m = await setup();
+    const m = await setup('advanced');
     await settle();
     const panel = section(m.container, 'Loudness target');
     const loud = [...panel.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((r) => r.textContent?.startsWith('Loud'))!;
@@ -540,7 +565,7 @@ describe('Loudness', () => {
 
   it('Match explains when Loudness cannot go far enough, and needs mastering on', async () => {
     fakeMeters({ momentary: -8, shortTerm: -8, integrated: -8, truePeakDb: -1 });
-    const m = await setup();
+    const m = await setup('advanced');
     await settle();
     const panel = section(m.container, 'Loudness target');
     click(button(panel, /Match target/));
@@ -556,7 +581,7 @@ describe('Spectrum', () => {
   const overlay = (root: Element) => root.querySelector<HTMLElement>('[data-testid="spectrum-overlay"]')!;
 
   it('says to start playback when audio has not started', async () => {
-    const m = await setup();
+    const m = await setup('advanced');
     await settle(100);
     expect(overlay(m.container).dataset.state).toBe('off');
     expect(overlay(m.container).textContent).toBe('Start playback to see the spectrum.');
@@ -569,7 +594,7 @@ describe('Spectrum', () => {
       for (let i = 0; i < out.length; i++) out[i] = i < out.length / 3 ? -24 : -60;
       return true;
     });
-    const m = await setup();
+    const m = await setup('advanced');
     await settle(400);
     // The canvas takes its size when the act() scope above flushes the resize; it draws on the next frame.
     await frames(2);
@@ -592,7 +617,7 @@ describe('Spectrum', () => {
       out.fill(-140);
       return true;
     });
-    const m = await setup();
+    const m = await setup('advanced');
     await settle(150);
     expect(overlay(m.container).dataset.state).toBe('silent');
     spy.mockImplementation(() => false);
@@ -607,7 +632,7 @@ describe('A/B comparison', () => {
   const hearingWithout = () => session.masteringListenBypass;
 
   it('holding plays the mix without mastering, listening only; letting go brings it back', async () => {
-    const m = await setup();
+    const m = await setup('advanced');
     const b = compareButton(m.container);
     const steps = session.store.historySize();
     const before = project();
@@ -631,7 +656,7 @@ describe('A/B comparison', () => {
   });
 
   it('a quick click keeps it off until the next click; the keyboard toggles it; leaving the view restores it', async () => {
-    const m = await setup();
+    const m = await setup('advanced');
     const b = compareButton(m.container);
     press(b);
     expect(hearingWithout()).toBe(true);
@@ -646,7 +671,7 @@ describe('A/B comparison', () => {
   });
 
   it('is unavailable when mastering is off, and the On switch ends it', async () => {
-    const m = await setup();
+    const m = await setup('advanced');
     const b = compareButton(m.container);
     press(b);
     expect(hearingWithout()).toBe(true);
@@ -662,7 +687,7 @@ describe('A/B comparison', () => {
   });
 
   it('works while a performance records, without touching the project', async () => {
-    const m = await setup();
+    const m = await setup('advanced');
     const b = compareButton(m.container);
     act(() => {
       session.store.setLock(TAKE_LOCK_MESSAGE, (label) => label.startsWith('module:'));
@@ -727,7 +752,7 @@ describe('Layout with the real theme', () => {
         // The mixer fits the workspace height: every fader is visible without scrolling.
         expect(mixer.getBoundingClientRect().bottom).toBeLessThanOrEqual(view.getBoundingClientRect().top + view.clientHeight + 1);
       }
-      const mastering = section(view, 'Mastering');
+      const mastering = section(view, c.mode === 'simple' ? 'Finish' : 'Mastering');
       const mr = mastering.getBoundingClientRect();
       if (c.sideBySide) {
         expect(mr.left).toBeGreaterThanOrEqual(mixer.getBoundingClientRect().right);
@@ -736,9 +761,9 @@ describe('Layout with the real theme', () => {
         expect(mr.top).toBeGreaterThanOrEqual(mixer.getBoundingClientRect().bottom);
       }
       for (const chip of section(view, 'Presets').querySelectorAll<HTMLElement>('button')) expect(chip.getBoundingClientRect().height).toBeGreaterThanOrEqual(40);
-      expect(button(view, /Match target/).getBoundingClientRect().height).toBeGreaterThanOrEqual(40);
-      if (c.w === 1366 && c.mode === 'simple') {
-        // Laptop, Simple: the spectrum is on screen without scrolling the mastering panel.
+      expect(button(view, c.mode === 'simple' ? /^Make it as loud as streaming songs/ : /Match target/).getBoundingClientRect().height).toBeGreaterThanOrEqual(40);
+      if (c.w === 1366 && c.mode === 'advanced') {
+        // Laptop, Advanced: the spectrum is on screen without scrolling the mastering panel.
         const plot = section(view, 'Spectrum').querySelector('canvas')!.getBoundingClientRect();
         expect(plot.height).toBeGreaterThanOrEqual(60);
         expect(plot.bottom).toBeLessThanOrEqual(mr.bottom);

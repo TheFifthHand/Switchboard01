@@ -171,7 +171,20 @@ export function described(el: Element): string {
     .join(' ');
 }
 
-export const card = (moduleId: Id) => document.getElementById(`simple-card-${moduleId}`) as HTMLElement;
+/** An effect's card in the Advanced rack (Simple shows no effect cards: they are under "Show every setting"). */
+export const rackCard = (moduleId: Id) => document.getElementById(`rack-card-${moduleId}`) as HTMLElement;
+
+/** Do something in Advanced (the effects rack), then come back to Simple. */
+export async function inAdvanced(fn: () => Promise<void>): Promise<void> {
+  act(() => {
+    setAdvancedTab('effects');
+    setUiMode('advanced');
+  });
+  await settleFrames(2);
+  await fn();
+  act(() => setUiMode('simple'));
+  await settleFrames(2);
+}
 
 /* ------------------------------------------------------------------ */
 /* Offline renders                                                     */

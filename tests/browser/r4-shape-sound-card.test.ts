@@ -190,7 +190,7 @@ describe('Edit sound', () => {
 });
 
 describe('a big screen fills (design-02)', () => {
-  it('1920 × 1080: xl big knobs in 3 × 2 that fill the panel; effect cards at least 260 px share the row', async () => {
+  it('1920 × 1080: xl big knobs in 3 × 2 that fill the panel, across the view', async () => {
     await openShape({ mode: 'simple', trackId: 't4', w: 1920, hh: 1080 });
     const grid = document.querySelector<HTMLElement>('[data-xl]');
     expect(grid, 'xl grid').not.toBeNull();
@@ -201,10 +201,8 @@ describe('a big screen fills (design-02)', () => {
     const panel = grid!.closest('section')!.getBoundingClientRect();
     const tiles = [...grid!.children].map((c) => c.getBoundingClientRect());
     expect(tiles[5].bottom).toBeGreaterThan(panel.bottom - 30);
-    const cards = [...document.querySelectorAll<HTMLElement>('[role="listitem"]')].map((c) => c.getBoundingClientRect());
-    expect(cards.length).toBeGreaterThanOrEqual(2);
-    for (const c of cards) expect(c.width).toBeGreaterThanOrEqual(259);
-    expect(Math.round(cards[0].top)).toBe(Math.round(cards[1].top));
+    // The effects are under Show every setting (r6): the big knobs have the view's width.
+    expect(panel.width).toBeGreaterThan(1920 * 0.9);
     // The Sound card uses medium knobs on a tall window.
     expect(sound().querySelector('[data-size="md"]')).not.toBeNull();
   });

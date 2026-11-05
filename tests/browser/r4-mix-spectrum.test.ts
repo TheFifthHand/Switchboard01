@@ -53,6 +53,8 @@ async function until(test: () => boolean, ms: number): Promise<boolean> {
 }
 
 function mountMix(width = 1366, height: number | 'auto' = 610) {
+  // The spectrum is Advanced (Simple shows the Finish card).
+  act(() => setUiMode('advanced'));
   const m = mount(h(TipsProvider, { enabled: false }, h(MixView)), { width });
   m.container.style.padding = '0';
   m.container.style.height = height === 'auto' ? 'auto' : `${height}px`;

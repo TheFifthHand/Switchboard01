@@ -13,6 +13,11 @@
  *   Advanced: every control as knobs, grouped Clean-up / EQ / Glue (with the
  *             Glue gain-reduction indicator) / Colour / Stereo / Loudness drive.
  *
+ * Simple shows it as one "Finish" card: the preset chips, one "Make it as
+ * loud as streaming songs" key (Match target, for the chosen target) with a
+ * plain line on how far the song is from it, and the on/off switch. The
+ * target choice, the readings, A/B and the spectrum are Advanced.
+ *
  * Beside the mixer the sections stack in one scrolling column; below the
  * mixer (full width) Presets and Loudness sit left of the Spectrum.
  *
@@ -33,6 +38,7 @@ import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { engageCompare, releaseCompare, useCompare } from './compare';
 import {
   MATCH_PASSES,
+  ON_TARGET_DB,
   clearMatchResult,
   distanceText,
   loudnessTick,
@@ -47,7 +53,7 @@ import {
   type LoudnessReading,
 } from './loudnessMatch';
 import { formatDb, formatLoudness, mixFrameLive, readMixFrame } from './mixMeters';
-import { LOUDNESS_TARGETS, setLoudnessTarget, useLoudnessTarget, type LoudnessTargetId } from './mixPrefs';
+import { LOUDNESS_TARGETS, loudLabel, setLoudnessTarget, useLoudnessTarget, type LoudnessTarget, type LoudnessTargetId } from './mixPrefs';
 import { Spectrum } from './Spectrum';
 import { useMixTask } from './useMixTask';
 import styles from './MasteringPanel.module.css';
@@ -219,33 +225,49 @@ function LevelMatchNote() {
 /* Presets                                                             */
 /* ------------------------------------------------------------------ */
 
-function Presets(props: { locked: boolean }) {
+/**
+ * The preset these settings are, apart from Loudness drive (which Match and
+ * "Make it as loud…" set on top of a preset), or undefined.
+ */
+export function presetBesideLoudness(params: Record<string, number>): (typeof MASTERING_PRESETS)[number] | undefined {
+  return MASTERING_PRESETS.find((p) => MASTERING_PARAMS.every((spec) => spec.id === 'loudness' || Math.abs(readParam(MASTERING_PARAMS, p.params, spec.id) - readParam(MASTERING_PARAMS, params, spec.id)) < 1e-6));
+}
+
+function Presets(props: { locked: boolean; simple?: boolean }) {
   const titleId = useId();
   const presetId = useProject((p) => p.mastering.presetId);
+  // A preset whose Loudness drive was set for the loudness target is still that preset, made louder or quieter.
+  const matchedId = useProject((p) => (p.mastering.presetId ? undefined : presetBesideLoudness(p.mastering.params)?.id));
   const current = MASTERING_PRESETS.find((x) => x.id === presetId);
+  const matched = MASTERING_PRESETS.find((x) => x.id === matchedId);
   const choose = (id: string) => {
     const preset = MASTERING_PRESETS.find((x) => x.id === id);
     const r = applyMasteringPreset(session.store, id);
     if (acceptMastering(r) && preset) notify(`Mastering: ${preset.name}. ${preset.description}`, 'info', 'undo');
   };
+  const shown = current ?? matched;
   return (
     <section className={styles.section} aria-labelledby={titleId} data-section="presets">
-      <SectionTitle id={titleId} aside={<LevelMatchNote />}>
+      <SectionTitle id={titleId} aside={props.simple ? undefined : <LevelMatchNote />}>
         Presets
       </SectionTitle>
       <div className={styles.chips} role="group" aria-labelledby={titleId}>
         {MASTERING_PRESETS.map((p) => (
           <Tooltip key={p.id} tip={p.description}>
-            <button type="button" className={styles.chip} aria-pressed={p.id === presetId} disabled={props.locked} onClick={() => choose(p.id)}>
+            <button type="button" className={styles.chip} aria-pressed={p.id === shown?.id} disabled={props.locked} onClick={() => choose(p.id)}>
               {p.name}
             </button>
           </Tooltip>
         ))}
       </div>
-      <p className={`${styles.note} ${styles.presetNote}`} data-testid="preset-note" title={current ? `${current.name}: ${current.description}` : undefined}>
+      <p className={`${styles.note} ${styles.presetNote}`} data-testid="preset-note" title={shown ? `${shown.name}: ${shown.description}` : undefined}>
         {current ? (
           <>
             <strong>{current.name}:</strong> {current.description}
+          </>
+        ) : matched ? (
+          <>
+            <strong>{matched.name}, at the loudness target:</strong> {matched.description}
           </>
         ) : (
           'Custom settings: pick a preset to start again from one.'
@@ -288,8 +310,15 @@ export function truePeakLevel(db: number | undefined): PeakLevel {
   return db > 0 ? 'over' : db > TRUE_PEAK_NEAR_DB ? 'near' : 'ok';
 }
 
-function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: boolean }) {
-  const { enabled, locked, comparing } = props;
+/** Simple's status line: how far the song is from the target, in words. */
+export function simpleDistance(b: { v: number }, t: LoudnessTarget): string {
+  const words = t.id === 'streaming' ? 'streaming songs' : `the ${t.name} target`;
+  const diff = b.v - t.lufs;
+  return Math.abs(diff) < ON_TARGET_DB ? `As loud as ${words}.` : `About ${Math.abs(diff).toFixed(1)} dB ${diff < 0 ? 'quieter' : 'louder'} than ${words}.`;
+}
+
+function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: boolean; simple?: boolean }) {
+  const { enabled, locked, comparing, simple = false } = props;
   const titleId = useId();
   const target = useLoudnessTarget();
   const loudnessDb = useProject((p) => readParam(MASTERING_PARAMS, p.mastering.params, 'loudness'));
@@ -382,10 +411,10 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
       const fresh = !matchState().measuring;
       const basis = readingBasis(reading);
       let status: string;
-      if (!fresh) {
-        status = !isPlaying
-          ? 'Start playback to measure the new setting.'
-          : `Measuring the new setting… ${basis ? distanceText({ ...basis, which: 'Short-term' }, t.lufs, t.name) : ''}`.trim();
+      if (simple) {
+        status = basis && fresh ? simpleDistance(basis, t) : !isPlaying ? 'Play your song: it is measured while it plays.' : 'Listening to your song…';
+      } else if (!fresh) {
+        status = !isPlaying ? 'Start playback to measure the new setting.' : `Measuring the new setting… ${basis ? distanceText({ ...basis, which: 'Short-term' }, t.lufs, t.name) : ''}`.trim();
       } else if (!basis) {
         status = !live || !isPlaying ? 'Start playback to measure.' : !l ? 'Loudness metering is not available.' : 'Measuring: play a few seconds.';
       } else status = distanceText(basis, t.lufs, t.name);
@@ -406,68 +435,73 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
   // "0.0 → +6.0 dB" while Loudness drive is still where the last match put it.
   const showMatch = lastMatch !== null && Math.abs(lastMatch.after - loudnessDb) < 0.05;
   const driveText = showMatch ? `${formatDb(lastMatch.before).replace(/ dB$/, '')} → ${formatDb(lastMatch.after)}` : formatDb(loudnessDb);
-  const matchWords = matching ? `Matching… ${Math.max(1, matching.applied)}/${MATCH_PASSES}` : 'Match target';
+  const idleWords = simple ? loudLabel(target) : 'Match target';
+  const matchWords = matching ? `Matching… ${Math.max(1, matching.applied)}/${MATCH_PASSES}` : idleWords;
 
   return (
     <section className={styles.section} aria-labelledby={titleId} data-section="loudness">
       {/* The section is named for its selector (design-16): the target, how far the song is from it, and Match. */}
-      <SectionTitle id={titleId}>Loudness target</SectionTitle>
-      <div className={styles.field}>
-        <SegmentedControl<LoudnessTargetId>
-          label="Loudness target"
-          options={LOUDNESS_TARGETS.map((t) => ({ value: t.id, label: `${t.name} ${MINUS}${Math.abs(t.lufs)}`, tip: `${minusLufs(t.lufs)}. ${t.description}` }))}
-          value={target.id}
-          onChange={(id) => {
-            setLoudnessTarget(id);
-            clearMatchResult();
-          }}
-          block
-          className={styles.targets}
-        />
-      </div>
-      <div className={styles.readoutRow}>
-        <div className={styles.readouts} role="group" aria-label="Loudness readings" data-hint-avoid="">
-          {READOUTS.map((r) => (
-            <Tooltip key={r.key} tip={r.tip}>
-              <div className={styles.readout} data-key={r.key}>
-                <span className={styles.readoutName} ref={r.key === 'truePeak' ? peakNameRef : undefined}>
-                  {r.name}
-                </span>
-                <span className={styles.readoutValue}>
-                  <span
-                    className="mono"
-                    data-testid={`loudness-${r.key}`}
-                    ref={(el) => {
-                      values.current[r.key] = el;
-                    }}
-                  >
-                    {'—'}
-                  </span>
-                  <span className={styles.unit}>{r.unit}</span>
-                </span>
-              </div>
-            </Tooltip>
-          ))}
-        </div>
-        <Tooltip tip="Start measuring again from now (integrated loudness and true peak).">
-          <button
-            type="button"
-            className={styles.reset}
-            aria-label="Reset loudness readings"
-            onClick={() => {
-              session.resetLoudness();
+      <SectionTitle id={titleId}>{simple ? 'Loudness' : 'Loudness target'}</SectionTitle>
+      {!simple && (
+        <div className={styles.field}>
+          <SegmentedControl<LoudnessTargetId>
+            label="Loudness target"
+            options={LOUDNESS_TARGETS.map((t) => ({ value: t.id, label: `${t.name} ${MINUS}${Math.abs(t.lufs)}`, tip: `${minusLufs(t.lufs)}. ${t.description}` }))}
+            value={target.id}
+            onChange={(id) => {
+              setLoudnessTarget(id);
               clearMatchResult();
-              lastAt.current = -Infinity;
-              meterWake();
             }}
-          >
-            <Icon name="undo" size={14} />
-            <span>Reset</span>
-          </button>
-        </Tooltip>
-      </div>
+            block
+            className={styles.targets}
+          />
+        </div>
+      )}
+      {!simple && (
+        <div className={styles.readoutRow}>
+          <div className={styles.readouts} role="group" aria-label="Loudness readings" data-hint-avoid="">
+            {READOUTS.map((r) => (
+              <Tooltip key={r.key} tip={r.tip}>
+                <div className={styles.readout} data-key={r.key}>
+                  <span className={styles.readoutName} ref={r.key === 'truePeak' ? peakNameRef : undefined}>
+                    {r.name}
+                  </span>
+                  <span className={styles.readoutValue}>
+                    <span
+                      className="mono"
+                      data-testid={`loudness-${r.key}`}
+                      ref={(el) => {
+                        values.current[r.key] = el;
+                      }}
+                    >
+                      {'—'}
+                    </span>
+                    <span className={styles.unit}>{r.unit}</span>
+                  </span>
+                </div>
+              </Tooltip>
+            ))}
+          </div>
+          <Tooltip tip="Start measuring again from now (integrated loudness and true peak).">
+            <button
+              type="button"
+              className={styles.reset}
+              aria-label="Reset loudness readings"
+              onClick={() => {
+                session.resetLoudness();
+                clearMatchResult();
+                lastAt.current = -Infinity;
+                meterWake();
+              }}
+            >
+              <Icon name="undo" size={14} />
+              <span>Reset</span>
+            </button>
+          </Tooltip>
+        </div>
+      )}
       <p ref={statusRef} className={styles.status} data-testid="loudness-status" data-hint-avoid="">
-        Start playback to measure.
+        {simple ? 'Play your song: it is measured while it plays.' : 'Start playback to measure.'}
       </p>
       <div className={styles.matchRow}>
         <Button
@@ -490,23 +524,31 @@ function LoudnessSection(props: { enabled: boolean; locked: boolean; comparing: 
         >
           {/* Both words take the same place, so the key keeps its width. */}
           <span className={styles.matchWords}>
-            <span data-shown={!matching || undefined}>Match target</span>
+            <span data-shown={!matching || undefined}>{idleWords}</span>
             <span data-shown={matching ? true : undefined} aria-hidden={!matching || undefined}>
               {matching ? matchWords : `Matching… ${MATCH_PASSES}/${MATCH_PASSES}`}
             </span>
           </span>
         </Button>
-        <span className={styles.loudnessNow} data-testid="loudness-control">
-          <span className={styles.loudnessNowName}>Loudness drive</span> <span className={`${styles.loudnessNowValue} mono`}>{driveText}</span>
-        </span>
+        {!simple && (
+          <span className={styles.loudnessNow} data-testid="loudness-control">
+            <span className={styles.loudnessNowName}>Loudness drive</span> <span className={`${styles.loudnessNowValue} mono`}>{driveText}</span>
+          </span>
+        )}
       </div>
       {reason && !locked && <p className={styles.blocked}>{reason}</p>}
       <p className={styles.result} role="status" aria-live="polite" data-testid="match-result">
         {result ?? ''}
       </p>
-      <p className={styles.fine} data-testid="true-peak-note">
-        True peak amber: at the limiter’s {MINUS}1 dBTP ceiling (normal). Red: above 0 dBTP.
-      </p>
+      {simple ? (
+        <p className={styles.fine}>
+          Sets the mastering’s Loudness drive so your song lands at {minusLufs(target.lufs)}. Nothing clips: the limiter keeps every peak under {MINUS}1 dB.
+        </p>
+      ) : (
+        <p className={styles.fine} data-testid="true-peak-note">
+          True peak amber: at the limiter’s {MINUS}1 dBTP ceiling (normal). Red: above 0 dBTP.
+        </p>
+      )}
     </section>
   );
 }
@@ -553,15 +595,7 @@ function groupsWithSpecs(): { group: Group; specs: ParamSpec[] }[] {
 const MasteringKnob = memo(function MasteringKnob(props: { spec: ParamSpec; disabled: boolean }) {
   const { spec, disabled } = props;
   const value = useProject((p) => readParam(MASTERING_PARAMS, p.mastering.params, spec.id));
-  return (
-    <Knob
-      spec={spec}
-      value={value}
-      size="sm"
-      disabled={disabled}
-      onChange={(v, info) => acceptMastering(setMasteringParam(session.store, spec.id, v, info.gesture))}
-    />
-  );
+  return <Knob spec={spec} value={value} size="sm" disabled={disabled} onChange={(v, info) => acceptMastering(setMasteringParam(session.store, spec.id, v, info.gesture))} />;
 });
 
 /** How much the Glue compressor turns the mix down right now (written to the DOM). */
@@ -656,12 +690,13 @@ export function MasteringPanel(props: { advanced: boolean; className?: string })
 
   return (
     <Panel
-      title="Mastering"
+      title={advanced ? 'Mastering' : 'Finish'}
+      subtitle={advanced ? undefined : <span className={styles.finishNote}>The whole song</span>}
       className={props.className}
       bodyClassName={styles.body}
       actions={
         <>
-          <CompareButton enabled={enabled} />
+          {advanced && <CompareButton enabled={enabled} />}
           <Switch
             label="Mastering"
             hideLabel
@@ -681,12 +716,14 @@ export function MasteringPanel(props: { advanced: boolean; className?: string })
             <Icon name="lock" size={13} /> {MASTERING_LOCKED_MESSAGE}
           </p>
         )}
-        <Presets locked={takeLocked} />
-        <LoudnessSection enabled={enabled} locked={takeLocked} comparing={comparing} />
-        <section className={`${styles.section} ${styles.spectrumSection}`} aria-labelledby={spectrumId} data-section="spectrum">
-          <SectionTitle id={spectrumId}>Spectrum</SectionTitle>
-          <Spectrum />
-        </section>
+        <Presets locked={takeLocked} simple={!advanced} />
+        <LoudnessSection enabled={enabled} locked={takeLocked} comparing={comparing} simple={!advanced} />
+        {advanced && (
+          <section className={`${styles.section} ${styles.spectrumSection}`} aria-labelledby={spectrumId} data-section="spectrum">
+            <SectionTitle id={spectrumId}>Spectrum</SectionTitle>
+            <Spectrum />
+          </section>
+        )}
         {advanced && <MasteringControls enabled={enabled} locked={takeLocked} />}
       </div>
     </Panel>

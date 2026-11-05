@@ -83,7 +83,8 @@ beforeAll(async () => {
   setLoudnessTarget('streaming');
   act(() => {
     session.store.replace(getStarter('house')!.build(), { resetHistory: true });
-    setUiMode('simple');
+    // The readings, Match target, A/B and the spectrum are Advanced (Simple shows the Finish card).
+    setUiMode('advanced');
     setView('play');
   });
   act(() => void session.accepted(cmd.applyMasteringPreset(session.store, 'clean')));
