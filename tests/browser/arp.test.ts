@@ -240,7 +240,8 @@ describe('Transport strip', () => {
     expect(session.store.getState().bpm).toBe(124);
   });
 
-  it('shows the recording state in text next to the two record buttons', () => {
+  it('shows the recording state in text next to the two record buttons (Performance is an Advanced control)', () => {
+    act(() => setUiMode('advanced'));
     const m = mount(h(TipsProvider, { enabled: true, children: h(TransportBar, { onOpenLibrary: () => {}, onOpenExport: () => {} }) }), { width: 1366 });
     const group = m.container.querySelector('[role="group"][aria-label="Recording"]')!;
     expect(group.querySelector('button[aria-label="Record Notes"]')).not.toBeNull();
@@ -254,6 +255,10 @@ describe('Transport strip', () => {
     expect(group.textContent).toContain('Recording performance');
     expect(group.querySelector('button[aria-label="Stop recording performance"]')).not.toBeNull();
     act(() => patchRuntime({ recording: 'off', recordTarget: null }));
+    // Simple mode shows the notes Record button only.
+    act(() => setUiMode('simple'));
+    expect(group.querySelector('button[aria-label="Record Notes"]')).not.toBeNull();
+    expect(group.querySelector('button[aria-label="Record Performance"]')).toBeNull();
   });
 
   it('shows the Record Notes grid while notes record (and once it is not the usual 1/16), never cut off', async () => {
