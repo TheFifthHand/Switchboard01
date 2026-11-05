@@ -6,6 +6,9 @@
  * - Coming back (a stored project was reopened): **Continue “<name>”** is the
  *   main, focused key; **Start a new groove** is the secondary one (the
  *   earlier project stays in My projects, and the shell says so).
+ * - **Make a beat from scratch** (both cases) starts a blank project on its
+ *   drums: a 1-bar loop open in Play › Steps, playing, so each square
+ *   clicked is heard at once ("Start from a beat…" sits right above it).
  * - "Other starters & projects" opens the project library on its Starters
  *   tab; "Just look around" (also Esc) closes the card.
  * - The card is modal: Tab and Shift+Tab stay on it.
@@ -56,12 +59,14 @@ export interface WelcomeProps {
   onBrowse(): void;
   /** Jump In (or Start a new groove) finished loading its starter (after onClose). */
   onJumpedIn?(): void;
+  /** Make a beat from scratch finished opening its blank project (after onClose). */
+  onBeatStarted?(): void;
 }
 
-export function Welcome({ lastProject, warnings = [], storageError, onClose, onLookAround, onContinued, onBrowse, onJumpedIn }: WelcomeProps) {
+export function Welcome({ lastProject, warnings = [], storageError, onClose, onLookAround, onContinued, onBrowse, onJumpedIn, onBeatStarted }: WelcomeProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const primaryRef = useRef<HTMLButtonElement>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<false | 'groove' | 'beat'>(false);
   // Continue resumes the loaded project; the library may have renamed or switched it meanwhile.
   const openName = useProject((p) => p.name);
   const returning = lastProject !== null;
@@ -95,13 +100,32 @@ export function Welcome({ lastProject, warnings = [], storageError, onClose, onL
 
   const jumpIn = () => {
     if (busy) return;
-    setBusy(true);
+    setBusy('groove');
     // Must run synchronously inside the click so the browser allows audio.
     void session.jumpIn().finally(() => {
       onClose();
       onJumpedIn?.();
     });
   };
+  const beatFromScratch = () => {
+    if (busy) return;
+    setBusy('beat');
+    // Also inside the click, for audio.
+    void session.beatFromScratch().finally(() => {
+      onClose();
+      onBeatStarted?.();
+    });
+  };
+  const beatButton = (
+    <>
+      <Button variant="secondary" icon="drum" onClick={beatFromScratch} disabled={!!busy} className={styles.secondary} aria-describedby="welcome-beat">
+        {busy === 'beat' ? 'Starting…' : 'Make a beat from scratch'}
+      </Button>
+      <p id="welcome-beat" className={styles.soundNote}>
+        An empty drum loop plays: click squares to add hits, or start from a ready-made beat.
+      </p>
+    </>
+  );
   const continueLast = () => {
     void session.continueProject();
     onClose();
@@ -149,27 +173,29 @@ export function Welcome({ lastProject, warnings = [], storageError, onClose, onL
         )}
         {returning ? (
           <>
-            <Button ref={primaryRef} variant="primary" size="lg" onClick={continueLast} disabled={busy} className={styles.jump} aria-describedby="welcome-continue">
+            <Button ref={primaryRef} variant="primary" size="lg" onClick={continueLast} disabled={!!busy} className={styles.jump} aria-describedby="welcome-continue">
               Continue “{openName}”
             </Button>
             <p id="welcome-continue" className={styles.soundNote}>
               Your song, as you left it.
             </p>
-            <Button variant="secondary" onClick={jumpIn} disabled={busy} className={styles.secondary} aria-describedby="welcome-sound">
-              {busy ? 'Starting…' : 'Start a new groove'}
+            <Button variant="secondary" onClick={jumpIn} disabled={!!busy} className={styles.secondary} aria-describedby="welcome-sound">
+              {busy === 'groove' ? 'Starting…' : 'Start a new groove'}
             </Button>
             <p id="welcome-sound" className={styles.soundNote}>
               A new starter groove plays right away; “{openName}” stays in My projects.
             </p>
+            {beatButton}
           </>
         ) : (
           <>
-            <Button ref={primaryRef} variant="primary" size="lg" icon="play" onClick={jumpIn} disabled={busy} className={styles.jump} aria-describedby="welcome-sound">
-              {busy ? 'Starting…' : 'Jump In'}
+            <Button ref={primaryRef} variant="primary" size="lg" icon="play" onClick={jumpIn} disabled={!!busy} className={styles.jump} aria-describedby="welcome-sound">
+              {busy === 'groove' ? 'Starting…' : 'Jump In'}
             </Button>
             <p id="welcome-sound" className={styles.soundNote}>
               A starter groove plays right away. Turn your volume to a comfortable level.
             </p>
+            {beatButton}
           </>
         )}
         {warnings.length > 0 && (

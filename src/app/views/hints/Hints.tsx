@@ -32,7 +32,7 @@ import { shallowEqual, useStore, type ReadableStore } from '../../../state/store
 import { session, useProject, useUi } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { finishHints, hideHints, hintsRunning, hintsStore, markHintDone, startSongHints, type HintId } from './hintsState';
-import { HINT_STEPS, bassHasClips, bassPart, currentHint, drumsPart, hintWhere, hintsFinishedText, projectHasClips, type HintContext } from './steps';
+import { bassHasClips, bassPart, currentHint, drumsHaveNotes, drumsPart, hintWhere, hintsFinishedText, projectHasClips, tourSteps, type HintContext } from './steps';
 import { findSpotFast, hardened, placeOk, readObstacles, spotCost, workArea, type Box, type Spot } from './placement';
 import { browserOpenStore } from '../arrange/laneStore';
 import { watchHints } from './tracker';
@@ -181,11 +181,19 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
   const parts = useProject(
     (p) => {
       const drums = drumsPart(p);
-      return { bassName: bassPart(p)?.name ?? null, drumsName: drums?.name ?? null, drumsMuted: drums?.mute ?? false, hasClips: projectHasClips(p), bassHasClips: bassHasClips(p), hasRegions: p.arrangement.regions.length > 0 };
+      return {
+        bassName: bassPart(p)?.name ?? null,
+        drumsName: drums?.name ?? null,
+        drumsMuted: drums?.mute ?? false,
+        drumsHasNotes: drumsHaveNotes(p),
+        hasClips: projectHasClips(p),
+        bassHasClips: bassHasClips(p),
+        hasRegions: p.arrangement.regions.length > 0,
+      };
     },
     shallowEqual,
   );
-  const recording = useRuntime((s) => s.recording === 'performance');
+  const recording = useRuntime((s) => s.recording !== 'off');
   const selectedTrack = useUi((s) => s.selectedTrackId);
   // Where Export is at this width, for the closing line and the export step (read from the strip, which follows the window).
   const [exportShown, setExportShown] = useState(true);
@@ -206,7 +214,7 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
   const go = step && !here ? (step.go ?? null) : null;
   // A step done in another view (or pad tab): one line, "Next, in Play: …", with the button that goes there.
   const where = go ? hintWhere(go, ctx) : null;
-  const songDone = song && HINT_STEPS.every((s) => s.track !== 'song' || done.includes(s.id));
+  const songDone = song && tourSteps('song', done, ctx).every((s) => done.includes(s.id));
   const text = step ? step.text(ctx) : hintsFinishedText(exportShown ? 'strip' : 'menu', songDone);
   const more = step && !go ? (step.more?.(ctx) ?? null) : null;
   const position = current?.position ?? 0;
@@ -513,6 +521,8 @@ function HintChip({ done, song, shownView }: { done: readonly HintId[]; song: bo
         className={styles.chip}
         aria-label={step ? `Try this, ${songTrack ? 'song hint' : 'hint'} ${position} of ${total}` : 'Hints'}
         data-hint={step?.id ?? 'finished'}
+        // Toasts go below the chip, never over it (Toast.tsx).
+        data-toast-below=""
         data-collapsed={go ? '' : undefined}
         data-done={justDone || undefined}
         onClickCapture={guardClicks}

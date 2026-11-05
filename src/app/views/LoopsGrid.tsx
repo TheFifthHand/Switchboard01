@@ -8,7 +8,7 @@
  * it plays ("■ Stop row"), and say which on hover and keyboard focus as the
  * pads do. State is shown with light AND text: Ready, Next bar
  * (with a beat countdown), Playing, Stops at bar N, Paused, Rec; an empty pad
- * is a quiet "+" (Add clip). A clip pad shows a small picture of its notes;
+ * is a quiet "+" (New loop). A clip pad shows a small picture of its notes;
  * the playing pad (and the playing scene) shows how far it is through its
  * loop, drawn by one animation-frame loop that reads the audio clock (no
  * React state per frame). Above the scenes: "❚❚ Pause" (paused: "▶ Continue")
@@ -72,9 +72,9 @@ import { createPortal, flushSync } from 'react-dom';
 import { Button, ClipSketch, DRUM_KEYS, Icon, Meter, NOTE_KEYS, OCTAVE_KEYS, Pad, Tooltip, useRafLoop, type IconName, type PadState } from '../../ui/components';
 import { TAP_SLOP_PX, type PadAction } from '../../ui/components/Pad';
 import { MOTION, boxOf, flip, offsetBox, prefersReducedMotion, scaledBox, stopMotion, type Box } from '../../ui/motion';
-import { BEATS_PER_BAR, MAX_SCENES, PPQ, TICKS_PER_BAR, TICKS_PER_BEAT, TICKS_PER_STEP, type Clip, type Id, type Project, type Scene } from '../../project/types';
-import { clipDropProblem, insertScene } from '../../state/commands';
-import { selectSlot, selectTrack, slotFor, uiStore } from '../../state/uiStore';
+import { BEATS_PER_BAR, MAX_SCENES, PPQ, TICKS_PER_BAR, TICKS_PER_BEAT, TICKS_PER_STEP, type Clip, type ClipBars, type Id, type Project, type Scene } from '../../project/types';
+import { clipDropProblem, createClip, insertScene } from '../../state/commands';
+import { selectSlot, selectTrack, setPadMode, slotFor, uiStore } from '../../state/uiStore';
 import type { ClipPhase } from '../../time/contracts';
 import { session, useProject, useUi } from '../instance';
 import { notify, runtimeStore, useRuntime, type RuntimeState, type TrackRuntime } from '../runtime';
@@ -212,7 +212,36 @@ function padTip(look: PadLook, replaying: boolean): string {
       return transport === 'stopped' ? 'Tap to start playing, with this clip.' : 'Tap to play this clip from the next bar, in time with the others. Tap it again to stop it.';
   }
 }
-const EMPTY_PAD_TIP = 'Tap to add a clip here: a new one, or paste a copied clip.';
+const EMPTY_PAD_TIP = 'Tap to make a loop here and open it in Steps. Right-click (or ⋯) for its length, a ready-made beat or Paste.';
+
+/** How long a loop made on an empty pad is: the longest loop in its scene (row), else 1 bar. */
+export function sceneLoopBars(p: Pick<Project, 'tracks'>, slot: number): ClipBars {
+  let bars = 0;
+  for (const t of p.tracks) bars = Math.max(bars, t.clips[slot]?.bars ?? 0);
+  return (bars || 1) as ClipBars;
+}
+
+/**
+ * A tap on an empty pad: a new loop as long as its scene's loops, open in
+ * Play › Steps (the step grid for drums, the piano roll for the others).
+ */
+export function newLoopAndEdit(trackId: Id, slot: number): boolean {
+  if (isEditLocked()) {
+    notify(`${LOCKED_TEXT}.`, 'warn');
+    return false;
+  }
+  const p = session.store.getState();
+  const bars = sceneLoopBars(p, slot);
+  if (!session.accepted(createClip(session.store, trackId, slot, bars))) return false;
+  const t = session.store.getState().tracks.find((x) => x.id === trackId);
+  const clip = t?.clips[slot];
+  selectTrack(trackId);
+  selectSlot(trackId, slot);
+  setPadMode('steps');
+  const how = t?.instrument.kind === 'drums' ? 'Click squares to add hits.' : 'Click in the grid to add notes.';
+  notify(`New loop “${clip?.name ?? ''}” (${barsLabel(bars)}) on ${t?.name ?? 'this part'}. ${how}`, 'info', 'undo');
+  return true;
+}
 /** Plain and short: the keys that do the same on a focused pad (Shift+F10, the menu key, ".") are in Help and in aria-keyshortcuts. */
 const PAD_ACTIONS_HINT = 'Right-click for its actions (it does not play). Drag it onto another pad to move it.';
 /** Keys on a focused pad (see onGridKey). */
@@ -1420,11 +1449,8 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
     selectTrack(trackId);
     selectSlot(trackId, slot);
     if (clip) void session.pressClip(trackId, slot);
-    else {
-      // "+" (Add clip): the new-clip choices (length, or paste) open at the pad.
-      const el = document.getElementById(id);
-      onMenu({ kind: 'clip', trackId, slot, anchor: anchorFromElement(el), returnFocus: el });
-    }
+    // An empty pad makes a loop and opens it to fill (its menu has the length, a beat and Paste).
+    else newLoopAndEdit(trackId, slot);
   };
   const open = (anchor: MenuAnchor, returnFocus: HTMLElement | null, ignore?: Element | null) => {
     selectTrack(trackId);
@@ -1452,7 +1478,7 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
   // The spoken state stays "Starts next bar" (a countdown read out every beat would be noise).
   const stateWord = look.caption ?? STATE_SPOKEN[state];
   const what = clip ? `clip ${clip.name}` : 'empty slot';
-  const label = clip ? `${col.name}, ${sceneName}: ${clip.name}, ${barsLabel(clip.bars)}. ${stateWord}.${selected ? ' Selected.' : ''}` : `${col.name}, ${sceneName}: empty. Add clip.${selected ? ' Selected.' : ''}`;
+  const label = clip ? `${col.name}, ${sceneName}: ${clip.name}, ${barsLabel(clip.bars)}. ${stateWord}.${selected ? ' Selected.' : ''}` : `${col.name}, ${sceneName}: empty. Tap for a new loop.${selected ? ' Selected.' : ''}`;
   const moveSpoken =
     drop === 'source' ? 'Moving this clip.' : drop === 'no' ? 'It cannot go here.' : target === 'swap' ? 'Press Enter to swap the two clips.' : 'Press Enter to drop it here.';
   return (
@@ -1482,7 +1508,7 @@ const ClipPad = memo(function ClipPad(props: ClipPadProps) {
           title={null}
           state={state}
           selected={selected}
-          label={clip ? clip.name : 'Add clip'}
+          label={clip ? clip.name : 'New loop'}
           sublabel={clip && !compact ? barsLabel(clip.bars) : undefined}
           caption={caption}
           captionIcon={paused ? 'pause' : undefined}
@@ -2127,10 +2153,10 @@ function PadActions(props: {
     return (
       <div className={styles.actions} role="region" aria-label="Selected pad" data-hint-avoid="">
         <p className={styles.actionsText}>
-          <span className={styles.actionsWhat}>{`${info.part} · ${info.scene}`}</span> empty pad: tap it to add a clip.
+          <span className={styles.actionsWhat}>{`${info.part} · ${info.scene}`}</span> empty pad: tap it to make a loop and fill it in Steps.
         </p>
-        <Button size="sm" variant="secondary" icon="plus" aria-haspopup="menu" onClick={(e) => onNewClip(at, e.currentTarget)} tip="Make a new clip here: choose its length (1 to 8 bars), or paste a copied clip.">
-          New clip
+        <Button size="sm" variant="secondary" icon="plus" aria-haspopup="menu" onClick={(e) => onNewClip(at, e.currentTarget)} tip="Other ways to start this loop: choose its length (1 to 8 bars), start from a ready-made beat (drums) or paste a copied loop.">
+          More ways…
         </Button>
       </div>
     );

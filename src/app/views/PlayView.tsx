@@ -13,12 +13,15 @@
  * whole app (the app loads this view eagerly): a selected part always has the
  * slot its controls act on.
  */
-import type { ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import '../selection';
-import { SegmentedControl } from '../../ui/components';
+import { Button, SegmentedControl } from '../../ui/components';
+import { clipAtSlot, isSongSlot } from '../../project/clips';
 import type { Id, Track } from '../../project/types';
-import { selectTrack, setPadMode, uiStore, type PadMode } from '../../state/uiStore';
-import { session, useUi } from '../instance';
+import { selectTrack, setPadMode, slotFor, uiStore, type PadMode } from '../../state/uiStore';
+import { session, useProject, useUi } from '../instance';
+import { BeatPicker } from './BeatPicker';
+import { anchorFromElement } from './ClipMenu';
 import { LoopsGrid } from './LoopsGrid';
 import { DrumPads } from './DrumPads';
 import { NotesPads } from './NotesPads';
@@ -61,6 +64,43 @@ function openPadMode(mode: PadMode): void {
   setPadMode(mode);
 }
 
+/**
+ * Steps on a drum part whose loop is empty (or whose pad has none yet):
+ * "Start from a beat…" next to the pad tabs, so the first step is one press.
+ * It stays while its picker is open, so beats can be tried one after another.
+ */
+function StartFromBeat() {
+  const trackId = useUi((s) => s.selectedTrackId);
+  const slot = useUi((s) => slotFor(s, s.selectedTrackId));
+  const empty = useProject((p) => {
+    const t = p.tracks.find((x) => x.id === trackId);
+    if (!t || t.instrument.kind !== 'drums') return false;
+    const clip = clipAtSlot(t, slot);
+    return clip ? clip.notes.length === 0 : !isSongSlot(slot);
+  });
+  const [open, setOpen] = useState<{ trackId: Id; slot: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  if (!empty && !open) return null;
+  return (
+    <>
+      <Button
+        ref={btnRef}
+        size="sm"
+        variant="secondary"
+        icon="drum"
+        className={styles.beatKey}
+        aria-haspopup="dialog"
+        aria-expanded={!!open}
+        onClick={() => setOpen((o) => (o ? null : { trackId, slot }))}
+        tip="Pick a ready-made beat by style and hear it in this loop at once. Then change any square."
+      >
+        Start from a beat…
+      </Button>
+      {open && <BeatPicker trackId={open.trackId} slot={open.slot} anchor={anchorFromElement(btnRef.current)} returnFocus={btnRef.current} ignore={btnRef.current} onClose={() => setOpen(null)} />}
+    </>
+  );
+}
+
 export function PlayView() {
   const padMode = useUi((s) => s.padMode);
   const advanced = useUi((s) => s.uiMode === 'advanced');
@@ -78,6 +118,7 @@ export function PlayView() {
             controls="pad-surface"
             size="md"
           />
+          {mode.value === 'steps' && <StartFromBeat />}
         </div>
         <div id="pad-surface" className={styles.surfaceBody} role="tabpanel" aria-label={`${mode.label} pads`}>
           {mode.render()}

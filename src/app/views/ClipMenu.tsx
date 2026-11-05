@@ -42,6 +42,7 @@ import { shallowEqual, useStore } from '../../state/store';
 import { session, useProject, useUi } from '../instance';
 import { notify } from '../runtime';
 import { barsLabel } from '../labels';
+import { BeatPicker } from './BeatPicker';
 import styles from './ClipMenu.module.css';
 
 /* ------------------------------------------------------------------ */
@@ -884,7 +885,7 @@ export const clipActions = {
 /* ------------------------------------------------------------------ */
 
 const LENGTH_OPTIONS = CLIP_BAR_CHOICES.map((b) => ({ value: b, label: String(b), ariaLabel: `Length ${barsLabel(b)}` }));
-const NEW_OPTIONS = CLIP_BAR_CHOICES.map((b) => ({ value: b, label: String(b), ariaLabel: `New clip, ${barsLabel(b)}` }));
+const NEW_OPTIONS = CLIP_BAR_CHOICES.map((b) => ({ value: b, label: String(b), ariaLabel: `New loop, ${barsLabel(b)}` }));
 /** Length's tooltip: what changing it does to the notes. */
 export const LENGTH_TIP = 'How many bars the clip loops over. Longer: the new bars start empty (Double or Repeat to 8 bars fill them with the pattern). Shorter: notes past the new end are removed; Undo brings them back.';
 const LONGEST: ClipBars = MAX_CLIP_BARS as ClipBars;
@@ -910,6 +911,7 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
       const to = t && clip ? nextEmptySlot(t.clips, slot) : null;
       return {
         trackName: t?.name ?? '',
+        drums: t?.instrument.kind === 'drums',
         scene: p.scenes[slot]?.name ?? `Row ${slot + 1}`,
         clipName: clip?.name ?? null,
         bars: clip?.bars ?? null,
@@ -924,6 +926,8 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
   const locked = useEditLocked();
   const toasts = useToastsIfAny();
   const [renaming, setRenaming] = useState(!!startInRename && info.clipName !== null && !locked);
+  // "Start from a beat…" swaps the menu for the beat picker, at the same place.
+  const [beats, setBeats] = useState(false);
 
   const act = (fn: () => unknown) => {
     fn();
@@ -949,20 +953,30 @@ export function ClipMenu({ trackId, slot, anchor, returnFocus, ignore, startInRe
     );
   }
 
+  if (beats && info.clipName === null) {
+    return <BeatPicker trackId={trackId} slot={slot} anchor={anchor} returnFocus={returnFocus} ignore={ignore} onClose={onClose} />;
+  }
+
   if (info.clipName === null) {
+    // A tap on an empty pad makes a loop at once (LoopsGrid); this menu (⋯, right-click) has the other ways.
     return (
-      <Popover anchor={anchor} label={`Empty slot: ${info.trackName}, ${info.scene}`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
-        <MenuHeader eyebrow={`${info.trackName} · ${info.scene}`} title="Empty slot">
+      <Popover anchor={anchor} label={`Empty pad: ${info.trackName}, ${info.scene}`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
+        <MenuHeader eyebrow={`${info.trackName} · ${info.scene}`} title="Empty pad">
           {locked && <div className={styles.meta}>{LOCKED_TEXT}.</div>}
         </MenuHeader>
+        {info.drums && (
+          <MenuItem icon="drum" hint="By style" disabled={locked} disabledReason={LOCKED_REASON} onSelect={() => setBeats(true)}>
+            Start from a beat…
+          </MenuItem>
+        )}
         <MenuKeyRow
-          label="New clip"
+          label="New loop"
           unit="bars"
           row="new"
           options={NEW_OPTIONS}
           disabled={locked}
           disabledReason={LOCKED_TEXT}
-          tip="An empty clip of that many bars, ready for notes: Edit steps opens it."
+          tip="An empty loop of that many bars, ready for notes: Edit steps opens it."
           onSelect={(b) => {
             const made = clipActions.create(trackId, slot, b, toasts);
             onClose();

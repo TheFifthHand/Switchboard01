@@ -136,7 +136,10 @@ describe('Project library', () => {
       const def = expected[i];
       expect(card.getAttribute('aria-label')).toContain(def === BLANK_STARTER ? 'Blank project' : def.name);
       expect(card.textContent).toContain(`${def.bpm} BPM`);
-      expect(card.textContent).toContain(def.key);
+      // r6: mood and tempo on the card ("warm, bouncy · 124 BPM"); the key's name on hover and in the card's name.
+      expect(card.querySelector<HTMLElement>('[data-feel]')!.title).toBe(`Key: ${def.key}`);
+      expect(card.getAttribute('aria-label')).toContain(def.key);
+      expect(card.querySelector('[data-feel]')!.textContent).toMatch(/^[a-z-]+, [a-z-]+ · \d+ BPM$/);
       expect(card.textContent).toContain(def.description);
     });
     // Storage is explained in the dialog.

@@ -137,7 +137,8 @@ describe('Clip pad menu', () => {
 
     const empty = slotsOf('t5').empty;
     rightClick(pad('t5', empty));
-    expect(menu()!.textContent).toContain('Empty slot');
+    // r6: the empty-pad menu says "Empty pad" and "New loop" (a tap makes a loop at once).
+    expect(menu()!.textContent).toContain('Empty pad');
     click(item(/Paste/));
     const pasted = clips('t5')[empty]!;
     expect(pasted).not.toBeNull();
@@ -194,16 +195,18 @@ describe('Clip pad menu', () => {
     expect(clips('t2')[full]!.notes.length).toBeGreaterThan(0);
   });
 
-  it('New clip on an empty slot creates a clip of the chosen length', () => {
+  // r6: "New loop", named after its part ("Lead 1"), not the scene.
+  it('New loop on an empty slot creates a loop of the chosen length', () => {
     setup();
     const empty = slotsOf('t6').empty;
     rightClick(pad('t6', empty));
-    click(menu()!.querySelector<HTMLButtonElement>('[aria-label="New clip, 2 bars"]')!);
+    click(menu()!.querySelector<HTMLButtonElement>('[aria-label="New loop, 2 bars"]')!);
     const c = clips('t6')[empty]!;
     expect(c).not.toBeNull();
     expect(c.bars).toBe(2);
     expect(c.notes).toHaveLength(0);
-    expect(c.name).toBe(session.store.getState().scenes[empty].name);
+    const part = session.store.getState().tracks.find((t) => t.id === 't6')!;
+    expect(c.name).toMatch(new RegExp(`^${part.name} \\d+$`));
     expect(pad('t6', empty).getAttribute('aria-label')).toContain(c.name);
   });
 

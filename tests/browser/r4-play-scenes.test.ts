@@ -170,10 +170,15 @@ describe('the pad menu uses every row and the longer lengths', () => {
     expect(project().scenes).toHaveLength(6);
 
     // A new 8-bar clip on an empty pad of the new row.
-    await clickEl(pad('t3', 5));
+    // r6: a tap makes a loop at once; the lengths are in the pad's ⋯ menu ("New loop").
+    act(() => {
+      selectTrack('t3');
+      selectSlot('t3', 5);
+    });
+    await clickEl(button(/^Options for empty slot/)!);
     const keys = [...menu()!.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].map((k) => k.getAttribute('aria-label'));
-    expect(keys).toEqual(['New clip, 1 bar', 'New clip, 2 bars', 'New clip, 3 bars', 'New clip, 4 bars', 'New clip, 8 bars']);
-    await clickEl(item(/New clip, 8 bars/));
+    expect(keys).toEqual(['New loop, 1 bar', 'New loop, 2 bars', 'New loop, 3 bars', 'New loop, 4 bars', 'New loop, 8 bars']);
+    await clickEl(item(/New loop, 8 bars/));
     expect(clipsOf('t3')[5]!.bars).toBe(8);
     // PLAY-21: the next step is to fill it. Focus goes to the pad actions' Edit steps, and the toast offers Edit steps too.
     await until(() => (document.activeElement?.textContent ?? '') === 'Edit steps', 'focus on Edit steps');

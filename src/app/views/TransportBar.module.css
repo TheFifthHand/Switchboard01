@@ -844,3 +844,155 @@
     z-index: 40;
   }
 }
+
+/*
+ * The project's name at the left of the strip (click to rename in place),
+ * with the save state under it in words ("Saved ✓", "Saving…", "Preview",
+ * "Not saved"): one key, 44 px tall. The name is cut short with "…" (its
+ * tooltip and accessible name say it whole). The save key on the right shows
+ * its lamp (words only for a failure, which it opens).
+ */
+.title {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 40px;
+  max-width: 180px;
+}
+.titleName {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 1px;
+  max-width: 100%;
+  min-width: 0;
+  height: 44px;
+  padding: 0 6px;
+  margin-left: -6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: text;
+}
+.titleName:hover {
+  border-color: var(--line);
+  background: var(--shell-hi);
+}
+.titleName:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.titleText {
+  max-width: 100%;
+  font-size: var(--fs-md);
+  font-weight: 650;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.titleSave {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--fs-xs);
+  line-height: 14px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.titleSave[data-title-save='error'] {
+  color: var(--coral-ink);
+}
+.titleInput {
+  width: 170px;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 6px;
+  margin-left: -6px;
+  border: 1px solid var(--teal);
+  border-radius: var(--r-sm);
+  background: var(--shell-hi);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: 650;
+}
+.titleInput:focus {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+/* The words are under the name now: the save key on the right is its lamp (words for a failure only). */
+.saveOk .saveText,
+.saveBusy .saveText,
+.savePreview .saveText {
+  display: none;
+}
+@media (max-width: 1599px) {
+  .title {
+    max-width: 130px;
+  }
+  .bar[data-mode='advanced'] .title {
+    max-width: 112px;
+  }
+}
+@media (max-width: 1439px) {
+  .title {
+    max-width: 100px;
+  }
+  .bar[data-mode='advanced'] .title {
+    max-width: 62px;
+  }
+}
+@media (max-width: 1279px) {
+  .title,
+  .bar[data-mode='advanced'] .title {
+    max-width: 76px;
+  }
+}
+/* Two rows below 1024 px: the name alone, as tall as the other keys (the save lamp on the right keeps the state). */
+@media (max-width: 1023px) {
+  .titleName {
+    height: 32px;
+  }
+  .titleSave {
+    display: none;
+  }
+}
+/* Performance (Advanced): its icon alone below 1800 px, so the project's name keeps its room. */
+@media (max-width: 1799px) {
+  .bar .recButtons > .perfKey[data-size] {
+    width: 32px;
+    padding: 0;
+    gap: 0;
+  }
+  .perfWord {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+/* From 1024 px (one row) the project's name is what gives way when room is short, never the right-hand keys. */
+@media (min-width: 1024px) {
+  .right {
+    flex-shrink: 0;
+  }
+  .title {
+    flex-shrink: 1;
+  }
+}
+/* Wide windows: the Simple · Advanced switch has one fixed width, so it never moves by a sub-pixel as the mode (and the name's room) changes. */
+@media (min-width: 1600px) {
+  .bar .modeSwitch {
+    width: 134px;
+  }
+}
+/* A waiting Update key in Advanced (until it is applied): the name gives it a little more room. */
+.bar[data-mode='advanced']:has(.update) .title {
+  min-width: 32px;
+}

@@ -270,7 +270,7 @@ describe('the chip never covers a heading or a status line', () => {
         expect(heading, 'the Shape heading').toBeTruthy();
         expect(coveredKeyText(), `${w} ${mode} shape: covers`).toEqual([]);
         expect(coveredControls(), `${w} ${mode} shape: covers`).toEqual([]);
-        // The Song view while the pads play: its header says "Your pads are playing" with Play the song.
+        // The Song view while the pads play: its header says "Pads are playing" with Play the song instead (r6).
         for (const step of ['pad', 'record', 'song-stretch'] as HintId[]) {
           act(() => {
             patchRuntime({ playing: true, mode: 'live' });
@@ -279,7 +279,7 @@ describe('the chip never covers a heading or a status line', () => {
           showStep(step);
           await settle();
           await chipPlaced();
-          expect(document.querySelector('[data-testid="pads-playing"]')!.textContent).toContain('Your pads are playing');
+          expect(document.querySelector('[data-testid="pads-playing"]')!.textContent).toContain('Pads are playing');
           // Its home is the Song header's free middle. Where that has no room (960 x 540 with the two-row transport, the
           // song filling the rows) it waits off screen, unseen, rather than cover anything (the rulebook's rule).
           if (!chip()!.hasAttribute('data-ready')) {

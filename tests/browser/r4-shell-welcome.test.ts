@@ -28,14 +28,14 @@ describe('Welcome, first visit', () => {
     const jump = button('Jump In')!;
     expect(document.activeElement).toBe(jump);
     expect(jump.dataset.variant).toBe('primary');
-    // Round the card with Tab: Jump In → Other starters → Just look around → Jump In.
+    // Round the card with Tab: Jump In → Make a beat from scratch (r6) → Other starters → Just look around → Jump In.
     const seen: string[] = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 5; i++) {
       await keys('{Tab}');
       seen.push((document.activeElement?.textContent ?? '').trim());
       expect(card()!.contains(document.activeElement), `Tab ${i + 1} stays on the card`).toBe(true);
     }
-    expect(seen).toEqual(['Other starters & projects', 'Just look around', 'Jump In', 'Other starters & projects']);
+    expect(seen).toEqual(['Make a beat from scratch', 'Other starters & projects', 'Just look around', 'Jump In', 'Make a beat from scratch']);
     // Shift+Tab from the first key goes to the last.
     await keys('{Shift>}{Tab}{/Shift}');
     await keys('{Shift>}{Tab}{/Shift}');

@@ -189,7 +189,8 @@ describe('"Try this" hints', () => {
     expect(chip()!.dataset.hint).toBe('record');
     act(() => patchRuntime({ recording: 'performance' }));
     await settle();
-    expect(chip()!.textContent).toContain('Recording. Play a little, then press Performance again to stop.');
+    // r6: the step names the transport's ● Record (a performance in Advanced counts too).
+    expect(chip()!.textContent).toContain('Recording. Play a few notes, then press Record again to stop.');
     act(() => patchRuntime({ recording: 'off' }));
     await settle();
 

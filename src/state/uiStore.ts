@@ -62,7 +62,7 @@ export interface UiState {
   keyboardCollapsed: boolean;
   /**
    * The keyboard folded or not, per view (remembered); a view not listed
-   * folds as `keyboardCollapsed` says, except Mix, which starts folded. Read it
+   * folds as `keyboardCollapsed` says, except Song and Mix, which start folded. Read it
    * with keyboardCollapsedFor.
    */
   keyboardCollapsedByView: Partial<Record<View, boolean>>;
@@ -330,9 +330,20 @@ export function setEffectClipboard(clip: EffectChainClip | null, store: UiStore 
   set(store, { effectClipboard: clip ? structuredClone(clip) : null });
 }
 
-/** Whether the keyboard is folded in `view` (Mix starts folded; other views follow keyboardCollapsed until set). */
+/** Whether the keyboard is folded in `view` (Song and Mix start folded; other views follow keyboardCollapsed until set). */
 export function keyboardCollapsedFor(s: UiState, view: View): boolean {
-  return s.keyboardCollapsedByView[view] ?? (view === 'mix' ? true : s.keyboardCollapsed);
+  return s.keyboardCollapsedByView[view] ?? (view === 'mix' || view === 'arrange' ? true : s.keyboardCollapsed);
+}
+
+/**
+ * Unfold the keyboard in `view` when it is folded only because that view
+ * starts folded (a note key or Record asks for it). A fold the person chose
+ * stays folded.
+ */
+export function openKeyboardIfDefault(view: View, store: UiStore = uiStore): void {
+  const s = store.getState();
+  if (s.keyboardCollapsedByView[view] !== undefined || !keyboardCollapsedFor(s, view)) return;
+  setKeyboardCollapsedFor(view, false, store);
 }
 
 /** The song lane's remembered zoom and scroll for a project, or null (fit the song). */

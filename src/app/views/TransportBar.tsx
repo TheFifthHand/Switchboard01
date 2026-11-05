@@ -10,7 +10,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { Button, Icon, Knob, Meter, NumberField, SegmentedControl, Tooltip, useRafLoop } from '../../ui/components';
 import { BPM_SPEC, MASTER_VOLUME_SPEC, SWING_SPEC } from '../../project/params';
-import { setTipsEnabled, setUiMode, setView, type UiMode, type View } from '../../state/uiStore';
+import { openKeyboardIfDefault, setTipsEnabled, setUiMode, setView, uiStore, type UiMode, type View } from '../../state/uiStore';
+import { renameProject } from '../../state/commands';
 import { session, useAutosave, useHistory, useProject, useUi } from '../instance';
 import { notify, runtimeStore, transportWord, useOffline, useRuntime, type RuntimeState } from '../runtime';
 import { PAUSE_UNAVAILABLE_MESSAGE, songKeyStartsSong, songPlayFrom } from '../session';
@@ -276,6 +277,16 @@ function SaveGlyph({ state }: { state: 'saved' | 'saving' | 'preview' | 'error' 
  * starter (stored on its first change). Pressing it opens your projects; when
  * saving failed it says why and how to recover.
  */
+/** The save state in a word: Saved, Saving…, Preview (an untouched starter) or Not saved. */
+function useSaveWord(): { text: 'Saved' | 'Saving…' | 'Preview' | 'Not saved'; state: 'saved' | 'saving' | 'preview' | 'error' } {
+  const save = useAutosave();
+  const preview = useRuntime((s) => s.preview);
+  const error = save.status === 'error';
+  const busy = !error && (save.status === 'saving' || save.dirty);
+  const idlePreview = preview && !error && !busy;
+  return error ? { text: 'Not saved', state: 'error' } : busy ? { text: 'Saving…', state: 'saving' } : idlePreview ? { text: 'Preview', state: 'preview' } : { text: 'Saved', state: 'saved' };
+}
+
 function SaveStatus(props: { onOpenLibrary(): void }) {
   const save = useAutosave();
   const preview = useRuntime((s) => s.preview);
@@ -331,6 +342,82 @@ function SaveStatus(props: { onOpenLibrary(): void }) {
 }
 
 /**
+ * The project's name at the left of the strip, with its save state under it
+ * in words ("Saved ✓"). A click on the name renames it in place: Enter (or
+ * leaving the field) keeps the new name, Esc keeps the old one. One undo step.
+ */
+function ProjectTitle() {
+  const name = useProject((p) => p.name);
+  const readonly = useAutosave().readonly ?? null;
+  const saved = useSaveWord();
+  const [editing, setEditing] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const nameRef = useRef<HTMLButtonElement>(null);
+  const done = useRef(false);
+  useLayoutEffect(() => {
+    if (!editing) return;
+    done.current = false;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [editing]);
+  const finish = (keep: boolean) => {
+    if (done.current) return;
+    done.current = true;
+    const next = inputRef.current?.value.trim() ?? '';
+    setEditing(false);
+    requestAnimationFrame(() => nameRef.current?.focus({ preventScroll: true }));
+    if (!keep || next === '' || next === name) return;
+    if (session.accepted(renameProject(session.store, next))) notify(`Renamed the project to “${session.store.getState().name}”.`, 'info', 'undo');
+  };
+  return (
+    <div className={styles.title} role="group" aria-label="Project">
+      {editing ? (
+        <input
+          ref={inputRef}
+          className={styles.titleInput}
+          defaultValue={name}
+          maxLength={80}
+          aria-label="Project name"
+          spellCheck={false}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              finish(true);
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              finish(false);
+            }
+          }}
+          onBlur={() => finish(true)}
+        />
+      ) : (
+        <Tooltip tip={readonly ? 'This project is saved by another tab, so it can be renamed there.' : 'Your project. Click to rename it.'} detail="Your projects (open, duplicate, export) are in Projects, in the More menu.">
+          <button
+            ref={nameRef}
+            type="button"
+            className={styles.titleName}
+            aria-label={`Project: ${name}. Rename`}
+            aria-disabled={readonly ? true : undefined}
+            onClick={() => {
+              if (readonly) notify('This project is open in another tab: rename it there, or take over here first.', 'warn');
+              else setEditing(true);
+            }}
+          >
+            <span className={styles.titleText}>{name}</span>
+            {/* The save state in words under the name (the save key on the right says it too, and acts on it). */}
+            <span className={styles.titleSave} data-title-save={saved.state} aria-hidden="true">
+              {saved.text}
+              {saved.state === 'saved' && <Icon name="check" size={11} />}
+            </span>
+          </button>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+/**
  * While Record Notes waits for its downbeat (the clip's launch at the next
  * bar, or the end of a count-in), the beats left before recording starts, as
  * heard (runtime.recordStartsAtTick against the audible position).
@@ -360,11 +447,27 @@ function RecordCountdown(props: { startsAt: number }) {
   return <span ref={ref} aria-hidden="true" />;
 }
 
-/** Record Notes, Record Performance and their options, with the recording status as the caption. */
+/**
+ * The words of a take into the song while it runs: "Recording · Lead · into
+ * the song at bar 9" (during the count-in "Count-in · Lead · song bar 9").
+ */
+export function songRecordingCaption(part: string, startBar: number, countingIn: boolean): string {
+  return countingIn ? `Count-in · ${part} · song bar ${startBar + 1}` : `Recording · ${part} · into the song at bar ${startBar + 1}`;
+}
+
+/**
+ * ● Record (notes), Record Performance (Advanced only) and the options, with
+ * the recording status as the caption. In the Song view Record records into
+ * the song from its cursor (session.toggleRecordNotes({ song: true })); in
+ * the other views it records into the selected part's pad loop.
+ */
 function RecordGroup() {
   const recording = useRuntime((s) => s.recording);
   const countingIn = useRuntime((s) => s.countingIn);
-  const targetId = useRuntime((s) => s.recordTarget?.trackId ?? null);
+  const songTake = useRuntime((s) => s.songRecording);
+  const songView = useUi((s) => s.view === 'arrange');
+  const advanced = useUi((s) => s.uiMode === 'advanced');
+  const targetId = useRuntime((s) => s.recordTarget?.trackId ?? s.songRecording?.trackId ?? null);
   // Record Notes waits for its downbeat: the caption counts the beats down.
   const startsAt = useRuntime((s) => (s.recording === 'notes' && s.playing && s.recordStartsAtTick != null ? s.recordStartsAtTick : null));
   // The clip to record into was chosen while another one played: it (and recording) starts at the next bar.
@@ -379,9 +482,11 @@ function RecordGroup() {
     const t = targetId ? p.tracks.find((x) => x.id === targetId) : undefined;
     return t && t.arp.enabled && t.instrument.kind !== 'drums' ? t.arp.division : null;
   });
-  // Short enough to fit above the buttons with the grid: the pressed Notes key says what records.
+  // Short enough to fit above the buttons with the grid: the pressed Record key says what records.
   const caption =
-    recording === 'notes'
+    recording === 'notes' && songTake
+      ? songRecordingCaption(targetName, songTake.startBar, countingIn || startsAt !== null)
+      : recording === 'notes'
       ? startsAt !== null
         ? null
         : countingIn
@@ -427,16 +532,30 @@ function RecordGroup() {
           variant="secondary"
           size="sm"
           tone="coral"
+          icon="record"
           pressed={recording === 'notes'}
           aria-pressed={undefined}
-          onClick={() => void session.toggleRecordNotes()}
-          aria-label={recording === 'notes' ? 'Stop recording notes' : 'Record Notes'}
-          tip={recording === 'notes' ? 'Stop recording notes. Undo then removes the whole pass in one step.' : 'Record what you play on the keyboard or drum pads into the selected clip.'}
-          detail="Timing, metronome and count-in are in Recording options (the metronome button). With the part's arpeggiator on, the notes it plays are recorded. Pause also ends the pass."
+          onClick={() => {
+            // Record opens the keyboard (folded in Song and Mix): what is played is what records.
+            if (recording !== 'notes') openKeyboardIfDefault(uiStore.getState().view);
+            void session.toggleRecordNotes(songView ? { song: true } : {});
+          }}
+          aria-label={recording === 'notes' ? 'Stop recording notes' : songView ? 'Record into the song' : 'Record Notes'}
+          tip={
+            recording === 'notes'
+              ? songTake
+                ? 'Stop recording. The take becomes loops in the song, and Undo removes it in one step.'
+                : 'Stop recording notes. Undo then removes the whole pass in one step.'
+              : songView
+                ? 'Record what you play on the selected part into the song, from the playhead. A new loop appears on its row as you play.'
+                : 'Record what you play on the keyboard or drum pads into the selected loop.'
+          }
+          detail="Timing, metronome and count-in are in Recording options (the metronome button). With the part's arpeggiator on, the notes it plays are recorded. Stop (or Pause) ends the take."
           className={recording === 'notes' ? styles.recActive : undefined}
         >
-          Notes
+          Record
         </Button>
+        {(advanced || recording === 'performance') && (
         <Button
           variant="secondary"
           size="sm"
@@ -447,10 +566,13 @@ function RecordGroup() {
           aria-label={recording === 'performance' ? 'Stop recording performance' : 'Record Performance'}
           tip={recording === 'performance' ? 'Stop and keep this performance. Replay or export it in Song.' : 'Capture everything you do — launches, notes, knob moves — as a replayable performance.'}
           detail="Cables and sound choices are locked while recording so the take replays exactly. Pause is not available during a take; Mute All ends the recording."
-          className={recording === 'performance' ? styles.recActive : undefined}
+          icon="recordPerformance"
+          className={`${styles.perfKey}${recording === 'performance' ? ` ${styles.recActive}` : ''}`}
         >
-          Performance
+          {/* The word where there is room (from 1800 px); narrower, the icon (its name stays "Record Performance"). */}
+          <span className={styles.perfWord}>Performance</span>
         </Button>
+        )}
         <RecordOptions />
       </div>
     </div>
@@ -713,6 +835,7 @@ export function TransportBar(props: TransportBarProps) {
 
   return (
     <header ref={barRef} className={styles.bar} data-mode={uiMode} aria-label="Transport">
+      <ProjectTitle />
       <SegmentedControl<View> label="View" kind="tabs" options={VIEW_OPTIONS} value={view} onChange={switchView} size="lg" lamp={false} className={styles.views} />
 
       <div className={`${styles.group} ${styles.playback}`} role="group" aria-label="Playback">
@@ -811,7 +934,7 @@ export function TransportBar(props: TransportBarProps) {
           aria-label={`Projects (open: ${projectName})`}
           className={`${styles.project} ${styles.projectKey}`}
         >
-          <span className={styles.projectName}>{projectName}</span>
+          <span className={styles.projectName}>Projects</span>
         </Button>
         <Button
           variant="primary"

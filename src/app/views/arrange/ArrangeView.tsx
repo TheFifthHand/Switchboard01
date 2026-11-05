@@ -22,7 +22,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from 're
 import { songBars } from '../../../project/arrangement';
 import type { Id, Project } from '../../../project/types';
 import { useStore } from '../../../state/store';
-import { useProject } from '../../instance';
+import { useProject, useUi } from '../../instance';
 import { readBrowserOpen, readFollow, readTakesOpen, writeBrowserOpen, writeFollow, writeTakesOpen } from './laneSettings';
 import { browserOpenStore, carriedStore } from './laneStore';
 import { LoopBrowser } from './LoopBrowser';
@@ -64,6 +64,7 @@ export function ArrangeView() {
   // The Performances panel open or folded: the person's choice while there are takes (remembered); with none, a look
   // at how to record one lasts until the first take comes (or the last one goes).
   const hasTakes = useProject(selectHasTakes);
+  const advanced = useUi((s) => s.uiMode === 'advanced');
   const [takesPref, setTakesPref] = useState<boolean>(() => readTakesOpen() ?? false);
   const [howOpen, setHowOpen] = useState(false);
   useEffect(() => setHowOpen(false), [hasTakes]);
@@ -103,7 +104,8 @@ export function ArrangeView() {
         </div>
         {!openTake && <LoopEditorPane />}
       </section>
-      <PerformancesPanel open={takesOpen} onOpenChange={onTakesOpen} openTake={openTake} onOpenTake={setOpenTake} />
+      {/* Performances are an Advanced tool: Simple shows the panel only once the project has a take to replay. */}
+      {(advanced || hasTakes) && <PerformancesPanel open={takesOpen} onOpenChange={onTakesOpen} openTake={openTake} onOpenTake={setOpenTake} />}
       <Carried />
     </div>
   );

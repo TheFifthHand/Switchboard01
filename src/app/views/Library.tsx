@@ -1,7 +1,7 @@
 /**
  * Project library (a large dialog with two tabs).
  *
- * - Starters: the eight curated starters and a blank project. Starting one
+ * - Starters: the 13 curated starters and a blank project. Starting one
  *   saves the open project first (it stays in My projects) and loads the new
  *   one without playing it — the user presses Play or taps a pad. When the
  *   open project cannot be kept (storage down, or its latest edits failed to
@@ -39,6 +39,7 @@ import { uiStore } from '../../state/uiStore';
 import { session, useAutosave, useProject } from '../instance';
 import { notify, runtimeStore, useRuntime } from '../runtime';
 import { downloadBlob } from '../download';
+import { starterFeel } from './keyMood';
 import styles from './Library.module.css';
 
 export type LibraryTab = 'starters' | 'projects';
@@ -69,8 +70,29 @@ const SPACE_CONTROLS = 'button, input, select, textarea, a[href], [role="tab"], 
 export function hearIt(): string {
   return uiStore.getState().view === 'arrange' ? 'Press Play to hear the song.' : 'Tap a pad or a scene to hear it.';
 }
-/** A blank project has no clips: there is nothing to hear yet, and a pad makes the first clip. */
-const BLANK_HINT = 'Tap a pad to make a clip, then press Edit steps.';
+/** A blank project has no loops: there is nothing to hear yet, and a tap on a pad makes the first one. */
+const BLANK_HINT = 'Tap a pad to make a loop and fill it in.';
+
+/**
+ * Each starter's feel in two everyday words, leading its card before the
+ * tempo ("warm, bouncy · 124 BPM"); the key's proper name is on hover.
+ */
+export const STARTER_FEEL: Record<string, string> = {
+  house: 'warm, bouncy',
+  techno: 'driving, hypnotic',
+  downtempo: 'relaxed, warm',
+  drumAndBass: 'fast, liquid',
+  garage: 'skippy, shuffled',
+  breakbeat: 'funky, busy',
+  synthwave: 'night-drive, glowing',
+  ambient: 'slow, floating',
+  trap: 'dark, half-time',
+  lofi: 'lazy, dusty',
+  pop: 'bright, steady',
+  afrobeats: 'sunny, swaying',
+  boomBap: 'hard, head-nod',
+  blank: 'empty, ready',
+};
 
 type Message = { tone: 'error' | 'success' | 'info'; text: string; action?: { label: string; onAction(): void } };
 
@@ -820,9 +842,11 @@ function StartersPanel(props: {
               >
                 <span className={styles.cardHead}>
                   <span className={styles.cardName}>{title}</span>
-                  <span className={`${styles.cardBpm} mono`}>{def.bpm} BPM</span>
                 </span>
-                <span className={`${styles.cardKey} mono`}>{def.key}</span>
+                {/* Mood and tempo first; the key's proper name ("G Dorian") on hover. */}
+                <span className={styles.cardKey} title={`Key: ${def.key}`} data-feel="">
+                  {starterFeel(STARTER_FEEL[def.id] ?? 'your own', def.bpm)}
+                </span>
                 <span id={`starter-desc-${def.id}`} className={styles.cardDesc}>
                   {def.description}
                 </span>

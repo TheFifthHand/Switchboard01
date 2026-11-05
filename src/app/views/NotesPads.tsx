@@ -41,6 +41,7 @@ import { LOCKED_REASON, useEditLocked } from './ClipMenu';
 import { HitReadout, PAD_GRID_ATTR, PAD_ORDER, PartChooser, PartStatus, PartSwitch, padGridKeyDown, playLive, useParts, useReplaying, useRovingPads, type PartInfo } from './DrumPads';
 import { ProgressionDialog, progressionRefusal } from './ProgressionDialog';
 import shared from './DrumPads.module.css';
+import { keyMood } from './keyMood';
 import styles from './NotesPads.module.css';
 
 export const NOTE_PADS = 16;
@@ -280,6 +281,7 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
   const assist = useProject((p) => p.assist);
   const storedOctave = useUi((s) => s.notesOctave);
   const chordsOn = useUi((s) => s.notesChords.on);
+  const advanced = useUi((s) => s.uiMode === 'advanced');
   const size = useUi((s) => s.notesChords.size);
   const storedInversion = useStore(chordVoicingStore, (s) => s.inversion);
   const inversion: ChordInversion = size === 3 && storedInversion === 3 ? 'smooth' : storedInversion;
@@ -328,7 +330,10 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
           {/* The key, and how the pads play it: single notes or chords. One block, so the panel fits at 1366 x 768. */}
           <div className={shared.block}>
             <p className={shared.eyebrow}>Key</p>
-            <h3 className={shared.title}>{keyName}</h3>
+            {/* In everyday words ("G · jazzy minor"); the scale's own name is in Advanced and on hover. */}
+            <h3 className={shared.title} title={keyName} aria-label={advanced ? keyName : `${keyMood(root, scale)}, ${keyName}`}>
+              {advanced ? keyName : keyMood(root, scale)}
+            </h3>
             <p className={styles.explain} aria-live="polite">
               {explain}
             </p>
