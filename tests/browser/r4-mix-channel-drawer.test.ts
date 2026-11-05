@@ -209,7 +209,8 @@ describe('Channel drawer', () => {
   });
 
   it('narrower than 1280 px the drawer takes the mastering’s place under the mixer; opening it ends an A/B comparison', async () => {
-    const m = await setup('simple', 1100, 768);
+    // A/B is Advanced.
+    const m = await setup('advanced', 1100, 768);
     const view = m.container.querySelector<HTMLElement>('[role="region"][aria-label="Mix view"]')!;
     // A latched comparison: the mastering is not heard.
     const ab = button(m.container, /^Compare A\/B/);

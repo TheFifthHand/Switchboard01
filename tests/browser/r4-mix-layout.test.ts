@@ -124,7 +124,7 @@ afterEach(async () => {
 
 describe('1366 × 768', () => {
   for (const mode of ['simple', 'advanced'] as const) {
-    it(`${mode}: mastering beside the mixer with Presets and Match target in sight; faders travel 220 px or more; names whole`, async () => {
+    it(`${mode}: mastering (Simple: Finish) beside the mixer with Presets and its loudness key in sight; faders travel 220 px or more; names whole`, async () => {
       const { view } = await setup(mode, 1366, 768);
       const mixer = view.querySelector<HTMLElement>('[data-testid="strip-t1"]')!.closest<HTMLElement>('section')!.getBoundingClientRect();
       const panel = masteringPanel(view);
@@ -135,7 +135,7 @@ describe('1366 × 768', () => {
       const bodyBox = panel.getBoundingClientRect();
       const chips = [...view.querySelectorAll<HTMLElement>('[data-section="presets"] button[aria-pressed]')];
       expect(chips.length).toBeGreaterThanOrEqual(6);
-      const match = [...view.querySelectorAll<HTMLElement>('button')].find((b) => /^Match target/.test(b.textContent ?? ''))!;
+      const match = [...view.querySelectorAll<HTMLElement>('button')].find((b) => (mode === 'simple' ? /^Make it as loud as streaming songs/ : /^Match target/).test(b.textContent ?? ''))!;
       for (const el of [...chips, match]) {
         const r = el.getBoundingClientRect();
         expect(r.top, el.textContent ?? '').toBeGreaterThanOrEqual(Math.max(viewBox.top, bodyBox.top) - 1);
@@ -371,7 +371,8 @@ describe('a strip meter shares its fader’s scale', () => {
 
 describe('the hint placer’s marks', () => {
   it('the mixer header is a hint home; the spectrum’s labels and the loudness readings are obstacles', async () => {
-    const { view } = await setup('simple', 1366, 768);
+    // The spectrum and the readings are Advanced.
+    const { view } = await setup('advanced', 1366, 768);
     const home = view.querySelector('[data-hint-home]')!;
     expect(home.closest('header')).not.toBeNull();
     expect(home.textContent).toContain('Drag a fader');

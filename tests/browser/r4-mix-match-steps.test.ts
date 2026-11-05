@@ -68,7 +68,8 @@ async function setup(target: 'streaming' | 'loud' = 'loud', size: [number, numbe
   setLoudnessTarget(target);
   act(() => {
     session.store.replace(createProject({ name: 'Match steps', now: 1 }), { resetHistory: true });
-    setUiMode('simple');
+    // The readings, Match target, A/B and the spectrum are Advanced (Simple shows the Finish card).
+    setUiMode('advanced');
     setView('mix');
   });
   resetMixFrame();

@@ -1,9 +1,9 @@
-/* Simple Shape: instrument + macros on the left, the effect cards on the right. Each column
-   scrolls on its own when the window is short; below 1024 px everything stacks and the page scrolls. */
+/* Simple Shape: the instrument card over the big knobs, across the view (the effects are in
+   Advanced). The column scrolls on its own when the window is short. */
 .simple {
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: minmax(400px, 0.9fr) minmax(0, 1.1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
 }
@@ -164,6 +164,11 @@
   justify-content: center;
 }
 
+/* Across the view on a laptop: all six 'xl' knobs in one row that fills the height. */
+.macros[data-xl-row] {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
 .macros[data-xl] .macroCaption {
   font-size: var(--fs-md);
   line-height: 20px;
@@ -196,233 +201,8 @@
   font-style: italic;
 }
 
-/* ---------- effects ---------- */
-
-.fxPanel {
-  min-height: 0;
-}
-
 .macro[data-inert] {
   background: var(--surface);
-}
-
-.fxBody {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-}
-
-.custom {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--r-md);
-  background: var(--surface-hi);
-  box-shadow: inset 0 0 0 1px var(--line);
-  color: var(--ink-2);
-  font-size: var(--fs-sm);
-  line-height: 1.4;
-}
-
-.custom > svg {
-  flex: none;
-  color: var(--ink-3);
-}
-
-.custom strong {
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.empty {
-  padding: 18px 16px;
-  border-radius: var(--r-md);
-  background: var(--surface-hi);
-  box-shadow: inset 0 0 0 1px var(--line-soft);
-  color: var(--ink-2);
-  font-size: var(--fs-md);
-  line-height: 1.45;
-  text-align: center;
-}
-
-.empty p {
-  margin: 0;
-}
-
-.empty p + p {
-  margin-top: 4px;
-  color: var(--ink-3);
-  font-size: var(--fs-sm);
-}
-
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
-}
-
-.cardCell {
-  display: flex;
-  min-width: 0;
-}
-
-.card {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 6px 8px 8px 12px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-md);
-  background: var(--surface-hi);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset;
-}
-
-.cardHead {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.slot {
-  display: inline-grid;
-  flex: none;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--surface-lo);
-  color: var(--ink-2);
-  font-size: var(--fs-xs);
-}
-
-.cardTitle {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-size: var(--fs-lg);
-  font-weight: 650;
-  line-height: 32px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.onOff[data-size] {
-  flex: none;
-  min-height: 40px;
-  margin-left: -4px;
-}
-
-.remove[data-size] {
-  flex: none;
-  margin-right: -4px;
-  color: var(--ink-3);
-}
-
-.cardBody {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-
-.cardKnobs {
-  display: flex;
-  flex: none;
-  gap: 2px;
-}
-
-.cardKnob {
-  flex: none;
-}
-
-.card[data-bypassed] .cardKnob,
-.card[data-bypassed] .sentence {
-  opacity: 0.55;
-}
-
-/* The Filter's Resonance line: what it does while offered, when it comes in otherwise. */
-.extraNote {
-  margin: 0;
-  color: var(--ink-3);
-  font-size: var(--fs-xs);
-  line-height: 1.35;
-}
-
-.gr {
-  padding: 0 2px;
-}
-
-.fxActions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.cardText {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  padding-top: 2px;
-}
-
-.sentence {
-  margin: 0;
-  color: var(--ink-2);
-  font-size: var(--fs-sm);
-  line-height: 1.4;
-}
-
-.controlled {
-  display: flex;
-  align-items: flex-start;
-  gap: 5px;
-  margin: 0;
-  color: var(--teal-ink);
-  font-size: var(--fs-xs);
-  line-height: 1.35;
-}
-
-.controlled > svg {
-  flex: none;
-  margin-top: 1px;
-}
-
-.notHeard {
-  margin: 0;
-  padding: 3px 7px;
-  border-radius: var(--r-sm);
-  background: var(--coral-wash);
-  color: var(--coral-ink);
-  font-size: var(--fs-xs);
-  line-height: 1.35;
-}
-
-.cardFoot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: auto;
-  padding-top: 2px;
-  border-top: 1px solid var(--line-soft);
-}
-
-.allSettings[data-size] {
-  margin-right: -4px;
 }
 
 /* Ghost buttons: the kit's focus rule composes the ring with `--btn-shadow: none`, which invalidates
@@ -431,22 +211,10 @@
   box-shadow: var(--focus-ring);
 }
 
-@media (min-width: 1700px) {
-  .simple {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 1240px) {
-  .simple {
-    grid-template-columns: minmax(380px, 0.85fr) minmax(0, 1.15fr);
-  }
-}
-
-/* Below 1024 CSS px (200 % zoom): one column, natural heights, the page scrolls. */
+/* Below 1024 CSS px (200 % zoom): natural heights, the page scrolls. */
 @media (max-width: 1023px) {
-  .simple {
-    grid-template-columns: minmax(0, 1fr);
+  .left {
+    overflow: visible;
   }
 }
 

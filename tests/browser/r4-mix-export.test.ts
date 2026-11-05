@@ -25,7 +25,7 @@ import { setLoudnessTarget } from '../../src/app/views/mix/mixPrefs';
 import { getStarter } from '../../src/content/starters';
 import { parseWav } from '../../src/render/wav';
 import * as cmd from '../../src/state/commands';
-import { setView, uiStore } from '../../src/state/uiStore';
+import { setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { cleanup, mount, wait } from './ui-harness';
 import { centre, click, send, settleFrames } from './r4-uikit-input';
 
@@ -45,6 +45,8 @@ beforeEach(async () => {
   act(() => {
     session.store.replace(getStarter('house')!.build(), { resetHistory: true });
     setView('play');
+    // Advanced shows every setting (Simple folds them under More options: r6-export-dialog).
+    setUiMode('advanced');
   });
   patchRuntime({ playing: false, paused: false, mode: 'live', songLoop: null, recording: 'off', notice: null });
   // Keep the files instead of downloading them.
@@ -64,7 +66,11 @@ beforeEach(async () => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  act(() => setUiMode('simple'));
 });
+
+/** The "Make it as loud as streaming songs" switch. */
+const loudSwitch = (root: ParentNode) => [...root.querySelectorAll<HTMLElement>('[role="switch"]')].find((x) => x.textContent?.includes('Make it as loud'))!;
 
 function open() {
   const el = (shown: boolean) => h(ToastProvider, null, h(ExportDialog, { open: shown, onClose: () => closes++, initialSource: 'scene:1' }));
@@ -202,6 +208,9 @@ describe('Export dialog: report and output', () => {
       session.accepted(cmd.applyMasteringPreset(session.store, 'loud'));
     });
     const { dialog } = open();
+    // As loud as the Loud preset makes it (not matched to the Streaming target).
+    await press(loudSwitch(dialog()));
+    expect(loudSwitch(dialog()).getAttribute('aria-checked')).toBe('false');
     await setLength(dialog(), 2);
     await exportAndWait(dialog());
     const mastered = dialog().querySelector('[data-testid="export-report"]')!.textContent ?? '';
@@ -266,7 +275,7 @@ describe('Export dialog: while it renders', () => {
     const end = performance.now() + 20_000;
     while (performance.now() < end && !/left/.test(text())) await act(async () => wait(100));
     console.info(`[export] progress: ${text()}`);
-    expect(text()).toMatch(/^\d+% · (about \d+ (s|min) left|a few seconds left)$/);
+    expect(text()).toMatch(/^(Checking loudness|Exporting)… \d+% · (about \d+ (s|min) left|a few seconds left)$/);
     await press(byText(dialog(), 'Cancel export'));
     await act(async () => wait(300));
     expect(dialog().querySelector('[data-testid="export-result"]')!.textContent).toBe('Export cancelled. Nothing was saved.');

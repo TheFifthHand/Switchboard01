@@ -551,3 +551,10 @@
     display: none !important;
   }
 }
+
+/* ---------- Simple: the Finish card ---------- */
+.finishNote {
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}

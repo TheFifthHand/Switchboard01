@@ -8,7 +8,9 @@
  * - Adding the effect back reconnects the big knob (Motion moves the cutoff
  *   again: offline renders differ), and Reset big knobs gives every big knob
  *   back what the sound designs it to move, the LFO's cable included.
- * Real clicks and keys throughout.
+ * Real clicks and keys throughout. Effects are removed and added in the
+ * Advanced rack (Simple shows no effect cards); the big knobs are checked in
+ * Simple.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react';
@@ -18,7 +20,7 @@ import { session } from '../../src/app/instance';
 import { runtimeStore } from '../../src/app/runtime';
 import { selectTrack, setView } from '../../src/state/uiStore';
 import { openApp, setUp, tearDown } from './r4-play-helpers';
-import { button, card, clickEl, closeShape, heard, keysOn, notice, nullDb, openShape, project, renderSolo, track } from './r4-shape-helpers';
+import { button, clickEl, inAdvanced, rackCard, closeShape, heard, keysOn, notice, nullDb, openShape, project, renderSolo, track } from './r4-shape-helpers';
 import { settleFrames } from './r4-uikit-input';
 
 const tile = (macro: string) => document.querySelector<HTMLElement>(`[data-macro="${macro}"]`)!;
@@ -39,7 +41,7 @@ describe('in the whole app: the remove toast names the big knob, with Undo', () 
       setView('shape');
     });
     await settleFrames(3);
-    await clickEl(button('Remove Filter', card('t4:filter')));
+    await inAdvanced(() => clickEl(button('Remove Filter', rackCard('t4:filter'))));
     const toast = toastWith('Removed Filter. The Motion big knob now moves nothing.');
     expect(toast, 'toast on screen').not.toBeNull();
     expect(runtimeStore.getState().notice?.action).toBe('undo');
@@ -58,7 +60,7 @@ describe('removing the Filter on Chords', () => {
 
   it('Motion is disabled and says “Moves nothing here”; the toast names it; adding Filter back makes Motion move the cutoff again', async () => {
     expect(tileKnob('motion').getAttribute('aria-disabled')).toBeNull();
-    await clickEl(button('Remove Filter', card('t4:filter')));
+    await inAdvanced(() => clickEl(button('Remove Filter', rackCard('t4:filter'))));
     expect(project().patch.modules.some((m) => m.id === 't4:filter')).toBe(false);
     expect(lfoCables()).toHaveLength(0);
     expect(notice()).toBe('Removed Filter. The Motion big knob now moves nothing.');
@@ -68,9 +70,11 @@ describe('removing the Filter on Chords', () => {
     // Tone still moves the synth's own cutoff: it stays live.
     expect(tileKnob('tone').getAttribute('aria-disabled')).toBeNull();
 
-    // Add effect → Filter: it takes back the part's Filter slot, so Motion (and Tone's brightness) move it again.
-    await clickEl(document.getElementById('shape-add-effect'));
-    await clickEl(document.querySelector('[role="menu"] [data-effect="filter"]'));
+    // Add effect → Filter (in the rack): it takes back the part's Filter slot, so Motion (and Tone's brightness) move it again.
+    await inAdvanced(async () => {
+      await clickEl(document.getElementById('shape-add-effect'));
+      await clickEl(document.querySelector('[role="menu"] [data-effect="filter"]'));
+    });
     expect(notice()).toMatch(/^Added Filter\..*The Motion big knob moves it again\.$/);
     expect(lfoCables().map((c) => `${c.to.module}.${c.to.port}`)).toEqual(['t4:filter.cutoff']);
     expect(track('t4').macroMap.motion.map((x) => `${x.module}.${x.param}`)).toContain('t4:filter.cutoff');
@@ -90,7 +94,7 @@ describe('removing the Filter on Chords', () => {
   }, 120_000);
 
   it('Undo in the toast brings the Filter and Motion back at once', async () => {
-    await clickEl(button('Remove Filter', card('t4:filter')));
+    await inAdvanced(() => clickEl(button('Remove Filter', rackCard('t4:filter'))));
     expect(tileKnob('motion').getAttribute('aria-disabled')).toBe('true');
     act(() => session.undo());
     await settleFrames();
@@ -99,7 +103,7 @@ describe('removing the Filter on Chords', () => {
   });
 
   it('removing the Drive names the Drive big knob', async () => {
-    await clickEl(button('Remove Drive', card('t4:drive')));
+    await inAdvanced(() => clickEl(button('Remove Drive', rackCard('t4:drive'))));
     expect(notice()).toBe('Removed Drive. The Drive big knob now moves nothing.');
     expect(tileKnob('drive').getAttribute('aria-disabled')).toBe('true');
   });
@@ -157,7 +161,7 @@ describe('Reset big knobs (Simple)', () => {
   });
 
   it('with the Filter gone, Motion still moves nothing after a reset, and the toast says what to do', async () => {
-    await clickEl(button('Remove Filter', card('t4:filter')));
+    await inAdvanced(() => clickEl(button('Remove Filter', rackCard('t4:filter'))));
     await clickEl(document.getElementById('simple-reset-big-knobs'));
     expect(notice()).toMatch(/Motion still moves nothing: the effect it moves is not in this part \(Add effect puts one back\)\.$/);
     expect(tileKnob('motion').getAttribute('aria-disabled')).toBe('true');

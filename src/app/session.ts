@@ -2576,12 +2576,25 @@ export class Session {
   }
 
   private async renderExport(opts: ExportOptions, measure: boolean): Promise<{ blob: Blob; report: ExportReport | null }> {
+    const buffer = await this.renderAudio(opts);
+    const report = measure ? await measureExport(buffer) : null;
+    const channels = [buffer.getChannelData(0), buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : buffer.getChannelData(0)];
+    return { blob: new Blob([encodeWav(channels, buffer.sampleRate, opts.bitDepth)], { type: 'audio/wav' }), report };
+  }
+
+  /**
+   * The rendered audio of an export (as renderWav, before it is encoded), for
+   * the Export dialog's other formats. `project` renders that project instead
+   * of the current one (a part on its own, for a file per part); its
+   * recordings are loaded like the current project's.
+   */
+  async renderAudio(opts: Omit<ExportOptions, 'bitDepth'> & { project?: Project }): Promise<AudioBuffer> {
     if (this.exportsRunning++ === 0) this.transport?.holdAhead(EXPORT_LOOKAHEAD_S);
     try {
       await this.autosaver?.flush();
-      const project = this.store.getState();
+      const project = opts.project ?? this.store.getState();
       const bank = await this.offlineBank(project, opts.sampleRate);
-      const buffer = await renderOffline({
+      return await renderOffline({
         project,
         source: opts.source,
         sampleRate: opts.sampleRate,
@@ -2592,12 +2605,14 @@ export class Session {
         mastering: opts.mastering !== false,
         createEngine: (ctx) => AudioEngine.create(ctx, { samples: bank, seed: project.seed, meters: false }),
       });
-      const report = measure ? await measureExport(buffer) : null;
-      const channels = [buffer.getChannelData(0), buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : buffer.getChannelData(0)];
-      return { blob: new Blob([encodeWav(channels, buffer.sampleRate, opts.bitDepth)], { type: 'audio/wav' }), report };
     } finally {
       if (--this.exportsRunning === 0) this.transport?.holdAhead(null);
     }
+  }
+
+  /** A file was saved by an export that did not go through renderWav (the hints follow it). */
+  exportSaved(): void {
+    this.exportsDoneStore.setState((n) => n + 1);
   }
 
   /** An export is preparing or rendering (see renderWav). */

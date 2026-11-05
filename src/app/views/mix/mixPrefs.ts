@@ -67,6 +67,11 @@ export function loudnessTarget(id: LoudnessTargetId = prefs.getState().target): 
   return LOUDNESS_TARGETS.find((t) => t.id === id) ?? LOUDNESS_TARGETS[0];
 }
 
+/** The words of the one-press loudness action for a target ("Make it as loud as streaming songs"). */
+export function loudLabel(t: LoudnessTarget): string {
+  return t.id === 'streaming' ? 'Make it as loud as streaming songs' : `Make it as loud as the ${t.name} target (${t.lufs < 0 ? '\u2212' : ''}${Math.abs(t.lufs)} LUFS)`;
+}
+
 export function useLoudnessTarget(): LoudnessTarget {
   return loudnessTarget(useStore(prefs, (s) => s.target));
 }

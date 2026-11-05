@@ -124,7 +124,7 @@ describe('Mastering is usable at every size', () => {
         const panel = masteringPanel(view);
         const body = masteringBody(view);
         const r = panel.getBoundingClientRect();
-        expect(panel.querySelector('h2')!.textContent).toBe('Mastering');
+        expect(panel.querySelector('h2')!.textContent).toBe(mode === 'simple' ? 'Finish' : 'Mastering');
         if (beside) {
           expect(r.left).toBeGreaterThanOrEqual(mixer.right);
           // As tall as the mixer: a real panel, not a strip.
@@ -132,7 +132,7 @@ describe('Mastering is usable at every size', () => {
           expect(r.height).toBeGreaterThanOrEqual(440);
           // Presets and Match target are in sight without scrolling, and nothing in the header spills out.
           const vb = view.getBoundingClientRect();
-          for (const el of [view.querySelector<HTMLElement>('[data-section="presets"] h3')!, byText(view, /^Match target/)]) {
+          for (const el of [view.querySelector<HTMLElement>('[data-section="presets"] h3')!, byText(view, mode === 'simple' ? /^Make it as loud as streaming songs/ : /^Match target/)]) {
             const e = el.getBoundingClientRect();
             expect(e.top, el.textContent ?? '').toBeGreaterThanOrEqual(Math.max(vb.top, r.top) - 1);
             expect(e.bottom, el.textContent ?? '').toBeLessThanOrEqual(Math.min(vb.bottom, r.bottom) + 1);
@@ -146,11 +146,14 @@ describe('Mastering is usable at every size', () => {
           expect(r.top).toBeGreaterThanOrEqual(mixer.bottom);
           // Its whole content shows: the panel body does not scroll on its own.
           expect(body.scrollHeight).toBeLessThanOrEqual(body.clientHeight + 1);
-          expect(body.clientHeight).toBeGreaterThanOrEqual(300);
-          // Wide: Presets and Loudness on the left, the Spectrum on the right.
-          const spectrum = view.querySelector<HTMLElement>('[data-section="spectrum"]')!.getBoundingClientRect();
-          const loudness = view.querySelector<HTMLElement>('[data-section="loudness"]')!.getBoundingClientRect();
-          expect(spectrum.left).toBeGreaterThanOrEqual(loudness.right);
+          // Simple's Finish card holds only the presets and one key, so it is shorter.
+          expect(body.clientHeight).toBeGreaterThanOrEqual(mode === 'simple' ? 150 : 300);
+          if (mode === 'advanced') {
+            // Wide: Presets and Loudness on the left, the Spectrum on the right.
+            const spectrum = view.querySelector<HTMLElement>('[data-section="spectrum"]')!.getBoundingClientRect();
+            const loudness = view.querySelector<HTMLElement>('[data-section="loudness"]')!.getBoundingClientRect();
+            expect(spectrum.left).toBeGreaterThanOrEqual(loudness.right);
+          }
           if (w >= 1024) {
             // The Mastering header (its name, A/B and switch) shows under the mixer on first view.
             const head = panel.querySelector('header')!.getBoundingClientRect();
@@ -184,12 +187,12 @@ describe('Mastering is usable at every size', () => {
   }
 });
 
-describe('Simple at 1366 × 768: Match keeps the spectrum in sight', () => {
+describe('Advanced at 1366 × 768: Match keeps the spectrum in sight', () => {
   it('after Match the spectrum is still fully on screen, and what Match did is shown in words', async () => {
     setLoudnessTarget('loud');
     fakeMeters(-0.5);
     act(() => patchRuntime({ playing: true }));
-    const { view } = await setup('simple', 1366, 768);
+    const { view } = await setup('advanced', 1366, 768);
     const panel = masteringPanel(view);
     const plotFits = () => {
       const plot = view.querySelector<HTMLElement>('[data-section="spectrum"] canvas')!.getBoundingClientRect();
@@ -220,7 +223,8 @@ describe('True peak and the master meter', () => {
       'ok',
     ]);
     const spy = fakeMeters(-2);
-    const { view } = await setup('simple', 1366, 768);
+    // The readings are Advanced (Simple shows the Finish card).
+    const { view } = await setup('advanced', 1366, 768);
     const value = view.querySelector<HTMLElement>('[data-testid="loudness-truePeak"]')!;
     const name = value.closest('[data-key="truePeak"]')!.firstElementChild as HTMLElement;
     const ink = () => getComputedStyle(value).color;
@@ -266,7 +270,7 @@ describe('True peak and the master meter', () => {
 describe('Words on the loudness and A/B buttons', () => {
   it('Reset shows its word and restarts the measurement', async () => {
     const reset = vi.spyOn(session, 'resetLoudness');
-    const { view } = await setup('simple', 1366, 768);
+    const { view } = await setup('advanced', 1366, 768);
     // (Another project restarts the readings by itself: count only the click.)
     reset.mockClear();
     const b = byText(view, 'Reset');
@@ -279,7 +283,7 @@ describe('Words on the loudness and A/B buttons', () => {
   });
 
   it('Compare A/B: the accessible name starts with the visible words, on and off', async () => {
-    const { view } = await setup('simple', 1366, 768);
+    const { view } = await setup('advanced', 1366, 768);
     const b = byText(view, /Compare A\/B/);
     const check = () => expect(b.getAttribute('aria-label')!.startsWith(b.querySelector('[data-shown]')!.textContent!.trim())).toBe(true);
     expect(b.getAttribute('aria-label')).toBe('Compare A/B (hear without mastering)');

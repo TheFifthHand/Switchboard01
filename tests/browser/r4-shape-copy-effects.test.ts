@@ -4,7 +4,8 @@
  * Copy keeps a part's effects (their settings as they sound now, on/off) for
  * the session (uiStore.effectClipboard); Paste puts them after another part's
  * effects or instead of them (keeping its Drive and Filter), in one undo
- * step, from Simple and from the Advanced rack. Real clicks.
+ * step, from the Advanced rack (Simple shows no effects since r6). Real
+ * clicks.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { act } from 'react';
@@ -17,17 +18,17 @@ import { settleFrames } from './r4-uikit-input';
 afterEach(closeShape);
 
 describe('Copy effects / Paste effects', () => {
-  it('Simple: copy Chords’ Reverb and EQ, paste after Lead’s effects: one undo step', async () => {
-    await openShape({ mode: 'simple', trackId: 't4' });
+  it('copy Chords’ Reverb and EQ, paste after Lead’s effects: one undo step', async () => {
+    await openShape({ mode: 'advanced', trackId: 't4', w: 1920, hh: 1080 });
     act(() => {
       session.accepted(cmd.insertEffect(session.store, 't4', 'reverb'));
       session.accepted(cmd.insertEffect(session.store, 't4', 'eq'));
       session.accepted(cmd.setModuleParam(session.store, 't4:eq', 'lowGain', 6));
     });
     await settleFrames();
-    const paste = () => document.getElementById('simple-paste-effects') as HTMLButtonElement;
+    const paste = () => document.getElementById('rack-paste-effects') as HTMLButtonElement;
     expect(paste().disabled).toBe(true);
-    await clickEl(document.getElementById('simple-copy-effects'));
+    await clickEl(document.getElementById('rack-copy-effects'));
     expect(notice()).toBe('Copied 2 effects from Chords: Reverb, EQ. Paste them onto another part.');
     expect(uiStore.getState().effectClipboard?.effects.map((e) => e.type)).toEqual(['reverb', 'eq']);
 
@@ -66,18 +67,18 @@ describe('Copy effects / Paste effects', () => {
   });
 
   it('a part whose Drive and Filter do nothing has nothing to copy, and says so', async () => {
-    await openShape({ mode: 'simple', trackId: 't1' });
-    await clickEl(document.getElementById('simple-copy-effects'));
+    await openShape({ mode: 'advanced', trackId: 't1', w: 1920, hh: 1080 });
+    await clickEl(document.getElementById('rack-copy-effects'));
     expect(notice()).toBe('Drums has no effects to copy (its Drive and Filter do nothing yet).');
     expect(uiStore.getState().effectClipboard).toBeNull();
   });
 
   it('while a performance records, Paste is unavailable and says why', async () => {
-    await openShape({ mode: 'simple', trackId: 't4' });
+    await openShape({ mode: 'advanced', trackId: 't4', w: 1920, hh: 1080 });
     act(() => void session.accepted(cmd.insertEffect(session.store, 't4', 'reverb')));
-    await clickEl(document.getElementById('simple-copy-effects'));
+    await clickEl(document.getElementById('rack-copy-effects'));
     act(() => session.store.setLock('Recording a performance.'));
     await settleFrames();
-    expect((document.getElementById('simple-paste-effects') as HTMLButtonElement).disabled).toBe(true);
+    expect((document.getElementById('rack-paste-effects') as HTMLButtonElement).disabled).toBe(true);
   });
 });
