@@ -1,5 +1,7 @@
 /**
- * Melodic steps: a piano roll for one bar of the clip at a time.
+ * Melodic steps: a piano roll for one bar of the clip at a time, or for the
+ * whole clip with its bars side by side when they fit (`span`, chosen by the
+ * editor from the room it has).
  *
  * Rows are pitches (only in-key rows while Musical Assist is on, every
  * semitone otherwise), columns are the cells of the chosen grid (1/16, 1/32,
@@ -34,6 +36,8 @@ import { notify, runtimeStore } from '../../runtime';
 import { MOD_ARIA, MOD_KEY } from '../ClipMenu';
 import {
   anchorNote,
+  barCells,
+  barsWords,
   cellColumn,
   cellIndices,
   cellSpan,
@@ -57,6 +61,7 @@ import {
   previewMovedNotes,
   scaleStepsBetween,
   selectedNotes,
+  spanSpec,
   stepsLabel,
   touchIntent,
   velocityVoices,
@@ -65,13 +70,11 @@ import {
   type NoteView,
   type PitchRow,
 } from './model';
-import { audition, auditionBlip, noteClipboard, selectedIdsFor, selectionKey, setSelectedIds, useKeyBurst, useSelectedIds, type Audition } from './shared';
+import { audition, auditionBlip, noteClipboard, selectedIdsFor, selectionKey, setSelectedIds, useKeyBurst, useRollRowHeight, useSelectedIds, type Audition } from './shared';
 import { StepNumbers, VelocityLane, gridStyle } from './StepLanes';
 import grid from './StepGrid.module.css';
 import styles from './PitchLane.module.css';
 
-/** Row height in px (the CSS reads it from --row-h). */
-export const ROW_H = 18;
 const MIN_TICKS = 6;
 /** Pointer travel (px) before a press on a note becomes a move or a box. */
 const DRAG_PX = 4;
@@ -87,9 +90,12 @@ const DRAW_ID = '__draw';
 export interface PitchLaneProps {
   trackId: Id;
   slot: number;
+  /** The first bar shown. */
   page: number;
   clip: Clip;
   kind: 'bass' | 'poly' | 'sampler';
+  /** Bars shown side by side from `page` (default 1). */
+  span?: number;
 }
 
 type Target = { on: 'label'; pitch: number } | { on: 'note'; note: Note; handle: boolean } | { on: 'empty'; cell: number; row: number };
@@ -257,12 +263,16 @@ function noteCovering(notes: readonly Note[], tick: number, pitch: number): Note
   return notes.find((n) => n.pitch === pitch && n.tick < tick && n.tick + n.duration > tick);
 }
 
-export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
+export function PitchLane({ trackId, slot, page, clip, kind, span = 1 }: PitchLaneProps) {
   const assist = useProject((p) => p.assist);
   const root = useProject((p) => p.root);
   const scale = useProject((p) => p.scale);
   const gridName = useUi((s) => s.stepGrid);
-  const spec = useMemo(() => gridSpec(gridName), [gridName]);
+  /** One bar's grid, and the shown cells (the bars side by side). */
+  const barSpec = useMemo(() => gridSpec(gridName), [gridName]);
+  const spec = useMemo(() => spanSpec(barSpec, span), [barSpec, span]);
+  /** Row height in px (the CSS reads it from --row-h): the roll's vertical zoom. */
+  const ROW_H = useRollRowHeight();
   const key: MusicalKey = useMemo(() => ({ root, scale }), [root, scale]);
   const inKeyOnly = assist && scale !== 'chromatic';
   const g = spec.ticks;
@@ -283,7 +293,7 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
   const usedKey = useMemo(() => [...new Set(clip.notes.map((n) => n.pitch))].sort((x, y) => x - y).join(','), [clip.notes]);
   const rows = useMemo(() => pitchRows({ assist, root, scale, used: usedKey ? usedKey.split(',').map(Number) : [] }), [assist, root, scale, usedKey]);
   const rowOf = useMemo(() => new Map(rows.map((r, i) => [r.pitch, i])), [rows]);
-  const views = useMemo(() => pageNoteViews(shown, page, clipTicks, g), [shown, page, clipTicks, g]);
+  const views = useMemo(() => pageNoteViews(shown, page, clipTicks, g, span), [shown, page, clipTicks, g, span]);
   const voices = useMemo(() => velocityVoices(clip.notes, page, spec, selSet), [clip.notes, page, spec, selSet]);
   const nameOf = useCallback((p: number) => noteName(p, key), [key]);
 
@@ -308,9 +318,9 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
   const burst = useKeyBurst();
 
   // Latest values for event handlers (first layout effect: later ones read it).
-  const cur = useRef({ trackId, slot, page, clip, rows, clipTicks, spec, key, inKeyOnly, selKey });
+  const cur = useRef({ trackId, slot, page, span, clip, rows, clipTicks, spec, key, inKeyOnly, selKey, rowH: ROW_H });
   useLayoutEffect(() => {
-    cur.current = { trackId, slot, page, clip, rows, clipTicks, spec, key, inKeyOnly, selKey };
+    cur.current = { trackId, slot, page, span, clip, rows, clipTicks, spec, key, inKeyOnly, selKey, rowH: ROW_H };
   });
 
   /* ---------- selection ---------- */
@@ -361,6 +371,18 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
     const target = nearestRow(r, (r[topRow]?.pitch ?? 60) + dir * 12);
     el.scrollTo({ top: target * ROW_H, behavior: 'smooth' });
   };
+
+  // A new row height (the vertical zoom) keeps the row in the middle of the view where it was.
+  const lastRowH = useRef(ROW_H);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const was = lastRowH.current;
+    lastRowH.current = ROW_H;
+    if (!el || was === ROW_H) return;
+    const mid = (el.scrollTop + el.clientHeight / 2) / was;
+    el.scrollTop = Math.max(0, mid * ROW_H - el.clientHeight / 2);
+    measure();
+  }, [ROW_H, measure]);
 
   // While a finger owns the roll, the browser must not scroll it (touchmove is passive in React: listen natively).
   useEffect(() => {
@@ -426,7 +448,7 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
     const c = cur.current;
     const side = edgeOf(x);
     const cell = side > 0 ? c.spec.cells - 1 : side < 0 ? 0 : cellAt(x).cell;
-    return c.page * c.spec.cells + cell;
+    return c.page * barCells(c.spec) + cell;
   };
 
   const rowAt = (y: number): number => {
@@ -468,7 +490,7 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
 
   const cursorFor = (note: Note) => {
     const c = cur.current;
-    if (note.tick >= pageStartTick(c.page) && note.tick < pageStartTick(c.page) + TICKS_PER_BAR) setCursor({ tick: note.tick - pageStartTick(c.page), pitch: note.pitch });
+    if (note.tick >= pageStartTick(c.page) && note.tick < pageStartTick(c.page) + c.span * TICKS_PER_BAR) setCursor({ tick: note.tick - pageStartTick(c.page), pitch: note.pitch });
   };
 
   const focusRoll = () => {
@@ -721,7 +743,8 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
   const updateEdge = (d: Extract<Drag, { kind: 'press' }>): void => {
     const c = cur.current;
     const side = edgeOf(d.lastX);
-    const next = c.page + side;
+    // Bars side by side show the whole clip: there is no page to turn to.
+    const next = c.page + side * c.span;
     const can = side !== 0 && next >= 0 && next < c.clip.bars;
     if (!can) {
       window.clearTimeout(d.edgeTimer);
@@ -739,7 +762,7 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
         d.edgeSide = 0;
         if (drag.current !== d) return;
         const cc = cur.current;
-        const to = cc.page + side;
+        const to = cc.page + side * cc.span;
         if (to < 0 || to >= cc.clip.bars) return;
         d.edgeTurns++;
         setStepPage(cc.trackId, to);
@@ -988,8 +1011,11 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
     const notes = session.store.getState().tracks.find((t) => t.id === c.trackId)?.clips[c.slot]?.notes ?? [];
     const anchor = anchorNote(selectedNotes(notes, new Set(ids)));
     if (!anchor) return;
-    const p = pageOfTick(anchor.tick);
-    if (p !== c.page) setStepPage(c.trackId, p);
+    // The bar it is in becomes the chosen one (bars side by side: it is in view already, the view stays).
+    const bar = pageOfTick(anchor.tick);
+    const shownNow = anchor.tick >= pageStartTick(c.page) && anchor.tick < pageStartTick(c.page) + c.span * TICKS_PER_BAR;
+    const p = shownNow ? c.page : bar;
+    setStepPage(c.trackId, bar);
     keyCursor.current = true;
     setCursor({ tick: anchor.tick - pageStartTick(p), pitch: anchor.pitch });
     return anchor;
@@ -1009,7 +1035,7 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
     if (!session.accepted(r)) return;
     if (r.message) notify(r.message);
     const anchor = followSelection(ids);
-    if (anchor) setAnnounce(`${plural(ids.length, 'note')} moved to bar ${pageOfTick(anchor.tick) + 1}, ${cellWords(Math.floor((anchor.tick % TICKS_PER_BAR) / g), spec)}`);
+    if (anchor) setAnnounce(`${plural(ids.length, 'note')} moved to bar ${pageOfTick(anchor.tick) + 1}, ${cellWords(Math.floor((anchor.tick % TICKS_PER_BAR) / g), barSpec)}`);
   };
 
   const transposeSelection = (dir: 1 | -1, octave: boolean): void => {
@@ -1164,7 +1190,7 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
           break;
         }
         const next = cell + dir;
-        if (next > spec.cells - 1 && page < c.clip.bars - 1) {
+        if (next > spec.cells - 1 && page + span < c.clip.bars) {
           setStepPage(c.trackId, page + 1);
           moveCursor(0, cursorRow, page + 1);
         } else if (next < 0 && page > 0) {
@@ -1291,7 +1317,8 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
             if (drag.current || touchOwned.current) e.preventDefault();
           }}
           data-testid="pitch-roll"
-          data-cells={spec.cells}
+          data-cells={barCells(spec)}
+          data-bars={span}
         >
           {rows.map((r, i) => (
             <RowBack key={r.pitch} row={r} index={i} />
@@ -1320,7 +1347,7 @@ export function PitchLane({ trackId, slot, page, clip, kind }: PitchLaneProps) {
             data-steps-entry=""
             className={styles.cursor}
             style={{ gridRow: cursorRow + 1, gridColumn: cellColumn(cursorCell, spec.perBeat) }}
-            aria-label={`Note grid, bar ${page + 1}. ${describe(cursorCell, cursorPitch)}${selCount ? `. ${plural(selCount, 'note')} selected` : ''}`}
+            aria-label={`Note grid, ${barsWords(page, span)}. ${describe(cursorCell, cursorPitch)}${selCount ? `. ${plural(selCount, 'note')} selected` : ''}`}
             aria-describedby="steps-roll-help"
             aria-keyshortcuts={`Delete ${MOD_ARIA}+A ${MOD_ARIA}+C ${MOD_ARIA}+X ${MOD_ARIA}+V ${MOD_ARIA}+D`}
             onKeyDown={onCursorKey}

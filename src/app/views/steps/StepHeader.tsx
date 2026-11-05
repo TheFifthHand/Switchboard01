@@ -18,7 +18,10 @@ import { session, useProject, useUi } from '../../instance';
 import { notify, useRuntime } from '../../runtime';
 import { barsLabel } from '../../labels';
 import { LENGTH_TIP, MenuHeader, MenuItem, MenuKeyRow, MenuSeparator, MoreIcon, Popover, anchorFromElement, type MenuAnchor } from '../ClipMenu';
+import { clipAtSlot, isSongSlot } from '../../../project/clips';
+import type { Project } from '../../../project/types';
 import { mergedWords, plural, quantizeMoves } from './model';
+import { RowZoom } from './RowZoom';
 import { barClipboard, useBarClipboard } from './shared';
 import styles from './StepHeader.module.css';
 
@@ -29,6 +32,12 @@ export interface HeaderClip {
 }
 
 const NO_NOTES: readonly Note[] = [];
+
+/** The clip at a pad row or a song slot (song loops open here too). */
+function clipIn(p: Project, trackId: Id, slot: number) {
+  const t = p.tracks.find((x) => x.id === trackId);
+  return t ? clipAtSlot(t, slot) : null;
+}
 
 /* ------------------------------------------------------------------ */
 /* Part and clip slot                                                  */
@@ -52,18 +61,27 @@ function SlotPicker({ trackId, slot }: { trackId: Id; slot: number }) {
     },
     shallowEqual,
   );
-  const count = slots.length;
+  // A loop that lives in the song (opened from the Song view) is shown after the pads, by its name.
+  const song = isSongSlot(slot);
+  const songName = useProject((p) => (song ? (clipIn(p, trackId, slot)?.name ?? null) : null));
+  const count = slots.length + (song ? 1 : 0);
   const playingSlot = useRuntime((s) => (s.playing ? (s.tracks[trackId]?.playingSlot ?? null) : null));
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const songRef = useRef<HTMLButtonElement | null>(null);
   const pick = (i: number) => {
+    if (i >= slots.length) {
+      songRef.current?.focus();
+      return;
+    }
     selectSlot(trackId, i);
     refs.current[i]?.focus();
   };
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (count === 0) return;
-    let next = slot;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (slot + 1) % count;
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (slot + count - 1) % count;
+    const at = song ? slots.length : slot;
+    let next = at;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (at + 1) % count;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (at + count - 1) % count;
     else if (e.key === 'Home') next = 0;
     else if (e.key === 'End') next = count - 1;
     else return;
@@ -113,6 +131,29 @@ function SlotPicker({ trackId, slot }: { trackId: Id; slot: number }) {
             </button>
           );
         })}
+        {song && songName !== null && (
+          <button
+            ref={songRef}
+            type="button"
+            role="radio"
+            aria-checked
+            tabIndex={0}
+            className={styles.slot}
+            data-selected
+            data-state={playingSlot === slot ? 'playing' : 'ready'}
+            data-song=""
+            aria-label={`In the song: ${songName}${playingSlot === slot ? ', playing' : ''}`}
+            title={`${songName}: a loop that lives in the song (not on a pad)`}
+          >
+            <span className={styles.slotLamp} aria-hidden="true" />
+            {playingSlot === slot && (
+              <span className={styles.slotPlay} aria-hidden="true">
+                ▶
+              </span>
+            )}
+            <span className={styles.slotName}>Song · {songName}</span>
+          </button>
+        )}
       </div>
     </div>
   );
@@ -177,9 +218,9 @@ function LengthPicker({ trackId, slot, bars, locked }: { trackId: Id; slot: numb
   const refs = useRef(new Map<number, HTMLButtonElement | null>());
   const set = (b: ClipBars) => {
     if (b === bars || locked) return;
-    const before = session.store.getState().tracks.find((t) => t.id === trackId)?.clips[slot]?.notes.length ?? 0;
+    const before = clipIn(session.store.getState(), trackId, slot)?.notes.length ?? 0;
     if (!session.accepted(cmd.setClipBars(session.store, trackId, slot, b))) return;
-    const after = session.store.getState().tracks.find((t) => t.id === trackId)?.clips[slot]?.notes.length ?? 0;
+    const after = clipIn(session.store.getState(), trackId, slot)?.notes.length ?? 0;
     if (after < before) notify(`Clip shortened to ${barsLabel(b)}: ${before - after} note${before - after === 1 ? '' : 's'} past the end removed.`, 'info', 'undo');
   };
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -240,8 +281,8 @@ const GRID_OPTIONS: readonly { value: StepGrid; label: string }[] = [
   { value: '1/16T', label: '1/16T' },
 ];
 
-function BarStrip({ trackId, slot, bars, page, kind }: { trackId: Id; slot: number; bars: number; page: number; kind: InstrumentKind }) {
-  const notes = useProject((p) => p.tracks.find((t) => t.id === trackId)?.clips[slot]?.notes ?? NO_NOTES);
+export function BarStrip({ trackId, slot, bars, page, kind }: { trackId: Id; slot: number; bars: number; page: number; kind: InstrumentKind }) {
+  const notes = useProject((p) => clipIn(p, trackId, slot)?.notes ?? NO_NOTES);
   const follow = useUi((s) => s.stepsFollow);
   const gridName = useUi((s) => s.stepGrid);
   const drums = kind === 'drums';
@@ -340,6 +381,7 @@ function BarStrip({ trackId, slot, bars, page, kind }: { trackId: Id; slot: numb
           detail="Hold Alt while dragging to place notes off the grid."
         />
       )}
+      {!drums && <RowZoom />}
     </div>
   );
 }
@@ -350,7 +392,7 @@ function BarStrip({ trackId, slot, bars, page, kind }: { trackId: Id; slot: numb
 
 function pageHasNotesSelector(trackId: Id, slot: number, page: number) {
   return (p: ReturnType<typeof session.store.getState>): boolean => {
-    const clip = p.tracks.find((t) => t.id === trackId)?.clips[slot];
+    const clip = clipIn(p, trackId, slot);
     if (!clip) return false;
     const a = page * TICKS_PER_BAR;
     return clip.notes.some((n) => n.tick >= a && n.tick < a + TICKS_PER_BAR);
@@ -373,7 +415,7 @@ function handOffFocus(el: HTMLButtonElement | null | undefined): void {
 }
 
 function currentClip(trackId: Id, slot: number) {
-  return session.store.getState().tracks.find((t) => t.id === trackId)?.clips[slot] ?? null;
+  return clipIn(session.store.getState(), trackId, slot) ?? null;
 }
 
 /** Notes that two of one pitch landing on one tick turned into one, as words for a toast (empty when none). */
@@ -426,7 +468,7 @@ function TightenMenu({ trackId, slot, anchor, returnFocus, onClose }: { trackId:
   const gridName = useUi((s) => s.stepGrid);
   const [to, setTo] = useState<QuantizeTo>(gridName);
   const [strength, setStrength] = useState(100);
-  const clip = useProject((p) => p.tracks.find((t) => t.id === trackId)?.clips[slot] ?? null);
+  const clip = useProject((p) => clipIn(p, trackId, slot) ?? null);
   if (!clip) return null;
   const { moved, merged } = quantizeMoves(clip.notes, QUANTIZE_TO_TICKS[to], strength / 100, clip.bars * TICKS_PER_BAR);
   const apply = () => {
@@ -464,7 +506,7 @@ function LoosenMenu({ trackId, slot, anchor, returnFocus, onClose }: { trackId: 
   const [timing, setTiming] = useState(4);
   const [level, setLevel] = useState(10);
   const bpm = useProject((p) => p.bpm);
-  const clip = useProject((p) => p.tracks.find((t) => t.id === trackId)?.clips[slot] ?? null);
+  const clip = useProject((p) => clipIn(p, trackId, slot) ?? null);
   if (!clip) return null;
   const ms = (ticks: number) => Math.round((ticks * 60000) / (Math.max(1, bpm) * 96));
   const timingOptions = TIMING_TICKS.map((t) => ({ value: t, label: t === 0 ? 'Off' : `±${ms(t)}`, ariaLabel: t === 0 ? 'Timing off' : `Timing up to ${ms(t)} milliseconds either way` }));
@@ -507,7 +549,7 @@ type ToolMenu = { kind: 'more' | 'timing' | 'tighten' | 'loosen'; anchor: MenuAn
 function Tools({ trackId, slot, page, clip, kind, trackName, fold }: { trackId: Id; slot: number; page: number; clip: HeaderClip; kind: InstrumentKind; trackName: string; fold: ToolsFold }) {
   const drums = kind === 'drums';
   const hasNotes = useProject(pageHasNotesSelector(trackId, slot, page));
-  const clipHasNotes = useProject((p) => (p.tracks.find((t) => t.id === trackId)?.clips[slot]?.notes.length ?? 0) > 0);
+  const clipHasNotes = useProject((p) => (clipIn(p, trackId, slot)?.notes.length ?? 0) > 0);
   const inKey = useProject((p) => p.assist && p.scale !== 'chromatic');
   const keyName = useProject((p) => (p.scale === 'chromatic' ? 'Chromatic' : keyLabel(p.root, p.scale)));
   const advanced = useUi((s) => s.uiMode === 'advanced');

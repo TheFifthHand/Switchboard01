@@ -69,6 +69,44 @@ export function setSelectedIds(key: string, ids: readonly Id[]): void {
 }
 
 /* ------------------------------------------------------------------ */
+/* Piano roll row height (vertical zoom)                               */
+/* ------------------------------------------------------------------ */
+
+/** The roll's row heights (px), smallest first: − and + step through them. */
+export const ROLL_ROW_HEIGHTS: readonly number[] = [22, 28, 36];
+const ROLL_ROWS_KEY = 'switchboard01.rollRowHeight';
+
+function readRowHeight(): number {
+  try {
+    const v = Number(globalThis.localStorage?.getItem(ROLL_ROWS_KEY));
+    return ROLL_ROW_HEIGHTS.includes(v) ? v : ROLL_ROW_HEIGHTS[0];
+  } catch {
+    return ROLL_ROW_HEIGHTS[0];
+  }
+}
+
+/** The piano roll's row height, shared by Steps and the Song view's editor (remembered on this device). */
+export const rollRowHeight = createStore<number>(readRowHeight());
+
+export function useRollRowHeight(): number {
+  return useStore(rollRowHeight, (s) => s);
+}
+
+/** One zoom step taller (1) or shorter (-1); false at the end of the range. */
+export function zoomRollRows(dir: 1 | -1): boolean {
+  const i = ROLL_ROW_HEIGHTS.indexOf(rollRowHeight.getState());
+  const next = ROLL_ROW_HEIGHTS[Math.max(0, i) + dir];
+  if (next === undefined) return false;
+  rollRowHeight.setState(next);
+  try {
+    globalThis.localStorage?.setItem(ROLL_ROWS_KEY, String(next));
+  } catch {
+    /* storage unavailable: the zoom lasts this session */
+  }
+  return true;
+}
+
+/* ------------------------------------------------------------------ */
 /* Audition                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -179,6 +217,8 @@ export interface PlayheadOptions {
   cellTicks?: number;
   /** Turn the shown page with the playhead (Follow), except while a pointer is pressed in the editor. */
   follow?: boolean;
+  /** Bars shown side by side from `page` (default 1): their cells are numbered on from the first bar's. */
+  span?: number;
 }
 
 /**
@@ -190,7 +230,8 @@ export interface PlayheadOptions {
  * changes, unless a pointer gesture is under way in the editor.
  */
 export function usePlayhead(rootRef: RefObject<HTMLElement | null>, trackId: Id, slot: number, bars: number, page: number, options: PlayheadOptions = {}): void {
-  const { cellTicks = TICKS_PER_STEP, follow = false } = options;
+  const { cellTicks = TICKS_PER_STEP, follow = false, span = 1 } = options;
+  const perBar = Math.round(TICKS_PER_BAR / cellTicks);
   const active = useClipPlaying(trackId, slot);
   const shown = useRef({ step: -2, page: -2 });
   const lastLive = useRef(-1);
@@ -234,7 +275,10 @@ export function usePlayhead(rootRef: RefObject<HTMLElement | null>, trackId: Id,
     for (const el of root.querySelectorAll('[data-live]')) el.removeAttribute('data-live');
     if (livePage < 0) return;
     for (const el of root.querySelectorAll(`[data-ph-page="${livePage}"]`)) el.setAttribute('data-live', '');
-    if (livePage === page && step >= 0) for (const el of root.querySelectorAll(`[data-ph-step="${step}"]`)) el.setAttribute('data-playhead', '');
+    if (livePage >= page && livePage < page + span && step >= 0) {
+      const at = (livePage - page) * perBar + step;
+      for (const el of root.querySelectorAll(`[data-ph-step="${at}"]`)) el.setAttribute('data-playhead', '');
+    }
   };
 
   useRafLoop(() => {
@@ -243,7 +287,8 @@ export function usePlayhead(rootRef: RefObject<HTMLElement | null>, trackId: Id,
     const livePage = pos ? pos.page : -1;
     if (follow && livePage >= 0 && livePage !== lastLive.current && pressed.current.size === 0) {
       lastLive.current = livePage;
-      if (livePage !== page) setStepPage(trackId, livePage);
+      // Bars side by side: the heard bar is already in view.
+      if (livePage < page || livePage >= page + span) setStepPage(trackId, livePage);
     }
     const s = shown.current;
     if (s.step === step && s.page === livePage) return;

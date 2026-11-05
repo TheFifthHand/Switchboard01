@@ -7,13 +7,16 @@
  *   Space toggles; a finger tap toggles too;
  * - a sound's menu (right-click its name, Shift+F10, or the ⋯ by the selected sound) clears it,
  *   fills it on every beat / 8th / 16th and shifts it;
- * - rows are at least 20 px at 1366 x 768 and 24 px at 1920 x 1080.
+ * - rows are at least 28 px at 1366 x 768 and 1920 x 1080 (round 6: Simple shows the eight main sounds, which fit;
+ *   with all 16 the grid scrolls). The tests below show all 16 sounds (Show all 16) and scroll a row into view
+ *   before they press it.
  */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
 import { DRUM_VOICES, type Note } from '../../src/project/types';
 import { drumVoiceFor, selectDrumVoice, selectSlot, selectTrack, setPadMode, uiStore } from '../../src/state/uiStore';
+import { CORE_VOICES, setAllSounds } from '../../src/app/views/steps/DrumSteps';
 import { item, menu, notice, openApp, press, setUp, tearDown, track, until } from './r4-play-helpers';
 import { centre, click, drag, finger, settleFrames, touch } from './r4-uikit-input';
 import { recordPlayed, resetKeyboardFold, rightClick } from './r4-keys-helpers';
@@ -24,6 +27,7 @@ beforeEach(async () => {
   resetKeyboardFold();
 });
 afterEach(async () => {
+  setAllSounds(false);
   await tearDown();
   // Leave the keyboard unfolded everywhere for the next test file (the fold is remembered in storage).
   resetKeyboardFold();
@@ -36,15 +40,23 @@ const hitsOf = (pitch: number, page = 0): number[] =>
     .map((n) => Math.round((n.tick - page * 384) / 24))
     .sort((a, b) => a - b);
 const gridEl = () => document.querySelector<HTMLElement>('[role="grid"][aria-label^="Kit sounds"]')!;
-const row = (voice: number) => gridEl().querySelector<HTMLElement>(`[role="row"][data-voice="${voice}"]`)!;
+/** A sound's row, scrolled into the grid's view (with all 16 sounds the grid scrolls at 1366 x 768). */
+const row = (voice: number) => {
+  const el = gridEl().querySelector<HTMLElement>(`[role="row"][data-voice="${voice}"]`)!;
+  const g = gridEl().getBoundingClientRect();
+  const r = el?.getBoundingClientRect();
+  if (r && (r.top < g.top || r.bottom > g.bottom)) el.scrollIntoView({ block: 'nearest' });
+  return el;
+};
 const cell = (voice: number, step1: number) => row(voice).querySelector<HTMLElement>(`[data-col="${step1}"]`)!;
 const name = (voice: number) => row(voice).querySelector<HTMLElement>('[role="rowheader"] button')!;
 const lanePad = (step1: number) => document.querySelector<HTMLButtonElement>(`button[aria-label^="Step ${step1}, "]`)!;
 
-/** Drums · Groove (Four Floor, 2 bars) in Steps. */
-async function openSteps(w = 1366, hh = 768): Promise<void> {
+/** Drums · Groove (Four Floor, 2 bars) in Steps, all 16 sounds shown (unless `main`). */
+async function openSteps(w = 1366, hh = 768, main = false): Promise<void> {
   await openApp(w, hh);
   act(() => {
+    setAllSounds(!main);
     selectTrack('t1');
     selectSlot('t1', 1);
     setPadMode('steps');
@@ -73,9 +85,22 @@ describe('the overview is a grid of hit targets (PLAY-03)', () => {
     expect(clip().notes.length).toBe(38);
   });
 
-  it('rows are at least 20 px tall at 1366 x 768', async () => {
-    await openSteps();
-    for (let v = 0; v < DRUM_VOICES; v++) expect(row(v).getBoundingClientRect().height, `row ${v}`).toBeGreaterThanOrEqual(19.5);
+  it('rows are at least 28 px tall at 1366 x 768: the main sounds fit, all 16 scroll', async () => {
+    await openSteps(1366, 768, true);
+    // Simple: the eight main sounds and the ones the clip uses, every row in view.
+    const shown = [...gridEl().querySelectorAll<HTMLElement>('[role="row"]')].map((r) => Number(r.dataset.voice));
+    for (const v of CORE_VOICES) expect(shown).toContain(v);
+    expect(shown.length).toBeLessThan(DRUM_VOICES);
+    const g = gridEl().getBoundingClientRect();
+    for (const v of shown) {
+      const r = gridEl().querySelector<HTMLElement>(`[role="row"][data-voice="${v}"]`)!.getBoundingClientRect();
+      expect(r.height, `row ${v}`).toBeGreaterThanOrEqual(27.5);
+      expect(r.bottom, `row ${v} in view`).toBeLessThanOrEqual(g.bottom + 1);
+    }
+    // Show all 16: every row keeps 28 px; the grid scrolls.
+    act(() => setAllSounds(true));
+    await settleFrames(2);
+    for (let v = 0; v < DRUM_VOICES; v++) expect(row(v).getBoundingClientRect().height, `row ${v}`).toBeGreaterThanOrEqual(27.5);
     // The big pads stay usable (they gave way first).
     expect(lanePad(1).getBoundingClientRect().height).toBeGreaterThanOrEqual(32);
     // Nothing of the editor is pushed out of its panel.
@@ -83,9 +108,9 @@ describe('the overview is a grid of hit targets (PLAY-03)', () => {
     expect(vel.bottom).toBeLessThanOrEqual(window.innerHeight - 100);
   });
 
-  it('rows are at least 24 px tall at 1920 x 1080', async () => {
+  it('rows are at least 28 px tall at 1920 x 1080', async () => {
     await openSteps(1920, 1080);
-    for (let v = 0; v < DRUM_VOICES; v++) expect(row(v).getBoundingClientRect().height, `row ${v}`).toBeGreaterThanOrEqual(23.5);
+    for (let v = 0; v < DRUM_VOICES; v++) expect(row(v).getBoundingClientRect().height, `row ${v}`).toBeGreaterThanOrEqual(27.5);
   });
 
   it('is one Tab stop: arrows move (up and down choose the sound), Space toggles', async () => {

@@ -4,8 +4,8 @@
  * playhead, Duplicate, Delete, Use another loop, Make it 2× longer, Edit
  * notes), and the keys do the same (Delete, Ctrl+D, Ctrl+C / Ctrl+V at the
  * playhead, Ctrl+E split, ← → move, Alt+← → length, ↑ ↓ and Ctrl+← → to
- * move between loops). A double-click opens the loop's notes in Play › Steps
- * with a way back to the song. Each edit is one undo step.
+ * move between loops). A double-click opens the loop's notes in the editor
+ * under the song (round 6). Each edit is one undo step.
  */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -209,15 +209,17 @@ describe('keys', () => {
 });
 
 describe('notes', () => {
-  it('a double-click opens the loop’s notes in Play › Steps, and “Back to Song” returns', async () => {
+  // Round 6: the loop opens in the editor under the rows; the Song view stays (Play › Steps follows the selection).
+  it('a double-click opens the loop’s notes in the editor under the song, and Close shuts it', async () => {
     await open();
     const clip = project().tracks[2].clips.find((c) => c)!;
     await doubleClickAt(on('C'));
-    expect(uiStore.getState()).toMatchObject({ view: 'play', padMode: 'steps', selectedTrackId: project().tracks[2].id });
+    expect(uiStore.getState()).toMatchObject({ view: 'arrange', selectedTrackId: project().tracks[2].id });
     expect(uiStore.getState().selectedSlot[project().tracks[2].id]).toBe(project().tracks[2].clips.indexOf(clip));
-    await waitFor(() => [...document.querySelectorAll('button')].some((b) => b.textContent === 'Back to Song'), 'Back to Song');
-    const back = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Back to Song')!;
-    await clickAt(centre(back));
+    await waitFor(() => !!document.querySelector('[data-loop-editor]'), 'the editor pane');
+    const close = document.querySelector<HTMLButtonElement>('[data-loop-editor] button[aria-label^="Close the editor"]')!;
+    await clickAt(centre(close));
+    await waitFor(() => !document.querySelector('[data-loop-editor]'), 'the pane closed');
     expect(uiStore.getState().view).toBe('arrange');
   });
 });

@@ -13,6 +13,7 @@ import { useId, useMemo, useState } from 'react';
 import { Button, ClipSketch, Dialog, SegmentedControl } from '../../ui/components';
 import { PROGRESSIONS, resolveProgression } from '../../music/chords';
 import { keyLabel } from '../../music/scales';
+import { clipAtSlot, isSongSlot } from '../../project/clips';
 import { CLIP_BAR_CHOICES, TICKS_PER_BAR, TICKS_PER_BEAT, type Id, type Note, type Project } from '../../project/types';
 import { createProgressionClip, type ProgressionRhythm } from '../../state/commands';
 import { ProjectStore } from '../../state/projectStore';
@@ -69,8 +70,9 @@ export function ProgressionDialog(props: { trackId: Id; onClose(): void }) {
   const project = useProject((p) => p);
   const locked = useEditLocked();
   const track = project.tracks.find((t) => t.id === trackId);
-  const clip = track?.clips[slot] ?? null;
-  const sceneName = project.scenes[slot]?.name ?? `Row ${slot + 1}`;
+  // A loop that lives in the song (slot 100 on) is named by its own name, never by a row number.
+  const clip = track ? clipAtSlot(track, slot) : null;
+  const sceneName = isSongSlot(slot) ? 'the song' : (project.scenes[slot]?.name ?? `Row ${slot + 1}`);
   const [progressionId, setProgressionId] = useState(PROGRESSIONS[0].id);
   const [rhythm, setRhythm] = useState<ProgressionRhythm>('held');
   const [bars, setBars] = useState<number>(() => (clip && (CLIP_BAR_CHOICES as readonly number[]).includes(clip.bars) ? clip.bars : 4));
@@ -84,7 +86,8 @@ export function ProgressionDialog(props: { trackId: Id; onClose(): void }) {
   const preview = useMemo(() => {
     const scratch = new ProjectStore(project);
     const r = createProgressionClip(scratch, trackId, slot, { progressionId, rhythm, bars, size });
-    const written = scratch.getState().tracks.find((t) => t.id === trackId)?.clips[slot] ?? null;
+    const t = scratch.getState().tracks.find((x) => x.id === trackId);
+    const written = t ? clipAtSlot(t, slot) : null;
     return { ok: r.changed, reason: r.changed ? null : (r.message ?? null), message: r.message, notes: r.changed && written ? written.notes : [] };
   }, [project, trackId, slot, progressionId, rhythm, bars, size]);
   const heard = useMemo(() => chordsOf(preview.notes, bars, chosen.prog.degrees.length), [preview.notes, bars, chosen.prog.degrees.length]);

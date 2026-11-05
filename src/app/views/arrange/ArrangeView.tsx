@@ -3,6 +3,7 @@
  *
  *   [ Song · 32 bars · 1:02          Loop · − Fit + · Follow · Loops ]
  *   [ timeline: ruler, sections, a row per part     │ loop browser   ]
+ *   [ editor: the loop opened from the song (double-click, E)       ]
  *   [ Performances (one line until opened)                          ]
  *
  * Each part has its own row; drag a loop anywhere along it, drag its right
@@ -25,6 +26,7 @@ import { useProject } from '../../instance';
 import { readBrowserOpen, readFollow, readTakesOpen, writeBrowserOpen, writeFollow, writeTakesOpen } from './laneSettings';
 import { browserOpenStore, carriedStore } from './laneStore';
 import { LoopBrowser } from './LoopBrowser';
+import { LoopEditorPane, useEditorKeys } from './LoopEditorPane';
 import { PerformancesPanel } from './PerformancesPanel';
 import { SongHeader } from './SongHeader';
 import { SongTimeline, type TimelineHandle } from './SongTimeline';
@@ -68,6 +70,8 @@ export function ArrangeView() {
   const takesOpen = hasTakes ? takesPref : howOpen;
   const [status, setStatus] = useState('');
   useEffect(() => setHandleNow(handle.current), []);
+  // The editor pane's keys (E, Esc). The open loop is kept while another view is open, as the scroll and the selection are.
+  useEditorKeys();
 
   const onFollow = useCallback((on: boolean) => {
     setFollow(on);
@@ -97,6 +101,7 @@ export function ArrangeView() {
           <SongTimeline follow={follow} handleRef={handle} onStatus={setStatus} />
           {browserOpen && <LoopBrowser onCarry={(e, item) => handle.current?.carry(e, item)} playheadBar={() => handle.current?.playheadBar() ?? 0} onClose={() => onBrowser(false)} />}
         </div>
+        {!openTake && <LoopEditorPane />}
       </section>
       <PerformancesPanel open={takesOpen} onOpenChange={onTakesOpen} openTake={openTake} onOpenTake={setOpenTake} />
       <Carried />

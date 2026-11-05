@@ -7,25 +7,38 @@ import { memo, useRef, type CSSProperties, type PointerEvent, type ReactNode } f
 import type { Id } from '../../../project/types';
 import { newGestureId } from '../../../ui/components';
 import { session } from '../../instance';
-import { STEP_GRID, cellColumn, cellIndices, cellLabel, clampVelocity, type GridSpec, type VelocityVoice } from './model';
+import { STEP_GRID, barCells, cellColumn, cellIndices, cellLabel, cellSpan, clampVelocity, spanColumns, type GridSpec, type VelocityVoice } from './model';
 import grid from './StepGrid.module.css';
 
-/** The CSS custom property that sets how many cells a beat has in the shared column template. */
+/** The CSS custom property that sets how many cells a beat has in the shared column template (and, for bars side by side, the template). */
 export function gridStyle(spec: GridSpec): CSSProperties {
-  return { '--per-beat': String(spec.perBeat) } as CSSProperties;
+  const span = spanColumns(spec);
+  // Custom properties inherit: rows inside an element styled with this follow the same columns.
+  return (span ? { '--per-beat': String(spec.perBeat), '--span-cols': span } : { '--per-beat': String(spec.perBeat) }) as unknown as CSSProperties;
 }
 
 /** Cell numbers (1-16 on the 1/16 grid), beat starts emphasised. The current cell lights amber while the clip plays. */
 export const StepNumbers = memo(function StepNumbers(props: { label?: ReactNode; className?: string; grid?: GridSpec }) {
   const spec = props.grid ?? STEP_GRID;
+  const bars = spec.bars ?? 1;
+  const per = barCells(spec);
   return (
-    <div className={[grid.cols, grid.numbers, props.className].filter(Boolean).join(' ')} style={gridStyle(spec)} data-cells={spec.cells}>
+    <div className={[grid.cols, grid.numbers, props.className].filter(Boolean).join(' ')} style={gridStyle(spec)} data-cells={barCells(spec)} data-bars={spec.bars ?? 1}>
       {/* The label may hold controls, so only the decorative numbers are hidden from assistive tech. */}
-      <div className={grid.numbersLabel}>{props.label}</div>
+      <div className={grid.numbersLabel} style={bars > 1 ? { gridRow: '1 / span 2' } : undefined}>
+        {props.label}
+      </div>
+      {/* Bars side by side: a line above the numbers names each bar. */}
+      {bars > 1 &&
+        cellIndices(bars).map((b) => (
+          <div key={`bar${b}`} className={grid.barLabel} style={{ gridColumn: cellSpan(b * per, b * per + per - 1, spec.perBeat), gridRow: 1 }} data-bar-label={b} aria-hidden="true">
+            Bar {b + 1}
+          </div>
+        ))}
       {cellIndices(spec.cells).map((s) => {
         const l = cellLabel(s, spec);
         return (
-          <div key={s} className={grid.num} style={{ gridColumn: cellColumn(s, spec.perBeat) }} data-beat={l.beat || undefined} data-ph-step={s} aria-hidden="true">
+          <div key={s} className={grid.num} style={{ gridColumn: cellColumn(s, spec.perBeat), gridRow: bars > 1 ? 2 : undefined }} data-beat={l.beat || undefined} data-ph-step={s} aria-hidden="true">
             {l.text}
           </div>
         );
@@ -151,7 +164,7 @@ export function VelocityLane({ values, counts, onSet, voices, hasSelection = fal
       onLostPointerCapture={onPointerEnd}
       aria-hidden="true"
       data-testid="velocity-lane"
-      data-cells={cells}
+      data-cells={voices ? Math.round(cells / (spec.bars ?? 1)) : barCells(spec)}
     >
       <div className={grid.velLabel}>
         <span className={grid.velTitle}>{title}</span>

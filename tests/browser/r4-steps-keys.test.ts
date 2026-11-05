@@ -45,7 +45,8 @@ describe('keys move the selection (PLAY-08)', () => {
     await press('{ArrowDown}');
     expect(byId(first.id).pitch).toBe(31);
     // The cursor followed the note, and the move is said.
-    expect(cursorEl().getAttribute('aria-label')).toMatch(/^Note grid, bar 1\. G1, step 3: note \(selected\)/);
+    // At 1366 this 2-bar clip shows both bars side by side: the cell is named with its bar.
+    expect(cursorEl().getAttribute('aria-label')).toMatch(/^Note grid, bars 1–2\. G1, bar 1, step 3: note \(selected\)/);
     // Left from step 3 by a step at a time stops at the clip's start with a message, deleting nothing.
     const count = bounce().length;
     await press('{ArrowLeft}');

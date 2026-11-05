@@ -7,7 +7,7 @@
  * or throw (private mode, quotas).
  */
 import { cloneClip } from '../project/clone';
-import { DRUM_VOICES, MAX_CLIP_BARS, MAX_SCENES, type Clip, type Id } from '../project/types';
+import { DRUM_VOICES, MAX_CLIP_BARS, MAX_SCENES, MAX_SONG_CLIPS, SONG_SLOT_BASE, type Clip, type Id } from '../project/types';
 import type { EffectChainClip } from './commands/patch';
 import { createStore, type Store } from './store';
 
@@ -236,8 +236,11 @@ export function setView(view: View, store: UiStore = uiStore): void {
 export function setPadMode(padMode: PadMode, store: UiStore = uiStore): void {
   if (PAD_MODES.includes(padMode)) set(store, { padMode });
 }
+/** A pad row, or a loop that lives in the song (slots from SONG_SLOT_BASE: the note editors open those too). */
 export function selectSlot(trackId: Id, slot: number, store: UiStore = uiStore): void {
-  if (Number.isInteger(slot) && slot >= 0 && slot < MAX_SCENES) setIn(store, 'selectedSlot', trackId, slot);
+  const pad = slot >= 0 && slot < MAX_SCENES;
+  const song = slot >= SONG_SLOT_BASE && slot < SONG_SLOT_BASE + MAX_SONG_CLIPS;
+  if (Number.isInteger(slot) && (pad || song)) setIn(store, 'selectedSlot', trackId, slot);
 }
 /**
  * Choose `slot` for a part only when none is chosen yet (PLAY-01: selecting a
