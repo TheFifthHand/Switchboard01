@@ -206,7 +206,8 @@ function roundUpBars(n: number): ClipBars {
  * "Record into the song": a finished Song-view take becomes song clips and
  * regions in one undo step that Undo calls "Record <Part>". The take is cut
  * into one clip per 8 bars (the last one rounded up to 1, 2, 4 or 8 bars),
- * each named like a new loop ("Bass 1", "Bass 2"…), with regions back to
+ * each named as a take of the part ("Bass take 1", "Bass take 2"…, as pad
+ * takes are), with regions back to
  * back from the start bar, placed like any region (they win over what was
  * there). The take lasts `bars` bars, longer when a note starts later. Notes
  * snap to `take.quantize` (else the project's Record quantize setting); a
@@ -256,7 +257,7 @@ export function recordTakeIntoSong(store: ProjectStore, take: SongTake): Command
     windows[w].set(`${rel}|${pitch}`, { id: uid('n'), tick: rel, pitch, velocity: clamp(n.velocity, 0, 1), duration });
   }
   const stem = partName(p, take.trackId);
-  const nextName = nameMaker(t, stem);
+  const nextName = nameMaker(t, `${stem.slice(0, 50)} take`);
   let full = false;
   const clips: Clip[] = windows.map((w, i) => {
     let notes = [...w.values()].sort((a, b) => a.tick - b.tick || a.pitch - b.pitch);

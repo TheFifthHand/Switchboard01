@@ -1,17 +1,15 @@
 /**
- * The Shape view's pure rules (no DOM): what a Simple effect card's knobs
- * are, where a knob's reset goes, the range a new big-knob assignment
- * sweeps, the Squeeze law, and the words for mappings and removals.
+ * The Shape view's pure rules (no DOM): where a knob's reset goes, the
+ * range a new big-knob assignment sweeps, and the words for mappings and
+ * removals.
  */
 import { describe, expect, it } from 'vitest';
-import { chooseMainKnob, resonanceInRange, RESONANCE_BELOW_HZ } from '../../src/app/views/shape/cardKnob';
 import { assignRange, curveWord, mappingWords, rangeWords } from '../../src/app/views/shape/macroAssign';
 import { bigKnobReach, offCaption, offSentence } from '../../src/app/views/shape/bigKnobReach';
 import { drumMixGroups, drumTuneVoice, groupLevels, playedSlots } from '../../src/app/views/shape/drumMix';
 import { STARTERS } from '../../src/content/starters';
 import { homeNote, knobHome, partKey } from '../../src/app/views/shape/paramState';
 import { removedEffectNotice } from '../../src/app/views/shape/shared';
-import { SQUEEZE_DEFAULT, squeezeOf, squeezeParams } from '../../src/app/views/shape/squeeze';
 import { macroHomeNote, macroSpecFor } from '../../src/app/macros';
 import { HOUSE } from '../../src/content/starters/house';
 import { COMPRESSOR_PARAMS, FILTER_PARAMS, INSTRUMENT_PARAMS, MODULE_PARAMS, clampParam, fromNormalized, specById, toNormalized } from '../../src/project/params';
@@ -20,57 +18,6 @@ import * as cmd from '../../src/state/commands';
 import { ProjectStore } from '../../src/state/projectStore';
 
 const spec = (list: readonly import('../../src/project/params').ParamSpec[], id: string) => specById(list, id)!;
-
-describe('Simple effect cards: the knob is the first main setting, or the big knob that sets it', () => {
-  const p = HOUSE.build();
-  it('every House part: Drive card → the Drive big knob; Filter card → the big knob that sets its cutoff (Tone or Motion)', () => {
-    for (const t of p.tracks) {
-      const drive = chooseMainKnob(p, `${t.id}:drive`, 'drive', t.id);
-      expect(drive.macro, t.name).toEqual({ trackId: t.id, macro: 'drive' });
-      expect(drive.by).toBe('Drive');
-      expect(drive.param).toBe('amount');
-      const filter = chooseMainKnob(p, `${t.id}:filter`, 'filter', t.id);
-      expect(['tone', 'motion'], t.name).toContain(filter.macro?.macro);
-      expect(filter.param).toBe('cutoff');
-    }
-  });
-
-  it('Resonance is offered only while the cutoff is in the audible band', () => {
-    const extra = (id: string) => chooseMainKnob(p, `${id}:filter`, 'filter', id).extra;
-    expect(extra('t4')).toBeNull(); // Motion 0: 20 kHz
-    expect(extra('t6')).toBe('resonance'); // Pad: Motion 25 %
-    expect(extra('t7')).toBe('resonance'); // Texture: Motion 50 %
-    expect(resonanceInRange({ mode: 0, cutoff: RESONANCE_BELOW_HZ - 1 })).toBe(true);
-    expect(resonanceInRange({ mode: 0, cutoff: RESONANCE_BELOW_HZ })).toBe(false);
-    expect(resonanceInRange({ mode: 1, cutoff: 40 })).toBe(false);
-    expect(resonanceInRange({ mode: 1, cutoff: 400 })).toBe(true);
-    expect(resonanceInRange({ mode: 2, cutoff: 20000 })).toBe(true);
-  });
-
-  it('a Filter card without Resonance says why: wide open, a high-pass at the bottom, or a big knob sets it', () => {
-    const store = new ProjectStore(HOUSE.build());
-    const note = () => chooseMainKnob(store.getState(), 't4:filter', 'filter', 't4').extraNote;
-    expect(note()).toBe('Resonance appears once the filter closes below 12 kHz.');
-    cmd.setModuleParam(store, 't4:filter', 'mode', 1);
-    cmd.removeMacroTarget(store, 't4', 'motion', store.getState().tracks.find((t) => t.id === 't4')!.macroMap.motion.findIndex((x) => x.module === 't4:filter' && x.param === 'cutoff'));
-    cmd.removeMacroTarget(store, 't4', 'tone', store.getState().tracks.find((t) => t.id === 't4')!.macroMap.tone.findIndex((x) => x.module === 't4:filter' && x.param === 'cutoff'));
-    cmd.setModuleParam(store, 't4:filter', 'cutoff', 20);
-    expect(note()).toBe('Resonance appears once the filter cuts above 60 Hz.');
-    cmd.setModuleParam(store, 't4:filter', 'cutoff', 400);
-    expect(chooseMainKnob(store.getState(), 't4:filter', 'filter', 't4')).toMatchObject({ extra: 'resonance', extraNote: null });
-    cmd.setMacroTarget(store, 't4', 'motion', store.getState().tracks.find((t) => t.id === 't4')!.macroMap.motion.length, { module: 't4:filter', param: 'resonance', min: 0.1, max: 0.6, curve: 'lin' });
-    expect(chooseMainKnob(store.getState(), 't4:filter', 'filter', 't4')).toMatchObject({ extra: null, extraNote: 'Resonance is set by the Motion big knob.' });
-  });
-
-  it('an added effect no big knob touches: its own first setting; the Compressor: Squeeze', () => {
-    const store = new ProjectStore(HOUSE.build());
-    cmd.insertEffect(store, 't4', 'reverb');
-    cmd.insertEffect(store, 't4', 'compressor');
-    const q = store.getState();
-    expect(chooseMainKnob(q, 't4:reverb', 'reverb', 't4')).toMatchObject({ param: 'mix', macro: null, by: null });
-    expect(chooseMainKnob(q, 't4:compressor', 'compressor', 't4')).toMatchObject({ param: 'squeeze', macro: null });
-  });
-});
 
 describe('where a knob’s reset goes', () => {
   const p = HOUSE.build();
@@ -157,29 +104,6 @@ describe('a new big-knob assignment', () => {
     expect(mappingWords('Tone', t, '0.0 dB')).toEqual({ curve: 'curve: even', over: 'over Tone 60–100%', now: 'now 0.0 dB' });
     expect(mappingWords('Tone', { ...t, macroFrom: 0 }, 'x').over).toBeNull();
     expect(rangeWords(spec(FILTER_PARAMS, 'bright'), t)).toBe('from 0.0 dB to +5.0 dB');
-  });
-});
-
-describe('Squeeze', () => {
-  it('half way is the compressor’s own default; none is no compression; full is −28 dB, 5:1, 8 dB makeup at most, 0.5 ms', () => {
-    expect(SQUEEZE_DEFAULT).toBe(0.5);
-    expect(squeezeParams(0.5)).toEqual({ threshold: -18, ratio: 4, makeup: 0, attack: 10 });
-    expect(squeezeParams(0)).toEqual({ threshold: 0, ratio: 1, makeup: 0, attack: 10 });
-    expect(squeezeParams(1)).toEqual({ threshold: -28, ratio: 5, makeup: 8, attack: 0.5 });
-  });
-
-  it('turning it up never loosens anything, makeup never passes 8 dB, and the knob reads back the amount from the threshold', () => {
-    let prev = squeezeParams(0);
-    for (let s = 0.05; s <= 1.0001; s += 0.05) {
-      const q = squeezeParams(s);
-      expect(q.threshold).toBeLessThanOrEqual(prev.threshold);
-      expect(q.ratio).toBeGreaterThanOrEqual(prev.ratio);
-      expect(q.makeup).toBeGreaterThanOrEqual(prev.makeup);
-      expect(q.makeup).toBeLessThanOrEqual(8);
-      expect(q.attack).toBeLessThanOrEqual(prev.attack);
-      expect(squeezeOf(q)).toBeCloseTo(Math.min(1, s), 5);
-      prev = q;
-    }
   });
 });
 

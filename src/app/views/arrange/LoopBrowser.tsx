@@ -247,7 +247,7 @@ export const LoopBrowser = memo(function LoopBrowser({ onCarry, playheadBar, onC
         ))}
       </div>
       <div className={styles.browserBody} role="tabpanel" id="loops-tab-panel" aria-labelledby={`loops-tab-${tab}`}>
-        {tab === 'song' ? <SongLoops onCarry={onCarry} playheadBar={playheadBar} /> : <LibraryPanel playheadBar={playheadBar} />}
+        {tab === 'song' ? <SongLoops onCarry={onCarry} playheadBar={playheadBar} /> : <LibraryPanel playheadBar={playheadBar} onCarry={onCarry} />}
       </div>
       <LibraryGhost />
     </aside>

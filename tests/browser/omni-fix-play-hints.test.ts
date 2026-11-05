@@ -349,7 +349,7 @@ describe('the closing line says where Export is', () => {
     await act(async () => {
       button(/^More:/)!.click();
     });
-    expect([...document.querySelectorAll('[role="menuitem"]')].some((el) => el.textContent?.includes('Export WAV…'))).toBe(true);
+    expect([...document.querySelectorAll('[role="menuitem"]')].some((el) => el.textContent?.includes('Export…'))).toBe(true);
     await act(async () => {
       button(/^More:/)!.click();
     });

@@ -1,9 +1,7 @@
 /**
  * What the Shape view says about each insert effect, in plain words:
  * the purpose groups of the Add effect menu, a short description per menu
- * item, the sentence an effect card shows, the candidates for the one main
- * knob the Simple view gives each effect, and how the Advanced rack lays out
- * its knobs.
+ * item, and how the Advanced rack lays out its knobs.
  *
  * Pure data over the module catalogue (no React, no audio). Every insertable
  * effect type appears in exactly one group.
@@ -11,7 +9,6 @@
 import { INSERTABLE_EFFECTS, MODULE_DEFS } from '../../../project/modules';
 import { MODULE_PARAMS, specById, type ParamSpec } from '../../../project/params';
 import type { ModuleType } from '../../../project/types';
-import { SQUEEZE_SPEC } from './squeeze';
 
 export interface EffectGroup {
   id: 'tone' | 'dynamics' | 'space' | 'movement' | 'colour' | 'stereo';
@@ -29,201 +26,32 @@ export const EFFECT_GROUPS: readonly EffectGroup[] = [
   { id: 'stereo', label: 'Stereo', types: ['widener'] },
 ];
 
-export interface EffectKnob {
-  /** Parameter id. */
-  id: string;
-  /** What turning it does, in one short sentence that names the knob. */
-  says: string;
-}
-
 export interface EffectInfo {
   /** One short line for the Add effect menu. */
   summary: string;
-  /** What the effect does, in one plain sentence (names no knob). */
-  does: string;
-  /**
-   * The Simple card's knob first (the effect's main amount), then the
-   * effect's other main settings. The card always shows the first one; when
-   * a big knob (macro) sets it, the card shows that big knob instead, so
-   * turning the card's knob always changes the sound.
-   */
-  knobs: readonly EffectKnob[];
 }
 
-/** Plain descriptions and the main-knob candidates of every insertable effect. */
+/** The Add effect menu's line for every insertable effect. */
 export const EFFECT_INFO: Partial<Record<ModuleType, EffectInfo>> = {
-  eq: {
-    summary: 'More or less bass, middle and treble.',
-    does: 'Shapes the tone.',
-    knobs: [
-      { id: 'lowGain', says: 'Lows adds or removes bass and weight.' },
-      { id: 'midGain', says: 'Mids brings the body of the sound forward or back.' },
-      { id: 'highGain', says: 'Highs adds or removes sparkle.' },
-    ],
-  },
-  filter: {
-    summary: 'Makes the sound darker or thinner.',
-    does: 'Removes part of the sound.',
-    knobs: [
-      { id: 'cutoff', says: 'Turn Cutoff down for a darker, softer tone.' },
-      { id: 'resonance', says: 'Resonance adds a ringing peak where the filter cuts.' },
-      { id: 'bright', says: 'Brightness adds or removes sparkle at the top.' },
-    ],
-  },
-  compressor: {
-    summary: 'Evens out loud and quiet moments for more punch.',
-    does: 'Holds loud moments down for a tighter, punchier sound.',
-    knobs: [
-      { id: 'squeeze', says: 'Squeeze holds them down harder: it lowers the threshold and raises the ratio together, and turns the level back up most of the way.' },
-      { id: 'ratio', says: 'Squeeze sets how hard.' },
-      { id: 'threshold', says: 'Lower the Threshold to squeeze more of the sound.' },
-      { id: 'mix', says: 'Mix blends the squeezed sound with the untouched one.' },
-    ],
-  },
-  gate: {
-    summary: 'Silences the quiet bits: tighter, cleaner tails.',
-    does: 'Silences the quiet bits, which cleans up noise and cuts tails short.',
-    knobs: [
-      { id: 'threshold', says: 'Everything quieter than the Threshold is silenced.' },
-      { id: 'range', says: 'Depth sets how quiet the silenced bits get.' },
-    ],
-  },
-  reverb: {
-    summary: 'A room or hall around the sound.',
-    does: 'Puts the sound in a room.',
-    knobs: [
-      { id: 'mix', says: 'Mix sets how much of the room you hear.' },
-      { id: 'decay', says: 'Size goes from a small room to a huge hall.' },
-      { id: 'tone', says: 'Tone makes the room darker or brighter.' },
-    ],
-  },
-  delay: {
-    summary: 'Echoes in time with the beat (a delay).',
-    does: 'Repeats the sound in time with the beat.',
-    knobs: [
-      { id: 'mix', says: 'Mix sets how loud the echoes are.' },
-      { id: 'feedback', says: 'Feedback sets how many times the echo repeats.' },
-      { id: 'tone', says: 'Tone makes the echoes darker or brighter.' },
-    ],
-  },
-  chorus: {
-    summary: 'A wide, shimmering double of the sound.',
-    does: 'Adds a wide, shimmering double of the sound.',
-    knobs: [
-      { id: 'mix', says: 'Mix sets how much.' },
-      { id: 'depth', says: 'Depth sets how strong the shimmer is.' },
-      { id: 'rate', says: 'Rate sets how fast it moves.' },
-    ],
-  },
-  phaser: {
-    summary: 'A slow, swirling sweep.',
-    does: 'Sweeps a swirl through the sound.',
-    knobs: [
-      { id: 'mix', says: 'Mix sets how strong it is.' },
-      { id: 'depth', says: 'Depth sets how wide the sweep is.' },
-      { id: 'rate', says: 'Rate sets how fast it sweeps.' },
-    ],
-  },
-  flanger: {
-    summary: 'A sweeping, jet-plane whoosh.',
-    does: 'Adds a sweeping, jet-plane whoosh.',
-    knobs: [
-      { id: 'mix', says: 'Mix sets how strong it is.' },
-      { id: 'depth', says: 'Depth sets how wide the sweep is.' },
-      { id: 'rate', says: 'Rate sets how fast it sweeps.' },
-    ],
-  },
-  autopan: {
-    summary: 'Swings the sound left and right in time.',
-    does: 'Swings the sound from side to side in time with the beat.',
-    knobs: [
-      { id: 'depth', says: 'Depth sets how far.' },
-      { id: 'division', says: 'Rate sets how often, in beats.' },
-    ],
-  },
-  drive: {
-    summary: 'Warmth first, then crunch and distortion.',
-    does: 'Warms the sound up, then adds crunch.',
-    knobs: [
-      { id: 'amount', says: 'Turn Drive up for more grit.' },
-      { id: 'tone', says: 'Fizz tames or keeps the bright fizz the crunch adds.' },
-      { id: 'mix', says: 'Mix blends the crunch with the clean sound.' },
-    ],
-  },
-  tape: {
-    summary: 'Warm tape saturation with a gentle wobble.',
-    does: 'Gives the warm, slightly wobbly sound of an old tape machine.',
-    knobs: [
-      { id: 'drive', says: 'Saturation sets how warm.' },
-      { id: 'wobble', says: 'Wobble sets how much the pitch drifts.' },
-      { id: 'mix', says: 'Mix blends the tape sound with the clean one.' },
-    ],
-  },
-  crusher: {
-    summary: 'Gritty, lo-fi digital crunch.',
-    does: 'Makes the sound gritty and lo-fi, like an old sampler.',
-    knobs: [
-      { id: 'downsample', says: 'Turn Lo-fi Rate up for more crunch.' },
-      { id: 'bits', says: 'Fewer Bits make it grittier.' },
-      { id: 'mix', says: 'Mix blends the crunch with the clean sound.' },
-    ],
-  },
-  widener: {
-    summary: 'Makes the sound wider or narrower.',
-    does: 'Spreads the sound wider across the speakers, keeping the bass centred.',
-    knobs: [
-      { id: 'width', says: 'Width sets how wide.' },
-      { id: 'monoBass', says: 'Mono Bass keeps the lows in the centre, for solid bass.' },
-    ],
-  },
+  eq: { summary: 'More or less bass, middle and treble.' },
+  filter: { summary: 'Makes the sound darker or thinner.' },
+  compressor: { summary: 'Evens out loud and quiet moments for more punch.' },
+  gate: { summary: 'Silences the quiet bits: tighter, cleaner tails.' },
+  reverb: { summary: 'A room or hall around the sound.' },
+  delay: { summary: 'Echoes in time with the beat (a delay).' },
+  chorus: { summary: 'A wide, shimmering double of the sound.' },
+  phaser: { summary: 'A slow, swirling sweep.' },
+  flanger: { summary: 'A sweeping, jet-plane whoosh.' },
+  autopan: { summary: 'Swings the sound left and right in time.' },
+  drive: { summary: 'Warmth first, then crunch and distortion.' },
+  tape: { summary: 'Warm tape saturation with a gentle wobble.' },
+  crusher: { summary: 'Gritty, lo-fi digital crunch.' },
+  widener: { summary: 'Makes the sound wider or narrower.' },
 };
 
 /** Menu line for an effect type (falls back to the module catalogue). */
 export function effectSummary(type: ModuleType): string {
   return EFFECT_INFO[type]?.summary ?? MODULE_DEFS[type].description;
-}
-
-/**
- * Card sentence for an effect type: what it does, then what its card knob
- * does (the given parameter, or the first candidate). Falls back to the
- * module catalogue.
- */
-export function effectSentence(type: ModuleType, paramId?: string): string {
-  const info = EFFECT_INFO[type];
-  if (!info) return MODULE_DEFS[type].description;
-  const knob = paramId === undefined ? info.knobs[0] : info.knobs.find((k) => k.id === paramId);
-  return knob ? `${info.does} ${knob.says}` : info.does;
-}
-
-/** What turning one of an effect's main knobs does ("Resonance adds a ringing peak where the filter cuts."), or ''. */
-export function knobSays(type: ModuleType, paramId: string): string {
-  return EFFECT_INFO[type]?.knobs.find((k) => k.id === paramId)?.says ?? '';
-}
-
-/**
- * Knobs a Simple card shows that are not one stored setting: the
- * Compressor's Squeeze sets threshold, ratio and makeup together.
- */
-export const VIRTUAL_KNOBS: Partial<Record<ModuleType, ParamSpec>> = { compressor: SQUEEZE_SPEC };
-
-/**
- * The effect's main settings, best first (the first parameter when none are
- * listed); the Simple card's knob is the first one (or its virtual knob).
- */
-export function mainKnobCandidates(type: ModuleType): ParamSpec[] {
-  const specs = MODULE_PARAMS[type];
-  const listed = (EFFECT_INFO[type]?.knobs ?? []).map((k) => specById(specs, k.id)).filter((s): s is ParamSpec => !!s);
-  return listed.length ? listed : specs.slice(0, 1);
-}
-
-/** The Simple card's one knob for an effect type: its virtual knob, else its first main setting. */
-export function cardKnobSpec(type: ModuleType): ParamSpec | undefined {
-  return VIRTUAL_KNOBS[type] ?? mainKnobCandidates(type)[0];
-}
-
-/** The preferred main knob's spec for an effect type (its first candidate). */
-export function mainParamSpec(type: ModuleType): ParamSpec | undefined {
-  return mainKnobCandidates(type)[0];
 }
 
 /**

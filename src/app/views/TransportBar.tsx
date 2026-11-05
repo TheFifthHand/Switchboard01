@@ -581,7 +581,7 @@ function RecordGroup() {
 
 /**
  * The More menu: a waiting Update first, then Undo and Redo, Simple or
- * Advanced and Tips, New project…, Projects…, Export WAV…, MIDI & audio…
+ * Advanced and Tips, New project…, Projects…, Export…, MIDI & audio…
  * and Help…, and last the offline state as plain text. It lists everything
  * the strip has no room for at this width (the Simple · Advanced switch and
  * Export below 1366 px, Projects below 1440 px, MIDI & audio, and the Update
@@ -677,7 +677,7 @@ function MoreMenu(props: { onOpenLibrary(): void; onNewProject(): void; onOpenEx
             Projects…
           </MenuItem>
           <MenuItem icon="download" onSelect={then(props.onOpenExport)}>
-            Export WAV…
+            Export…
           </MenuItem>
           <MenuSeparator />
           <MenuItem icon="midi" onSelect={then(props.onOpenDevices)}>

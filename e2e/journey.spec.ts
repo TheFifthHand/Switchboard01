@@ -85,7 +85,7 @@ test('Jump In → groove → switch clips → Tone/Space → keyboard → record
 
   // Export is also in the More menu at every width (the strip shows it from 1366 px).
   await page.getByRole('button', { name: /^More:/ }).click();
-  await page.getByRole('menuitem', { name: /Export WAV/ }).click();
+  await page.getByRole('menuitem', { name: /^Export…/ }).click();
   const dialog = page.getByRole('dialog', { name: 'Export' });
   await expect(dialog).toBeVisible();
   // The dialog opens on the whole song when the song has loops (r6); the take is one choice away.

@@ -36,6 +36,7 @@ export const WALKTHROUGHS: readonly Walkthrough[] = [
       'Press Add loops (top right) and drag a scene onto the rows: each of its parts gets a loop. Or drag one part’s loop onto its own row.',
       'Drag a loop’s right edge to make it play longer: it snaps to the bars and repeats to fill them.',
       'Drag a loop to move it; hold Alt (or Ctrl) as you let go to drop a copy. Double-click an empty spot to pick a loop for it.',
+      'Double-click a loop to edit its notes in the editor under the song (E opens it, Esc closes it).',
       'Click a bar number to move the playhead, then press Play (or Space). Drag along the bar numbers to loop part of the song.',
       'Right-click a section (Intro, Drop …) for fades, a filter rise, Build up or Breakdown, each one Undo. Shape the song… adds an intro or an ending.',
     ],
@@ -47,8 +48,8 @@ export const WALKTHROUGHS: readonly Walkthrough[] = [
     steps: [
       'With music playing, press Performance to record what you do. Press it again to stop; the take appears in Song.',
       'Notes records what you play into the selected clip. One Undo removes the whole pass.',
-      'Open Mix and try a mastering preset and a loudness target. Compare A/B lets you hear the mix without mastering.',
-      'Press Export (or ⋯ → Export WAV…), choose the song, a scene or a performance, then Export WAV.',
+      'Open Mix, try a mastering preset in Finish, then Make it as loud as streaming songs.',
+      'Press Export (or ⋯ → Export…). The whole song is chosen for you: pick a format, then press Export.',
       'For a portable copy, open Projects → Export this project. The .omnisong.zip file opens in any browser.',
     ],
   },

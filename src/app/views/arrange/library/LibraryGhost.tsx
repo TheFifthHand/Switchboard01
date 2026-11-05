@@ -11,7 +11,7 @@ import type { CSSProperties } from 'react';
 import type { Clip } from '../../../../project/types';
 import { RegionFace } from '../RegionView';
 import laneStyles from '../SongView.module.css';
-import { libraryGhostStore } from './libraryDrag';
+import { libraryGhostStore } from '../laneStore';
 
 export function LibraryGhost() {
   const g = useStore(libraryGhostStore, (s) => s);

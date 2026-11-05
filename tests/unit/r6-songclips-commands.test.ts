@@ -316,7 +316,7 @@ describe('recordTakeIntoSong', () => {
     expect(store.historySize().undo).toBe(1);
     expect(store.undoLabel()).toBe('Record Bass');
     const p = store.getState();
-    expect(sketch(p)).toEqual(['t3:Bounce@0+4~0', 't3:Bass 1@4+8~0', 't3:Bass 2@12+4~0', 't3:Bounce@16+16~0']);
+    expect(sketch(p)).toEqual(['t3:Bounce@0+4~0', 't3:Bass take 1@4+8~0', 't3:Bass take 2@12+4~0', 't3:Bounce@16+16~0']);
     const [a, b] = p.tracks[2].songClips!;
     expect(a.bars).toBe(8);
     expect(b.bars).toBe(4);
@@ -340,14 +340,15 @@ describe('recordTakeIntoSong', () => {
 
   it('a short take makes one clip of 1, 2 or 4 bars; later notes make the take longer; names skip used ones', () => {
     const { store } = fresh();
-    cmd.addLoopToSong(store, 't5', 20, { bars: 1 });
+    cmd.addLoopToSong(store, 't5', 20, { bars: 1, name: 'Lead take 1' });
     const r = cmd.recordTakeIntoSong(store, { trackId: 't5', startBar: 0, bars: 1, notes: [note(TICKS_PER_BAR * 2 + 10, 60)], quantize: 'off' });
     expect(r.changed).toBe(true);
     const p = store.getState();
-    expect(songNames(p, 't5')).toEqual(['Lead 1', 'Lead 2']);
+    // Takes are named "<Part> take N", skipping names in use.
+    expect(songNames(p, 't5')).toEqual(['Lead take 1', 'Lead take 2']);
     expect(p.tracks[4].songClips![1]).toMatchObject({ bars: 4 });
     expect(p.tracks[4].songClips![1].notes[0].tick).toBe(TICKS_PER_BAR * 2 + 10);
-    expect(sketch(p)).toEqual(['t5:Lead 2@0+4~0', 't5:Lead 1@20+1~0']);
+    expect(sketch(p)).toEqual(['t5:Lead take 2@0+4~0', 't5:Lead take 1@20+1~0']);
   });
 
   it('an empty take leaves no step and says so', () => {
@@ -363,7 +364,7 @@ describe('recordTakeIntoSong', () => {
     const r = cmd.recordTakeIntoSong(store, { trackId: 't3', startBar: MAX_SONG_BARS - 2, bars: 1, notes: [note(0), note(TICKS_PER_BAR * 5)] });
     expect(r.changed).toBe(true);
     expect(r.message).toMatch(/1 note past the end/);
-    expect(sketch(store.getState())).toEqual([`t3:Bass 1@${MAX_SONG_BARS - 2}+2~0`]);
+    expect(sketch(store.getState())).toEqual([`t3:Bass take 1@${MAX_SONG_BARS - 2}+2~0`]);
     expectValid(store.getState());
   });
 });

@@ -24,7 +24,7 @@ Rules:
   `src/time/recordWindow.ts`, `src/time/songLoop.ts`, `src/audio/spectrum.ts` and view helpers such
   as the Song view's `arrange/songLayout.ts`, `songModel.ts`, `laneSelection.ts`,
   `laneGestures.ts`, `laneLoop.ts` and `laneKeys.ts`, `steps/model.ts` and Shape's `macroAssign`,
-  `cardKnob`, `squeeze`, `paramState`, `drumMix` and `bigKnobReach` are **pure TypeScript**: no
+  `paramState`, `drumMix` and `bigKnobReach` are **pure TypeScript**: no
   DOM, no Web Audio, no React. They run in Node unit tests.
 - `src/audio` never imports React, stores, or UI. It is driven by `setProject()` and timed calls.
 - Audio nodes, class instances and functions never enter the Project. The Project is JSON.
@@ -660,8 +660,8 @@ is the timing notes in `src/time/contracts.ts` and the header of `src/time/seque
   group. `usePlayhead(…, {cellTicks, follow})` lights the heard step from `clipPhase` +
   `audibleTick`.
 - **Shape:** pure, unit-tested helpers `macroAssign` (a new assignment never jumps the sound; an
-  option control or a value at an end of its travel waits for the big knob to pass), `cardKnob`,
-  `squeeze`, `paramState`, `drumMix` (the Drum mix's groups from the voices a part plays) and
+  option control or a value at an end of its travel waits for the big knob to pass),
+  `paramState`, `drumMix` (the Drum mix's groups from the voices a part plays) and
   `bigKnobReach` (heard, waiting for a switched-off effect, or moving nothing); `knobExtras` adds
   Alt+double-click and the knob menu with native listeners; `partSwitch.endKnobDrags` ends every
   knob drag (as a cancelled pointer) when the selected part changes, before React renders the new

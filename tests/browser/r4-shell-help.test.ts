@@ -129,7 +129,7 @@ describe('the More menu', () => {
     expect(usable.textContent).toContain('Show every control (Advanced)');
     await until(() => document.activeElement === usable, 'focus on the first usable action');
     const words = list.map((i) => i.textContent ?? '');
-    for (const w of ['Redo', 'Show every control (Advanced)', 'Tips', 'New project…', 'Projects…', 'Export WAV…', 'MIDI & audio…', 'Help…']) expect(words.some((x) => x.includes(w)), w).toBe(true);
+    for (const w of ['Redo', 'Show every control (Advanced)', 'Tips', 'New project…', 'Projects…', 'Export…', 'MIDI & audio…', 'Help…']) expect(words.some((x) => x.includes(w)), w).toBe(true);
     // The offline state: the menu's last line, a status (not a menu item), its words whole.
     const status = menu()!.querySelector<HTMLElement>('[role="status"]')!;
     expect(status.textContent).toContain('Offline ready');

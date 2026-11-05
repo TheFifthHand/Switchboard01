@@ -16,7 +16,7 @@
  * to add it at the playhead on its kind of part (the selected part when it
  * is one). The list shows LIBRARY_PAGE rows and "Show more" adds more.
  */
-import { memo, useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { memo, useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { ClipSketch, Icon, Tooltip } from '../../../../ui/components';
 import type { LibraryLoop, LoopRole } from '../../../../content/loops';
 import { TICKS_PER_BAR, type Id, type Project } from '../../../../project/types';
@@ -25,9 +25,9 @@ import { uiStore } from '../../../../state/uiStore';
 import { session, useProject } from '../../../instance';
 import { startPreview, stopPreview, usePreviewKey } from '../../../preview';
 import { useRuntime } from '../../../runtime';
+import type { Carry } from '../laneController';
 import { addLibraryLoopHere } from '../songActions';
 import { barsText, partHue } from '../songModel';
-import { carryLibraryLoop } from './libraryDrag';
 import { LIBRARY_PAGE, PART_CHIPS, libraryResults, loopRoleOf, loopTarget, realizeFor, styleChips, styleName, type LibraryQuery } from './libraryModel';
 import styles from './Library.module.css';
 
@@ -84,9 +84,11 @@ function notesFor(p: Project, loop: LibraryLoop, trackId: Id): ReturnType<typeof
 export interface LibraryPanelProps {
   /** Where Enter adds a loop: the playhead / song start point. */
   playheadBar(): number;
+  /** A row pressed: carry its loop onto the song (the timeline's LaneController). */
+  onCarry(e: ReactPointerEvent<HTMLElement>, item: Carry): void;
 }
 
-export const LibraryPanel = memo(function LibraryPanel({ playheadBar }: LibraryPanelProps) {
+export const LibraryPanel = memo(function LibraryPanel({ playheadBar, onCarry }: LibraryPanelProps) {
   const stored = useStore(libraryQueryStore, (s) => s);
   const q = stored ?? initialQuery();
   const set = (next: Partial<LibraryQuery>) => libraryQueryStore.setState({ ...q, ...next });
@@ -173,7 +175,7 @@ export const LibraryPanel = memo(function LibraryPanel({ playheadBar }: LibraryP
           Show every loop
         </button>
       )}
-      <LibraryRows loops={visible} onRowKey={onRowKey} />
+      <LibraryRows loops={visible} onRowKey={onRowKey} onCarry={onCarry} />
       {results.length > shown && (
         <button type="button" className={styles.more} onClick={() => setShown((n) => n + LIBRARY_PAGE)} data-testid="library-more">
           Show {Math.min(LIBRARY_PAGE, results.length - shown)} more
@@ -183,7 +185,7 @@ export const LibraryPanel = memo(function LibraryPanel({ playheadBar }: LibraryP
   );
 });
 
-function LibraryRows({ loops, onRowKey }: { loops: readonly LibraryLoop[]; onRowKey(e: KeyboardEvent<HTMLLIElement>, loop: LibraryLoop): void }) {
+function LibraryRows({ loops, onRowKey, onCarry }: { loops: readonly LibraryLoop[]; onRowKey(e: KeyboardEvent<HTMLLIElement>, loop: LibraryLoop): void; onCarry: LibraryPanelProps['onCarry'] }) {
   // The rows follow the parts, the key and the selection (where Enter puts a loop and ▶ plays it).
   const p = useProject((x) => x);
   const selected = useStore(uiStore, (s) => s.selectedTrackId);
@@ -208,7 +210,7 @@ function LibraryRows({ loops, onRowKey }: { loops: readonly LibraryLoop[]; onRow
             aria-label={`${loop.name}, ${meta}${ok ? `, for ${target.name}` : ''}. Drag it onto a part, or press Enter to add it at the playhead${ok ? ` on ${target.name}` : ''}.`}
             onPointerDown={(e) => {
               if ((e.target as Element).closest('button')) return;
-              carryLibraryLoop(e, loop, ok ? target.hue : 210);
+              onCarry(e, { kind: 'library', loop, name: loop.name, bars: loop.bars, hue: ok ? target.hue : 210 });
             }}
             onKeyDown={(e) => onRowKey(e, loop)}
           >

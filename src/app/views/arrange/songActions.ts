@@ -23,6 +23,7 @@ import type { Edge, RegionClipboard, ShapeKind, SongEditResult } from '../../../
 import { editorStore } from './editorStore';
 import { clearSelection, setSelection } from './laneStore';
 import { freshName, libraryLoop, loopTarget, partProblem, realizeFor } from './library/libraryModel';
+import { quietly } from './sceneOffer';
 import { barsText, scenePlaces } from './songModel';
 
 const project = () => session.store.getState();
@@ -252,7 +253,7 @@ export function putLoopOnPad(trackId: Id, clipId: Id): (songCmd.CommandResult & 
   const slot = t ? slotOfClip(t, clipId) : -1;
   if (!t || !isSongSlot(slot)) return null;
   const name = clipById(t, clipId)?.name ?? 'the loop';
-  const r = songCmd.copyLoopToPad(session.store, trackId, slot);
+  const r = quietly(() => songCmd.copyLoopToPad(session.store, trackId, slot));
   if (!session.accepted(r) || r.slot === undefined) return r;
   const scene = p.scenes[r.slot]?.name || `scene ${r.slot + 1}`;
   said(`Put a copy of ${name} on the ${t.name} pad in ${scene}: play it live in Play`, r);

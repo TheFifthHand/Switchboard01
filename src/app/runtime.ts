@@ -62,6 +62,12 @@ export interface RuntimeState {
   /** One-line status message shown as a toast (e.g. "Variation: 5 notes changed" [Undo]). */
   notice: Notice | null;
   /**
+   * A suggestion with a button of its own ("Add Bass 2 to the song where
+   * Groove plays?" [Add]), shown as a toast beside the notices (it does not
+   * replace them). Null (or absent): none.
+   */
+  offer?: Offer | null;
+  /**
    * Record Notes is waiting for its clip to start (the next bar, or the end
    * of the count-in): the transport tick recording starts at, so the
    * transport can count the beats down; null (or absent) when not waiting.
@@ -101,6 +107,14 @@ export interface Notice {
   entry?: number;
 }
 
+/** See RuntimeState.offer: the words, the button's label and what it does. */
+export interface Offer {
+  id: number;
+  text: string;
+  label: string;
+  run(): void;
+}
+
 export const EMPTY_TRACK_RUNTIME: TrackRuntime = { playingSlot: null, queued: null };
 
 export const runtimeStore = createStore<RuntimeState>({
@@ -122,6 +136,7 @@ export const runtimeStore = createStore<RuntimeState>({
   preview: false,
   held: {},
   notice: null,
+  offer: null,
   recordStartsAtTick: null,
   recordTargetAudible: true,
   starterReplaced: null,
@@ -165,6 +180,19 @@ export function notify(text: string, tone: 'info' | 'warn' | 'error' = 'info', a
   // Nothing to undo (or redo): no button.
   const tied = action && step !== null ? { action, ...(step !== undefined ? { entry: step } : {}) } : {};
   patchRuntime({ notice: { id: noticeCounter, text, tone, ...tied } });
+}
+
+let offerCounter = 0;
+
+/** Show a suggestion with its own button (see RuntimeState.offer); a newer one replaces it. */
+export function offer(text: string, label: string, run: () => void): void {
+  offerCounter += 1;
+  patchRuntime({ offer: { id: offerCounter, text, label, run } });
+}
+
+/** Take the suggestion showing now away (its subject is gone). */
+export function withdrawOffer(): void {
+  if (runtimeStore.getState().offer) patchRuntime({ offer: null });
 }
 
 /** The transport's state in one word, as the transport shows it. */

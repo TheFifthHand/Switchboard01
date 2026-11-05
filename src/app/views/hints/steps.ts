@@ -384,7 +384,7 @@ export const HINT_STEPS: readonly HintStep[] = [
     track: 'song',
     // An empty song has nothing to export yet.
     ready: (c) => c.hasRegions !== false,
-    text: (c) => (c.exportAt === 'menu' ? 'Export your song: ⋯ at the top right, then Export WAV….' : 'Press Export, at the top right, to save your song as a WAV file.'),
+    text: (c) => (c.exportAt === 'menu' ? 'Export your song: ⋯ at the top right, then Export….' : 'Press Export, at the top right, to save your song as a WAV file.'),
     more: () => 'In Song it starts from the song.',
     here: () => true,
     // An export finished: a WAV file was made.

@@ -231,7 +231,7 @@ describe('Offline readiness in the transport', () => {
       buttonNamed(/^More:/, bar())!.click();
     });
     const items = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role^="menuitem"]')].map((el) => el.textContent ?? '');
-    for (const word of ['Undo', 'Redo', 'Projects…', 'Export WAV…', 'Show every control (Advanced)']) expect(items.some((t) => t.includes(word)), `${word} in ${items.join(' / ')}`).toBe(true);
+    for (const word of ['Undo', 'Redo', 'Projects…', 'Export…', 'Show every control (Advanced)']) expect(items.some((t) => t.includes(word)), `${word} in ${items.join(' / ')}`).toBe(true);
     // The offline state is the menu's last line: a status, not an item (it cannot be chosen or focused).
     const menuText = document.querySelector<HTMLElement>('[role="menu"]')?.textContent ?? '';
     expect(menuText, 'Offline ready in More').toContain('Offline ready');

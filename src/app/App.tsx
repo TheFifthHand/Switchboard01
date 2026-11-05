@@ -13,7 +13,7 @@ import { BUNDLE_EXTENSION, LEGACY_BUNDLE_EXTENSIONS } from '../persistence/bundl
 import { session, useProject, useUi } from './instance';
 import { IDLE_AUTOSAVE_STATE, type AutosaveState } from '../persistence/autosave';
 import { createStore, useStore } from '../state/store';
-import { notify, runtimeStore, setNoticeHistory, useRuntime, type NoticeAction } from './runtime';
+import { notify, runtimeStore, setNoticeHistory, useRuntime, withdrawOffer, type NoticeAction } from './runtime';
 import type { BootInfo } from './session';
 import { TransportBar, useNothingToPlay } from './views/TransportBar';
 import { PlayView } from './views/PlayView';
@@ -28,6 +28,7 @@ import { SEEN_VERSION_KEY, notesToShow } from './views/hints/guides';
 import { useAudioInput } from './views/devices';
 import { ShapeView } from './views/shape/ShapeView';
 import { ArrangeView } from './views/arrange/ArrangeView';
+import { watchSceneOffers } from './views/arrange/sceneOffer';
 import { MixView } from './views/mix/MixView';
 import { downloadBlob } from './download';
 import type { View } from '../state/uiStore';
@@ -153,6 +154,35 @@ function Notices() {
       }),
     [toasts],
   );
+  return null;
+}
+
+/** A suggestion with its own button (runtime offer), in a toast of its own beside the notices. */
+function Offers() {
+  const current = useRuntime((s) => s.offer ?? null);
+  const toasts = useToasts();
+  // A pad loop made in a scene the song plays: offer to add it there too.
+  useEffect(() => watchSceneOffers(), []);
+  useEffect(() => {
+    if (!current) {
+      toasts.dismiss('offer');
+      return;
+    }
+    toasts.show({
+      id: 'offer',
+      tone: 'info',
+      message: current.text,
+      action: {
+        label: current.label,
+        onAction: () => {
+          // Once: the button goes with the toast.
+          if (runtimeStore.getState().offer?.id === current.id) withdrawOffer();
+          current.run();
+        },
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.id]);
   return null;
 }
 
@@ -756,6 +786,7 @@ export function App({ boot }: { boot: BootInfo }) {
         />
         <HelpDialog open={help !== null} initialTab={help ?? undefined} onClose={() => setHelp(null)} onShowGuide={showGuide} onShowHints={showHints} />
         <Notices />
+        <Offers />
         <SaveFailureToast />
         <DocumentTitle welcome={welcome} />
         <LeaveGuard exportOpen={exportOpen} />

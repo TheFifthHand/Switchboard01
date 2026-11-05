@@ -227,7 +227,7 @@ describe('Transport strip', () => {
     expect(uiStore.getState().tipsEnabled).toBe(false);
     expect(document.querySelector('[role="menu"][aria-label="More"]')).toBeNull();
     click(more);
-    click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.includes('Export WAV'))!);
+    click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.includes('Export…'))!);
     click(more);
     click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.includes('Projects'))!);
     expect(opened).toEqual(['export', 'library']);

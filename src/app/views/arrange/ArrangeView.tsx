@@ -82,6 +82,7 @@ export function ArrangeView() {
     setBrowserPref(open);
     writeBrowserOpen(open);
   }, []);
+  const openBrowserNow = useCallback(() => onBrowser(true), [onBrowser]);
   const onTakesOpen = useCallback(
     (open: boolean) => {
       if (!hasTakes) {
@@ -99,7 +100,7 @@ export function ArrangeView() {
       <section className={styles.song} aria-labelledby="song-title" data-folded={openTake ? '' : undefined}>
         <SongHeader handle={handleNow} follow={follow} onFollow={onFollow} browserOpen={browserOpen} onBrowser={onBrowser} folded={!!openTake} onUnfold={() => setOpenTake(null)} status={status} />
         <div className={styles.body} hidden={!!openTake}>
-          <SongTimeline follow={follow} handleRef={handle} onStatus={setStatus} />
+          <SongTimeline follow={follow} handleRef={handle} onStatus={setStatus} openBrowser={openBrowserNow} />
           {browserOpen && <LoopBrowser onCarry={(e, item) => handle.current?.carry(e, item)} playheadBar={() => handle.current?.playheadBar() ?? 0} onClose={() => onBrowser(false)} />}
         </div>
         {!openTake && <LoopEditorPane />}

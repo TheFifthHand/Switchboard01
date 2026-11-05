@@ -96,6 +96,8 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
       { id: 'section-move', keys: ['Alt+← →'], does: 'On a section name: move the section one place earlier or later.' },
       { id: 'section-drag', keys: ['drag', 'Alt+drag', 'Ctrl+drag'], does: 'A section name: drag to reorder; Alt places it freely; Ctrl drops a copy.' },
       { id: 'song-zoom', keys: ['Ctrl+wheel'], does: 'Zoom the song around the pointer (the wheel alone scrolls it).' },
+      { id: 'song-library', keys: ['Enter', '↑ ↓'], does: 'In the loop library: add the loop at the playhead; go to the loop above or below.' },
+      { id: 'song-browser-tabs', keys: ['← →'], does: 'On the loop browser’s tabs: switch between This song and Library.' },
     ],
   },
   {

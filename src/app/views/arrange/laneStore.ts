@@ -112,5 +112,13 @@ export function usePxPerBar(): number {
 /** The region under the pointer (its ⋯ shows), or null. */
 export const hoverStore = createStore<Id | null>(null);
 
+/** What LibraryGhost draws over the rows while a library loop is carried (it has no clip in the project yet). */
+export type LibraryGhost =
+  | { kind: 'loop'; trackId: Id; row: number; hue: number; start: number; bars: number; name: string; notes: readonly { tick: number; pitch: number; velocity: number; duration: number }[]; drums: boolean }
+  /** Over a part of the wrong kind: what the loop needs, at the pointer (timeline px). */
+  | { kind: 'no'; text: string; x: number; y: number };
+
+export const libraryGhostStore = createStore<LibraryGhost | null>(null);
+
 /** The loop browser ("Add loops") is open: the "Try this" song steps word themselves by it. */
 export const browserOpenStore = createStore<boolean>(false);

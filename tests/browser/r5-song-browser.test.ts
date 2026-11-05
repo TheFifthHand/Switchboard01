@@ -1,12 +1,13 @@
 /**
  * Building a song from the loop browser in real Chromium with a real mouse:
- * the empty song's one button, a scene card dragged onto the rows (every part
+ * the empty song's card, a scene card dragged onto the rows (every part
  * with a clip in it gets a loop there, plus a section named after it), a part's
  * loop that lands only on its own row, a double-click on an empty spot that
  * picks a loop for it, and Enter on a card or chip (the keyboard way).
  */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { emptySongText } from '../../src/app/views/arrange/library/EmptySong';
 import { ppbStore } from '../../src/app/views/arrange/laneStore';
 import { rowBars } from '../../src/project/arrangement';
 import type { Project } from '../../src/project/types';
@@ -49,10 +50,11 @@ function chip(clipId: string): HTMLElement {
 }
 
 describe('an empty song', () => {
-  it('says what to do in one line, with one button that makes a song from the scenes; the loop browser is open', async () => {
+  it('says what to do in one line, with a button that makes a song from the scenes; the loop browser is open', async () => {
     await openSong(1366, 768, emptySong);
     const empty = document.querySelector<HTMLElement>('[data-testid="song-empty"]')!;
-    expect(empty.textContent).toContain('Drag a scene or a loop here — or');
+    expect(empty.textContent).toContain(emptySongText(true));
+    expect(empty.querySelector('[data-testid="empty-open-library"]')).toBeTruthy();
     expect(browser()).toBeTruthy();
     const before = undoCount();
     await clickAt(centre(document.querySelector('[data-testid="empty-make-song"]')!));

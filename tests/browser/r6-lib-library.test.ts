@@ -22,7 +22,6 @@ import { previewStore, stopPreview } from '../../src/app/preview';
 import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { EmptySong } from '../../src/app/views/arrange/library/EmptySong';
 import { addClipWhereScenePlays } from '../../src/app/views/arrange/songActions';
-import { cancelLibraryCarry } from '../../src/app/views/arrange/library/libraryDrag';
 import { libraryQueryStore } from '../../src/app/views/arrange/library/LibraryPanel';
 import { editorStore } from '../../src/app/views/arrange/editorStore';
 import { browserTabStore } from '../../src/app/views/arrange/LoopBrowser';
@@ -77,7 +76,6 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   stopPreview();
-  cancelLibraryCarry();
   await teardownSong();
 });
 
@@ -393,11 +391,12 @@ describe('an empty spot on a row', () => {
     act(() => ppbStore.setState(32));
     await settle();
     const lead = trackId('Lead');
-    await doubleClickAt({ x: barX(6) + 10, y: rowY(lead) });
+    // Left of the empty song's card (its buttons sit across the middle rows).
+    await doubleClickAt({ x: barX(2) + 10, y: rowY(lead) });
     const key = document.querySelector<HTMLElement>('[role="menu"] [data-row="new-loop"][data-bars="4"]')!;
     expect(key.getAttribute('aria-label')).toBe('New empty loop, 4 bars');
     await clickAt(centre(key));
-    expect(regions()).toMatchObject([{ trackId: lead, start: 6, bars: 4 }]);
+    expect(regions()).toMatchObject([{ trackId: lead, start: 2, bars: 4 }]);
     const clip = songClipsOf('Lead')[0];
     expect(clip).toMatchObject({ name: 'Lead 1', bars: 4, notes: [] });
     expect(editorStore.getState()).toMatchObject({ trackId: lead, clipId: clip.id });

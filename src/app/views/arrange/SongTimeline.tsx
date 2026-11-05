@@ -33,7 +33,7 @@
  * ruler or a section, or a Cut, as much as after a click on a loop.
  */
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type Ref } from 'react';
-import { Button, useElementSize, useRafLoop } from '../../../ui/components';
+import { useElementSize, useRafLoop } from '../../../ui/components';
 import { regionEnd, songBars as projectSongBars, timelineBars as projectTimelineBars } from '../../../project/arrangement';
 import type { Id, Project } from '../../../project/types';
 import { useStore } from '../../../state/store';
@@ -44,6 +44,7 @@ import { MoreIcon, anchorFromContextEvent, anchorFromElement, isEchoOfKeyboardMe
 import { rangeText } from './songModel';
 import { isMac } from '../hints/shortcuts';
 import { DragOverlay } from './DragOverlay';
+import { EmptySong } from './library/EmptySong';
 import { openLoopEditor } from './editorStore';
 import { LaneController, type Carry, type LaneHost } from './laneController';
 import type { BarRange } from './laneGestures';
@@ -93,10 +94,9 @@ const selectHasScenes = (p: Project) => p.tracks.some((t) => t.clips.some((c) =>
 
 /**
  * What the Song view keeps while another view is open (it unmounts): the
- * project it showed, where it was scrolled to, and a loop to put keyboard
- * focus back on (Back to Song after Edit notes).
+ * project it showed and where it was scrolled to.
  */
-const kept: { projectId: string | null; left: number; top: number; focus: Id | null } = { projectId: null, left: 0, top: 0, focus: null };
+const kept: { projectId: string | null; left: number; top: number } = { projectId: null, left: 0, top: 0 };
 
 /** Elements that take the lane's keys for themselves while they have focus. */
 const OWN_KEYS = 'input, textarea, select, [contenteditable="true"], [role="menu"], [role="dialog"], [role="listbox"], [role="slider"], [role="spinbutton"], [role="combobox"], [role="tablist"], [data-own-keys]';
@@ -107,7 +107,7 @@ export function currentBar(): number {
   return live !== null ? Math.max(0, Math.floor(live + 1e-6)) : Math.max(0, Math.round(runtimeStore.getState().songCursor));
 }
 
-export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean; handleRef: Ref<TimelineHandle>; onStatus(text: string): void }) {
+export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { follow: boolean; handleRef: Ref<TimelineHandle>; onStatus(text: string): void; /** Shows the loop browser (the empty song's Open the loop library). */ openBrowser?: () => void }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const originRef = useRef<HTMLDivElement>(null);
@@ -196,7 +196,7 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
   }, [ppb]);
 
   // A project opens: its remembered zoom, else the scale that shows the whole song; nothing selected. Back from
-  // another view with the same project: as it was (zoom, scroll, selection), keyboard focus back on its loop.
+  // another view with the same project: as it was (zoom, scroll, selection).
   const fittedFor = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (!size.width || fittedFor.current === projectId) return;
@@ -207,13 +207,9 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
         sc.scrollLeft = kept.left;
         sc.scrollTop = kept.top;
       }
-      const back = kept.focus;
-      kept.focus = null;
-      if (back) focusRegion(back, false);
       return;
     }
     kept.projectId = projectId;
-    kept.focus = null;
     // A project's zoom is kept from the first visit on (fitted then), so the loops and their edges are where they were left.
     const remembered = readZoom(projectId);
     const p = session.store.getState();
@@ -878,30 +874,11 @@ export function SongTimeline({ follow, handleRef, onStatus }: { follow: boolean;
           <div ref={lineRef} className={styles.playhead} data-on={songPlaying || undefined} aria-hidden="true" />
         </div>
       </div>
-      {!hasRegions && <EmptyNote hasScenes={hasScenes} />}
+      {!hasRegions && <EmptySong hasScenes={hasScenes} openBrowser={openBrowser} />}
       {menu?.kind === 'region' && menuRegion && <RegionMenu region={menuRegion} targets={menuTargets} clickedBar={menu.bar} anchor={menu.anchor} returnFocus={menu.returnFocus} ignore={menu.viaMore ? moreRef.current : null} host={menuHost} onClose={() => setMenu(null)} />}
       {menu?.kind === 'section' && menuSection && <SectionMenu section={menuSection} anchor={menu.anchor} returnFocus={menu.returnFocus} host={menuHost} onClose={() => setMenu(null)} />}
       {menu?.kind === 'time' && <TimeMenu bar={menu.bar} range={range} anchor={menu.anchor} returnFocus={menu.returnFocus} onClose={() => setMenu(null)} />}
       {menu?.kind === 'picker' && <LoopPicker trackId={menu.trackId} bar={menu.bar} anchor={menu.anchor} returnFocus={menu.returnFocus} onClose={() => setMenu(null)} />}
-    </div>
-  );
-}
-
-/**
- * The empty song (no loops, whatever section labels are left): one line and
- * one button. It steps aside while something is dragged in.
- */
-function EmptyNote({ hasScenes }: { hasScenes: boolean }) {
-  const dragging = useStore(dragStore, (d) => d !== null);
-  if (dragging) return null;
-  return (
-    <div className={styles.empty} data-testid="song-empty">
-      <p className={styles.emptyText}>{hasScenes ? 'The song is empty. Drag a scene or a loop here — or' : 'The song is empty. Make some loops on the pads in Play, then drag them here.'}</p>
-      {hasScenes && (
-        <Button variant="primary" icon="sparkle" onClick={() => act.fillFromScenes()} data-testid="empty-make-song">
-          Make a song from my scenes
-        </Button>
-      )}
     </div>
   );
 }
@@ -968,7 +945,6 @@ function HoverMore({ menuFor, onToggle, buttonRef }: { menuFor: Id | null; onTog
 /** Clear a drag view left behind (tests). */
 export function resetLaneState(): void {
   kept.projectId = null;
-  kept.focus = null;
   kept.left = 0;
   kept.top = 0;
   dragStore.setState(null);

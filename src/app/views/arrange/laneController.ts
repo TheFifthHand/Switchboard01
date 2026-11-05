@@ -44,7 +44,8 @@
  */
 import { clipBarsOf, regionEnd, reorderSection, reorderTarget, type Edge } from '../../../project/arrangement';
 import { TOUCH_HOLD_MS, TOUCH_SLOP_PX } from '../../../ui/components';
-import type { Id, Project, SongRegion } from '../../../project/types';
+import type { LibraryLoop } from '../../../content/loops';
+import { MAX_SONG_BARS, type Id, type Project, type SongRegion } from '../../../project/types';
 import { selectTrack } from '../../../state/uiStore';
 import {
   DRAG_SLOP_PX,
@@ -66,11 +67,13 @@ import {
   type DragPreview,
 } from './laneGestures';
 import { EMPTY_SELECTION, clickSelect, marqueeSelect, pressSelect, regionsInBox, type LaneSelection } from './laneSelection';
-import { carriedStore, dragStore, rangeStore, selectionStore, setSelection, type DragView } from './laneStore';
+import { carriedStore, dragStore, libraryGhostStore, rangeStore, selectionStore, setSelection, type DragView } from './laneStore';
 import { reorderSectionTo } from './laneEdits';
-import { addLoop, addScene, moveLoops, moveSectionBy, resizeLoops, resizeSectionBy } from './songActions';
+import { partProblem, partProblemShort, realizeFor } from './library/libraryModel';
+import { notify } from '../../runtime';
+import { addLibraryLoop, addLoop, addScene, moveLoops, moveSectionBy, resizeLoops, resizeSectionBy } from './songActions';
 import { barAt, edgeAt, rowAt, rulerBarAt, xToBar } from './songLayout';
-import { lengthBadge, moveBadge, startBadge } from './songModel';
+import { lengthBadge, moveBadge, partHue, startBadge } from './songModel';
 
 /**
  * The drag's cursor (grabbing, ↔, not allowed), shown by one transparent
@@ -122,8 +125,15 @@ export interface LaneHost {
   busy(on: boolean): void;
 }
 
-/** Something picked up in the loop browser. */
-export type Carry = { kind: 'scene'; row: number; name: string; bars: number } | { kind: 'loop'; trackId: Id; clipId: Id; name: string; bars: number; hue: number };
+/**
+ * Something picked up in the loop browser: a scene, a part's loop, or a
+ * library loop (it goes on any part that can play it; until the drop it has
+ * no clip in the project, so LibraryGhost draws it).
+ */
+export type Carry =
+  | { kind: 'scene'; row: number; name: string; bars: number }
+  | { kind: 'loop'; trackId: Id; clipId: Id; name: string; bars: number; hue: number }
+  | { kind: 'library'; loop: LibraryLoop; name: string; bars: number; hue: number };
 
 type Gesture =
   | {
@@ -166,7 +176,7 @@ interface Active {
   /** What the overlay shows now (its key, so unchanged moves publish nothing). */
   key: string;
   /** The last preview (committed at the drop). `before`: a section reorder (null: to the end). */
-  last: { delta: number; copy: boolean; range?: BarRange; drop?: { bar: number; ok: boolean }; before?: Id | null } | null;
+  last: { delta: number; copy: boolean; range?: BarRange; drop?: { bar: number; ok: boolean; trackId?: Id }; before?: Id | null } | null;
   captured: Element | null;
   /**
    * The view may scroll by itself near its edges: at once for gestures that
@@ -523,6 +533,10 @@ export class LaneController {
       }
       case 'carry': {
         const item = g.item;
+        if (item.kind === 'library') {
+          this.carryLibrary(item, p, ppb, rowH);
+          return;
+        }
         const over = this.overRows(a.cx, a.cy);
         const bar = barAt(this.tx(a.cx), ppb);
         const row = rowAt(this.ty(a.cy), rowH);
@@ -559,6 +573,46 @@ export class LaneController {
         return;
       }
     }
+  }
+
+  /**
+   * A library loop over the rows: over a part that can play it, the row
+   * lights and the loop is drawn where it would land ("Bar 9"; what it would
+   * cut short drawn cut); over a part of the wrong kind the pointer says
+   * what it needs ("Needs a drum part").
+   */
+  private carryLibrary(item: Extract<Carry, { kind: 'library' }>, p: Project, ppb: number, rowH: number): void {
+    const a = this.a!;
+    const over = this.overRows(a.cx, a.cy);
+    const row = rowAt(this.ty(a.cy), rowH);
+    const t = over ? p.tracks.find((x) => x.id === this.host.tracks()[row]) : undefined;
+    const problem = t ? partProblem(item.loop, t) : null;
+    carriedStore.setState({ x: a.cx, y: a.cy, text: item.name, hue: item.hue, overRows: !!t && !problem });
+    if (!a.touch) dragCursor(t && problem ? 'not-allowed' : 'grabbing');
+    if (!t) {
+      a.last = null;
+      if (a.key !== '') {
+        this.publish(null, '');
+        libraryGhostStore.setState(null);
+      }
+      return;
+    }
+    if (problem) {
+      a.last = { delta: 0, copy: false, drop: { bar: 0, ok: false, trackId: t.id } };
+      this.publish({ kind: 'drop' }, `no|${t.id}`);
+      libraryGhostStore.setState({ kind: 'no', text: partProblemShort(item.loop), x: this.tx(a.cx), y: this.ty(a.cy) });
+      return;
+    }
+    const start = Math.max(0, Math.min(barAt(this.tx(a.cx), ppb), MAX_SONG_BARS - item.bars));
+    a.last = { delta: 0, copy: false, drop: { bar: start, ok: true, trackId: t.id } };
+    const key = `ok|${t.id}|${start}`;
+    if (key === a.key) return;
+    const placed = { id: 'library:drop', trackId: t.id, clipId: 'library:drop', start, bars: item.bars, offset: 0 };
+    const pv = previewPlace(p, p.arrangement.regions, [placed]);
+    // The new loop is drawn by LibraryGhost, not by the overlay.
+    const shown = pv.shown.filter((r) => r.id !== placed.id);
+    this.publish({ kind: 'drop', preview: { ...pv, shown, moved: [] }, ownRow: t.id, touches: pv.touches, badge: { text: `Bar ${start + 1}`, x: start * ppb, row, align: 'start' } }, key);
+    libraryGhostStore.setState({ kind: 'loop', trackId: t.id, row, hue: partHue(row), start, bars: item.bars, name: item.name, notes: realizeFor(p, item.loop, t)?.notes ?? [], drums: item.loop.part.kind === 'drums' });
   }
 
   private publish(view: DragView | null, key?: string): void {
@@ -651,6 +705,18 @@ export class LaneController {
         else moveSectionBy(g.id, last.delta, last.copy);
         return;
       case 'carry':
+        if (g.item.kind === 'library') {
+          const drop = last?.drop;
+          if (!drop?.trackId) return;
+          if (drop.ok) addLibraryLoop(g.item.loop.id, drop.trackId, drop.bar);
+          else {
+            // Dropped on a part of the wrong kind: why, in full.
+            const t = this.host.project().tracks.find((x) => x.id === drop.trackId);
+            const problem = t ? partProblem(g.item.loop, t) : null;
+            if (problem) notify(problem, 'warn');
+          }
+          return;
+        }
         if (!last?.drop?.ok) return;
         if (g.item.kind === 'scene') addScene(g.item.row, last.drop.bar);
         else addLoop(g.item.trackId, g.item.clipId, last.drop.bar);
@@ -742,6 +808,7 @@ export class LaneController {
     }
     if (dragStore.getState()) dragStore.setState(null);
     if (carriedStore.getState()) carriedStore.setState(null);
+    if (libraryGhostStore.getState()) libraryGhostStore.setState(null);
     if (a.started) this.host.busy(false);
   }
 }

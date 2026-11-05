@@ -177,7 +177,7 @@ export function toggleStep(store: ProjectStore, trackId: Id, slot: number, stepI
   const note: Note = { id: uid('n'), tick, pitch, velocity: clamp(velocity, 0, 1), duration: TICKS_PER_STEP };
   if (!clip) {
     const bars = Math.max(1, Math.ceil((stepIndex + 1) / STEPS_PER_BAR)) as ClipBars;
-    const fresh: Clip = { id: uid('clip'), name: defaultClipName(p, slot), bars, notes: [note] };
+    const fresh: Clip = { id: uid('clip'), name: defaultClipName(p, slot, trackId), bars, notes: [note] };
     const r = run(store, 'notes:Add step', (d) => {
       draftTrack(d, trackId).clips[slot] = fresh;
     });
@@ -464,7 +464,7 @@ export function addRecordedNotes(store: ProjectStore, trackId: Id, slot: number,
         c.notes = opts.mode === 'replace' ? added : [...c.notes.filter((n) => !addedKeys.has(keyOf(n))), ...added];
       }, opts.gesture)
     : run(store, label, (d) => {
-        draftTrack(d, trackId).clips[slot] = { id: uid('clip'), name: defaultClipName(p, slot), bars, notes: added };
+        draftTrack(d, trackId).clips[slot] = { id: uid('clip'), name: defaultClipName(p, slot, trackId), bars, notes: added };
       }, opts.gesture);
   return { ...r, added: added.length, message };
 }
@@ -945,7 +945,7 @@ export function paintSteps(
     }
     const clipId = uid('clip');
     const r = run(store, 'notes:Paint steps', (d) => {
-      draftTrack(d, trackId).clips[slot] = { id: clipId, name: defaultClipName(p, slot), bars: reach, notes: fresh };
+      draftTrack(d, trackId).clips[slot] = { id: clipId, name: defaultClipName(p, slot, trackId), bars: reach, notes: fresh };
     }, gesture, display);
     if (r.changed && gesture !== undefined) paintCreated.set(store, { gesture, clipId });
     return { ...r, painted: r.changed ? add.length : 0 };
@@ -999,7 +999,7 @@ export function fillSound(
         draftClip(d, trackId, slot).notes.push(...fresh);
       }, undefined, display)
     : run(store, 'notes:Fill sound', (d) => {
-        draftTrack(d, trackId).clips[slot] = { id: uid('clip'), name: defaultClipName(p, slot), bars: 1, notes: fresh };
+        draftTrack(d, trackId).clips[slot] = { id: uid('clip'), name: defaultClipName(p, slot, trackId), bars: 1, notes: fresh };
       }, undefined, display);
   return { ...r, added: r.changed ? add.length : 0 };
 }
