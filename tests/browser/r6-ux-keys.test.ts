@@ -15,7 +15,7 @@ import { editorStore } from '../../src/app/views/arrange/editorStore';
 import { ppbStore } from '../../src/app/views/arrange/laneStore';
 import type { Project } from '../../src/project/types';
 import { closeShell, keys, openShell, until } from './r4-shell-harness';
-import { centre, clickAt, on, openSong, press, project, region, regionEl, resetSong, settle, teardownSong, waitFor } from './r5-song-helpers';
+import { centre, clickAt, on, openSong, press, project, region, regionEl, resetSong, settle, teardownSong, waitFor, advancedMode } from './r5-song-helpers';
 
 /** What the transport was asked to do (the real one would start audio). */
 let calls: string[] = [];
@@ -80,6 +80,8 @@ describe('the Song view’s editor pane from the keyboard', () => {
   beforeEach(async () => {
     localStorage.removeItem('switchboard01.songEditorHeight');
     await resetSong();
+    // Round 7: in Simple a click on a loop opens it (r7-home-song); E is tested where a click only selects.
+    advancedMode();
     await openSong(1366, 768, song);
     act(() => ppbStore.setState(32));
     await settle();

@@ -229,6 +229,8 @@ describe('Ctrl and Alt', () => {
 
 describe('what an edit leaves selected', () => {
   it('a scene drop leaves nothing selected: stretching one of its loops stretches that one; several say how many', async () => {
+    // Scene cards (the browser's This song tab): Advanced since round 7.
+    advancedMode();
     await open((p) => {
       p.arrangement.regions = [];
       p.arrangement.sections = [];
@@ -276,6 +278,8 @@ describe('what an edit leaves selected', () => {
 
 describe('carrying a part’s loop', () => {
   it('over another part’s row, "Not this part" shows at the pointer only', async () => {
+    // A part's loop chips (the browser's This song tab): Advanced since round 7.
+    advancedMode();
     await open((p) => {
       p.arrangement.regions = [];
       p.arrangement.sections = [];
