@@ -72,6 +72,11 @@ export interface DrumStepsProps {
   span?: number;
   /** The big pads of the selected sound under the grid (default on; the Song view's editor leaves them out). */
   pads?: boolean;
+  /**
+   * Only the grid (the Song screen's editor in Simple): the eight main sounds (and any the loop uses), no
+   * "Show all 16" and no velocity lane. Advanced shows everything whatever this says.
+   */
+  lean?: boolean;
 }
 
 /** "step 5" on one bar; "bar 2, step 5" with bars side by side. */
@@ -335,7 +340,7 @@ const StepPad = memo(function StepPad(props: { step: number; span: number; veloc
 /* Editor                                                              */
 /* ------------------------------------------------------------------ */
 
-export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = true }: DrumStepsProps) {
+export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = true, lean = false }: DrumStepsProps) {
   const voice = useUi((s) => drumVoiceFor(s, trackId));
   const names = useMemo(() => getKitVoiceNames(kitId), [kitId]);
   const spec = useMemo(() => spanSpec(STEP_GRID, span), [span]);
@@ -360,7 +365,8 @@ export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = t
   // does not pull its row away).
   const advanced = useUi((s) => s.uiMode === 'advanced');
   const allSounds = useStore(allSoundsStore, (s) => s);
-  const showAll = advanced || allSounds;
+  const bare = lean && !advanced;
+  const showAll = advanced || (allSounds && !bare);
   const sticky = useRef<{ clipId: Id; voices: Set<number> }>({ clipId: '', voices: new Set() });
   if (sticky.current.clipId !== clip.id) sticky.current = { clipId: clip.id, voices: new Set() };
   const usedKey = useMemo(() => [...new Set(clip.notes.map((n) => Math.round(n.pitch)))].sort((x, y) => x - y).join(','), [clip.notes]);
@@ -631,7 +637,7 @@ export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = t
   const tabCell = cell;
 
   const where = barsWords(page, span);
-  const soundsHead = advanced ? (
+  const soundsHead = advanced || bare ? (
     <span className={styles.colHead}>Sounds</span>
   ) : (
     <Tooltip tip={showAll ? 'Show only the eight main sounds (and any sound this loop uses).' : `Show all ${DRUM_VOICES} sounds of the kit.`}>
@@ -650,7 +656,7 @@ export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = t
         style={{ ...gridStyle(spec), '--rows': String(visible.length) } as CSSProperties}
         role="grid"
         data-space-plays=""
-        aria-label={`Kit sounds, ${where}: click a step to add or remove a hit, drag along a row to paint. Arrow keys move, Enter toggles, Shift+F10 opens a sound's actions.${hidden ? ` ${hidden} more sounds are hidden: Show all ${DRUM_VOICES} shows them.` : ''}`}
+        aria-label={`Kit sounds, ${where}: click a step to add or remove a hit, drag along a row to paint. Arrow keys move, Enter toggles, Shift+F10 opens a sound's actions.${hidden && !bare ? ` ${hidden} more sounds are hidden: Show all ${DRUM_VOICES} shows them.` : ''}`}
         aria-rowcount={visible.length}
         aria-colcount={lastCol + 1}
         onPointerDown={onGridPointerDown}
@@ -710,7 +716,7 @@ export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = t
           ))}
         </div>
       )}
-      <VelocityLane className={styles.velocity} grid={spec} values={velocities} onSet={setVelocity} title={pads ? 'Velocity' : voiceName} hint={pads ? 'Drag a bar ↕' : 'Velocity · drag ↕'} />
+      {!bare && <VelocityLane className={styles.velocity} grid={spec} values={velocities} onSet={setVelocity} title={pads ? 'Velocity' : voiceName} hint={pads ? 'Drag a bar ↕' : 'Velocity · drag ↕'} />}
       {menu && <SoundMenu trackId={trackId} slot={slot} voice={menu.voice} name={nameOf(menu.voice)} clip={clip} anchor={menu.anchor} returnFocus={menu.returnFocus} onClose={() => setMenu(null)} />}
     </div>
   );

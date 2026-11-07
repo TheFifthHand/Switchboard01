@@ -123,3 +123,25 @@
   line-height: 1.4;
   color: var(--ink-3);
 }
+
+/* ---------- Embedded (the Song screen's editor, Play side) ---------- */
+.embed {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+.embedSide {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 2px;
+}
+.embedSide .explain {
+  margin: 0;
+  font-weight: 500;
+}

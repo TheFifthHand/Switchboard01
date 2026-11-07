@@ -1,8 +1,9 @@
 /*
  * The Song view's editor pane, docked under the rows: a grip, a one-line
- * header (the loop, where else it plays, Make this one different, Close),
- * the bar keys for loops too long to show whole, and the step grid or piano
- * roll filling the rest.
+ * header (the loop, Draw | Play, Try a ready-made…, Shorter / Longer and
+ * Make it different or Record into this loop, where else it plays, Just here,
+ * Close), the bar keys for loops too long to show whole, and the step grid or
+ * piano roll (Draw) or the instrument's pads (Play) filling the rest.
  */
 .pane {
   flex: none;
@@ -49,6 +50,7 @@
 .head {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px 12px;
   min-height: 32px;
@@ -86,6 +88,39 @@
 /* The loop plays elsewhere too: an edit here changes those places (said in words; the colour is a hint). */
 .where[data-shared] {
   color: var(--ink-2);
+}
+.modes {
+  flex: none;
+}
+.tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.length {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.lengthText {
+  min-width: 5.5em;
+  padding-left: 4px;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+/* Recording into this loop: coral (recording), with the words. */
+.recording {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 7px;
+  background: var(--coral-wash);
+  color: var(--coral-ink);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
 }
 .spacer {
   flex: 1 1 0;
@@ -139,4 +174,9 @@
 .pane[data-locked] .body {
   opacity: 0.5;
   pointer-events: none;
+}
+
+/* Play: the instrument's pads fill the pane, never taller than it. */
+.body[data-play] {
+  padding-top: 2px;
 }

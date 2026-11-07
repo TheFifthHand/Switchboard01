@@ -12,7 +12,11 @@
  * play at it (each beat's own tempo is shown as a hint, "best at 90 BPM").
  *
  * Opened from the empty-pad menu (⋯ or right-click on an empty drum pad) and
- * from Play › Steps on a drum part.
+ * from Play › Steps on a drum part; `inSong`: from the Song screen's editor
+ * ("Try a ready-made beat…"), where the loop plays in the song: the pads are
+ * left alone (a playing song plays the beat where the loop is), and with
+ * nothing playing the beat is heard once on the part (the loop preview). In
+ * Simple the words leave out BPM and bars.
  */
 import { useMemo, useRef, useState } from 'react';
 import { Button, Icon } from '../../ui/components';
@@ -23,8 +27,9 @@ import { clipAtSlot, isSongSlot, trackClips } from '../../project/clips';
 import type { ClipBars, Id, Project } from '../../project/types';
 import * as cmd from '../../state/commands';
 import { selectSlot, selectTrack } from '../../state/uiStore';
-import { session, useProject } from '../instance';
-import { notify, runtimeStore } from '../runtime';
+import { session, useProject, useUi } from '../instance';
+import { notify, runtimeStore, useRuntime } from '../runtime';
+import { startPreview, stopPreview } from '../preview';
 import { MenuHeader, Popover, isEditLocked, LOCKED_TEXT, type MenuAnchor } from './ClipMenu';
 import styles from './BeatPicker.module.css';
 
@@ -124,22 +129,41 @@ export async function hearLoop(trackId: Id, slot: number): Promise<void> {
   await session.pressClip(trackId, slot);
 }
 
+/** Hear a beat once on the part, as it is in the loop now (nothing else playing: the loop preview). */
+export function previewLoopNow(trackId: Id, slot: number, key: string): void {
+  const rt = runtimeStore.getState();
+  if (rt.playing || rt.paused || rt.recording !== 'off') return;
+  const t = session.store.getState().tracks.find((x) => x.id === trackId);
+  const clip = t ? clipAtSlot(t, slot) : null;
+  if (!clip) return;
+  void startPreview(key, trackId, clip.notes, clip.bars);
+}
+
+/** "chill · 2 bars"-free words for Simple: the feel alone ("chill"). */
+export function beatMetaPlain(b: BeatDef): string {
+  return b.feel;
+}
+
 export interface BeatPickerProps {
   trackId: Id;
   slot: number;
+  /** Opened from the Song screen's editor: the loop plays in the song (see the file comment). */
+  inSong?: boolean;
   anchor: MenuAnchor;
   returnFocus?: HTMLElement | null;
   ignore?: Element | null;
   onClose(): void;
 }
 
-export function BeatPicker({ trackId, slot, anchor, returnFocus, ignore, onClose }: BeatPickerProps) {
+export function BeatPicker({ trackId, slot, inSong = false, anchor, returnFocus, ignore, onClose }: BeatPickerProps) {
   const styleList = useMemo(() => beatStyles(), []);
   const bpm = useProject((p) => p.bpm);
   const setsTempo = useProject((p) => beatSetsTempo(p, trackId, slot));
   const partName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? 'Drums');
   const [style, setStyle] = useState(() => styleForTempo(bpm));
   const [picked, setPicked] = useState<string | null>(null);
+  const plain = useUi((s) => s.uiMode !== 'advanced') && inSong;
+  const songPlays = useRuntime((s) => s.playing);
   const listRef = useRef<HTMLUListElement>(null);
   const current = styleList.find((s) => s.id === style) ?? styleList[0];
   const pick = (b: BeatDef) => {
@@ -147,14 +171,28 @@ export function BeatPicker({ trackId, slot, anchor, returnFocus, ignore, onClose
     selectTrack(trackId);
     selectSlot(trackId, slot);
     setPicked(b.id);
-    void hearLoop(trackId, slot);
+    if (!inSong) void hearLoop(trackId, slot);
+    else previewLoopNow(trackId, slot, `beat:${b.id}`);
   };
+  const close = () => {
+    if (inSong) stopPreview();
+    onClose();
+  };
+  const title = inSong ? 'Try a ready-made beat' : 'Start from a beat';
+  const meta = (b: BeatDef) => (plain ? beatMetaPlain(b) : beatMeta(b, setsTempo));
+  const note = plain
+    ? `Click a beat to put it in this loop${songPlays ? ': you hear it in your song' : ' and hear it'}. Click another to swap it. Undo goes back.${setsTempo ? ' Each beat brings its own speed to this new song.' : ''}`
+    : null;
   return (
-    <Popover anchor={anchor} label="Start from a beat" role="dialog" onClose={onClose} returnFocus={returnFocus} ignore={ignore} className={styles.picker}>
-      <MenuHeader eyebrow={partName} title="Start from a beat">
+    <Popover anchor={anchor} label={title} role="dialog" onClose={close} returnFocus={returnFocus} ignore={ignore} className={styles.picker}>
+      <MenuHeader eyebrow={partName} title={title}>
         <div className={styles.note}>
-          Press a beat to hear it in this loop. Press another to swap it. Undo goes back.{' '}
-          {setsTempo ? 'Each beat brings its own tempo to this new project.' : `Beats play at your song’s tempo, ${Math.round(bpm)} BPM.`}
+          {note ?? (
+            <>
+              Press a beat to hear it in this loop. Press another to swap it. Undo goes back.{' '}
+              {setsTempo ? 'Each beat brings its own tempo to this new project.' : `Beats play at your song’s tempo, ${Math.round(bpm)} BPM.`}
+            </>
+          )}
         </div>
       </MenuHeader>
       <div className={styles.styles} role="radiogroup" aria-label="Style">
@@ -179,17 +217,17 @@ export function BeatPicker({ trackId, slot, anchor, returnFocus, ignore, onClose
           const on = picked === b.id;
           return (
             <li key={b.id}>
-              <button type="button" className={styles.beat} data-picked={on || undefined} aria-pressed={on} aria-label={`${b.name}, ${beatMeta(b, setsTempo)}${on ? ', in the loop' : ''}`} onClick={() => pick(b)} data-beat={b.id}>
+              <button type="button" className={styles.beat} data-picked={on || undefined} aria-pressed={on} aria-label={`${b.name}, ${meta(b)}${on ? ', in the loop' : ''}`} onClick={() => pick(b)} data-beat={b.id}>
                 <Icon name={on ? 'check' : 'play'} size={14} className={styles.beatIcon} />
                 <span className={styles.beatName}>{b.name}</span>
-                <span className={styles.beatMeta}>{on ? 'In the loop' : beatMeta(b, setsTempo)}</span>
+                <span className={styles.beatMeta}>{on ? 'In the loop' : meta(b)}</span>
               </button>
             </li>
           );
         })}
       </ul>
       <div className={styles.foot}>
-        <Button size="sm" variant={picked ? 'primary' : 'secondary'} onClick={onClose}>
+        <Button size="sm" variant={picked ? 'primary' : 'secondary'} onClick={close}>
           {picked ? 'Keep this beat' : 'Close'}
         </Button>
       </div>

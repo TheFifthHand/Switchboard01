@@ -26,6 +26,7 @@ import { MACRO_IDS, TICKS_PER_BAR, type Clip, type Id, type Instrument, type Mac
 import { INTENSITY, applyVariation, setClipNotes, setLocked } from '../../state/commands';
 import { variationSeed } from '../../music/variation';
 import { ProjectStore } from '../../state/projectStore';
+import { clipAtSlot, isSongSlot } from '../../project/clips';
 import { setView, slotFor, uiStore } from '../../state/uiStore';
 import { session, useProject, useUi } from '../instance';
 import { notify, runtimeStore } from '../runtime';
@@ -146,14 +147,25 @@ function selectedClip(trackId: Id) {
   return { p, track, slot, clip: track?.clips[slot] ?? null };
 }
 
-type Strength = 'subtle' | 'bold';
+export type Strength = 'subtle' | 'bold';
 
 function vary(trackId: Id, strength: Strength): void {
-  const { p, track, slot, clip } = selectedClip(trackId);
-  if (!track) return;
+  varyLoop(trackId, slotFor(uiStore.getState(), trackId), strength);
+}
+
+/**
+ * Variation on the part's loop at `slot` (a pad row or a song slot: the Song
+ * view's editor varies the loop it shows). One undo step, or a notice saying
+ * why nothing changed. `opts.plain`: the notice in Simple's words (no pads).
+ */
+export function varyLoop(trackId: Id, slot: number, strength: Strength, opts: { plain?: boolean } = {}): boolean {
+  const p = session.store.getState();
+  const track = p.tracks.find((t) => t.id === trackId) ?? null;
+  if (!track) return false;
+  const clip = clipAtSlot(track, slot);
   if (!clip) {
     notify(`Slot ${slot + 1} of ${track.name} is empty. Select a loop with notes: Variation changes a pattern.`, 'warn');
-    return;
+    return false;
   }
   const original = originalFor(clip);
   const what = `${track.name} · ${clip.name}`;
@@ -169,33 +181,42 @@ function vary(trackId: Id, strength: Strength): void {
     if (!t.changed) {
       // Refused (a kept pattern, notes that no longer fit): say why, as the real press would.
       session.accepted(t);
-      return;
+      return false;
     }
-    const varied = trial.getState().tracks.find((x) => x.id === trackId)?.clips[slot]?.notes;
+    const tt = trial.getState().tracks.find((x) => x.id === trackId);
+    const varied = tt ? clipAtSlot(tt, slot)?.notes : undefined;
     if (varied && notesSig(varied) !== before) seed = s;
   }
   if (seed === null) {
     notify(
       clip.notes.length <= TINY_CLIP_NOTES
         ? `${what} is too short to vary: add a few notes first.`
-        : `Variation found nothing new for ${what} this time. Bold changes more.`,
+        : opts.plain
+          ? `Nothing new came up for ${what} this time. Press again for another try.`
+          : `Variation found nothing new for ${what} this time. Bold changes more.`,
       'info',
     );
-    return;
+    return false;
   }
   const r = applyVariation(session.store, trackId, slot, seed, INTENSITY[strength], { from: original.notes });
-  if (!session.accepted(r)) return;
-  const after = session.store.getState().tracks.find((t) => t.id === trackId)?.clips[slot]?.notes ?? clip.notes;
+  if (!session.accepted(r)) return false;
+  const now = session.store.getState().tracks.find((t) => t.id === trackId);
+  const after = (now ? clipAtSlot(now, slot)?.notes : undefined) ?? clip.notes;
   original.made.add(notesSig(after));
+  if (opts.plain) {
+    notify(`${what} is a little different now. Press again for another version; Undo goes back.`, 'info', 'undo');
+    return true;
+  }
   // Varying a clip other than the one playing is silent until it plays: say so, in the pads' words
   // (unless it is already queued to start).
   const rt = runtimeStore.getState();
   const tr = rt.tracks[trackId];
   const playingSlot = rt.playing && tr?.queued?.slot !== slot ? (tr?.playingSlot ?? null) : null;
-  const playingClip = playingSlot !== null && playingSlot !== slot ? track.clips[playingSlot] : null;
+  const playingClip = playingSlot !== null && playingSlot !== slot && !isSongSlot(slot) ? track.clips[playingSlot] : null;
   const elsewhere = playingClip ? ` ${playingClip.name} is playing: tap the ${clip.name} pad to hear it.` : '';
   const head = strength === 'bold' ? `Bold variation on ${what}` : `Variation on ${what}`;
   notify(`${head}: ${r.summary ?? 'changed'}.${elsewhere}`, 'info', 'undo');
+  return true;
 }
 
 function backToOriginal(trackId: Id): void {

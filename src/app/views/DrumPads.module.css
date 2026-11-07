@@ -474,3 +474,38 @@
     min-height: calc(4 * 56px + 3 * 10px + 20px);
   }
 }
+
+/* ---------- Embedded (the Song screen's editor, Play side) ---------- */
+/* Not a size container: the narrow-display rules above are for the Play view, never for the editor's pads. */
+.root[data-embedded] {
+  container-type: normal;
+  container-name: none;
+}
+.root[data-embedded] .gridWrap {
+  height: 100%;
+}
+.root[data-embedded] .stage {
+  gap: 6px;
+}
+.root[data-embedded] .grid {
+  gap: 8px;
+  padding: 8px;
+}
+/* Wider than tall: the editor is a strip under the song, and pad names stay on one line. */
+.root[data-embedded] .stage {
+  aspect-ratio: 2.4;
+}
+.embed {
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+.embedHint {
+  margin: 0;
+  padding: 6px 2px;
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: var(--ink-3);
+}
