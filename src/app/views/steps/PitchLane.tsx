@@ -97,6 +97,8 @@ export interface PitchLaneProps {
   kind: 'bass' | 'poly' | 'sampler';
   /** Bars shown side by side from `page` (default 1). */
   span?: number;
+  /** Only the roll (the Song screen's editor in Simple): no velocity lane. Advanced shows it whatever this says. */
+  lean?: boolean;
 }
 
 type Target = { on: 'label'; pitch: number } | { on: 'note'; note: Note; handle: boolean } | { on: 'empty'; cell: number; row: number };
@@ -264,12 +266,13 @@ function noteCovering(notes: readonly Note[], tick: number, pitch: number): Note
   return notes.find((n) => n.pitch === pitch && n.tick < tick && n.tick + n.duration > tick);
 }
 
-export function PitchLane({ trackId, slot, page, clip, kind, span = 1 }: PitchLaneProps) {
+export function PitchLane({ trackId, slot, page, clip, kind, span = 1, lean = false }: PitchLaneProps) {
   const assist = useProject((p) => p.assist);
   const root = useProject((p) => p.root);
   const scale = useProject((p) => p.scale);
   const gridName = useUi((s) => s.stepGrid);
   const advanced = useUi((s) => s.uiMode === 'advanced');
+  const bare = lean && !advanced;
   /** One bar's grid, and the shown cells (the bars side by side). */
   const barSpec = useMemo(() => gridSpec(gridName), [gridName]);
   const spec = useMemo(() => spanSpec(barSpec, span), [barSpec, span]);
@@ -1302,7 +1305,7 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1 }: PitchLa
               tiny={keyTiny}
               label={inKeyOnly ? `Rows in key: ${keyName}` : 'Rows: all 12 notes'}
               tip={inKeyOnly ? `Rows show the notes of ${keyName}${advanced ? '' : ` (${SCALE_MOOD[scale]})`}: Musical Assist is on.` : 'Rows show all 12 notes (Musical Assist is off).'}
-              detail="Switch Musical Assist or the key on the keyboard strip."
+              detail={bare ? 'Change the mood of the song in the menu under its name, at the top.' : 'Switch Musical Assist or the key on the keyboard strip.'}
             />
           </div>
         }
@@ -1368,7 +1371,7 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1 }: PitchLa
       <span className="visually-hidden" aria-live="polite">
         {announce}
       </span>
-      <VelocityLane
+      {!bare && <VelocityLane
         className={`${styles.velocity} ${styles.gutter}`}
         grid={spec}
         voices={voices}
@@ -1385,7 +1388,7 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1 }: PitchLa
             'Drag · per step'
           )
         }
-      />
+      />}
     </div>
   );
 }

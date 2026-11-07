@@ -273,8 +273,8 @@ const ChordPad = memo(function ChordPad(props: { trackId: Id; index: number; cho
 /* Layout                                                              */
 /* ------------------------------------------------------------------ */
 
-function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }) {
-  const { part, melodicParts } = props;
+function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[]; embedded?: boolean }) {
+  const { part, melodicParts, embedded = false } = props;
   const trackId = part.id;
   const root = useProject((p) => p.root);
   const scale = useProject((p) => p.scale);
@@ -322,6 +322,112 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
   const canDown = octave > OCTAVE_RANGE.min;
   const canUp = octave < top;
   const writeDisabled = locked || refusal !== null;
+
+  const pads = (
+    <div className={shared.gridWrap}>
+      <div className={shared.stage}>
+        <PartStatus part={part} plain={embedded} />
+        <div
+          ref={gridRef}
+          className={shared.grid}
+          role="group"
+          aria-label={
+            chordsOn
+              ? `Chord pads for ${part.name} in ${keyName}, 4 by 4, the home chord bottom-left. Arrow keys move between pads.`
+              : `Note pads for ${part.name}, ${rangeText}, 4 by 4, lowest note bottom-left. Arrow keys move between pads.`
+          }
+          onKeyDown={onNoteGridKey}
+          onFocus={onFocus}
+          {...{ [PAD_GRID_ATTR]: '' }}
+        >
+          {chordsOn
+            ? PAD_ORDER.map((index) => {
+                const chord = chordPads[index];
+                if (!chord) return <div key={index} className={styles.cell} />;
+                return (
+                  <ChordPad
+                    key={index}
+                    trackId={trackId}
+                    index={index}
+                    chord={chord}
+                    spelled={chord.notes.map(spell).join(', ')}
+                    disabled={replaying}
+                    onHit={onHit}
+                  />
+                );
+              })
+            : PAD_ORDER.map((index) => {
+                const pitch = pitches[index];
+                if (pitch === undefined) return <div key={index} className={styles.cell} />;
+                return (
+                  <NotePad
+                    key={index}
+                    trackId={trackId}
+                    index={index}
+                    pitch={pitch}
+                    name={spell(pitch)}
+                    isRoot={pitchClass(pitch) === pitchClass(root)}
+                    inKey={assist || chromaticScale || isInScale(pitch, root, scale)}
+                    disabled={replaying}
+                    onHit={onHit}
+                  />
+                );
+              })}
+        </div>
+      </div>
+    </div>
+  );
+
+  if (embedded) {
+    // The Song screen's editor (Play side): how the pads play, then the pads. Simple says it without note names (and calls them squares).
+    const plainExplain = chordsOn ? 'Each square plays a chord that fits your song.' : assist || chromaticScale ? 'Every square plays a note that fits your song.' : 'Shaded squares are outside the song’s key.';
+    return (
+      <div className={shared.root} data-embedded="">
+        <div className={styles.embed}>
+          <div className={styles.embedSide} role="group" aria-label={`How the squares play ${part.name}`}>
+            <Switch checked={chordsOn} onChange={(on) => setNotesChords({ on })} label="Chords" size="sm" tone="teal" tip="One square plays a whole chord that fits your song." />
+            {chordsOn && advanced && (
+              <div className={styles.chordRow}>
+                <SegmentedControl<'3' | '4'> label="Chord size" size="sm" options={SIZE_OPTIONS} value={String(size) as '3' | '4'} onChange={(v) => setNotesChords({ size: v === '4' ? 4 : 3 })} />
+                <Select
+                  label="Inversion"
+                  hideLabel
+                  size="sm"
+                  value={String(inversion)}
+                  options={inversionOptions(size)}
+                  onChange={(v) => setChordInversion(v === 'smooth' ? 'smooth' : (Number(v) as 0 | 1 | 2 | 3))}
+                  className={styles.inversion}
+                />
+              </div>
+            )}
+            {!chordsOn &&
+              (advanced ? (
+                <div className={styles.rangeRow}>
+                  <IconButton icon="octaveDown" label="Pads octave down" size="sm" variant="secondary" disabled={!canDown} onClick={() => setNotesOctave(octave - 1)} tip="Move all 16 pads one octave lower." />
+                  <output className={`${styles.range} mono`} aria-label={`Pads play ${spell(low)} to ${spell(high)}`}>
+                    {rangeText}
+                  </output>
+                  <IconButton icon="octaveUp" label="Pads octave up" size="sm" variant="secondary" disabled={!canUp} onClick={() => setNotesOctave(octave + 1)} tip="Move all 16 pads one octave higher." />
+                </div>
+              ) : (
+                <div className={styles.rangeRow} role="group" aria-label="Notes higher or lower">
+                  <Button size="sm" variant="secondary" icon="octaveDown" disabled={!canDown} onClick={() => setNotesOctave(octave - 1)} tip="Every square plays lower notes.">
+                    Lower
+                  </Button>
+                  <Button size="sm" variant="secondary" icon="octaveUp" disabled={!canUp} onClick={() => setNotesOctave(octave + 1)} tip="Every square plays higher notes.">
+                    Higher
+                  </Button>
+                </div>
+              ))}
+            <p className={styles.explain} aria-live="polite">
+              {advanced ? explain : plainExplain}
+            </p>
+          </div>
+          {pads}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={shared.root}>
@@ -420,62 +526,22 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[] }
           </div>
         </div>
 
-        <div className={shared.gridWrap}>
-          <div className={shared.stage}>
-            <PartStatus part={part} />
-            <div
-              ref={gridRef}
-              className={shared.grid}
-              role="group"
-              aria-label={
-                chordsOn
-                  ? `Chord pads for ${part.name} in ${keyName}, 4 by 4, the home chord bottom-left. Arrow keys move between pads.`
-                  : `Note pads for ${part.name}, ${rangeText}, 4 by 4, lowest note bottom-left. Arrow keys move between pads.`
-              }
-              onKeyDown={onNoteGridKey}
-              onFocus={onFocus}
-              {...{ [PAD_GRID_ATTR]: '' }}
-            >
-              {chordsOn
-                ? PAD_ORDER.map((index) => {
-                    const chord = chordPads[index];
-                    if (!chord) return <div key={index} className={styles.cell} />;
-                    return (
-                      <ChordPad
-                        key={index}
-                        trackId={trackId}
-                        index={index}
-                        chord={chord}
-                        spelled={chord.notes.map(spell).join(', ')}
-                        disabled={replaying}
-                        onHit={onHit}
-                      />
-                    );
-                  })
-                : PAD_ORDER.map((index) => {
-                    const pitch = pitches[index];
-                    if (pitch === undefined) return <div key={index} className={styles.cell} />;
-                    return (
-                      <NotePad
-                        key={index}
-                        trackId={trackId}
-                        index={index}
-                        pitch={pitch}
-                        name={spell(pitch)}
-                        isRoot={pitchClass(pitch) === pitchClass(root)}
-                        inKey={assist || chromaticScale || isInScale(pitch, root, scale)}
-                        disabled={replaying}
-                        onHit={onHit}
-                      />
-                    );
-                  })}
-            </div>
-          </div>
-        </div>
+        {pads}
       </div>
       {writing && <ProgressionDialog trackId={trackId} onClose={() => setWriting(false)} />}
     </div>
   );
+}
+
+/**
+ * The note (or chord) pads of one melodic part, for the Song screen's editor
+ * (its Play side): the Chords switch and Lower / Higher beside the pads.
+ */
+export function EditorNotePads(props: { trackId: Id }) {
+  const parts = useParts();
+  const part = parts.find((p) => p.id === props.trackId);
+  if (!part || part.kind === 'drums') return null;
+  return <NoteLayout part={part} melodicParts={[]} embedded />;
 }
 
 export function NotesPads() {

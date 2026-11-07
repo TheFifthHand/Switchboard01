@@ -23,7 +23,7 @@ import { ppbStore } from '../../src/app/views/arrange/laneStore';
 import { clipAtSlot, slotOfClip } from '../../src/project/clips';
 import type { Id, Project } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
-import { selectSlot, selectTrack, setPadMode, setView, uiStore } from '../../src/state/uiStore';
+import { selectSlot, selectTrack, setPadMode, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { centre, clickAt, doubleClickAt, on, openSong, press, project, region, regionEl, regions, resetSong, settle, teardownSong, waitFor } from './r5-song-helpers';
 
 const SHOTS = '/tmp/claude-0/r6/shots-editor';
@@ -79,6 +79,8 @@ afterEach(async () => {
 describe('the editor pane in the Song view', () => {
   it('a double-click opens the loop under the rows; the view stays Song; a step edit changes the pad clip both regions play', async () => {
     await open();
+    // Round 7: bar numbers and pads are Advanced's words (Simple: "Plays 2 places", r7-edit-editor).
+    act(() => setUiMode('advanced'));
     const dc = project().tracks[0].clips.find((c) => c)!;
     await doubleClickAt(on('A'));
     await waitFor(() => !!pane(), 'the editor pane');
@@ -149,6 +151,8 @@ describe('the editor pane in the Song view', () => {
 
   it('Make this one different: only that region gets its own copy, and the pane edits the copy', async () => {
     await open();
+    // Round 7: Advanced keeps 2.4's words; Simple's "Just here" is covered in r7-edit-editor.
+    act(() => setUiMode('advanced'));
     const dc = project().tracks[0].clips.find((c) => c)!;
     await doubleClickAt(on('A'));
     await waitFor(() => !!pane(), 'the editor pane');
@@ -165,7 +169,8 @@ describe('the editor pane in the Song view', () => {
     // An edit now changes the copy only.
     const padBefore = JSON.stringify(clipNow(drumsId(), dc.id)!.notes);
     const copyBefore = clipNow(drumsId(), a.clipId)!.notes.length;
-    await clickAt(centre(drumCell(7, 2)));
+    // (Advanced shows all 16 sounds: a row near the top is in view.)
+    await clickAt(centre(drumCell(2, 2)));
     expect(clipNow(drumsId(), a.clipId)!.notes.length).not.toBe(copyBefore);
     expect(JSON.stringify(clipNow(drumsId(), dc.id)!.notes)).toBe(padBefore);
   });

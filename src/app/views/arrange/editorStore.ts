@@ -12,7 +12,7 @@
  */
 import { regionEnd } from '../../../project/arrangement';
 import { clipAtSlot, slotOfClip } from '../../../project/clips';
-import type { Clip, Id, Project } from '../../../project/types';
+import { TICKS_PER_BAR, TICKS_PER_BEAT, type Clip, type ClipBars, type Id, type Project } from '../../../project/types';
 import { createStore } from '../../../state/store';
 
 export interface EditorTarget {
@@ -43,6 +43,19 @@ export function openLoopEditor(p: Project, regionId: Id, opts: { focus?: boolean
 
 export function closeLoopEditor(): void {
   editorStore.setState(null);
+}
+
+/**
+ * The editor's two sides: Draw (the step grid or the piano roll) and Play
+ * (the instrument's pads, recorded into the loop). Kept while other loops
+ * open, so a person who plays goes on playing.
+ */
+export type EditorMode = 'draw' | 'play';
+
+export const editorModeStore = createStore<EditorMode>('draw');
+
+export function setEditorMode(mode: EditorMode): void {
+  if (mode === 'draw' || mode === 'play') editorModeStore.setState(mode);
 }
 
 export interface ResolvedEditor {
@@ -110,11 +123,41 @@ export function clampEditorHeight(px: number, available: number, keep = 150): nu
 }
 
 /* ------------------------------------------------------------------ */
+/* Length (Shorter / Longer)                                           */
+/* ------------------------------------------------------------------ */
+
+/** The lengths Shorter and Longer step through (halves and doubles: the loop stays in step with the song). */
+export const LENGTH_STEPS: readonly ClipBars[] = [1, 2, 4, 8];
+
+/** The next length up (null: as long as a loop gets). */
+export function longerBars(bars: number): ClipBars | null {
+  return LENGTH_STEPS.find((b) => b > bars) ?? null;
+}
+
+/** The next length down (null: as short as a loop gets). */
+export function shorterBars(bars: number): ClipBars | null {
+  return [...LENGTH_STEPS].reverse().find((b) => b < bars) ?? null;
+}
+
+/** How long a loop of `bars` lasts at `bpm`, in plain words: "2 seconds", "4.5 seconds". */
+export function loopSecondsText(bars: number, bpm: number): string {
+  const beats = (bars * TICKS_PER_BAR) / TICKS_PER_BEAT;
+  const s = bpm > 0 ? (beats * 60) / bpm : 0;
+  const shown = s >= 10 ? Math.round(s) : Math.round(s * 10) / 10;
+  return `${shown} second${shown === 1 ? '' : 's'}`;
+}
+
+/* ------------------------------------------------------------------ */
 /* Where else the loop plays                                           */
 /* ------------------------------------------------------------------ */
 
 function barsText(a: number, b: number): string {
   return b - a <= 1 ? `${a + 1}` : `${a + 1}–${b}`;
+}
+
+/** Simple's words for where a loop plays: "Plays only here", "Plays 2 places". */
+export function placesText(uses: number): string {
+  return uses <= 1 ? 'Plays only here' : `Plays ${uses} places`;
 }
 
 /**

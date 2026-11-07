@@ -60,7 +60,7 @@ export function showInstrumentInAdvanced(toAdvanced: () => void): void {
 /* Instrument card                                                     */
 /* ------------------------------------------------------------------ */
 
-const KIND_ICON: Record<InstrumentKind, IconName> = { drums: 'drum', bass: 'wave', poly: 'keys', sampler: 'mic' };
+export const KIND_ICON: Record<InstrumentKind, IconName> = { drums: 'drum', bass: 'wave', poly: 'keys', sampler: 'mic' };
 
 interface InstInfo {
   kind: InstrumentKind;
@@ -153,13 +153,14 @@ function useMacroState(trackId: Id, macro: MacroId): MacroState {
   }, shallowEqual);
 }
 
-const MacroTile = memo(function MacroTile(props: { trackId: Id; macro: MacroId; size: KnobSize }) {
-  const { trackId, macro, size } = props;
+/** One big knob with its plain caption (also the Song screen's Sound panel's). */
+export const MacroTile = memo(function MacroTile(props: { trackId: Id; macro: MacroId; size: KnobSize; idBase?: string }) {
+  const { trackId, macro, size, idBase = 'shape-macro' } = props;
   const base = MACRO_SPECS[macro];
   const st = useMacroState(trackId, macro);
   const rows = useMacroRows(trackId, macro);
   const spec = st.home === base.default ? base : { ...base, default: st.home };
-  const id = `shape-macro-${macro}`;
+  const id = `${idBase}-${macro}`;
   useKnobExtras(id, { onAltReset: st.inert ? undefined : () => session.setMacro(trackId, macro, macroPlainDefault(macro), newGestureId('knob-reset')) });
   const off = st.off ? st.off.split('\u0000') : null;
   return (

@@ -209,14 +209,31 @@ export function useReplaying(): boolean {
  * muted, another part is soloed, or a performance is replaying. Shown as a
  * one-line bar above the pads.
  */
-export function PartStatus(props: { part: PartInfo }) {
-  const { part } = props;
+export function PartStatus(props: { part: PartInfo; plain?: boolean }) {
+  const { part, plain = false } = props;
   const replaying = useReplaying();
   const silence = useProject((p) => silenceOf(p, part.id));
   if (replaying) {
     return (
       <Notice className={styles.status} tone="info" action={{ label: 'Stop replay', onAction: () => session.stop() }}>
         <strong className={styles.statusLead}>Replaying a performance.</strong> The pads are paused until it stops.
+      </Notice>
+    );
+  }
+  if (plain && silence !== 'audible') {
+    // The Song screen's editor: everyday words (no parts, no pads).
+    const muted = silence === 'muted';
+    return (
+      <Notice
+        className={styles.status}
+        tone="warning"
+        action={
+          muted
+            ? { label: 'Unmute', onAction: () => session.setMute(part.id, false) }
+            : { label: `Hear ${part.name} too`, onAction: () => session.accepted(setSolo(session.store, part.id, true)) }
+        }
+      >
+        <strong className={styles.statusLead}>{muted ? `${part.name} is muted,` : `${part.name} is silent:`}</strong> {muted ? 'so you will not hear it.' : 'another instrument is set to play alone.'}
       </Notice>
     );
   }
@@ -450,8 +467,8 @@ const DrumPad = memo(function DrumPad(props: { trackId: Id; voice: number; name:
 
 const onDrumGridKey = padGridKeyDown(DRUM_PAD_ID);
 
-function DrumKit(props: { part: PartInfo; drumParts: readonly PartInfo[] }) {
-  const { part, drumParts } = props;
+function DrumKit(props: { part: PartInfo; drumParts: readonly PartInfo[]; embedded?: boolean }) {
+  const { part, drumParts, embedded = false } = props;
   const trackId = part.id;
   const kitId = part.kitId ?? '';
   const names = useMemo(() => getKitVoiceNames(kitId), [kitId]);
@@ -480,7 +497,8 @@ function DrumKit(props: { part: PartInfo; drumParts: readonly PartInfo[] }) {
   // leave a note stuck on the previous part (pads do the same).
   const keyReleases = useRef(new Map<number, () => void>());
   useComputerKeyboard({
-    enabled: padMode === 'drums' && !replaying,
+    // Embedded in the Song screen's editor, the app's own computer keys play the kit (the same table).
+    enabled: padMode === 'drums' && !replaying && !embedded,
     layout: 'drums',
     onNoteOn: (voice, velocity) => {
       keyReleases.current.get(voice)?.();
@@ -497,6 +515,49 @@ function DrumKit(props: { part: PartInfo; drumParts: readonly PartInfo[] }) {
   const keyFor = (voice: number) => drumKeyHint(voice, capLabels);
   const rowKeys = PAD_ROWS.map((row) => `${keyFor(row[0]) ?? ''}–${keyFor(row[3]) ?? ''}`).join(', ');
   const selectedKey = keyFor(selectedVoice);
+
+  const pads = (
+    <div className={styles.gridWrap}>
+      <div className={styles.stage}>
+        <PartStatus part={part} plain={embedded} />
+        <div
+          ref={gridRef}
+          className={styles.grid}
+          role="group"
+          aria-label={`${kitName} pads for ${part.name}, 4 by 4. Arrow keys move between pads.`}
+          onKeyDown={onDrumGridKey}
+          onFocus={onFocus}
+          {...{ [PAD_GRID_ATTR]: '' }}
+        >
+          {PAD_ORDER.map((voice) => (
+            <DrumPad
+              key={voice}
+              trackId={trackId}
+              voice={voice}
+              name={names[voice] ?? `Pad ${voice + 1}`}
+              keyHint={keyFor(voice)}
+              selected={voice === selectedVoice}
+              disabled={replaying}
+              onHit={onHit}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  if (embedded) {
+    return (
+      <div className={styles.root} data-embedded="">
+        <div className={styles.embed}>
+          <p className={styles.embedHint}>
+            Tap the squares, or press the letter shown on each. Lower on a square plays harder.
+          </p>
+          {pads}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.root}>
@@ -550,36 +611,22 @@ function DrumKit(props: { part: PartInfo; drumParts: readonly PartInfo[] }) {
           </div>
         </div>
 
-        <div className={styles.gridWrap}>
-          <div className={styles.stage}>
-            <PartStatus part={part} />
-            <div
-              ref={gridRef}
-              className={styles.grid}
-              role="group"
-              aria-label={`${kitName} pads for ${part.name}, 4 by 4. Arrow keys move between pads.`}
-              onKeyDown={onDrumGridKey}
-              onFocus={onFocus}
-              {...{ [PAD_GRID_ATTR]: '' }}
-            >
-              {PAD_ORDER.map((voice) => (
-                <DrumPad
-                  key={voice}
-                  trackId={trackId}
-                  voice={voice}
-                  name={names[voice] ?? `Pad ${voice + 1}`}
-                  keyHint={keyFor(voice)}
-                  selected={voice === selectedVoice}
-                  disabled={replaying}
-                  onHit={onHit}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
+        {pads}
       </div>
     </div>
   );
+}
+
+/**
+ * The kit's 16 pads alone, for the Song screen's editor (its Play side): no
+ * side display and no keys of their own (the app's computer keys play the
+ * same kit sounds, with the same letters on the pads).
+ */
+export function EditorDrumPads(props: { trackId: Id }) {
+  const parts = useParts();
+  const part = parts.find((p) => p.id === props.trackId);
+  if (!part || part.kind !== 'drums') return null;
+  return <DrumKit part={part} drumParts={[]} embedded />;
 }
 
 export function DrumPads() {
