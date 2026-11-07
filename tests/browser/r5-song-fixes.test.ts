@@ -47,6 +47,7 @@ import {
   teardownSong,
   undoCount,
   waitFor,
+  advancedMode,
 } from './r5-song-helpers';
 
 /** Drums: A (bars 1–8), B (13–16); Bass: C (1–16); sections Intro (1–8) and Drop (9–16). */
@@ -82,6 +83,8 @@ afterEach(teardownSong);
 
 describe('clearing the song', () => {
   it('Ctrl+A takes the loops and the sections; Delete clears the song in one undo step; it reads empty and the button makes a song', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await open();
     await clickAt(on('A'));
     await press('a', 2);
@@ -109,6 +112,8 @@ describe('clearing the song', () => {
   });
 
   it('with only section labels left the song is empty: 0 bars, the empty note, and its button still makes a song', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await open();
     // A marquee over every loop (from an empty spot after them), then Delete.
     await dragTo({ x: barX(17.5), y: rowY(project().tracks[0].id) }, { x: barX(0.2), y: rowY(project().tracks[2].id) + 8 });
@@ -123,6 +128,8 @@ describe('clearing the song', () => {
   });
 
   it('Play with an empty song plays the pads, and the header says the song is empty', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await open((p) => {
       p.arrangement.regions = [];
       p.arrangement.sections = [];
@@ -222,6 +229,8 @@ describe('Ctrl and Alt', () => {
 
 describe('what an edit leaves selected', () => {
   it('a scene drop leaves nothing selected: stretching one of its loops stretches that one; several say how many', async () => {
+    // Scene cards (the browser's This song tab): Advanced since round 7.
+    advancedMode();
     await open((p) => {
       p.arrangement.regions = [];
       p.arrangement.sections = [];
@@ -269,6 +278,8 @@ describe('what an edit leaves selected', () => {
 
 describe('carrying a part’s loop', () => {
   it('over another part’s row, "Not this part" shows at the pointer only', async () => {
+    // A part's loop chips (the browser's This song tab): Advanced since round 7.
+    advancedMode();
     await open((p) => {
       p.arrangement.regions = [];
       p.arrangement.sections = [];
@@ -289,6 +300,8 @@ describe('carrying a part’s loop', () => {
 
 describe('the part the keyboard plays', () => {
   it('a click on a part’s header, or on one of its loops, chooses it; its header shows it', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await open();
     const bass = project().tracks[2];
     const drums = project().tracks[0];

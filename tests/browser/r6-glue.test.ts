@@ -28,7 +28,7 @@ import type { Project } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
 import { startHints } from '../../src/app/views/hints';
 import { setTipsEnabled } from '../../src/state/uiStore';
-import { barX, centre, clickAt, dragTo, mouse, openSong, project, region, regions, release, resetSong, rowY, scroller, settle, teardownSong, trackId, undoCount, waitFor } from './r5-song-helpers';
+import { barX, centre, clickAt, dragTo, mouse, openSong, project, region, regions, release, resetSong, rowY, scroller, settle, teardownSong, trackId, undoCount, waitFor, advancedMode } from './r5-song-helpers';
 
 // Screenshots for a person to look at, beside the test results (git-ignored); the path is relative to this file.
 const SHOTS = '../../test-results/shots-glue';
@@ -69,6 +69,8 @@ const sceneSong = (p: Project) => {
 
 describe('the empty song', () => {
   it('shows the empty-song card; Open the loop library shows a hidden browser on its Library tab, search focused', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await openSong(1366, 768, emptySong);
     const card = document.querySelector<HTMLElement>('[data-testid="song-empty"]')!;
     expect(card.textContent).toContain(emptySongText(true));
@@ -197,8 +199,10 @@ describe('carrying a library loop', () => {
     await settle();
     act(() => libraryQueryStore.setState({ text: 'steady four', role: 'drums', genre: null }));
     if (!document.querySelector('[data-testid="loop-browser"]')) await clickAt(centre(document.querySelector('[data-testid="loops-toggle"]')!));
-    await waitFor(() => !!document.querySelector('[data-testid="loops-tab-library"]'), 'the browser');
-    await clickAt(centre(document.querySelector('[data-testid="loops-tab-library"]')!));
+    await waitFor(() => !!document.querySelector('[data-testid="loop-browser"]'), 'the browser');
+    // (Simple's LOOPS is the library alone, with no tabs.)
+    const libTab = document.querySelector('[data-testid="loops-tab-library"]');
+    if (libTab) await clickAt(centre(libTab));
     await waitFor(() => !!document.querySelector('[data-library-loop="beat-steady-four"]'), 'the library row');
     const sc = scroller();
     expect(sc.scrollLeft).toBe(0);

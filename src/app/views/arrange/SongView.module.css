@@ -1516,3 +1516,115 @@
     animation: none;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Simple mode: the Song screen as the home                            */
+/* ------------------------------------------------------------------ */
+
+/* "Your song · 1:04": the length in minutes and seconds, read with the title. */
+.homeLength {
+  font: var(--fw-medium) var(--fs-lg) / 20px var(--font-mono);
+  color: var(--ink-2);
+}
+.zoom[data-small] {
+  opacity: 0.85;
+}
+
+/* Rows: the instrument's picture and name (a key that opens its Sound panel), its volume under them. */
+.partNameKey {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: -2px 0 -2px -3px;
+  padding: 2px 6px 2px 3px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.partNameKey:hover {
+  border-color: var(--line-strong);
+  background: var(--surface);
+}
+.partNameKey:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.partNameKey[aria-pressed='true'] {
+  border-color: var(--teal);
+  color: var(--teal-ink);
+}
+.partIcon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: hsl(var(--h) 34% 42%);
+  color: #fff;
+}
+.partHead[data-simple] .partName {
+  font-size: var(--fs-md);
+}
+/* Mute, Solo and ⋯ show while the pointer is over the header or a key has focus (Advanced: always). */
+.partHead[data-simple] .partKeys {
+  opacity: 0;
+  transition: opacity var(--dur-fast, 120ms) ease;
+}
+.partHead[data-simple]:hover .partKeys,
+.partHead[data-simple]:focus-within .partKeys,
+.partHead[data-simple][data-status] .partKeys {
+  opacity: 1;
+}
+@media (hover: none) {
+  .partHead[data-simple] .partKeys {
+    opacity: 1;
+  }
+}
+/* Short rows (the editor is open): the name only; the volume is in the Sound panel. */
+.timeline[data-simple][data-short-rows] .partHead[data-simple] .partControls {
+  display: none;
+}
+
+/* The ruler in Simple: the section names read first, the bar numbers stay small. */
+.timeline[data-simple] .sectionName {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+}
+.timeline[data-simple] .rulerNum {
+  font-size: var(--fs-2xs);
+  color: var(--ink-3);
+}
+
+/* The tip line at the bottom of the Song screen: one next step, and Hide tips. */
+.tipLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-hi);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+}
+.tipLine > svg {
+  flex: none;
+  color: var(--teal-ink);
+}
+.tipText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tipText strong {
+  color: var(--ink);
+}

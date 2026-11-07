@@ -24,7 +24,7 @@ import { clipAtSlot, slotOfClip } from '../../src/project/clips';
 import type { Id, Project } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
 import { selectSlot, selectTrack, setPadMode, setUiMode, setView, uiStore } from '../../src/state/uiStore';
-import { centre, clickAt, doubleClickAt, on, openSong, press, project, region, regionEl, regions, resetSong, settle, teardownSong, waitFor } from './r5-song-helpers';
+import { advancedMode, centre, clickAt, doubleClickAt, on, openSong, press, project, region, regionEl, regions, resetSong, settle, teardownSong, waitFor } from './r5-song-helpers';
 
 // Screenshots for a person to look at, beside the test results (git-ignored); the path is relative to this file.
 const SHOTS = '../../test-results/shots-editor';
@@ -177,6 +177,8 @@ describe('the editor pane in the Song view', () => {
   });
 
   it('E opens the focused loop, Esc closes the pane and focus goes back to the loop', async () => {
+    // Round 7: in Simple the click itself opens the loop (r7-home-song); E is tested where a click only selects.
+    advancedMode();
     await open();
     await clickAt(on('C'));
     expect(document.activeElement).toBe(regionEl('C'));

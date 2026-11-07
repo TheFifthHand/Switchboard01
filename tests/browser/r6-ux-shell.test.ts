@@ -256,15 +256,21 @@ describe('the Song view', () => {
     const n = badge.textContent!.match(/\d+/)![0];
     expect(badge.title).toBe(`This loop plays in ${n} places`);
     await page.screenshot({ path: `${SHOTS}/song-badges-1920.png` });
-    // Pads playing: the chip's key tip is true to what Space does.
-    act(() => patchRuntime({ playing: true, paused: false, mode: 'live' }));
+    // Pads playing: the chip's key tip is true to what Space does. (2.4's Song header with the pads chip: Advanced since round 7.)
+    act(() => {
+      setUiMode('advanced');
+      patchRuntime({ playing: true, paused: false, mode: 'live' });
+    });
     await settle(100);
     const playSong = await until(() => document.querySelector<HTMLElement>('[data-testid="play-the-song"]'), 'Play the song instead');
     expect(described(playSong.closest('[aria-describedby]') ?? playSong)).toContain('Space pauses the pads first; press it again to play the song.');
     act(() => patchRuntime({ playing: false, paused: true, mode: 'live' }));
     await settle(100);
     expect(described(document.querySelector<HTMLElement>('[data-testid="play-the-song"]')!.closest('[aria-describedby]')!)).toContain('Space does the same now.');
-    act(() => patchRuntime({ playing: false, paused: false }));
+    act(() => {
+      patchRuntime({ playing: false, paused: false });
+      setUiMode('simple');
+    });
   });
 });
 

@@ -122,3 +122,22 @@ export const libraryGhostStore = createStore<LibraryGhost | null>(null);
 
 /** The loop browser ("Add loops") is open: the "Try this" song steps word themselves by it. */
 export const browserOpenStore = createStore<boolean>(false);
+
+/* ------------------------------------------------------------------ */
+/* Simple mode's rows                                                  */
+/* ------------------------------------------------------------------ */
+
+/** The instruments the timeline shows a row for now, in order (Simple hides those with no music; null: every one). */
+export const shownRowsStore = createStore<readonly Id[] | null>(null);
+
+/**
+ * Instruments "+ Add instrument" brought in without music yet (a Recording),
+ * for the project they were added in: their row shows until another project opens.
+ */
+export const revealedStore = createStore<{ projectId: Id; ids: readonly Id[] } | null>(null);
+
+export function revealRow(projectId: Id, trackId: Id): void {
+  const cur = revealedStore.getState();
+  const ids = cur && cur.projectId === projectId ? cur.ids : NO_IDS;
+  if (!ids.includes(trackId)) revealedStore.setState({ projectId, ids: [...ids, trackId] });
+}

@@ -60,8 +60,9 @@ describe('layout', () => {
       await openSong(w, h);
       checkLayout(`${w}x${h} starter song`);
       // With the loop browser open too.
-      const loops = document.querySelector<HTMLElement>('[data-testid="loops-toggle"]')!;
-      if (loops.getAttribute('aria-pressed') !== 'true') {
+      // (Simple's Song screen has LOOPS open from the start: no toggle until it is closed.)
+      const loops = document.querySelector<HTMLElement>('[data-testid="loops-toggle"]');
+      if (loops && loops.getAttribute('aria-pressed') !== 'true') {
         act(() => loops.click());
         await settle(200);
       }

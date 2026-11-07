@@ -9,7 +9,8 @@
  *   once the pointer travels, move it (and every selected region) along its
  *   row in whole bars; Alt or Ctrl (⌘) copies. A Ctrl press changes the
  *   selection only once it is known what it was: a click adds or removes the
- *   region, a drag copies exactly what an Alt drag would;
+ *   region, a drag copies exactly what an Alt drag would; a plain click
+ *   (no drag) is also told to the host (Simple opens the loop's editor);
  * - a region's edge grip: lengthen or shorten it (right), trim or extend its
  *   start (left);
  * - an empty spot on a row: a marquee that selects what it touches (a click
@@ -123,6 +124,8 @@ export interface LaneHost {
   sectionClick(id: Id, add: boolean): void;
   /** A gesture began or ended (the playhead stops following meanwhile). */
   busy(on: boolean): void;
+  /** A plain click on a loop (no drag, no Shift or Ctrl): Simple opens it in the editor. */
+  regionClick?(id: Id): void;
 }
 
 /**
@@ -732,7 +735,10 @@ export class LaneController {
       case 'region': {
         const sel = selectionStore.getState();
         if (g.toggleOnClick) setSelection(clickSelect(sel, g.anchor.id, 'toggle'));
-        else if (!g.additive) setSelection(clickSelect(sel, g.anchor.id, 'replace'));
+        else if (!g.additive) {
+          setSelection(clickSelect(sel, g.anchor.id, 'replace'));
+          this.host.regionClick?.(g.anchor.id);
+        }
         return;
       }
       case 'marquee':

@@ -53,6 +53,7 @@ import {
   teardownSong,
   timeline,
   waitFor,
+  advancedMode,
 } from './r5-song-helpers';
 
 /** A 64-bar song: Drums D over bars 1–64, Bass B over 9–40; sections Verse (1–16) and Chorus (17–48). */
@@ -317,6 +318,8 @@ describe('drags and menus', () => {
 
 describe('the header', () => {
   it('Shape the song… adds an intro before the song (and is unavailable, with the reason, while the song is empty)', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await open(16);
     await clickAt(centre(button('Shape the song…')));
     await clickAt(centre(menuItem('Add an intro')));
@@ -330,6 +333,8 @@ describe('the header', () => {
   });
 
   it('in an empty song, Shape the song… says why it cannot', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await open(16, (p) => {
       p.arrangement.regions = [];
       p.arrangement.sections = [];
@@ -342,6 +347,8 @@ describe('the header', () => {
   });
 
   it('Add loops (not "Loops") opens the browser; its loops say "2 bars"; part names keep their whole name in a tooltip', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await open(16);
     const toggle = document.querySelector<HTMLElement>('[data-testid="loops-toggle"]')!;
     expect(toggle.textContent?.trim()).toBe('Add loops');

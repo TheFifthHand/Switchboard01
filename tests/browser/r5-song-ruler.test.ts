@@ -33,6 +33,7 @@ import {
   timeline,
   waitFor,
   wheelAt,
+  advancedMode,
 } from './r5-song-helpers';
 
 /** A 64-bar song: Drums over bars 1–64, Bass over 9–40. */
@@ -106,6 +107,8 @@ describe('the ruler', () => {
   });
 
   it('the Loop key with nothing set loops the selected loop’s bars; again stops looping', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await open();
     await clickAt(on('B'));
     const key = document.querySelector<HTMLElement>('[data-testid="loop-toggle"]')!;

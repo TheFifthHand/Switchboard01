@@ -40,6 +40,16 @@ export async function resetSong(): Promise<void> {
   });
 }
 
+/**
+ * Round 7: 2.4's Song view (its header with Loop, Follow, Shape the song… and
+ * Add loops, every part's row with its pan dial, the keyboard part mark) lives
+ * on in Advanced; Simple's Song screen is the home (tests/browser/r7-home-*).
+ * Tests of those 2.4 controls switch to Advanced first.
+ */
+export function advancedMode(): void {
+  act(() => setUiMode('advanced'));
+}
+
 export async function teardownSong(): Promise<void> {
   if (session.playing || session.paused) act(() => session.stop());
   act(() => {

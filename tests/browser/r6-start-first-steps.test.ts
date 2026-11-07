@@ -203,6 +203,8 @@ describe('the transport', () => {
     await until(() => !welcome(), 'the card to go');
     act(() => {
       patchRuntime({ playing: true, mode: 'live' });
+      // 2.4's Song header (with its pads chip): Advanced since round 7.
+      setUiMode('advanced');
       setView('arrange');
     });
     await settle(200);
