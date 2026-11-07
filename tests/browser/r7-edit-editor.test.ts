@@ -31,7 +31,8 @@ import * as cmd from '../../src/state/commands';
 import { setUiMode, uiStore } from '../../src/state/uiStore';
 import { centre, clickAt, doubleClickAt, mouse, on, openSong, project, region, regions, resetSong, settle, teardownSong, waitFor } from './r5-song-helpers';
 
-const SHOTS = '/tmp/claude-0/r7/wt-editsound/shots';
+/** Screenshots for the report, in the ignored .vitest folder (relative to this file); never a reason to fail. */
+const shot = (name: string) => page.screenshot({ path: `../../.vitest/shots-r7-edit/${name}` }).catch(() => undefined);
 
 /** Drums: A over bars 1–8 and B over 13–16 (the same pad clip); Bass: C over 1–16. */
 function song(p: Project): void {
@@ -115,7 +116,7 @@ describe('the editor in Simple', () => {
     expect(document.documentElement.scrollHeight).toBeLessThanOrEqual(window.innerHeight);
     const count = visibleControls(pane()!);
     console.log(`[r7-edit] Simple editor (drums, Draw) controls: ${count}`);
-    await page.screenshot({ path: `${SHOTS}/editor-draw-drums-1366.png` });
+    await shot(`editor-draw-drums-1366.png`);
 
     // Just here: this place gets its own loop; the other keeps the shared one.
     const shared = regions().find((r) => r.id === 'A')!.clipId;
@@ -194,7 +195,7 @@ describe('ready-made loops and beats', () => {
     const p = project();
     const bass = p.tracks[2];
     expect(rows.map((r) => r.dataset.readyLoop)).toEqual(readyLoopsFor(bass.role, bass.instrument.kind).map((l) => l.id));
-    await page.screenshot({ path: `${SHOTS}/editor-ready-loops-1366.png` });
+    await shot(`editor-ready-loops-1366.png`);
     for (const row of rows.slice(0, 3)) await clickAt(centre(row));
     const third = readyLoopsFor(bass.role, bass.instrument.kind)[2];
     const want = fitReadyLoop(realizeFor(p, third, bass)!, 2);
@@ -218,7 +219,7 @@ describe('ready-made loops and beats', () => {
     await clickAt(centre(button('Try a ready-made beat…')!));
     const beat = () => document.querySelector<HTMLElement>('[role="dialog"] button[data-beat]');
     await waitFor(() => !!beat(), 'the beats');
-    await page.screenshot({ path: `${SHOTS}/editor-ready-beat-1366.png` });
+    await shot(`editor-ready-beat-1366.png`);
     await clickAt(centre(beat()!));
     await settle();
     expect(notesSig('A')).not.toBe(before);
@@ -240,7 +241,7 @@ describe('Play', () => {
     const grid = pane()!.querySelector<HTMLElement>('[data-pad-grid]')!;
     expect(grid.getBoundingClientRect().bottom).toBeLessThanOrEqual(pane()!.getBoundingClientRect().bottom + 0.5);
     console.log(`[r7-edit] Simple editor (drums, Play) controls: ${visibleControls(pane()!)}`);
-    await page.screenshot({ path: `${SHOTS}/editor-play-drums-1366.png` });
+    await shot(`editor-play-drums-1366.png`);
 
     const { slot } = regionClip('A');
     const voice = 9;
@@ -287,7 +288,7 @@ describe('Play', () => {
     const chords = pane()!.querySelector<HTMLElement>('[role="switch"]')!;
     await clickAt(centre(chords));
     await waitFor(() => !!pane()!.querySelector('[data-chord]'), 'chord pads');
-    await page.screenshot({ path: `${SHOTS}/editor-play-chords-1366.png` });
+    await shot(`editor-play-chords-1366.png`);
     const pad = pane()!.querySelector<HTMLElement>('[data-chord] button')!;
     const at = centre(pad);
     await mouse('mouseMoved', at);
@@ -308,12 +309,12 @@ describe('screenshots', () => {
     it(`${w} x ${hh}: the bass loop in Draw and Play`, async () => {
       await open(w, hh);
       await openRegion('C');
-      await page.screenshot({ path: `${SHOTS}/editor-draw-bass-${w}.png` });
+      await shot(`editor-draw-bass-${w}.png`);
       expect(document.documentElement.scrollHeight).toBeLessThanOrEqual(window.innerHeight);
       console.log(`[r7-edit] ${w}: Simple editor (bass, Draw) controls: ${visibleControls(pane()!)}`);
       act(() => editorModeStore.setState('play'));
       await settle(200);
-      await page.screenshot({ path: `${SHOTS}/editor-play-bass-${w}.png` });
+      await shot(`editor-play-bass-${w}.png`);
       expect(document.documentElement.scrollHeight).toBeLessThanOrEqual(window.innerHeight);
       console.log(`[r7-edit] ${w}: Simple editor (bass, Play) controls: ${visibleControls(pane()!)}`);
     });

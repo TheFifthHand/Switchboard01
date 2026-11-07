@@ -19,7 +19,8 @@ import { setView, uiStore } from '../../src/state/uiStore';
 import { centre, clickAt, press, project, resetSong, settle, teardownSong, waitFor } from './r5-song-helpers';
 import { mount } from './ui-harness';
 
-const SHOTS = '/tmp/claude-0/r7/wt-editsound/shots';
+/** Screenshots for the report, in the ignored .vitest folder (relative to this file); never a reason to fail. */
+const shot = (name: string) => page.screenshot({ path: `../../.vitest/shots-r7-edit/${name}` }).catch(() => undefined);
 
 let closed = 0;
 const panel = () => document.querySelector<HTMLElement>('[data-testid="sound-panel"]')!;
@@ -70,7 +71,7 @@ describe('the Sound panel', () => {
       return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden';
     }).length;
     console.log(`[r7-edit] Sound panel controls: ${controls}`);
-    await page.screenshot({ path: `${SHOTS}/sound-panel.png` });
+    await shot(`sound-panel.png`);
   });
 
   it('Mute, Hear it alone, Volume and a big knob change the instrument itself', async () => {
