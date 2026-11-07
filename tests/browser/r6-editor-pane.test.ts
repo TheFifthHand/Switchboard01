@@ -26,7 +26,8 @@ import * as cmd from '../../src/state/commands';
 import { selectSlot, selectTrack, setPadMode, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { centre, clickAt, doubleClickAt, on, openSong, press, project, region, regionEl, regions, resetSong, settle, teardownSong, waitFor } from './r5-song-helpers';
 
-const SHOTS = '/tmp/claude-0/r6/shots-editor';
+// Screenshots for a person to look at, beside the test results (git-ignored); the path is relative to this file.
+const SHOTS = '../../test-results/shots-editor';
 
 /** Drums: A over bars 1–8 and B over 13–16 (the same pad clip); Bass: C over 1–16. */
 function song(p: Project): void {

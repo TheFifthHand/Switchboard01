@@ -59,7 +59,8 @@ import {
   waitFor,
 } from './r5-song-helpers';
 
-const SHOTS = '/tmp/claude-0/r6/shots-lanelib';
+// Screenshots for a person to look at, beside the test results (git-ignored); the path is relative to this file.
+const SHOTS = '../../test-results/shots-lanelib';
 
 const emptySong = (p: Project) => {
   p.arrangement.regions = [];

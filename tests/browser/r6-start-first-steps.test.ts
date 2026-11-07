@@ -25,7 +25,8 @@ import { bottomAboveGuidance } from '../../src/ui/components/Toast';
 import { keyboardCollapsedFor, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { button, click, closeShell, keys, openShell, settle, shown, transport, until } from './r4-shell-harness';
 
-const SHOTS = '/tmp/claude-0/r6/shots-start';
+// Screenshots for a person to look at, beside the test results (git-ignored); the path is relative to this file.
+const SHOTS = '../../test-results/shots-start';
 
 afterEach(async () => {
   if (session.playing) session.stop();

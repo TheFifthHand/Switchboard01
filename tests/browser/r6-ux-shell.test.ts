@@ -1,6 +1,6 @@
 /**
  * r6 UX fixes in the running app (real Chromium, real clicks; screenshots at
- * 1366 × 768 and 1920 × 1080 in /tmp/claude-0/r6/shots-fix2):
+ * 1366 × 768 and 1920 × 1080 in test-results/shots-fix2):
  * - the recording readout says the whole "Recording · Lead · into the song at
  *   bar 9" where the strip has room, and a shorter whole wording where it has
  *   not (never "RECOR…");
@@ -28,7 +28,8 @@ import { BEATS } from '../../src/content/beats';
 import { setKeyboardCollapsed, setPadMode, setUiMode, setView, selectTrack, uiStore } from '../../src/state/uiStore';
 import { button, click, closeShell, keys, openShell, settle, shown, transport, until } from './r4-shell-harness';
 
-const SHOTS = '/tmp/claude-0/r6/shots-fix2';
+// Screenshots for a person to look at, beside the test results (git-ignored); the path is relative to this file.
+const SHOTS = '../../test-results/shots-fix2';
 const welcome = () => document.querySelector('[role="dialog"][aria-labelledby="welcome-title"]');
 const described = (el: Element) =>
   (el.getAttribute('aria-describedby') ?? '')

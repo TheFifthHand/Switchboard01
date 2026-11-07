@@ -30,7 +30,8 @@ import { startHints } from '../../src/app/views/hints';
 import { setTipsEnabled } from '../../src/state/uiStore';
 import { barX, centre, clickAt, dragTo, mouse, openSong, project, region, regions, release, resetSong, rowY, scroller, settle, teardownSong, trackId, undoCount, waitFor } from './r5-song-helpers';
 
-const SHOTS = '/tmp/claude-0/r6/shots-glue';
+// Screenshots for a person to look at, beside the test results (git-ignored); the path is relative to this file.
+const SHOTS = '../../test-results/shots-glue';
 
 beforeEach(async () => {
   await resetSong();
