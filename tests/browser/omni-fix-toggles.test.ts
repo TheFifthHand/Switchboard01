@@ -308,8 +308,11 @@ describe('engaged toggles keep their on-look', () => {
     expect(worstContrast(state), 'Metronome switch: "On"').toBeGreaterThanOrEqual(4.5);
     await real(() => userEvent.keyboard('{Escape}'));
 
-    // Song: Loop (teal, pressed while the song loops) and Follow.
-    act(() => setView('arrange'));
+    // Song: Loop (teal, pressed while the song loops) and Follow. 2.4's Song header: Advanced since round 7.
+    act(() => {
+      setUiMode('advanced');
+      setView('arrange');
+    });
     await settle(150);
     act(() => {
       (session as unknown as { setSongLoop(l: { fromBar: number; toBar: number }): boolean }).setSongLoop({ fromBar: 0, toBar: 8 });
@@ -327,7 +330,10 @@ describe('engaged toggles keep their on-look', () => {
     await expectOnLookHolds('Follow', follow);
 
     // Mix: the strips' Mute and Solo.
-    act(() => setView('mix'));
+    act(() => {
+      setUiMode('simple');
+      setView('mix');
+    });
     await settle(150);
     const mixMute = [...document.querySelectorAll<HTMLElement>('main button[aria-pressed="true"]')].find((b) => /Mute/.test(b.getAttribute('aria-label') ?? b.textContent ?? ''));
     const mixSolo = [...document.querySelectorAll<HTMLElement>('main button[aria-pressed="true"]')].find((b) => /Solo/.test(b.getAttribute('aria-label') ?? b.textContent ?? ''));

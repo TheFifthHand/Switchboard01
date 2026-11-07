@@ -330,7 +330,7 @@ export function LevelSlider({ spec, value, label, onChange, controlledBy, disabl
 }
 
 /** A part's volume slider, pan dial and meter (its channel's level and pan, as in Mix). */
-export const PartControls = memo(function PartControls({ trackId, name }: { trackId: Id; name: string }) {
+export const PartControls = memo(function PartControls({ trackId, name, pan = true }: { trackId: Id; name: string; /** Simple leaves the pan dial to Every setting. */ pan?: boolean }) {
   const info = useChannel(trackId);
   const panSpec = useMemo<ParamSpec>(() => ({ ...PAN, label: `${name} pan`, short: 'Pan' }), [name]);
   const channel = info.channel;
@@ -357,21 +357,23 @@ export const PartControls = memo(function PartControls({ trackId, name }: { trac
           onChange={setLevel}
           controlledBy={info.levelBy ?? undefined}
           disabled={!channel}
-          tip={`How loud ${name} is in the song. It is the same level as ${name}’s fader in Mix.`}
+          tip={pan ? `How loud ${name} is in the song. It is the same level as ${name}’s fader in Mix.` : `How loud ${name} is in your song.`}
         />
         <Meter read={read} label={`${name} meter`} orientation="horizontal" thickness={2} segments={20} floorDb={LEVEL.min} scale={METER_SCALE} showClip={false} className={styles.partMeter} />
       </span>
-      <Knob
-        spec={panSpec}
-        value={info.pan}
-        size="sm"
-        showValue={false}
-        onChange={setPan}
-        controlledBy={info.panBy ?? undefined}
-        disabled={!channel}
-        tip={`Places ${name} left or right. The same as the Pan knob in Mix.`}
-        className={styles.partPan}
-      />
+      {pan && (
+        <Knob
+          spec={panSpec}
+          value={info.pan}
+          size="sm"
+          showValue={false}
+          onChange={setPan}
+          controlledBy={info.panBy ?? undefined}
+          disabled={!channel}
+          tip={`Places ${name} left or right. The same as the Pan knob in Mix.`}
+          className={styles.partPan}
+        />
+      )}
     </span>
   );
 });

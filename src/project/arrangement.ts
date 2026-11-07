@@ -631,3 +631,46 @@ export function tidySections(sections: readonly SongSection[]): { sections: Song
   }
   return { sections: out, fixed };
 }
+
+/* ------------------------------------------------------------------ */
+/* Plain section names for a growing song                              */
+/* ------------------------------------------------------------------ */
+
+/** The names "Add a part after" gives new sections, in turn (then "Verse 2", "Chorus 2"…). */
+export const PART_NAMES = ['Verse', 'Chorus', 'Bridge'] as const;
+
+/** `base`, or "<base> 2", "<base> 3"… when a section is already called that (case aside). */
+export function uniqueSectionName(sections: readonly Pick<SongSection, 'name'>[], base: string): string {
+  const taken = new Set(sections.map((s) => s.name.trim().toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let n = 2; ; n++) if (!taken.has(`${base} ${n}`.toLowerCase())) return `${base} ${n}`;
+}
+
+/**
+ * The next plain name for a new part of the song: Verse, Chorus, Bridge,
+ * then Verse 2, Chorus 2, Bridge 2, Verse 3… (the first one no section has),
+ * so a song that grows never has two new parts with the same name.
+ */
+export function nextPartName(sections: readonly Pick<SongSection, 'name'>[]): string {
+  const taken = new Set(sections.map((s) => s.name.trim().toLowerCase()));
+  for (let n = 1; ; n++) {
+    for (const base of PART_NAMES) {
+      const name = n === 1 ? base : `${base} ${n}`;
+      if (!taken.has(name.toLowerCase())) return name;
+    }
+  }
+}
+
+/**
+ * The section "Make it longer" repeats or adds after, for the playhead at
+ * `bar`: the section there, else the last one that starts before it, else
+ * the first. Null when the song has no sections.
+ */
+export function sectionToGrow(sections: readonly SongSection[], bar: number): SongSection | null {
+  const sorted = sortSections(sections);
+  if (!sorted.length) return null;
+  const at = sectionAt(sorted, bar);
+  if (at) return at;
+  const before = sorted.filter((s) => s.start <= bar);
+  return before[before.length - 1] ?? sorted[0];
+}

@@ -31,6 +31,12 @@
  * and nothing that takes keys of its own has focus (a field, a menu, a
  * dialog, the takes panel): after a marquee, a click on an empty spot, the
  * ruler or a section, or a Cut, as much as after a click on a loop.
+ *
+ * Simple mode shows a row only for the instruments with music (and the ones
+ * it keeps: see useSimpleRows), every row while a loop is carried in from
+ * the browser; a click on a loop opens its editor; the section names read
+ * larger than the bar numbers; the rows shrink further while the editor is
+ * open so every instrument stays in view.
  */
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type Ref } from 'react';
 import { useElementSize, useRafLoop } from '../../../ui/components';
@@ -38,7 +44,7 @@ import { clipAtSlot } from '../../../project/clips';
 import { regionEnd, songBars as projectSongBars, timelineBars as projectTimelineBars } from '../../../project/arrangement';
 import type { Id, Project } from '../../../project/types';
 import { useStore } from '../../../state/store';
-import { session, useProject } from '../../instance';
+import { session, useProject, useUi } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { songPlayheadBar, useSongPlaying } from '../../songPlayback';
 import { MoreIcon, anchorFromContextEvent, anchorFromElement, isEchoOfKeyboardMenu, noteKeyboardMenu, useToastsIfAny, type MenuAnchor } from '../ClipMenu';
@@ -46,20 +52,22 @@ import { loopPlaces, rangeText } from './songModel';
 import { isMac } from '../hints/shortcuts';
 import { DragOverlay } from './DragOverlay';
 import { EmptySong } from './library/EmptySong';
-import { openLoopEditor } from './editorStore';
+import { editorStore, openLoopEditor } from './editorStore';
 import { LaneController, type Carry, type LaneHost } from './laneController';
 import type { BarRange } from './laneGestures';
 import { laneKey } from './laneKeys';
 import { sameRange } from './laneLoop';
 import { neighbour, pruneSelection, selectAll, selectNone } from './laneSelection';
-import { dragStore, hoverStore, ppbStore, rangeStore, selectionStore, setSelection, usePxPerBar, useRange, type DragView } from './laneStore';
+import { carriedStore, dragStore, hoverStore, ppbStore, rangeStore, revealedStore, selectionStore, setSelection, shownRowsStore, usePxPerBar, useRange, type DragView } from './laneStore';
 import { readZoom, writeZoom } from './laneSettings';
 import { PartRow, partKeysNav, type HeadCol } from './PartRow';
 import { SectionStrip, type SectionStripProps } from './SectionStrip';
 import * as act from './songActions';
 import { LoopPicker, RegionMenu, SectionMenu, type MenuHost } from './SongMenus';
-import { HEADER_W, HEADER_W_NARROW, RULER_H, SECTIONS_H, barAt, fitZoom, followScroll, gridStep, rowHeight, snapBar, timelineBars, zoomScroll, zoomStep } from './songLayout';
-import { rowViews, sameRows } from './songModel';
+import { HEADER_W, HEADER_W_NARROW, ROW_SHORT_PX, RULER_H, SECTIONS_H, barAt, fitZoom, followScroll, gridStep, rowHeight, snapBar, timelineBars, zoomScroll, zoomStep } from './songLayout';
+import { rowViews, sameRows, type RowView } from './songModel';
+import { simpleRowIds } from './songHome';
+import { sidePanelStore } from './sidePanelStore';
 import { TimeMenu, TimelineRuler } from './TimelineRuler';
 import styles from './SongView.module.css';
 
@@ -116,9 +124,16 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
   const headRef = useRef<HTMLDivElement>(null);
   const plusRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
-  const rows = useProject(rowViews, sameRows);
+  const allRows = useProject(rowViews, sameRows);
+  const simple = useUi((s) => s.uiMode !== 'advanced');
+  const shownIds = useSimpleRows(simple);
+  const rows = useMemo(() => shownRows(allRows, shownIds), [allRows, shownIds]);
   const tracks = useMemo(() => rows.map((r) => r.id), [rows]);
-  const anySolo = rows.some((r) => r.solo);
+  useEffect(() => {
+    shownRowsStore.setState(simple ? tracks : null);
+  }, [simple, tracks]);
+  useEffect(() => () => shownRowsStore.setState(null), []);
+  const anySolo = allRows.some((r) => r.solo);
   const songBars = useProject(selectSongBars);
   const extent = useProject(selectExtent);
   const hasRegions = useProject(selectHasRegions);
@@ -136,15 +151,17 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
   const headW = size.width && size.width < 980 ? HEADER_W_NARROW : HEADER_W;
   const viewW = Math.max(0, size.width - headW);
   const bars = timelineBars(extent, viewW / Math.max(1, ppb));
-  const rowH = rowHeight(size.height - RULER_H - SECTIONS_H - 14, rows.length);
+  // Simple: while the editor is open below, the rows shrink further so every instrument stays in view.
+  const editorOpen = useStore(editorStore, (e) => e !== null);
+  const rowH = rowHeight(size.height - RULER_H - SECTIONS_H - 14, rows.length, simple && editorOpen ? ROW_SHORT_PX : undefined);
   const toasts = useToastsIfAny();
   const [menu, setMenu] = useState<Menu | null>(null);
   const [renaming, setRenaming] = useState<Id | null>(null);
   const [headTab, setHeadTab] = useState<{ row: number; col: HeadCol }>({ row: 0, col: 0 });
 
   // Live values for the controller and the frame loop (no re-render needed to read them).
-  const live = useRef({ ppb, rowH, headW, tracks, follow, busy: false, userScrollAt: -Infinity, viewW, bars, songPlaying });
-  live.current = { ...live.current, ppb, rowH, headW, tracks, follow, viewW, bars, songPlaying };
+  const live = useRef({ ppb, rowH, headW, tracks, follow, busy: false, userScrollAt: -Infinity, viewW, bars, songPlaying, simple });
+  live.current = { ...live.current, ppb, rowH, headW, tracks, follow, viewW, bars, songPlaying, simple };
   const rowsRef = useRef<HTMLDivElement>(null);
   /** A press is putting keyboard focus on the loop it pressed (that focus selects nothing by itself). */
   const pressFocus = useRef(false);
@@ -321,6 +338,10 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
       busy: (on) => {
         live.current.busy = on;
         if (on) hoverStore.setState(null);
+      },
+      // Simple: a click on a loop opens it in the editor below (a drag still moves it; Shift and Ctrl still select).
+      regionClick: (id) => {
+        if (live.current.simple) openLoopEditor(session.store.getState(), id);
       },
     };
     return new LaneController(host);
@@ -830,7 +851,7 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
   } as CSSProperties;
 
   return (
-    <div ref={rootRef} className={styles.timeline} style={style} data-testid="song-timeline" data-playing={songPlaying || undefined}>
+    <div ref={rootRef} className={styles.timeline} style={style} data-testid="song-timeline" data-playing={songPlaying || undefined} data-simple={simple || undefined} data-short-rows={(simple && rowH < 50) || undefined}>
       <div
         ref={scrollerRef}
         className={styles.scroller}
@@ -864,6 +885,7 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
               +
             </div>
             <HoverMore
+              tracks={tracks}
               buttonRef={moreRef}
               menuFor={menu?.kind === 'region' && menu.viaMore ? menu.id : null}
               onToggle={(id, el) =>
@@ -917,11 +939,11 @@ function SectionsLayer(props: Omit<SectionStripProps, 'dragged' | 'newSection' |
  * actions. It stays on the region whose menu it opened while that menu is
  * open; a second click closes the menu.
  */
-function HoverMore({ menuFor, onToggle, buttonRef }: { menuFor: Id | null; onToggle(id: Id, el: HTMLElement): void; buttonRef: Ref<HTMLButtonElement> }) {
+function HoverMore({ tracks, menuFor, onToggle, buttonRef }: { tracks: readonly Id[]; menuFor: Id | null; onToggle(id: Id, el: HTMLElement): void; buttonRef: Ref<HTMLButtonElement> }) {
   const hovered = useStore(hoverStore, (s) => s);
   const id = menuFor ?? hovered;
   const region = useProject((p) => (id ? (p.arrangement.regions.find((r) => r.id === id) ?? null) : null));
-  const rowIndex = useProject((p) => (region ? p.tracks.findIndex((t) => t.id === region.trackId) : -1));
+  const rowIndex = region ? tracks.indexOf(region.trackId) : -1;
   const ppb = usePxPerBar();
   const shared = useProject((p) => (region ? loopPlaces(p, region.trackId, region.clipId) > 1 : false));
   if (!region || rowIndex < 0 || region.bars * ppb < 56) return null;
@@ -948,6 +970,35 @@ function HoverMore({ menuFor, onToggle, buttonRef }: { menuFor: Id | null; onTog
 
 
 
+
+const NO_IDS: readonly Id[] = [];
+const sameIdList = (a: readonly Id[] | null, b: readonly Id[] | null) => a === b || (!!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]));
+
+/**
+ * Simple: the instruments that get a row (simpleRowIds), null in Advanced
+ * (every part). Kept on screen besides those with music: one added without
+ * music yet, one being recorded into, the one open in the editor or the
+ * Sound panel; every one while a loop is carried in from the browser.
+ */
+function useSimpleRows(simple: boolean): readonly Id[] | null {
+  const projectId = useProject(selectProjectId);
+  const carrying = useStore(carriedStore, (c) => !!c);
+  const editorTrack = useStore(editorStore, (e) => e?.trackId ?? null);
+  const soundTrack = useStore(sidePanelStore, (s) => (s.kind === 'sound' ? s.trackId : null));
+  const recTrack = useRuntime((s) => s.songRecording?.trackId ?? null);
+  const revealed = useStore(revealedStore, (s) => (s && s.projectId === projectId ? s.ids : NO_IDS));
+  const keep = useMemo(() => new Set<Id>([...revealed, ...[editorTrack, soundTrack, recTrack].filter((x): x is Id => !!x)]), [revealed, editorTrack, soundTrack, recTrack]);
+  const select = useCallback((p: Project) => (simple ? simpleRowIds(p, keep, carrying) : null), [simple, keep, carrying]);
+  return useProject(select, sameIdList);
+}
+
+/** The rows shown, numbered for the keyboard in the order they show (each keeps its part's colour and number). */
+function shownRows(all: readonly RowView[], ids: readonly Id[] | null): RowView[] {
+  if (!ids) return all as RowView[];
+  const out: RowView[] = [];
+  for (const r of all) if (ids.includes(r.id)) out.push(r.index === out.length ? r : { ...r, index: out.length });
+  return out;
+}
 
 /** Clear a drag view left behind (tests). */
 export function resetLaneState(): void {

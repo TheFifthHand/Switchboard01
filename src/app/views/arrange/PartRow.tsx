@@ -13,6 +13,11 @@
  * settings, Keep pattern. Mute and Solo call the same session commands as
  * Play and Mix, so all three stay in step (Undo covers them).
  *
+ * Simple mode: the instrument's picture and name instead of the number (a
+ * click opens its Sound panel on the right), the volume without the pan
+ * dial, and Mute, Solo and ⋯ only while the pointer is over the header or a
+ * key has focus (always while it is muted or soloed).
+ *
  * While Record writes into the song on this part (runtime songRecording),
  * a coral "Recording…" region grows on the row from the bar the take began,
  * above the loops there, until the take ends and becomes loops.
@@ -28,10 +33,13 @@ import type { Clip, Id, Project, SongRegion } from '../../../project/types';
 import { selectTrack } from '../../../state/uiStore';
 import { session, useProject, useUi } from '../../instance';
 import { useRuntime } from '../../runtime';
+import { useStore } from '../../../state/store';
 import { MoreIcon, anchorFromContextEvent, anchorFromElement, isMenuKey, noteKeyboardMenu, type MenuAnchor } from '../ClipMenu';
 import { SoundBrowser } from '../SoundBrowser';
 import { TrackMenu } from '../TrackMenu';
 import { PartControls } from './PartControls';
+import { openSound, sidePanelStore } from './sidePanelStore';
+import { INSTRUMENT_KINDS } from './songHome';
 import { RegionView } from './RegionView';
 import { barsText, partStatus, type RowView } from './songModel';
 import styles from './SongView.module.css';
@@ -78,8 +86,13 @@ type HeadMenu = { anchor: MenuAnchor; returnFocus: HTMLElement | null; rename: b
  */
 function PartHeader({ row, anySolo, tab, onFocusKey }: { row: RowView; anySolo: boolean; tab: HeadCol | null; onFocusKey(row: number, col: HeadCol): void }) {
   const status = partStatus(row, anySolo);
+  const simple = useUi((s) => s.uiMode !== 'advanced');
   // The part the keyboard strip plays (chosen here, in Play or in Shape): a teal mark and a keys icon.
-  const current = useUi((s) => s.selectedTrackId === row.id);
+  // Simple has no keyboard strip: the mark is on the instrument whose Sound panel is open.
+  const playsKeys = useUi((s) => s.selectedTrackId === row.id);
+  const soundOpenHere = useStore(sidePanelStore, (s) => s.kind === 'sound' && s.trackId === row.id);
+  const current = simple ? soundOpenHere : playsKeys;
+  const kind = INSTRUMENT_KINDS[row.role] ?? INSTRUMENT_KINDS.lead;
   const [menu, setMenu] = useState<HeadMenu | null>(null);
   const [soundOpen, setSoundOpen] = useState(false);
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -112,18 +125,43 @@ function PartHeader({ row, anySolo, tab, onFocusKey }: { row: RowView; anySolo: 
       data-part-head=""
       data-status={status === 'Muted' ? 'muted' : status === 'Solo' ? 'solo' : status ? 'quiet' : undefined}
       data-current={current || undefined}
+      data-simple={simple || undefined}
       onClick={(e) => !(e.target as Element).closest('button, input') && selectTrack(row.id)}
       onContextMenu={onContextMenu}
     >
-      <span className={styles.partNum} aria-hidden="true">
-        {row.number}
-      </span>
+      {!simple && (
+        <span className={styles.partNum} aria-hidden="true">
+          {row.number}
+        </span>
+      )}
       <span className={styles.partBody}>
         <span className={styles.partNameLine}>
-          <span className={styles.partName} title={row.name}>
-            {row.name}
-          </span>
-          {current && (
+          {simple ? (
+            // The instrument's picture and name: a click opens its Sound panel on the right.
+            <Tooltip name={`${row.name}: sound`} tip={`Open ${row.name}’s sound: change it, its volume and how it feels.`}>
+              <button
+                type="button"
+                className={styles.partNameKey}
+                data-testid="row-name"
+                aria-label={`${row.name} (${kind.name}): open its sound`}
+                aria-pressed={soundOpenHere}
+                onClick={() => {
+                  selectTrack(row.id);
+                  openSound(row.id);
+                }}
+              >
+                <span className={styles.partIcon} aria-hidden="true">
+                  <Icon name={kind.icon} size={13} />
+                </span>
+                <span className={styles.partName}>{row.name}</span>
+              </button>
+            </Tooltip>
+          ) : (
+            <span className={styles.partName} title={row.name}>
+              {row.name}
+            </span>
+          )}
+          {!simple && current && (
             <span className={styles.partCurrent} title="The keyboard plays this part">
               <Icon name="keys" size={11} />
               <span className={styles.srOnly}>(the keyboard plays this part)</span>
@@ -133,7 +171,7 @@ function PartHeader({ row, anySolo, tab, onFocusKey }: { row: RowView; anySolo: 
             {status ?? row.sound}
           </span>
         </span>
-        <PartControls trackId={row.id} name={row.name} />
+        <PartControls trackId={row.id} name={row.name} pan={!simple} />
       </span>
       <span className={styles.partKeys}>
         <Tooltip name={row.mute ? `Unmute ${row.name}` : `Mute ${row.name}`} tip={row.mute ? `Hear ${row.name} again.` : `Silence ${row.name} in the song (it keeps its place).`}>
@@ -154,7 +192,7 @@ function PartHeader({ row, anySolo, tab, onFocusKey }: { row: RowView; anySolo: 
             <Icon name="speaker" size={14} />
           </button>
         </Tooltip>
-        <Tooltip name={row.solo ? `Stop soloing ${row.name}` : `Solo ${row.name}`} tip={row.solo ? `Hear every part again.` : `Hear only ${row.name} (and any other soloed part).`}>
+        <Tooltip name={row.solo ? `Stop soloing ${row.name}` : `Solo ${row.name}`} tip={simple ? (row.solo ? 'Hear every instrument again.' : `Hear ${row.name} alone.`) : row.solo ? `Hear every part again.` : `Hear only ${row.name} (and any other soloed part).`}>
           <button
             type="button"
             className={styles.partKey}

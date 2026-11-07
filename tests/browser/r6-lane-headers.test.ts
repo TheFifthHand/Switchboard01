@@ -20,7 +20,7 @@ import { ppbStore } from '../../src/app/views/arrange/laneStore';
 import { readZoom } from '../../src/app/views/arrange/laneSettings';
 import { moduleId } from '../../src/project/factory';
 import type { Project } from '../../src/project/types';
-import { centre, clickAt, doubleClickAt, dragTo, menuItem, mouse, on, openSong, press, project, region, regionEl, regions, resetSong, rightClickAt, settle, teardownSong, undoCount, wheelAt } from './r5-song-helpers';
+import { centre, clickAt, doubleClickAt, dragTo, menuItem, mouse, on, openSong, press, project, region, regionEl, regions, resetSong, rightClickAt, settle, teardownSong, undoCount, wheelAt, advancedMode } from './r5-song-helpers';
 
 const head = (trackId: string) => document.querySelector<HTMLElement>(`[data-lane-row="${trackId}"] [data-part-head]`)!;
 const slider = (trackId: string) => head(trackId).querySelector<HTMLElement>('[role="slider"][aria-label$=" volume"]')!;
@@ -94,6 +94,8 @@ describe('volume and pan in the part headers', () => {
   });
 
   it('the pan dial changes the part’s channel pan (Mix’s pan knob), one undo step per drag', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await openSong(1366, 768, song);
     const bass = project().tracks[2];
     const dial = panDial(bass.id);

@@ -279,7 +279,8 @@ describe('the chip never covers a heading or a status line', () => {
           showStep(step);
           await settle();
           await chipPlaced();
-          expect(document.querySelector('[data-testid="pads-playing"]')!.textContent).toContain('Pads are playing');
+          // (Round 7: Simple's Song screen has no pads chip; 2.4's header with it is Advanced's.)
+          if (mode === 'advanced') expect(document.querySelector('[data-testid="pads-playing"]')!.textContent).toContain('Pads are playing');
           // Its home is the Song header's free middle. Where that has no room (960 x 540 with the two-row transport, the
           // song filling the rows) it waits off screen, unseen, rather than cover anything (the rulebook's rule).
           if (!chip()!.hasAttribute('data-ready')) {

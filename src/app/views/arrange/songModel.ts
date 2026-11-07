@@ -39,6 +39,8 @@ export interface RowView {
   hue: number;
   mute: boolean;
   solo: boolean;
+  /** What kind of instrument it is (its picture in Simple's row header). */
+  role: Track['role'];
 }
 
 export function rowView(p: Project, t: Track, index: number): RowView {
@@ -49,7 +51,7 @@ export function rowView(p: Project, t: Track, index: number): RowView {
   } catch {
     sound = INSTRUMENT_LABEL[t.instrument.kind];
   }
-  return { id: t.id, index, number: index + 1, name, sound, hue: partHue(index), mute: t.mute, solo: t.solo };
+  return { id: t.id, index, number: index + 1, name, sound, hue: partHue(index), mute: t.mute, solo: t.solo, role: t.role };
 }
 
 export function rowViews(p: Project): RowView[] {
@@ -58,7 +60,7 @@ export function rowViews(p: Project): RowView[] {
 
 /** Two row lists that show the same (the same array is kept while nothing changed). */
 export function sameRows(a: readonly RowView[], b: readonly RowView[]): boolean {
-  return a.length === b.length && a.every((x, i) => x.id === b[i].id && x.name === b[i].name && x.sound === b[i].sound && x.mute === b[i].mute && x.solo === b[i].solo && x.index === b[i].index);
+  return a.length === b.length && a.every((x, i) => x.id === b[i].id && x.name === b[i].name && x.sound === b[i].sound && x.mute === b[i].mute && x.solo === b[i].solo && x.index === b[i].index && x.role === b[i].role);
 }
 
 /** Whether a part is heard, in words: Muted, Solo, Not soloed (another part is soloed), or null. */

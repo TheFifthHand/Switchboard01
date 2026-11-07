@@ -9,7 +9,7 @@ import { act } from 'react';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { ppbStore } from '../../src/app/views/arrange/laneStore';
 import type { Project } from '../../src/project/types';
-import { barX, centre, clickAt, doubleClickAt, on, openSong, press, region, resetSong, rightClickAt, rowY, settle, teardownSong } from './r5-song-helpers';
+import { barX, centre, clickAt, doubleClickAt, on, openSong, press, region, resetSong, rightClickAt, rowY, settle, teardownSong, advancedMode } from './r5-song-helpers';
 
 interface AxeApi {
   run(context: Element, options: Record<string, unknown>): Promise<AxeResults>;
@@ -42,6 +42,8 @@ beforeEach(resetSong);
 afterEach(teardownSong);
 
 it('the Song view and its menus pass axe-core', async () => {
+  // 2.4's Song view controls: Advanced since round 7.
+  advancedMode();
   await openSong(1366, 768, song);
   act(() => ppbStore.setState(32));
   await settle();

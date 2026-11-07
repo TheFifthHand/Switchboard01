@@ -30,6 +30,7 @@ import {
   settle,
   teardownSong,
   undoCount,
+  advancedMode,
 } from './r5-song-helpers';
 
 const emptySong = (p: Project) => {
@@ -70,6 +71,8 @@ describe('an empty song', () => {
 
 describe('dragging from the loop browser', () => {
   it('a scene card dropped on the rows: a loop for each of its parts from that bar, and a section named after it (one undo step)', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await openSong(1366, 768, emptySong);
     act(() => ppbStore.setState(24));
     await settle();
@@ -89,6 +92,8 @@ describe('dragging from the loop browser', () => {
   });
 
   it('a part’s loop lands only on its own row: that row lights up; over another row the drop does nothing', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await openSong(1366, 768, emptySong);
     act(() => ppbStore.setState(24));
     await settle();
@@ -116,6 +121,8 @@ describe('dragging from the loop browser', () => {
   });
 
   it('Enter on a chip adds it at the playhead (the keyboard way)', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await openSong(1366, 768, emptySong);
     const lead = project().tracks[4];
     const clip = lead.clips.find((c) => c)!;

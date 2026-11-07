@@ -198,10 +198,13 @@ export function followScroll(x: number, scrollLeft: number, viewport: number, co
 /* Rows and regions                                                    */
 /* ------------------------------------------------------------------ */
 
-/** The height each of `rows` part rows gets from `free` px (within ROW_MIN_PX..ROW_MAX_PX). */
-export function rowHeight(free: number, rows: number): number {
-  if (!(rows > 0) || !Number.isFinite(free)) return ROW_MIN_PX;
-  return Math.max(ROW_MIN_PX, Math.min(ROW_MAX_PX, Math.floor(free / rows)));
+/** Simple mode's rows may shrink to this while the editor is open (the name only: the volume is in the Sound panel). */
+export const ROW_SHORT_PX = 28;
+
+/** The height each of `rows` part rows gets from `free` px (within `min` (ROW_MIN_PX)..ROW_MAX_PX). */
+export function rowHeight(free: number, rows: number, min: number = ROW_MIN_PX): number {
+  if (!(rows > 0) || !Number.isFinite(free)) return min;
+  return Math.max(min, Math.min(ROW_MAX_PX, Math.floor(free / rows)));
 }
 
 /** The row at `y` px below the first row's top (rows of `rowH`): -1 above the rows, ≥ the row count below them. */

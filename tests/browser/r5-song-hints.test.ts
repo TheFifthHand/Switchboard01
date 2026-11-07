@@ -14,7 +14,7 @@ import { ppbStore } from '../../src/app/views/arrange/laneStore';
 import { session } from '../../src/app/instance';
 import { setTipsEnabled } from '../../src/state/uiStore';
 import { chipPlaced } from './r4-shell-chip';
-import { barX, centre, clickAt, dragTo, edge, on, openSong, press, project, regions, resetSong, rowY, rt, settle, teardownSong, waitFor } from './r5-song-helpers';
+import { barX, centre, clickAt, dragTo, edge, on, openSong, press, project, regions, resetSong, rowY, rt, settle, teardownSong, waitFor, advancedMode } from './r5-song-helpers';
 
 const chip = () => document.querySelector<HTMLElement>('aside[data-hint]');
 const hint = () => chip()?.dataset.hint ?? null;
@@ -26,6 +26,8 @@ afterEach(async () => {
 });
 
 it('the song steps are done by the real gestures, one after another', async () => {
+  // 2.4's Song view controls: Advanced since round 7.
+  advancedMode();
   await openSong(1366, 768);
   act(() => {
     setTipsEnabled(true);
@@ -80,6 +82,8 @@ it('the song steps are done by the real gestures, one after another', async () =
 });
 
 it('with the header busy, the chip is never under the ruler: drawn on top wherever it sits, and never over the loop band', async () => {
+  // 2.4's Song view controls: Advanced since round 7.
+  advancedMode();
   await openSong(1366, 768);
   act(() => {
     setTipsEnabled(true);

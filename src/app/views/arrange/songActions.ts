@@ -12,7 +12,7 @@
  * loops (part, clip, length, where in the clip and where from each other),
  * Ctrl+V puts copies at the playhead on the same parts.
  */
-import { regionEnd } from '../../../project/arrangement';
+import { regionEnd, sectionAt, sortSections } from '../../../project/arrangement';
 import { clipById, isSongSlot, slotOfClip } from '../../../project/clips';
 import type { ClipBars, Id, SongMoveKind } from '../../../project/types';
 import { uiStore } from '../../../state/uiStore';
@@ -23,7 +23,8 @@ import * as songCmd from '../../../state/commands';
 import type { Edge, RegionClipboard, ShapeKind, SongEditResult } from '../../../state/commands';
 import { editorStore } from './editorStore';
 import { clearSelection, setSelection } from './laneStore';
-import { freshName, libraryLoop, loopTarget, partProblem, realizeFor } from './library/libraryModel';
+import { freshName, libraryLoop, libraryResults, loopRoleOf, loopTarget, partProblem, realizeFor } from './library/libraryModel';
+import { INSTRUMENT_KINDS } from './songHome';
 import { quietly } from './sceneOffer';
 import { barsText, scenePlaces } from './songModel';
 
@@ -83,18 +84,44 @@ export function moveLoops(ids: readonly Id[], delta: number, opts: { copy?: bool
   if (!delta && !opts.copy) return null;
   // The words only when they are said (a drop says nothing: it is drawn).
   const words = opts.say ? loopsWords(ids) : '';
+  const before = project();
   const r = songCmd.moveRegions(session.store, ids, delta, { copy: opts.copy });
   const first = opts.say && r.ids?.length ? regions().find((x) => x.id === r.ids![0]) : null;
-  return run(r, { text: opts.say ? `${opts.copy ? 'Copied' : 'Moved'} ${words}${first ? ` to bar ${first.start + 1}` : ''}` : undefined });
+  const out = run(r, { text: opts.say ? `${opts.copy ? 'Copied' : 'Moved'} ${words}${first ? ` to bar ${first.start + 1}` : ''}` : undefined });
+  if (!opts.say) sayCovered(before, ids, `${opts.copy ? 'The copy of' : 'Moved'} ${loopsWords(ids)}${opts.copy ? ' went' : ''} over other music.`, r);
+  return out;
+}
+
+/**
+ * Simple mode: a drag that covered other loops on their rows says what went
+ * ("Four Floor grew over other music. It replaced Fill."), with Undo, so
+ * music never disappears silently. Advanced keeps 2.4's quiet drags.
+ */
+function sayCovered(before: ReturnType<typeof project>, ids: readonly Id[], lead: string, r: SongEditResult): void {
+  if (!r.changed || uiStore.getState().uiMode === 'advanced') return;
+  const tracks = new Set(before.arrangement.regions.filter((x) => ids.includes(x.id)).map((x) => x.trackId));
+  const after = project();
+  const covered: string[] = [];
+  for (const trackId of tracks) {
+    // The dragged loops themselves are not "replaced": only what they landed on.
+    const others = (q: typeof before) => ({ ...q, arrangement: { ...q.arrangement, regions: q.arrangement.regions.filter((x) => !ids.includes(x.id)) } });
+    const text = replacedLoopsText(others(before), others(after), trackId);
+    if (text) covered.push(text.replace(/^It replaced /, '').replace(/\.$/, '').replace(/ \((?:bars?) [^)]*\)/g, ''));
+  }
+  if (!covered.length) return;
+  notify(`${lead} It replaced ${covered.join(' and ')}.`, 'info', 'undo');
 }
 
 export function resizeLoops(ids: readonly Id[], edge: Edge, delta: number, opts: { say?: boolean } = {}): SongEditResult | null {
   if (!ids.length || !delta || lockedNow()) return null;
   const words = opts.say ? loopsWords(ids) : '';
+  const before = project();
   const r = songCmd.resizeRegions(session.store, ids, edge, delta);
   const one = ids.length === 1 ? regions().find((x) => x.id === ids[0]) : null;
   const text = edge === 'end' ? (one ? `${words} now lasts ${barsText(one.bars)}` : `${delta > 0 ? 'Lengthened' : 'Shortened'} ${words}`) : one ? `${words} now starts at bar ${one.start + 1}` : `Trimmed ${words}`;
-  return run(r, { select: false, text: opts.say ? text : undefined });
+  const out = run(r, { select: false, text: opts.say ? text : undefined });
+  if (!opts.say) sayCovered(before, ids, `${loopsWords(ids)} grew over other music.`, r);
+  return out;
 }
 
 /** "Make it 2× longer": the loop lasts twice as long (its clip repeats to fill it). */
@@ -421,14 +448,75 @@ export function shapeSectionNow(id: Id, kind: ShapeKind): SongEditResult | null 
 
 
 /** "Add an intro" / "Add an ending" (Shape the song…): the new bars are selected. */
-export function addIntroNow(): SongEditResult | null {
+export function addIntroNow(opts: { plain?: boolean } = {}): SongEditResult | null {
   if (lockedNow()) return null;
-  return run(songCmd.addIntro(session.store), { text: 'Added an intro' });
+  const r = songCmd.addIntro(session.store);
+  return run(r, { text: opts.plain ? `Added ${madeName(r) ?? 'an intro'} at the start: your instruments come in one at a time` : 'Added an intro' });
 }
 
-export function addEndingNow(): SongEditResult | null {
+export function addEndingNow(opts: { plain?: boolean } = {}): SongEditResult | null {
   if (lockedNow()) return null;
-  return run(songCmd.addEnding(session.store), { text: 'Added an ending' });
+  const r = songCmd.addEnding(session.store);
+  return run(r, { text: opts.plain ? `Added ${madeName(r) ?? 'an ending'} at the end: your instruments drop out one at a time` : 'Added an ending' });
+}
+
+/** The name of the section an edit made ("Intro 2"). */
+function madeName(r: SongEditResult & { sectionId?: Id }): string | null {
+  return r.sectionId ? (project().arrangement.sections.find((s) => s.id === r.sectionId)?.name ?? null) : null;
+}
+
+/**
+ * "Make it longer" › Repeat <part> again / Add a part after <part>: the part
+ * of the song at `bar` plays again after itself (a new part gets the next
+ * plain name: Verse, Chorus, Bridge, Verse 2…), said with Undo. The new loops
+ * are left unselected: a click on one opens it.
+ */
+export function growSongNow(kind: songCmd.GrowKind, bar: number): (SongEditResult & { sectionId?: Id }) | null {
+  if (lockedNow()) return null;
+  const r = songCmd.growSong(session.store, bar, kind);
+  if (!session.accepted(r)) return r;
+  clearSelection();
+  said(kind === 'again' ? `${r.from} now plays twice in a row` : `Added ${r.name} after ${r.from}: it plays the same music, ready to change`, r);
+  return r;
+}
+
+/**
+ * "+ Add instrument" (Simple): instrument `trackId` gets the first library
+ * loop of its kind (in the song's key), placed over the part of the song at
+ * `bar` (repeated to fill it), as one undo step "Add <instrument>", said with
+ * Undo. `loop` is null when no library loop suits it (a Recording); the row
+ * then just shows, ready to record into.
+ */
+export function addInstrumentNow(trackId: Id, bar: number): { regionId?: Id; start: number; loop: string | null } | null {
+  if (lockedNow()) return null;
+  const p = project();
+  const t = p.tracks.find((x) => x.id === trackId);
+  if (!t) return null;
+  const role = loopRoleOf(t);
+  const loop = role ? libraryResults({ text: '', role, genre: null }).find((l) => !partProblem(l, t)) : undefined;
+  const notes = loop ? realizeFor(p, loop, t) : null;
+  const section = sectionAt(sortSections(p.arrangement.sections), bar);
+  const start = section ? section.start : Math.max(0, Math.floor(bar));
+  if (!loop || !notes) return { start, loop: null };
+  const name = freshName(t, notes.name);
+  // One undo step for the loop and its length (a Record Notes pass already groups every edit it makes).
+  const group = runtimeStore.getState().recording !== 'notes';
+  if (group) session.store.beginGroup(`arrange:Add ${t.name}`);
+  let regionId: Id | undefined;
+  try {
+    const r = songCmd.addLoopToSong(session.store, trackId, start, { name, bars: notes.bars, notes: notes.notes }, { display: `Add ${t.name}` });
+    if (session.accepted(r) && r.regionId) {
+      regionId = r.regionId;
+      const placed = regions().find((x) => x.id === regionId);
+      if (section && placed && placed.bars !== section.bars) session.accepted(songCmd.resizeRegions(session.store, [regionId], 'end', section.bars - placed.bars));
+    }
+  } finally {
+    if (group) session.store.endGroup();
+  }
+  if (!regionId) return null;
+  clearSelection();
+  notify(`Added ${t.name}: it plays “${name}”${section ? ` in ${section.name}` : ''}. Try other ${INSTRUMENT_KINDS[t.role].name.toLowerCase()} loops in LOOPS.`, 'info', 'undo');
+  return { regionId, start, loop: loop.id };
 }
 
 /** A performance take's launches put in the song after its end (each loop on its part's row, as long as it played). */

@@ -34,6 +34,7 @@ import {
   shapeOf,
   teardownSong,
   undoCount,
+  advancedMode,
 } from './r5-song-helpers';
 
 /** Drums (row 1): A over bars 1–8 and B over 13–16; Bass (row 3): C over 1–16. */
@@ -113,6 +114,8 @@ describe('moving a loop', () => {
   });
 
   it('leaving the row by more than a row’s height says “not allowed”, and the drop still lands on its own row', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await open();
     const from = on('B', 0.5);
     const far = { x: from.x + 2 * ppb(), y: rowY(project().tracks[4].id) };

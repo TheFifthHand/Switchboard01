@@ -57,6 +57,7 @@ import {
   trackId,
   undoCount,
   waitFor,
+  advancedMode,
 } from './r5-song-helpers';
 
 const SHOTS = '/tmp/claude-0/r6/shots-lanelib';
@@ -100,7 +101,9 @@ async function showBrowser(): Promise<void> {
 
 async function openLibrary(): Promise<void> {
   await showBrowser();
-  await clickAt(centre(tab('library')));
+  // (Simple's LOOPS is the library alone, with no tabs.)
+  const libTab = document.querySelector('[data-testid="loops-tab-library"]');
+  if (libTab) await clickAt(centre(libTab));
   await waitFor(() => !!document.querySelector('[data-testid="loop-library"]'), 'the library');
 }
 
@@ -119,6 +122,8 @@ async function typeText(text: string): Promise<void> {
 
 describe('the browser’s tabs and the library list', () => {
   it('This song is first in a song with loops; Library lists loops by part, style and search', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await openSong(1366, 768);
     await showBrowser();
     expect(tab('song').getAttribute('aria-selected')).toBe('true');
@@ -154,6 +159,8 @@ describe('the browser’s tabs and the library list', () => {
   });
 
   it('a project with few loops of its own opens on the Library; a long list shows more on request', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await openSong(1366, 768, (p) => {
       emptySong(p);
       for (const t of p.tracks) t.clips = t.clips.map(() => null);
@@ -481,6 +488,8 @@ describe('a pad clip made in a scene the song uses', () => {
 
 describe('the empty song', () => {
   it('says what to do in one line, with Open the loop library (and Make a song from my scenes)', async () => {
+    // 2.4's Song view controls: Advanced since round 7.
+    advancedMode();
     await openSong(1366, 768, emptySong);
     act(() => browserTabStore.setState({ projectId: project().id, tab: 'song' }));
     const host = document.createElement('div');

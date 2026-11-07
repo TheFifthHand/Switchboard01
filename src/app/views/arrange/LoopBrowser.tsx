@@ -29,7 +29,7 @@ import { ClipSketch, Icon, Tooltip } from '../../../ui/components';
 import { clipById } from '../../../project/clips';
 import { TICKS_PER_BAR, type Id, type Project } from '../../../project/types';
 import { createStore, shallowEqual, useStore } from '../../../state/store';
-import { session, useProject } from '../../instance';
+import { session, useProject, useUi } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import type { Carry } from './laneController';
 import { addLoop, addScene } from './songActions';
@@ -205,7 +205,10 @@ export interface LoopBrowserProps {
 }
 
 export const LoopBrowser = memo(function LoopBrowser({ onCarry, playheadBar, onClose }: LoopBrowserProps) {
-  const [tab, setTab] = useBrowserTab();
+  const [chosen, setTab] = useBrowserTab();
+  // Simple (round 7): LOOPS is the library alone. "This song" (scenes and the pads' loops) is an Advanced tool.
+  const simple = useUi((s) => s.uiMode !== 'advanced');
+  const tab: BrowserTab = simple ? 'library' : chosen;
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
@@ -215,7 +218,7 @@ export const LoopBrowser = memo(function LoopBrowser({ onCarry, playheadBar, onC
     tabRefs.current[j]?.focus();
   };
   return (
-    <aside className={styles.browser} aria-label="Loops: drag a scene or a loop onto the song" data-testid="loop-browser" data-tab={tab}>
+    <aside className={styles.browser} aria-label={simple ? 'Loops: drag one onto your song' : 'Loops: drag a scene or a loop onto the song'} data-testid="loop-browser" data-tab={tab}>
       <div className={styles.browserHead}>
         <h3 className={styles.browserTitle}>Loops</h3>
         <Tooltip name="Hide the loops" tip="Hide this panel to give the song more room. The Loops key above brings it back.">
@@ -224,29 +227,31 @@ export const LoopBrowser = memo(function LoopBrowser({ onCarry, playheadBar, onC
           </button>
         </Tooltip>
       </div>
-      <div className={libStyles.tabs} role="tablist" aria-label="Which loops">
-        {TABS.map((t, i) => (
-          <button
-            key={t.id}
-            ref={(el) => {
-              tabRefs.current[i] = el;
-            }}
-            type="button"
-            role="tab"
-            id={`loops-tab-${t.id}`}
-            aria-controls="loops-tab-panel"
-            aria-selected={tab === t.id}
-            tabIndex={tab === t.id ? 0 : -1}
-            className={libStyles.tab}
-            data-testid={`loops-tab-${t.id}`}
-            onClick={() => setTab(t.id)}
-            onKeyDown={(e) => onTabKey(e, i)}
-          >
-            {t.name}
-          </button>
-        ))}
-      </div>
-      <div className={styles.browserBody} role="tabpanel" id="loops-tab-panel" aria-labelledby={`loops-tab-${tab}`}>
+      {!simple && (
+        <div className={libStyles.tabs} role="tablist" aria-label="Which loops">
+          {TABS.map((t, i) => (
+            <button
+              key={t.id}
+              ref={(el) => {
+                tabRefs.current[i] = el;
+              }}
+              type="button"
+              role="tab"
+              id={`loops-tab-${t.id}`}
+              aria-controls="loops-tab-panel"
+              aria-selected={tab === t.id}
+              tabIndex={tab === t.id ? 0 : -1}
+              className={libStyles.tab}
+              data-testid={`loops-tab-${t.id}`}
+              onClick={() => setTab(t.id)}
+              onKeyDown={(e) => onTabKey(e, i)}
+            >
+              {t.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className={styles.browserBody} {...(simple ? {} : { role: 'tabpanel', id: 'loops-tab-panel', 'aria-labelledby': `loops-tab-${tab}` })}>
         {tab === 'song' ? <SongLoops onCarry={onCarry} playheadBar={playheadBar} /> : <LibraryPanel playheadBar={playheadBar} onCarry={onCarry} />}
       </div>
       <LibraryGhost />
