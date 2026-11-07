@@ -22,7 +22,7 @@ import { TICKS_PER_STEP } from '../../src/project/types';
 import { addNote, createClip, insertScene, toggleStep } from '../../src/state/commands';
 import { selectSlot, selectTrack, uiStore } from '../../src/state/uiStore';
 import { centre, click as cdpClick } from './r4-uikit-input';
-import { button, clickEl, clipsOf, described, grid, item, menu, notice, openApp, pad, panel, press, project, setUp, tearDown, until } from './r4-play-helpers';
+import { button, clickEl, clipsOf, described, grid, item, menu, notice, openApp, openIn, pad, panel, press, project, setUp, tearDown, until } from './r4-play-helpers';
 
 beforeEach(setUp);
 afterEach(tearDown);
@@ -119,9 +119,11 @@ describe('keyboard focus stays in view (M2)', () => {
 });
 
 describe('short windows', () => {
-  it('at 1366 x 657 (a laptop browser) three rows show whole, with a fade at the foot while more are below', async () => {
+  // Round 7: Simple's pads are on the Jam pads sheet, under its 40 px "Back to my song" bar: a row fewer than 2.4 showed.
+  it('at 1366 x 657 (a laptop browser) two rows show whole, with a fade at the foot while more are below', async () => {
+    openIn('simple');
     await openApp(1366, 657);
-    for (const r of [0, 1, 2]) expect(fullyShown(pad('t3', r)), `row ${r}`).toBe(true);
+    for (const r of [0, 1]) expect(fullyShown(pad('t3', r)), `row ${r}`).toBe(true);
     expect(frame().hasAttribute('data-more')).toBe(true);
     const fade = frame().querySelector<HTMLElement>('[class*="gridFade"]')!;
     await until(() => Number(getComputedStyle(fade).opacity) > 0.9, 'the fade');
@@ -133,10 +135,11 @@ describe('short windows', () => {
     expect(pad('t3', 1).getAttribute('aria-label')).toMatch(/\d bars?\./);
   });
 
-  it('at 1280 x 720 all four starter rows fit, no fade', async () => {
+  it('at 1280 x 720 three starter rows show whole, with a fade while the fourth is below', async () => {
+    openIn('simple');
     await openApp(1280, 720);
-    for (const r of [0, 1, 2, 3]) expect(fullyShown(pad('t3', r)), `row ${r}`).toBe(true);
-    expect(frame().hasAttribute('data-more')).toBe(false);
+    for (const r of [0, 1, 2]) expect(fullyShown(pad('t3', r)), `row ${r}`).toBe(true);
+    expect(frame().hasAttribute('data-more')).toBe(true);
   });
 });
 

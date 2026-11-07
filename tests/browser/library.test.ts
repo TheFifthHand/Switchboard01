@@ -23,7 +23,7 @@ import { closeDb, deleteDb, putSample, saveProject } from '../../src/persistence
 import * as library from '../../src/persistence/library';
 import { createProject } from '../../src/project/factory';
 import { PROJECT_VERSION, type Project } from '../../src/project/types';
-import { setGuideDone, setView, uiStore } from '../../src/state/uiStore';
+import { setGuideDone, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { cleanup, key, mount, wait } from './ui-harness';
 
 /** Make every IndexedDB write fail as if browser storage were full; returns the undo. */
@@ -52,11 +52,14 @@ beforeEach(async () => {
   loaded = [];
   closed = 0;
   guides = 0;
+  // Round 7: these cover 2.4's library flows and transport, which Advanced keeps (Simple's Project ▾: r7-shell-simple).
+  act(() => setUiMode('advanced'));
   await deleteDb();
 });
 
 afterEach(async () => {
   cleanup();
+  act(() => setUiMode('simple'));
   await deleteDb();
 });
 

@@ -1,0 +1,151 @@
+/* The Simple top bar: few keys, large, in one row from 1024 px. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 58px;
+  padding: 0 12px;
+  background: linear-gradient(180deg, var(--shell-hi), var(--shell));
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
+  position: relative;
+  z-index: 5;
+  min-width: 0;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-soft);
+  flex: none;
+}
+
+/* Play and Pause keep one width, so nothing shifts when it flips. */
+.play[data-size] {
+  --h: 40px;
+  --px: 14px;
+  min-width: 96px;
+  font-size: var(--fs-lg);
+}
+.stop[data-size] {
+  --h: 40px;
+  --px: 12px;
+}
+
+.rec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-soft);
+}
+.recKey[data-size] {
+  --h: 40px;
+  --px: 12px;
+  flex: none;
+}
+.recOn[data-size] {
+  color: var(--coral-ink);
+}
+.recLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 280px;
+  font: var(--type-label);
+  color: var(--coral-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recDot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--coral);
+  animation: recBlink 1.2s ease-in-out infinite;
+}
+@keyframes recBlink {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .recDot {
+    animation: none;
+  }
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
+.share[data-size] {
+  --h: 36px;
+  --px: 16px;
+}
+
+.more {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, var(--shell-hi), var(--shell));
+  box-shadow: var(--shadow-raised);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.more:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.more[aria-expanded='true'] {
+  border-color: var(--teal);
+  box-shadow: var(--shadow-pressed);
+  color: var(--ink);
+}
+.more:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+/* An update is waiting: coral = attention (the menu's first item says it in words). */
+.moreBadge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 0 1.5px var(--shell-hi);
+}
+
+/* Narrow windows: the record line gives way first, then the bar wraps (the page scrolls below 1024 px). */
+@media (max-width: 1180px) {
+  .recLine {
+    max-width: 160px;
+  }
+}
+@media (max-width: 1023px) {
+  .bar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 58px;
+    padding: 6px 12px;
+    position: sticky;
+    top: 0;
+  }
+}

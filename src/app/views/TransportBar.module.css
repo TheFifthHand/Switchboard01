@@ -1020,3 +1020,10 @@
 .bar[data-mode='advanced']:has(.update) .title {
   min-width: 32px;
 }
+
+/* Advanced at 1440-1599 px with a failed save: "Not saved" takes the room the bar.beat readout had (it is gone at 1366-1439 px already). */
+@media (min-width: 1440px) and (max-width: 1599px) {
+  .bar[data-mode='advanced']:has(.saveError) .position {
+    display: none;
+  }
+}

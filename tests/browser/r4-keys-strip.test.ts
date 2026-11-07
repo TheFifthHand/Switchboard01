@@ -17,12 +17,14 @@ import { session } from '../../src/app/instance';
 import { NOTE_KEYS } from '../../src/ui/components';
 import { setAssist } from '../../src/state/commands';
 import { selectTrack, setView, uiStore } from '../../src/state/uiStore';
-import { button, clickEl, openApp, setUp, tearDown, until } from './r4-play-helpers';
+import { button, clickEl, openApp, openIn, setUp, tearDown, until } from './r4-play-helpers';
 import { settleFrames } from './r4-uikit-input';
 import { keyboard, resetKeyboardFold, strip } from './r4-keys-helpers';
 
 beforeEach(async () => {
   await setUp();
+  // Round 7: Simple shows the keyboard strip on the Jam pads sheet, as 2.4's Simple Play view had it.
+  openIn('simple');
   resetKeyboardFold();
 });
 afterEach(async () => {
@@ -117,6 +119,8 @@ describe('--keyboard-h and toasts', () => {
 
 describe('folding is remembered per view', () => {
   it('folded in Play stays folded there; Shape keeps its own choice; Mix starts folded', async () => {
+    // Advanced: Simple shows the strip on the Jam pads sheet only (round 7).
+    openIn('advanced');
     await openApp(1366, 768);
     await clickEl(button('Hide the keyboard', strip()));
     expect(strip().hasAttribute('data-collapsed')).toBe(true);

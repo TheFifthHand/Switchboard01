@@ -151,6 +151,8 @@ describe('the editor pane in the Song view', () => {
   });
 
   it('Make this one different: only that region gets its own copy, and the pane edits the copy', async () => {
+    // Simple's pane (its eight main drum rows): the song helpers open Advanced since round 7.
+    act(() => setUiMode('simple'));
     await open();
     // Round 7: Advanced keeps 2.4's words; Simple's "Just here" is covered in r7-edit-editor.
     act(() => setUiMode('advanced'));

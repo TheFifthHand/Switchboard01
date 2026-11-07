@@ -25,7 +25,7 @@ beforeEach(async () => {
   act(() => {
     setGuideDone(true);
     setTipsEnabled(true);
-    setUiMode('simple');
+    setUiMode('advanced'); // Round 7: 2.4's Play view, tabs and strip are Advanced's (Simple: r7-shell-*).
     setView('play');
     patchRuntime({ playing: false, paused: false, recording: 'off', notice: null, tracks: {}, muteAll: false });
   });

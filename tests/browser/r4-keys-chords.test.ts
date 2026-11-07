@@ -18,7 +18,7 @@ import { progressionRefusal } from '../../src/app/views/ProgressionDialog';
 import { isInScale } from '../../src/music/scales';
 import { setAssist } from '../../src/state/commands';
 import { selectTrack, setPadMode, slotFor, uiStore } from '../../src/state/uiStore';
-import { clickEl, notice, openApp, press, project, setUp, tearDown, track, until } from './r4-play-helpers';
+import { clickEl, notice, openApp, openIn, press, project, setUp, tearDown, track, until } from './r4-play-helpers';
 import { centre, click, mouse, settleFrames, touch } from './r4-uikit-input';
 import { recordPlayed, resetKeyboardFold } from './r4-keys-helpers';
 import { wait } from './ui-harness';
@@ -224,10 +224,13 @@ describe('Write a progression…', () => {
   });
 });
 
-describe('the Notes side panel fits at 1366 x 768', () => {
+// Round 7: Simple's Play view is the Jam pads sheet, under a 40 px "Back to my song" bar, so its whole-panel
+// check is at 1920 x 1080 (at 1366 x 768 the panel scrolls; Advanced, denser, scrolls there too).
+describe('the Notes side panel fits on the Jam pads sheet at 1920 x 1080', () => {
   for (const mode of ['notes', 'chords', 'chromatic'] as const) {
     it(`${mode}: everything shows without scrolling, nothing sticks out sideways`, async () => {
-      await openApp(1366, 768);
+      openIn('simple');
+      await openApp(1920, 1080);
       act(() => {
         selectTrack('t4');
         setPadMode('notes');

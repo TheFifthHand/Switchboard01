@@ -168,21 +168,22 @@ describe('the transport', () => {
   });
 
   it('● Record records into the song in the Song view and says where; Performance is in Advanced only', async () => {
-    await openShell();
+    // Round 7: Simple's top bar has one Record (into the song, r7-shell-simple); 2.4's strip is Advanced's.
+    await openShell({ mode: 'simple' });
     await click(button('Jump In')!);
     await until(() => !welcome(), 'the card to go');
     const rec = () => button(/^Record (Notes|into the song)$/, transport());
-    expect(rec()!.textContent).toBe('Record');
-    expect(rec()!.querySelector('svg')).not.toBeNull();
     expect(button('Record Performance', transport())).toBeNull();
-    act(() => setUiMode('advanced'));
-    await settle(60);
-    expect(button('Record Performance', transport())).not.toBeNull();
-    act(() => setUiMode('simple'));
-    act(() => setView('arrange'));
-    await settle(200);
     // No takes yet: no Performances panel in Simple.
     expect(document.body.textContent).not.toContain('No takes yet');
+    act(() => setUiMode('advanced'));
+    act(() => setView('play'));
+    await settle(60);
+    expect(button('Record Performance', transport())).not.toBeNull();
+    expect(rec()!.textContent).toBe('Record');
+    expect(rec()!.querySelector('svg')).not.toBeNull();
+    act(() => setView('arrange'));
+    await settle(200);
     expect(rec()!.getAttribute('aria-label')).toBe('Record into the song');
     const spy = vi.spyOn(session, 'toggleRecordNotes').mockImplementation(async () => {});
     await click(rec()!);

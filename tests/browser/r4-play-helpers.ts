@@ -25,17 +25,28 @@ export const SIZES = [
 ] as const;
 
 let boot: BootInfo;
+/** Where openApp lands: Advanced's Play view (the default), or Simple's Jam pads sheet (openIn('simple')). */
+let openMode: 'simple' | 'advanced' = 'advanced';
+
+/**
+ * Open the app in Simple on the Jam pads sheet (2.4's Play view under "Back to my song", with the
+ * keyboard strip) instead of Advanced's Play view. For this test file's tests, until setUp runs again.
+ */
+export function openIn(mode: 'simple' | 'advanced'): void {
+  openMode = mode;
+}
 let hintsBefore: HintsState | null = null;
 
-/** Before each test: a clean library, Simple mode, the Play view's Loops pads, Tips on (the default) with the hint chip closed. */
+/** Before each test: a clean library, Advanced (round 7: 2.4's Play view with its tabs is Advanced; Simple opens it as a sheet), the Play view's Loops pads, Tips on (the default) with the hint chip closed. */
 export async function setUp(): Promise<void> {
   await deleteDb();
   hintsBefore = hintsStore.getState();
+  openMode = 'advanced';
   act(() => {
     hintsStore.setState({ ...hintsBefore!, hidden: true });
     setGuideDone(true);
     setTipsEnabled(true);
-    setUiMode('simple');
+    setUiMode('advanced');
     setView('play');
     setPadMode('loops');
     setKeyboardCollapsed(false);
@@ -97,6 +108,12 @@ export async function openApp(w: number, hh: number, opts: { play?: boolean } = 
   } else {
     await act(async () => {
       await session.newFromStarter('house');
+    });
+  }
+  if (openMode === 'simple') {
+    act(() => {
+      setUiMode('simple');
+      setView('play');
     });
   }
   await act(async () => {

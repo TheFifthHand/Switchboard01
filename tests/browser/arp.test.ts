@@ -17,7 +17,7 @@ import { TransportBar } from '../../src/app/views/TransportBar';
 import { getStarter } from '../../src/content/starters';
 import type { Id } from '../../src/project/types';
 import { setArp, setAssist, setSettings } from '../../src/state/commands';
-import { selectTrack, setKeyboardOctave, setPadMode, setTipsEnabled, setUiMode, uiStore } from '../../src/state/uiStore';
+import { selectTrack, setKeyboardOctave, setPadMode, setTipsEnabled, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { TipsProvider } from '../../src/ui/components';
 import { cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
 import '../../src/ui/theme.css';
@@ -34,6 +34,8 @@ beforeEach(() => {
     setPadMode('loops');
     selectTrack('t4');
     setKeyboardOctave(4);
+    // Round 7: Simple shows the keyboard strip on the Jam pads sheet (the Play view) only.
+    setView('play');
   });
 });
 

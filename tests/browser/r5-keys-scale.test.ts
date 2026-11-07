@@ -19,12 +19,14 @@ import { runtimeStore } from '../../src/app/runtime';
 import { isInScale, scaleKeyboardNotes, snapToScale } from '../../src/music/scales';
 import { setAssist, setKey } from '../../src/state/commands';
 import { selectTrack, setKeyboardOctave, setUiMode, uiStore } from '../../src/state/uiStore';
-import { button, described, openApp, press, project, setUp, tearDown, until } from './r4-play-helpers';
+import { button, described, openApp, press, project, setUp, tearDown, until, openIn } from './r4-play-helpers';
 import { centre, click, drag, mouse, settleFrames } from './r4-uikit-input';
 import { keyboard, recordPlayed, resetKeyboardFold, strip } from './r4-keys-helpers';
 
 beforeEach(async () => {
   await setUp();
+  // Round 7: Simple shows the keyboard strip on the Jam pads sheet, as 2.4's Simple Play view had it.
+  openIn('simple');
   resetKeyboardFold();
   act(() => setKeyboardOctave(4));
 });

@@ -415,6 +415,8 @@ export class Session {
     // The new project's graph is built right below (whatever plays meanwhile keeps playing in time).
     this.brace();
     this.store.replace(project);
+    // Simple has one home: whatever opens (a starter, an import, a project) opens on the Song screen.
+    if (uiStore.getState().uiMode === 'simple') setView('arrange');
     if (!opts.unsaved) this.autosaver?.markSaved(project);
     this.resetRuntimeTracks();
     await this.loadProjectSamples(project);
@@ -425,8 +427,10 @@ export class Session {
 
   /**
    * Jump In: enable audio (this must run inside the click), save whatever is
-   * open, start a fresh House starter session and play its Groove scene on
-   * the Loops pads (whatever view was left open last time).
+   * open and start a fresh House starter session. In Simple it lands on the
+   * Song screen (the home) playing the song, repeating the starter's main
+   * section (Groove) so it plays at once and keeps playing until Stop; in
+   * Advanced it plays the Groove scene on the Loops pads, as 2.4 did.
    */
   async jumpIn(): Promise<void> {
     const audio = this.startAudio();
@@ -438,9 +442,18 @@ export class Session {
       notify(e instanceof Error ? e.message : String(e), 'error');
       return;
     }
+    selectTrack('t4');
+    if (uiStore.getState().uiMode === 'simple') {
+      setView('arrange');
+      const loop = starterMainLoop(this.store.getState(), JUMP_IN_SCENE_ROW);
+      this.setSongLoop(loop);
+      if (loop) this.setSongCursor(loop.fromBar);
+      if (!(await audio)) return;
+      await this.playSong();
+      return;
+    }
     setView('play');
     setPadMode('loops');
-    selectTrack('t4');
     if (!(await audio)) return;
     this.transport!.launchScene(JUMP_IN_SCENE_ROW);
     this.selectRow(JUMP_IN_SCENE_ROW);
@@ -465,12 +478,15 @@ export class Session {
 
   /**
    * Welcome's "Make a beat from scratch": enable audio (inside the click),
-   * keep whatever is open, start a blank project, make a 1-bar loop on its
-   * drums and open it in Play › Steps, looping, so every square clicked is
-   * heard at once. Resolves with the drum part and its pad (null when the
-   * project could not start).
+   * keep whatever is open and start a blank project with a 1-bar drum loop,
+   * playing on repeat, so every square clicked is heard at once. In Simple
+   * the loop is a new empty loop at the start of the song (bar 1), the song
+   * plays repeating it, and the Song screen is home (`regionId`: the shell
+   * opens the editor on it); in Advanced it is a pad loop open in Play ›
+   * Steps, as 2.4 did. Resolves with the drum part and the loop's slot (null
+   * when the project could not start).
    */
-  async beatFromScratch(): Promise<{ trackId: Id; slot: number } | null> {
+  async beatFromScratch(): Promise<{ trackId: Id; slot: number; regionId?: Id } | null> {
     const audio = this.startAudio();
     // Named for what the person set out to do ("My beat", "My beat 2"… as the library keeps names apart), never "Blank".
     const fresh = BLANK_STARTER.build();
@@ -483,6 +499,19 @@ export class Session {
     }
     const drums = this.store.getState().tracks.find((t) => t.instrument.kind === 'drums');
     if (!drums) return null;
+    if (uiStore.getState().uiMode === 'simple') {
+      // The loop is part of the project's first state: Undo does not take the empty beat away.
+      const added = cmd.addLoopToSong(this.store, drums.id, 0, { bars: 1 }, { display: 'Add a drum loop' });
+      if (!added.changed || added.slot === undefined || !added.regionId) return null;
+      this.store.clearHistory();
+      selectTrack(drums.id);
+      selectSlot(drums.id, added.slot);
+      setView('arrange');
+      this.setSongLoop({ fromBar: 0, toBar: 1 });
+      this.setSongCursor(0);
+      if (await audio) await this.playSong();
+      return { trackId: drums.id, slot: added.slot, regionId: added.regionId };
+    }
     const slot = 0;
     if (!this.accepted(cmd.createClip(this.store, drums.id, slot, 1))) return null;
     selectTrack(drums.id);
@@ -541,7 +570,8 @@ export class Session {
     rememberProjectView(this.store.getState().id, uiStore.getState().view);
     // A rescue copy that could not be stored opens as unsaved: autosave keeps trying to store it.
     await this.loadProject(opened.project, { unsaved: !!opened.unsaved });
-    const last = projectView(opened.project.id);
+    // In Simple every project opens on the home (the Song screen), even one last left on a sheet.
+    const last = uiStore.getState().uiMode === 'simple' ? 'arrange' : projectView(opened.project.id);
     if (last) setView(last);
     for (const w of opened.warnings) notify(w, 'warn');
   }
@@ -3010,6 +3040,22 @@ export function sampleStorageMessage(e: unknown): string {
  * outside it; from the top when that lies at or after the song's end
  * (`length` bars) outside the loop.
  */
+/**
+ * The stretch of a starter's song Jump In repeats: the first section named
+ * after scene row `row` (House: "Groove"), else the song's longest section,
+ * else the whole song. Null for an empty song.
+ */
+export function starterMainLoop(p: Project, row: number): SongLoop | null {
+  const sections = p.arrangement.sections;
+  const name = p.scenes[row]?.name;
+  const named = name ? [...sections].sort((a, b) => a.start - b.start).find((s) => s.name === name) : undefined;
+  const longest = [...sections].sort((a, b) => b.bars - a.bars || a.start - b.start)[0];
+  const pick = named ?? longest;
+  if (pick) return { fromBar: pick.start, toBar: pick.start + pick.bars };
+  const length = songBars(p);
+  return length > 0 ? { fromBar: 0, toBar: length } : null;
+}
+
 export function songPlayFrom(length: number, cursor: number, loop: SongLoop | null, asked: number | null = null): number {
   let from = asked ?? cursor;
   if (asked === null && loop && !inSongLoop(loop, from)) from = loop.fromBar;

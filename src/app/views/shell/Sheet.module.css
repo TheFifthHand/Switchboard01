@@ -1,0 +1,56 @@
+/* A sheet: a slim bar with the way back, then the 2.4 view filling the rest. */
+.sheet {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  padding: 4px 12px;
+  background: var(--teal-wash);
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.back {
+  flex: none;
+}
+
+.title {
+  margin: 0;
+  flex: none;
+  font: var(--type-panel-title);
+  color: var(--ink);
+}
+
+.line {
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  font: var(--type-caption);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.esc {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  font: var(--type-caption);
+  color: var(--ink-2);
+  background: var(--shell-hi);
+}
+
+.body {
+  min-height: 0;
+  min-width: 0;
+}

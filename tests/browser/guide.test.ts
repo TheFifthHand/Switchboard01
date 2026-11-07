@@ -14,7 +14,7 @@ import { patchRuntime } from '../../src/app/runtime';
 import { Guide, placeCallout } from '../../src/app/views/Guide';
 import { HINTS_STORAGE_KEY, INITIAL_HINTS, hintsStore } from '../../src/app/views/hints/hintsState';
 import { createProject } from '../../src/project/factory';
-import { UI_STORAGE_KEY, selectTrack, setGuideDone, setView, uiStore } from '../../src/state/uiStore';
+import { UI_STORAGE_KEY, selectTrack, setGuideDone, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { cleanup, key, mount, wait } from './ui-harness';
 
 let closes = 0;
@@ -337,6 +337,8 @@ describe('Quick guide', () => {
       }
       await settle();
     };
+    // Round 7: the quick guide is about 2.4's Play view, so it is offered in Advanced (Simple's Song screen has its tip line).
+    act(() => setUiMode('advanced'));
     try {
       const first = mount(h(App, { boot }));
       await pressJumpIn();
@@ -360,6 +362,7 @@ describe('Quick guide', () => {
       expect(document.querySelector('[data-guide-step]')).toBeNull();
     } finally {
       session.jumpIn = realJumpIn;
+      act(() => setUiMode('simple'));
     }
   });
 

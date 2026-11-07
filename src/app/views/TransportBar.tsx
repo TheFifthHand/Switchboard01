@@ -6,6 +6,9 @@
  * More menu. On narrower windows secondary controls move into the More menu
  * (it always holds Tips), so every control stays one press away without
  * squeezing the always-visible ones.
+ *
+ * Round 7: this is Advanced's strip (2.4's, with Share… in More beside
+ * Export). Simple has its own top bar, shell/SimpleTopBar.tsx.
  */
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { Button, Icon, Knob, Meter, NumberField, SegmentedControl, Tooltip, useRafLoop } from '../../ui/components';
@@ -700,7 +703,7 @@ function FocusFirstUsable() {
   return <span ref={ref} hidden />;
 }
 
-function MoreMenu(props: { onOpenLibrary(): void; onNewProject(): void; onOpenExport(): void; onOpenDevices(): void; onOpenHelp(): void; projectName: string }) {
+function MoreMenu(props: { onOpenLibrary(): void; onNewProject(): void; onOpenExport(): void; onOpenShare?(): void; onOpenDevices(): void; onOpenHelp(): void; projectName: string }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const history = useHistory();
@@ -776,6 +779,11 @@ function MoreMenu(props: { onOpenLibrary(): void; onNewProject(): void; onOpenEx
           <MenuItem icon="download" onSelect={then(props.onOpenExport)}>
             Export…
           </MenuItem>
+          {props.onOpenShare && (
+            <MenuItem icon="upload" onSelect={then(props.onOpenShare)}>
+              Share…
+            </MenuItem>
+          )}
           <MenuSeparator />
           <MenuItem icon="midi" onSelect={then(props.onOpenDevices)}>
             MIDI & audio…
@@ -849,7 +857,7 @@ function HistoryKey(props: { kind: 'undo' | 'redo' }) {
   );
 }
 
-function HistoryKeys() {
+export function HistoryKeys() {
   return (
     <div className={styles.history} role="group" aria-label="Undo and redo">
       <HistoryKey kind="undo" />
@@ -865,6 +873,8 @@ export interface TransportBarProps {
   onNewProject?(): void;
   /** Help… (also the ? key). */
   onOpenHelp?(): void;
+  /** Share… (round 7): the Share dialog, in the More menu beside Export (the strip keeps 2.4's keys). */
+  onOpenShare?(): void;
 }
 
 /**
@@ -878,7 +888,7 @@ export interface TransportBarProps {
  * up to date as the strip wraps or grows, as banners come and go, and as
  * the page scrolls.
  */
-function useTransportHeight(ref: RefObject<HTMLElement | null>): void {
+export function useTransportHeight(ref: RefObject<HTMLElement | null>): void {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -1049,6 +1059,7 @@ export function TransportBar(props: TransportBarProps) {
           onOpenLibrary={props.onOpenLibrary}
           onNewProject={props.onNewProject ?? props.onOpenLibrary}
           onOpenExport={props.onOpenExport}
+          onOpenShare={props.onOpenShare}
           onOpenDevices={() => setDevicesOpen(true)}
           onOpenHelp={props.onOpenHelp ?? (() => window.dispatchEvent(new CustomEvent('sb:open-help')))}
           projectName={projectName}

@@ -16,6 +16,10 @@
  * - Record Notes waiting for its downbeat counts the beats ("Recording in 3…");
  * - a view tab braces playback first and shows at once; the meters read the
  *   shared per-frame meter frame.
+ *
+ * Round 7: this strip is Advanced's; Simple has its own top bar (no tabs,
+ * tempo, master or switch), swept in r7-shell-simple. The width sweeps run in
+ * Advanced only.
  */
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -61,13 +65,12 @@ const stopWordShown = () => {
 };
 
 describe('the strip at every width', () => {
-  it('fits, keeps Export and Stop from 1366 px in both modes, and the switch stays put', async () => {
+  it('fits and keeps Export and Stop from 1366 px (Advanced)', async () => {
     await openShell();
     await keys('{Escape}');
     for (const w of [1024, 1280, 1366, 1440, 1520, 1599, 1600, 1700, 1799, 1800, 1920]) {
       await page.viewport(w, w >= 1920 ? 1080 : 768);
-      const at: Record<string, { right: number; switchX: number | null }> = {};
-      for (const mode of ['simple', 'advanced'] as const) {
+      for (const mode of ['advanced'] as const) {
         act(() => setUiMode(mode));
         await settle(80);
         const label = `${w} ${mode}`;
@@ -86,19 +89,16 @@ describe('the strip at every width', () => {
           expect(projectsShown(), `${label}: Projects`).toBe(w >= 1600);
           expect(undoWordShown(), `${label}: the word Undo`).toBe(w >= 1800);
         }
-        if (mode === 'simple' || w >= 1180) expect(Math.round(transport().getBoundingClientRect().height), `${label}: one row`).toBe(58);
-        const sw = transport().querySelector('[role="radiogroup"][aria-label="Simple or Advanced"]');
-        at[mode] = { right: Math.round(right()!.getBoundingClientRect().width), switchX: shown(sw) ? Math.round(sw!.getBoundingClientRect().left) : null };
+        if (w >= 1180) expect(Math.round(transport().getBoundingClientRect().height), `${label}: one row`).toBe(58);
+        expect(right(), `${label}: the right-hand group`).not.toBeNull();
       }
-      // The right-hand group is one width in both modes: the switch does not jump.
-      expect(at.advanced, `${w}: right group`).toEqual(at.simple);
     }
   });
 
   it('below 1024 px: two balanced rows within 15 % of a 540 px window, Master and Mute All on the second', async () => {
     await openShell({ width: 960, height: 540 });
     await keys('{Escape}');
-    for (const mode of ['simple', 'advanced'] as const) {
+    for (const mode of ['advanced'] as const) {
       act(() => setUiMode(mode));
       await settle(80);
       const bar = transport().getBoundingClientRect();

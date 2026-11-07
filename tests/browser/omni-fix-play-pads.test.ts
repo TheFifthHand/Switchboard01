@@ -33,7 +33,7 @@ beforeEach(async () => {
   act(() => {
     setGuideDone(true);
     setTipsEnabled(true);
-    setUiMode('simple');
+    setUiMode('advanced'); // Round 7: 2.4's Play view, tabs and strip are Advanced's (Simple: r7-shell-*).
     setView('play');
     setPadMode('loops');
     setKeyboardCollapsed(false);
@@ -261,6 +261,11 @@ describe('colour says what it means', () => {
 describe('the key summary', () => {
   it('"Key: G Dorian" is plain text, not a tab stop', async () => {
     await openApp(1366, 768);
+    // Simple's summary: on the Jam pads sheet (round 7), where Simple shows the keyboard strip.
+    act(() => {
+      setUiMode('simple');
+      setView('play');
+    });
     const keyboard = document.querySelector<HTMLElement>('section[aria-label="Keyboard"]')!;
     const summary = [...keyboard.querySelectorAll<HTMLElement>('p')].find((p) => /^Key: /.test(p.textContent ?? ''))!;
     expect(summary).toBeTruthy();

@@ -1,0 +1,214 @@
+/* Project ▾: the name with its save state under it, then the panel. */
+.trigger {
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto;
+  grid-template-rows: auto auto;
+  column-gap: 6px;
+  align-items: center;
+  max-width: 240px;
+  min-width: 0;
+  height: 44px;
+  padding: 2px 8px 2px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.trigger:hover,
+.trigger[aria-expanded='true'] {
+  background: var(--surface-hi);
+  border-color: var(--line);
+}
+.trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.name {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  font: var(--type-panel-title);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.saveWord {
+  grid-column: 1;
+  grid-row: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font: var(--type-caption);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.trigger[data-save='error'] .saveWord {
+  color: var(--coral-ink);
+}
+.caret {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  color: var(--ink-3);
+}
+
+.panel {
+  width: 320px;
+  padding: 8px;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.title {
+  margin: 0;
+  max-width: 100%;
+  font: var(--type-panel-title);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rename {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--teal);
+  border-radius: var(--r-sm);
+  background: var(--pad);
+  color: var(--ink);
+  font: var(--type-label);
+}
+.rename:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.saveLine {
+  margin: 0;
+  font: var(--type-caption);
+  color: var(--ink-2);
+}
+.saveLine[data-save='error'] {
+  color: var(--coral-ink);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink);
+  font: var(--type-label);
+  text-align: left;
+  cursor: pointer;
+}
+.item:hover {
+  background: var(--surface-hi);
+}
+.item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.item[aria-disabled='true'] {
+  color: var(--ink-3);
+}
+
+.speed,
+.mood {
+  padding: 8px 6px;
+}
+.speed {
+  border-bottom: 1px solid var(--line-soft);
+}
+.rowHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.label {
+  font: var(--type-label);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+.value {
+  font: var(--type-caption);
+  color: var(--ink-2);
+}
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.end {
+  flex: none;
+  font: var(--type-caption);
+  color: var(--ink-3);
+}
+.slider {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--amber);
+  height: 24px;
+}
+.slider:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--r-sm);
+}
+
+.moods {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+.moodKey {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--pad);
+  color: var(--ink);
+  font: var(--type-label);
+  text-align: left;
+  cursor: pointer;
+}
+.moodKey:hover {
+  border-color: var(--line-strong);
+}
+.moodKey[aria-pressed='true'] {
+  border-color: var(--teal);
+  background: var(--teal-wash);
+  color: var(--teal-ink);
+}
+.moodKey:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.hint {
+  margin: 6px 0 0;
+  font: var(--type-caption);
+  color: var(--ink-3);
+}

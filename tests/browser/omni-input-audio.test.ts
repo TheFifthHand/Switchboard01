@@ -116,7 +116,8 @@ function impulses(x: Float32Array): number[] {
 
 beforeEach(() => {
   localStorage.removeItem(AUDIO_INPUT_SETTINGS_KEY);
-  uiStore.setState({ ...defaultUiState() });
+  // 2.4's default view (the Play view); round 7's default is the Song screen.
+  uiStore.setState({ ...defaultUiState(), view: 'play' });
   patchRuntime({ muteAll: false, stalled: null, playing: false, paused: false, mode: 'live', replayId: null, recording: 'off', recordTarget: null, countingIn: false, held: {}, notice: null, tracks: {} });
 });
 

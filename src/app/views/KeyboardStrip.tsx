@@ -35,6 +35,11 @@
  * at the bottom of the window to `--keyboard-h` on :root (0 when folded or
  * when the page scrolls), so toasts sit above it.
  *
+ * In Simple (round 7) the strip is not shown on the Song screen (the editor
+ * under it has a Play side for that) nor on the Mixer or Every setting
+ * sheets; the computer keys still play the selected instrument. The Jam pads
+ * sheet (2.4's Play view) keeps it under its pads, as 2.4 had it.
+ *
  * Every held key (mouse, touch or computer key) keeps the release of the note
  * it started, so changing the part, the octave or the arpeggiator while it is
  * down still ends that note, on its part and at its pitch.
@@ -193,7 +198,7 @@ function release(map: Map<number, () => void>, key: number): void {
  * bottom of the window: its height while it is docked there and unfolded;
  * 0 when folded, when the page scrolls (narrow windows) or once it is gone.
  */
-function useKeyboardHeightVar(ref: RefObject<HTMLElement | null>, collapsed: boolean): void {
+function useKeyboardHeightVar(ref: RefObject<HTMLElement | null>, collapsed: boolean, hidden: boolean): void {
   useLayoutEffect(() => {
     const el = ref.current;
     const root = document.documentElement;
@@ -212,7 +217,7 @@ function useKeyboardHeightVar(ref: RefObject<HTMLElement | null>, collapsed: boo
       window.removeEventListener('resize', write);
       root.style.setProperty('--keyboard-h', '0px');
     };
-  }, [ref, collapsed]);
+  }, [ref, collapsed, hidden]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -356,7 +361,9 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   const view = useUi((s) => s.view);
   const octave = useUi((s) => s.keyboardOctave);
   const advanced = useUi((s) => s.uiMode === 'advanced');
-  const collapsed = useUi((s) => keyboardCollapsedFor(s, s.view));
+  // Simple shows no strip outside Jam pads: it plays as a folded one does (the computer keys, all three octaves).
+  const hidden = !advanced && view !== 'play';
+  const collapsed = useUi((s) => keyboardCollapsedFor(s, s.view)) || hidden;
   const trackName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
   const kind = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind);
   const kitId = useProject((p) => {
@@ -381,7 +388,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   const keysBox = useElementSize(keysRef, collapsed);
   const [pending, setPending] = useState<MusicalKey | null>(null);
 
-  useKeyboardHeightVar(stripRef, collapsed);
+  useKeyboardHeightVar(stripRef, collapsed, hidden);
 
   const baseNote = isDrums ? KIT_BASE_NOTE : (octave + 1) * 12;
   // A third octave when the keys would still be at least KEYS_WIDE_MIN_PX wide (and stay inside MIDI).
@@ -434,7 +441,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
       release(keyNotes.current, index);
       keyNotes.current.set(index, playLive(trackId, isDrums ? index : baseNote + index, velocity, 'computer'));
       // Song and Mix start with the keyboard folded: playing a note brings it up (a fold the person chose stays).
-      if (collapsed) openKeyboardIfDefault(view);
+      if (collapsed && !hidden) openKeyboardIfDefault(view);
     },
     onNoteOff: (index) => release(keyNotes.current, index),
     onOctave: (delta) => {
@@ -449,7 +456,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
       if (pitch === undefined) return;
       release(keyNotes.current, index);
       keyNotes.current.set(index, playLive(trackId, pitch, velocity, 'computer'));
-      if (collapsed) openKeyboardIfDefault(view);
+      if (collapsed && !hidden) openKeyboardIfDefault(view);
     },
     onNoteOff: (index) => release(keyNotes.current, index),
     onOctave: (delta) => shiftKeyboardOctave(delta),
@@ -518,6 +525,8 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
       className={styles.fold}
     />
   );
+
+  if (hidden) return <>{props.children}</>;
 
   if (collapsed) {
     return (

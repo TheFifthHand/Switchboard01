@@ -292,7 +292,7 @@ describe('UI store', () => {
   it('has first-run defaults and remembers preferences', () => {
     const storage = memoryStorage();
     const ui = createUiStore(storage);
-    expect(ui.getState()).toMatchObject({ selectedTrackId: 't1', view: 'play', padMode: 'loops', keyboardOctave: 4, tipsEnabled: true, cablesOpen: false, guideDone: false, clipboard: null });
+    expect(ui.getState()).toMatchObject({ selectedTrackId: 't1', view: 'arrange', padMode: 'loops', keyboardOctave: 4, tipsEnabled: true, cablesOpen: false, guideDone: false, clipboard: null });
     setTipsEnabled(false, ui);
     setPadMode('steps', ui);
     shiftKeyboardOctave(10, ui);
@@ -311,7 +311,7 @@ describe('UI store', () => {
 
   it('survives broken or throwing storage', () => {
     const broken = memoryStorage({ [UI_STORAGE_KEY]: '{not json' });
-    expect(createUiStore(broken).getState().view).toBe('play');
+    expect(createUiStore(broken).getState().view).toBe('arrange');
     const throwing: KeyValueStorage = {
       getItem: () => {
         throw new Error('denied');
@@ -324,7 +324,7 @@ describe('UI store', () => {
     expect(() => setTipsEnabled(false, ui)).not.toThrow();
     expect(ui.getState().tipsEnabled).toBe(false);
     const hostile = memoryStorage({ [UI_STORAGE_KEY]: JSON.stringify({ view: 'evil', keyboardOctave: 99, selectedTrackId: '<script>' }) });
-    expect(createUiStore(hostile).getState()).toMatchObject({ view: 'play', keyboardOctave: 7, selectedTrackId: 't1' });
+    expect(createUiStore(hostile).getState()).toMatchObject({ view: 'arrange', keyboardOctave: 7, selectedTrackId: 't1' });
   });
 
   it('starts in Simple with the keyboard shown, and remembers Advanced and a folded keyboard', () => {

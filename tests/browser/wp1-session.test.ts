@@ -14,7 +14,7 @@ import { Session } from '../../src/app/session';
 import { getStarter } from '../../src/content/starters';
 import { deleteDb, putSample } from '../../src/persistence/db';
 import type { Project, SampleMeta } from '../../src/project/types';
-import { setPadMode, setView, uiStore } from '../../src/state/uiStore';
+import { setPadMode, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const house = (): Project => getStarter('house')!.build();
@@ -241,7 +241,9 @@ describe('Resume after a stall', () => {
 });
 
 describe('Jump In', () => {
-  it('lands on the Play view with the Loops pads, whatever view was left open last time', async () => {
+  // Round 7: Advanced keeps 2.4's Jump In (Simple lands on the Song screen: r7-shell-starts).
+  it('in Advanced lands on the Play view with the Loops pads, whatever view was left open last time', async () => {
+    setUiMode('advanced');
     setView('arrange');
     setPadMode('steps');
     const s = session();
@@ -249,5 +251,6 @@ describe('Jump In', () => {
     expect(uiStore.getState().view).toBe('play');
     expect(uiStore.getState().padMode).toBe('loops');
     expect(rt().playing).toBe(true);
+    setUiMode('simple');
   });
 });
