@@ -7,8 +7,11 @@
  *   main, focused key; **Start a new groove** is the secondary one (the
  *   earlier project stays in My projects, and the shell says so).
  * - **Make a beat from scratch** (both cases) starts a blank project on its
- *   drums: a 1-bar loop open in Play › Steps, playing, so each square
- *   clicked is heard at once ("Start from a beat…" sits right above it).
+ *   drums: a 1-bar loop playing on repeat, so each square clicked is heard at
+ *   once. In Simple it is a loop at the start of the song, open in the editor
+ *   under the Song screen; in Advanced it is open in Play › Steps (2.4).
+ * - Jump In (and Start a new groove) lands on the Song screen in Simple,
+ *   playing the song and repeating its main part (Advanced: the Loops pads).
  * - "Other starters & projects" opens the project library on its Starters
  *   tab; "Just look around" (also Esc) closes the card.
  * - The card is modal: Tab and Shift+Tab stay on it.
@@ -59,8 +62,8 @@ export interface WelcomeProps {
   onBrowse(): void;
   /** Jump In (or Start a new groove) finished loading its starter (after onClose). */
   onJumpedIn?(): void;
-  /** Make a beat from scratch finished opening its blank project (after onClose). */
-  onBeatStarted?(): void;
+  /** Make a beat from scratch finished opening its blank project (after onClose), with its drum loop (null when it could not start). */
+  onBeatStarted?(beat: { trackId: string; slot: number; regionId?: string } | null): void;
 }
 
 export function Welcome({ lastProject, warnings = [], storageError, onClose, onLookAround, onContinued, onBrowse, onJumpedIn, onBeatStarted }: WelcomeProps) {
@@ -111,10 +114,13 @@ export function Welcome({ lastProject, warnings = [], storageError, onClose, onL
     if (busy) return;
     setBusy('beat');
     // Also inside the click, for audio.
-    void session.beatFromScratch().finally(() => {
-      onClose();
-      onBeatStarted?.();
-    });
+    void session
+      .beatFromScratch()
+      .catch(() => null)
+      .then((beat) => {
+        onClose();
+        onBeatStarted?.(beat);
+      });
   };
   const beatButton = (
     <>

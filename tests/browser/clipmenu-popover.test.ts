@@ -186,7 +186,7 @@ describe('menus in the app', () => {
     act(() => {
       setGuideDone(true);
       setTipsEnabled(true);
-      setUiMode('simple');
+      setUiMode('advanced'); // Round 7: 2.4's Play view, tabs and strip are Advanced's (Simple: r7-shell-*).
       setView('play');
       setPadMode('loops');
       patchRuntime({ playing: false, paused: false, recording: 'off', notice: null, tracks: {} });

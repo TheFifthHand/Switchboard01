@@ -294,7 +294,7 @@ async function openApp(w: number, hh: number) {
   act(() => {
     setGuideDone(true);
     setTipsEnabled(true);
-    setUiMode('simple');
+    setUiMode('advanced'); // Round 7: 2.4's Play view, tabs and strip are Advanced's (Simple: r7-shell-*).
     setView('play');
     setPadMode('loops');
     setKeyboardCollapsed(false);
@@ -403,7 +403,7 @@ describe('MIDI & audio dialog', () => {
         expect(document.scrollingElement!.scrollWidth, `${w} ${mode}`).toBeLessThanOrEqual(window.innerWidth);
         // Where the key has room it shows; MIDI & audio is always in the More menu.
         const key = transport().querySelector<HTMLElement>('button[aria-label^="MIDI & audio"]');
-        if (w >= 1280 || (mode === 'simple' && w >= 1180)) expect(shown(key), `${w} ${mode}: the key`).toBe(true);
+        if (w >= 1280 || mode === 'simple') expect(shown(key), `${w} ${mode}: the key`).toBe(true);
       }
     }
     act(() => setUiMode('simple'));

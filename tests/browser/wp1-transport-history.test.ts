@@ -26,7 +26,7 @@ beforeEach(async () => {
   act(() => {
     setGuideDone(true);
     setTipsEnabled(true);
-    setUiMode('simple');
+    setUiMode('advanced'); // Round 7: 2.4's Play view, tabs and strip are Advanced's (Simple: r7-shell-*).
   });
   boot = await session.boot();
 });
@@ -108,17 +108,18 @@ describe('Undo and Redo on the strip', () => {
           expect(Math.min(r.width, r.height), `${label}: ${word} is a 32 px target`).toBeGreaterThanOrEqual(32);
           expect(wordShown(k, word), `${label}: the word "${word}"`).toBe(w >= 1800);
         }
-        // The Simple · Advanced switch is on the strip beside them from 1366 px (in More narrower).
-        for (const name of ['Simple', 'Advanced']) expect(shown([...bar().querySelectorAll('[role="radio"]')].find((r) => r.textContent === name) ?? null), `${label}: "${name}"`).toBe(w >= 1366);
+        // Advanced: the Simple · Advanced switch is on the strip beside them from 1366 px (in More narrower).
+        // Simple (round 7) has no switch on its bar: ⋯ › Show every control.
+        if (mode === 'advanced') for (const name of ['Simple', 'Advanced']) expect(shown([...bar().querySelectorAll('[role="radio"]')].find((r) => r.textContent === name) ?? null), `${label}: "${name}"`).toBe(w >= 1366);
         expectStripFits(label);
         if (w >= 1180) expect(bar().getBoundingClientRect().height, `${label}: one row`).toBeLessThan(70);
       }
     }
-    // At 1366 (Simple) Stop and Export keep their words next to them; Undo and Redo are named icon keys.
+    // At 1366 (Simple) Stop and Share keep their words next to them; Undo and Redo are named icon keys.
     act(() => setUiMode('simple'));
     await page.viewport(1366, 768);
     await settle();
-    for (const word of ['Stop', 'Export']) {
+    for (const word of ['Stop', 'Share']) {
       const b = [...bar().querySelectorAll<HTMLElement>('button')].find((x) => [...x.querySelectorAll('span')].some((s) => s.textContent?.trim() === word));
       expect(b && shown(b) && wordShown(b, word), `1366: "${word}"`).toBe(true);
     }

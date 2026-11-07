@@ -17,7 +17,7 @@ import { session } from '../../src/app/instance';
 import { DRUM_VOICES, type Note } from '../../src/project/types';
 import { drumVoiceFor, selectDrumVoice, selectSlot, selectTrack, setPadMode, uiStore } from '../../src/state/uiStore';
 import { CORE_VOICES, setAllSounds } from '../../src/app/views/steps/DrumSteps';
-import { item, menu, notice, openApp, press, setUp, tearDown, track, until } from './r4-play-helpers';
+import { item, menu, notice, openApp, openIn, press, setUp, tearDown, track, until } from './r4-play-helpers';
 import { centre, click, drag, finger, settleFrames, touch } from './r4-uikit-input';
 import { recordPlayed, resetKeyboardFold, rightClick } from './r4-keys-helpers';
 import { wait } from './ui-harness';
@@ -86,6 +86,8 @@ describe('the overview is a grid of hit targets (PLAY-03)', () => {
   });
 
   it('rows are at least 28 px tall at 1366 x 768: the main sounds fit, all 16 scroll', async () => {
+    // Simple's eight main sounds: on the Jam pads sheet (round 7).
+    openIn('simple');
     await openSteps(1366, 768, true);
     // Simple: the eight main sounds and the ones the clip uses, every row in view.
     const shown = [...gridEl().querySelectorAll<HTMLElement>('[role="row"]')].map((r) => Number(r.dataset.voice));

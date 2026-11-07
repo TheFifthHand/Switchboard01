@@ -14,11 +14,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
 import * as cmd from '../../src/state/commands';
 import { setUiMode } from '../../src/state/uiStore';
-import { menu, press, setUp, tearDown } from './r4-play-helpers';
+import { menu, openIn, press, setUp, tearDown } from './r4-play-helpers';
 import { settleFrames } from './r4-uikit-input';
 import { BASS, CHORDS, openSteps, scroller } from './r4-steps-helpers';
 
-beforeEach(setUp);
+beforeEach(async () => {
+  await setUp();
+  // Round 7: Simple's Steps is on the Jam pads sheet (Advanced's cases switch mode themselves).
+  openIn('simple');
+});
 afterEach(async () => {
   act(() => setUiMode('simple'));
   await tearDown();
@@ -49,9 +53,10 @@ function measure() {
   };
 }
 
+// Round 7: Simple's Steps is on the Jam pads sheet, whose "Back to my song" bar takes 40 px (about two roll rows).
 const SIZES = [
-  { w: 1366, h: 768, rows: 18, head: 80 },
-  { w: 1280, h: 720, rows: 16, head: 80 },
+  { w: 1366, h: 768, rows: 16, head: 80 },
+  { w: 1280, h: 720, rows: 13.5, head: 80 },
   { w: 1024, h: 768, rows: 13.5, head: null },
 ] as const;
 

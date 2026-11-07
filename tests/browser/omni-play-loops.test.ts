@@ -38,7 +38,7 @@ beforeEach(async () => {
     // Other test files share this browser's remembered UI state: start from the Play view's Loops pads.
     setView('play');
     setPadMode('loops');
-    setUiMode('simple');
+    setUiMode('advanced'); // Round 7: 2.4's Play view, tabs and strip are Advanced's (Simple: r7-shell-*).
     selectTrack('t3');
     selectSlot('t3', 0);
   });

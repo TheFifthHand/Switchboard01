@@ -19,6 +19,7 @@ import { deleteDb, saveProject } from '../../src/persistence/db';
 import * as library from '../../src/persistence/library';
 import { formatClock, projectShape } from '../../src/persistence/summary';
 import { reasonBefore } from '../../src/persistence/versions';
+import { setUiMode, setView } from '../../src/state/uiStore';
 import type { Project } from '../../src/project/types';
 import { cleanup, mount, nextFrame, wait } from './ui-harness';
 
@@ -214,6 +215,11 @@ describe('Versions in My projects', () => {
 
 describe('Starting starters from the Library', () => {
   it('a Blank project says how to begin, and starters get names that can be told apart', async () => {
+    // 2.4's words in Advanced (pads); Simple's at the end.
+    act(() => {
+      setUiMode('advanced');
+      setView('play');
+    });
     const first = getStarter('house')!.build();
     first.name = 'House Starter';
     await saveProject(first);
@@ -230,5 +236,12 @@ describe('Starting starters from the Library', () => {
     await until(() => loaded.length === 2, 'Blank loaded');
     const name = session.store.getState().name;
     expect(runtimeStore.getState().notice?.text).toBe(`Started “${name}”. “House Starter 2” is still in My projects. Tap a pad to make a loop and fill it in.`);
+    // Simple (round 7) opens a blank song on the Song screen, where a loop comes from LOOPS.
+    act(() => setUiMode('simple'));
+    cleanup();
+    open('starters');
+    await click(await until(() => buttonNamed(/^Start Blank project/), 'Blank card'), 'Blank card');
+    await until(() => loaded.length === 3, 'Blank loaded in Simple');
+    expect(runtimeStore.getState().notice?.text).toMatch(/Drag a loop in from LOOPS on the right to start your song\.$/);
   });
 });

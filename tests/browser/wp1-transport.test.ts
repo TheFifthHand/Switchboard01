@@ -10,6 +10,11 @@
  * playback, a recording or with unsaved edits; the More menu carries both
  * where the strip has no room; and at 200 % zoom the strip (with Mute All)
  * stays on screen while the page scrolls.
+ *
+ * Round 7: this strip is Advanced's (Simple has its own top bar, covered by
+ * r7-shell-simple), so the sweeps run in Advanced, where Swing takes the room
+ * Stop's and Export's words had in 2.4's Simple, and the strip is one row from
+ * 1180 px.
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -31,7 +36,7 @@ beforeEach(async () => {
     setGuideDone(true);
     setTipsEnabled(true);
     // The default (and remembered) mode; Advanced has its own sweep in omni-play-layout.
-    setUiMode('simple');
+    setUiMode('advanced'); // Round 7: 2.4's Play view, tabs and strip are Advanced's (Simple: r7-shell-*).
   });
   boot = await session.boot();
 });
@@ -105,7 +110,7 @@ function wordShown(b: HTMLElement | null, word: string): boolean {
   return r.width >= word.length * 5 && r.left >= box.left - 0.5 && r.right <= Math.min(box.right, bar.right) + 0.5 && getComputedStyle(el).clip === 'auto';
 }
 
-/** Stop with its word from 1280 px and Export from 1366 px in Simple, whatever the save or update state. */
+/** Stop and Export with their words (Advanced: where Swing leaves them the room), whatever the save or update state. */
 function expectStopAndExportWords(label: string, opts: { exportKey?: boolean } = {}) {
   const stop = buttonNamed('Stop', bar());
   const exportKey = buttonNamed('Export', bar());
@@ -219,8 +224,7 @@ describe('Offline readiness in the transport', () => {
     setOffline('ready');
     await page.viewport(1366, 768);
     await settle();
-    for (const name of [/^Autosave: /, /^More:/, /^Undo/, /^Redo/]) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
-    expectStopAndExportWords('1366 px, offline ready');
+    for (const name of [/^Autosave: /, /^More:/, /^Undo/, /^Redo/, 'Stop']) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
     expectSwitchOnStrip('1366 px, offline ready');
     expectStripFits('1366 px, offline ready');
     expect(shown([...bar().querySelectorAll<HTMLElement>('[role="status"]')].find((el) => el.textContent?.includes('Offline ready'))), 'offline state in More at 1366').toBe(false);
@@ -244,6 +248,10 @@ describe('Offline readiness in the transport', () => {
     for (const name of [/^Undo/, /^Redo/, /^Projects \(open:/, 'Export']) expect(shown(buttonNamed(name, bar())), String(name)).toBe(true);
     expectSwitchOnStrip('1600 px, offline ready');
     expectStripFits('1600 px, offline ready');
+    // Wide, Stop and Export say their words in Advanced too.
+    await page.viewport(1920, 1080);
+    await settle();
+    expectStopAndExportWords('1920 px, offline ready');
   });
 
   it('fits the strip at every width from 1024 to 1920 px, with an update waiting, a preview or a failed save', async () => {
@@ -259,16 +267,15 @@ describe('Offline readiness in the transport', () => {
             await wait(0);
           });
           expectStripFits(`${w} px, ${state}, ${save}`);
-          if (w >= 1280) expectStopAndExportWords(`${w} px, ${state}, ${save}`, { exportKey: w >= 1366 });
-          // Narrower, Stop is its square (still named Stop) and Export is in More.
-          else expect(wordShown(buttonNamed('Stop', bar()), 'Stop'), `${w} px: Stop as its square`).toBe(false);
+          // Stop is always on the strip (its word where there is room; Advanced's Swing takes that room below 1600 px).
+          expect(shown(buttonNamed('Stop', bar())), `${w} px: Stop`).toBe(true);
           // Undo and Redo are always on the strip (as icons where their words have no room); the switch from 1366 px.
           for (const name of [/^Undo/, /^Redo/]) expect(shown(buttonNamed(name, bar())), `${w} px, ${state}, ${save}: ${name}`).toBe(true);
           if (w >= 1366) expectSwitchOnStrip(`${w} px, ${state}, ${save}`);
           else for (const name of ['Simple', 'Advanced']) expect(shown([...bar().querySelectorAll('[role="radio"]')].find((r) => r.textContent === name)), `${w} px: "${name}" in More`).toBe(false);
           expectNoOverlap(`${w} px, ${state}, ${save}`);
-          // One row at every width (Simple).
-          expect(bar().getBoundingClientRect().height, `${w} px, ${state}, ${save}: one row`).toBeLessThan(70);
+          // One row from 1180 px (Advanced); it wraps onto two rows below, as before.
+          expect(bar().getBoundingClientRect().height, `${w} px, ${state}, ${save}: rows`).toBeLessThan(w >= 1180 ? 70 : 120);
         }
       }
     };
@@ -288,9 +295,9 @@ describe('Offline readiness in the transport', () => {
     }
   });
 
-  it('keeps Undo and Redo on the strip at 1024-1920 px and the Simple · Advanced switch from 1366 px (in More, on one row, below), in Simple and Advanced', async () => {
+  it('keeps Undo and Redo on the strip at 1024-1920 px and the Simple · Advanced switch from 1366 px (in More, on one row, below), in Advanced', async () => {
     await openApp();
-    for (const mode of ['simple', 'advanced'] as const) {
+    for (const mode of ['advanced'] as const) {
       act(() => setUiMode(mode));
       for (const w of [1024, 1280, 1366, 1440, 1600, 1920]) {
         await page.viewport(w, 900);
@@ -309,12 +316,10 @@ describe('Offline readiness in the transport', () => {
             expect(k!.closest('[role="menu"]'), `${label}: ${kind} not in a menu`).toBeNull();
             expect(k!.getAttribute('aria-label'), `${label}: ${kind}'s name`).toMatch(kind === 'undo' ? /^Undo/ : /^Redo/);
           }
-          // Stop and Export keep their words from 1366 px (Simple; Advanced's Swing takes their room until 1600 / 1700 px).
-          if (mode === 'simple' && w >= 1366) expectStopAndExportWords(label);
           expectStripFits(label);
           expectNoOverlap(label);
-          // One row: Simple at every width, Advanced (with Swing) from 1180 px; it wraps onto two rows below, as before.
-          expect(bar().getBoundingClientRect().height, `${label}: rows`).toBeLessThan(mode === 'simple' || w >= 1180 ? 70 : 120);
+          // One row: Advanced (with Swing) from 1180 px; it wraps onto two rows below, as before.
+          expect(bar().getBoundingClientRect().height, `${label}: rows`).toBeLessThan(w >= 1180 ? 70 : 120);
         }
       }
     }

@@ -35,7 +35,8 @@ export async function resetSong(): Promise<void> {
     patchRuntime({ held: {}, notice: null, recording: 'off', recordTarget: null, playing: false, paused: false, mode: 'live', replayId: null });
     setGuideDone(true);
     setTipsEnabled(false);
-    setUiMode('simple');
+    // Round 7: these tests cover 2.4's Song view and transport, which Advanced keeps.
+    setUiMode('advanced');
     setKeyboardCollapsed(false);
   });
 }

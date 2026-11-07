@@ -70,8 +70,13 @@ const SPACE_CONTROLS = 'button, input, select, textarea, a[href], [role="tab"], 
 export function hearIt(): string {
   return uiStore.getState().view === 'arrange' ? 'Press Play to hear the song.' : 'Tap a pad or a scene to hear it.';
 }
-/** A blank project has no loops: there is nothing to hear yet, and a tap on a pad makes the first one. */
-const BLANK_HINT = 'Tap a pad to make a loop and fill it in.';
+/**
+ * A blank project has no loops: there is nothing to hear yet. A tap on a pad makes the first one; in
+ * Simple (round 7) a blank song opens on the Song screen, where a loop comes from LOOPS.
+ */
+function blankHint(): string {
+  return uiStore.getState().uiMode === 'simple' ? 'Drag a loop in from LOOPS on the right to start your song.' : 'Tap a pad to make a loop and fill it in.';
+}
 
 /**
  * Each starter's feel in two everyday words, leading its card before the
@@ -330,7 +335,7 @@ function LibraryDialog({ initialTab = 'starters', onClose, onLoaded, onShowGuide
       await session.newFromStarter(def.id, { discardCurrent });
       // The project is on screen now, even if the dialog was closed meanwhile.
       const name = session.store.getState().name;
-      announceLoaded(`Started ${quote(name)}.`, before, keptPrevious ? `${quote(previous)} is still in My projects.` : '', def === BLANK_STARTER ? BLANK_HINT : hearIt());
+      announceLoaded(`Started ${quote(name)}.`, before, keptPrevious ? `${quote(previous)} is still in My projects.` : '', def === BLANK_STARTER ? blankHint() : hearIt());
       onLoaded('starter');
     });
 

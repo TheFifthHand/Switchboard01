@@ -26,6 +26,11 @@ export interface ShellOptions {
   guideDone?: boolean;
   /** Before boot: store a project, so the Welcome card is the returning visit's. */
   stored?: boolean;
+  /**
+   * Simple or Advanced (default Advanced: since round 7 the 2.4 strip, its view tabs and the Play view
+   * these tests cover are Advanced's; Simple has the one-home top bar, see r7-shell-*).
+   */
+  mode?: 'simple' | 'advanced';
 }
 
 /** Fonts the app uses, loaded so measurements are the real ones. */
@@ -66,7 +71,7 @@ export async function openShell(opts: ShellOptions = {}): Promise<{ boot: BootIn
     hintsStore.setState(INITIAL_HINTS);
     setGuideDone(opts.guideDone ?? true);
     setTipsEnabled(true);
-    setUiMode('simple');
+    setUiMode(opts.mode ?? 'advanced');
     setView('play');
     setPadMode('loops');
     selectTrack('t4');

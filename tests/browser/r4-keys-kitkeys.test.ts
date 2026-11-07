@@ -10,12 +10,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getKitVoiceNames } from '../../src/audio/instruments/kits';
 import { DRUM_KEYS } from '../../src/ui/components';
 import { selectTrack, setPadMode, setUiMode, type PadMode } from '../../src/state/uiStore';
-import { openApp, press, setUp, tearDown, track } from './r4-play-helpers';
+import { openApp, press, setUp, tearDown, track, openIn } from './r4-play-helpers';
 import { centre, click, settleFrames } from './r4-uikit-input';
 import { keyboard, recordPlayed, resetKeyboardFold, strip } from './r4-keys-helpers';
 
 beforeEach(async () => {
   await setUp();
+  // Round 7: Simple shows the keyboard strip on the Jam pads sheet, as 2.4's Simple Play view had it.
+  openIn('simple');
   resetKeyboardFold();
 });
 afterEach(async () => {

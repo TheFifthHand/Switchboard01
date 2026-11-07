@@ -11,6 +11,7 @@ import { DRUM_VOICES, MAX_CLIP_BARS, MAX_SCENES, MAX_SONG_CLIPS, SONG_SLOT_BASE,
 import type { EffectChainClip } from './commands/patch';
 import { createStore, type Store } from './store';
 
+/** The 2.4 views. In Simple, 'arrange' (the Song screen) is the home and the others open as sheets over it. */
 export type View = 'play' | 'shape' | 'arrange' | 'mix';
 /** Simple shows the essentials (pads, big knobs, mute/solo, record, export); Advanced shows every control. */
 export type UiMode = 'simple' | 'advanced';
@@ -103,7 +104,8 @@ type Persisted = Pick<UiState, (typeof PERSISTED)[number]>;
 export function defaultUiState(): UiState {
   return {
     selectedTrackId: 't1',
-    view: 'play',
+    // Simple's one home is the Song screen (round 7); Advanced users' last view is remembered.
+    view: 'arrange',
     padMode: 'loops',
     selectedSlot: {},
     stepPage: {},

@@ -23,7 +23,7 @@ import { ppbStore } from '../../src/app/views/arrange/laneStore';
 import { clipAtSlot, slotOfClip } from '../../src/project/clips';
 import type { Id, Project } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
-import { selectSlot, selectTrack, setPadMode, setView, uiStore } from '../../src/state/uiStore';
+import { selectSlot, selectTrack, setPadMode, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { centre, clickAt, doubleClickAt, on, openSong, press, project, region, regionEl, regions, resetSong, settle, teardownSong, waitFor } from './r5-song-helpers';
 
 const SHOTS = '/tmp/claude-0/r6/shots-editor';
@@ -148,6 +148,8 @@ describe('the editor pane in the Song view', () => {
   });
 
   it('Make this one different: only that region gets its own copy, and the pane edits the copy', async () => {
+    // Simple's pane (its eight main drum rows): the song helpers open Advanced since round 7.
+    act(() => setUiMode('simple'));
     await open();
     const dc = project().tracks[0].clips.find((c) => c)!;
     await doubleClickAt(on('A'));

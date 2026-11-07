@@ -1,13 +1,20 @@
 /**
  * Application shell (Omni Song): transport strip, the current view, the
- * keyboard strip, dialogs (projects, export, Help), the quick guide and
- * "Try this" hints, banners (audio, a stall, a project open in another tab),
- * the toasts the shell itself raises, and global keys, focus and drops.
+ * keyboard strip, dialogs (projects, export, share, Help), the quick guide
+ * and "Try this" hints, banners (audio, a stall, a project open in another
+ * tab), the toasts the shell itself raises, and global keys, focus and drops.
+ *
+ * Simple (round 7) has one home, the Song screen (view 'arrange'): its top
+ * bar has no view tabs (shell/SimpleTopBar), any other view opens as a sheet
+ * under "← Back to my song" (shell/Sheet; Esc returns), Play and Space always
+ * play the song, and the keyboard strip is hidden (its computer keys still
+ * play the selected instrument). Advanced is 2.4's strip, tabs and keyboard,
+ * plus Share.
  */
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { Button, TipsProvider, ToastProvider, useToasts, type ToastApi, type ToastOptions } from '../ui/components';
 import { DRUM_KEYS, NOTE_KEYS, isTypingTarget } from '../ui/hooks/useComputerKeyboard';
-import { setTipsEnabled, uiStore } from '../state/uiStore';
+import { setTipsEnabled, setView, uiStore } from '../state/uiStore';
 import * as library from '../persistence/library';
 import { BUNDLE_EXTENSION, LEGACY_BUNDLE_EXTENSIONS } from '../persistence/bundle';
 import { session, useProject, useUi } from './instance';
@@ -31,6 +38,12 @@ import { ShapeView } from './views/shape/ShapeView';
 import { ArrangeView } from './views/arrange/ArrangeView';
 import { watchSceneOffers } from './views/arrange/sceneOffer';
 import { MixView } from './views/mix/MixView';
+import { openLoopEditor } from './views/arrange/editorStore';
+import { writeTakesOpen } from './views/arrange/laneSettings';
+import { ShareDialog } from './views/share/ShareDialog';
+import { SimpleTopBar } from './views/shell/SimpleTopBar';
+import { SHEET_TITLES, Sheet } from './views/shell/Sheet';
+import { playSimple } from './views/shell/simplePlay';
 import { downloadBlob } from './download';
 import type { View } from '../state/uiStore';
 import styles from './App.module.css';
@@ -403,6 +416,10 @@ export function App({ boot }: { boot: BootInfo }) {
   const [welcome, setWelcome] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportSource, setExportSource] = useState<string | undefined>(undefined);
+  const [shareOpen, setShareOpen] = useState(false);
+  const simple = useUi((s) => s.uiMode === 'simple');
+  // Recorded takes (⋯ in Simple): the Song screen opens again with its takes panel open.
+  const [songKey, setSongKey] = useState(0);
   const tips = useUi((s) => s.tipsEnabled);
   const view = useUi((s) => s.view);
   // The tab changes at once; the view itself follows in a deferred render.
@@ -440,7 +457,8 @@ export function App({ boot }: { boot: BootInfo }) {
 
   // The guide is offered once, for the first project; the hints start with it (they show after the guide).
   const offerGuide = (): boolean => {
-    if (uiStore.getState().guideDone) return false;
+    // The quick guide points at the 2.4 Play view; Simple's Song screen has its own tip line instead.
+    if (uiStore.getState().guideDone || uiStore.getState().uiMode === 'simple') return false;
     setGuide(true);
     return true;
   };
@@ -503,6 +521,12 @@ export function App({ boot }: { boot: BootInfo }) {
       }),
     [],
   );
+
+  // Simple has one home: the app opens on the Song screen (a view left open as a sheet does not come back).
+  // Switching from Advanced to Simple keeps the view on screen (as a sheet over the song): the switch changes nothing else.
+  useEffect(() => {
+    if (uiStore.getState().uiMode === 'simple') setView('arrange');
+  }, []);
 
   // Global shortcuts: Space = Play/Pause, Shift+Space = Stop, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y = undo/redo,
   // Ctrl+S = save now, ? = Help, M = mute / unmute the selected part.
@@ -618,8 +642,10 @@ export function App({ boot }: { boot: BootInfo }) {
       spaceTaken = true;
       if (e.repeat) return;
       if (e.shiftKey) session.stop();
-      // In Song, Space plays the song (as the transport's Play song key does): a paused song continues, and
-      // paused pads stop for the song (session.togglePlay). Elsewhere a pause resumes what was playing.
+      // In Simple, Space always plays the song (there is no other way to play there). In Advanced's Song view it
+      // plays the song (as the transport's Play song key does): a paused song continues, and paused pads stop for
+      // the song (session.togglePlay). Elsewhere a pause resumes what was playing.
+      else if (uiStore.getState().uiMode === 'simple') void playSimple();
       else void session.togglePlay({ song: uiStore.getState().view === 'arrange' });
     };
     // The key up of a Space the transport took does not reach the control either.
@@ -710,6 +736,13 @@ export function App({ boot }: { boot: BootInfo }) {
     };
   }, []);
 
+  /** Close a sheet (Simple): back to the Song screen, with keyboard focus on Play. */
+  const backHome = () => {
+    session.brace();
+    setView('arrange');
+    setFocusPlay(true);
+  };
+
   const showGuide = () => {
     setLibrary(null);
     setHelp(null);
@@ -742,23 +775,44 @@ export function App({ boot }: { boot: BootInfo }) {
           }}
         />
         <div className={styles.app} inert={welcome ? true : undefined}>
-          <TransportBar
-            onOpenLibrary={() => setLibrary({ tab: 'projects', fromWelcome: false })}
-            onNewProject={() => setLibrary({ tab: 'starters', fromWelcome: false })}
-            onOpenExport={() => {
-              setExportSource(undefined);
-              setExportOpen(true);
-            }}
-            onOpenHelp={() => setHelp('shortcuts')}
-          />
+          {simple ? (
+            <SimpleTopBar
+              onOpenLibrary={() => setLibrary({ tab: 'projects', fromWelcome: false })}
+              onNewProject={() => setLibrary({ tab: 'starters', fromWelcome: false })}
+              onOpenShare={() => setShareOpen(true)}
+              onOpenHelp={() => setHelp('shortcuts')}
+              onOpenTakes={() => {
+                writeTakesOpen(true);
+                setView('arrange');
+                setSongKey((n) => n + 1);
+              }}
+            />
+          ) : (
+            <TransportBar
+              onOpenLibrary={() => setLibrary({ tab: 'projects', fromWelcome: false })}
+              onNewProject={() => setLibrary({ tab: 'starters', fromWelcome: false })}
+              onOpenExport={() => {
+                setExportSource(undefined);
+                setExportOpen(true);
+              }}
+              onOpenShare={() => setShareOpen(true)}
+              onOpenHelp={() => setHelp('shortcuts')}
+            />
+          )}
           <div className={styles.bannerSlot} data-banners="">
             <ReadonlyBanner />
             <AudioBanner />
           </div>
           <main className={styles.main}>
             {/* One heading per view, for screen readers: what this is and which project is open. */}
-            <h1 className="visually-hidden">{`Omni Song — ${VIEW_NAMES[shownView]} · ${projectName}`}</h1>
-            <Workspace view={shownView} />
+            <h1 className="visually-hidden">{`Omni Song — ${simple && shownView !== 'arrange' ? SHEET_TITLES[shownView] : VIEW_NAMES[shownView]} · ${projectName}`}</h1>
+            {simple && shownView !== 'arrange' ? (
+              <Sheet view={shownView} onBack={() => backHome()}>
+                <Workspace view={shownView} />
+              </Sheet>
+            ) : (
+              <Workspace key={songKey} view={shownView} />
+            )}
           </main>
           <footer className={styles.keyboard}>
             <KeyboardStrip />
@@ -779,7 +833,9 @@ export function App({ boot }: { boot: BootInfo }) {
             onContinued={() => setFocusPlay(true)}
             onBrowse={() => setLibrary({ tab: 'starters', fromWelcome: true })}
             onJumpedIn={jumpedIn}
-            onBeatStarted={() => {
+            onBeatStarted={(beat) => {
+              // Simple: the new loop opens in the editor under the song, so its squares are right there.
+              if (beat?.regionId) openLoopEditor(session.store.getState(), beat.regionId);
               // A beat from nothing: the hints start at the step grid (the starter's guide is not for this).
               startHints();
               announceReplaced();
@@ -812,6 +868,7 @@ export function App({ boot }: { boot: BootInfo }) {
             setExportSource(undefined);
           }}
         />
+        {shareOpen && <ShareDialog onClose={() => setShareOpen(false)} />}
         <HelpDialog open={help !== null} initialTab={help ?? undefined} onClose={() => setHelp(null)} onShowGuide={showGuide} onShowHints={showHints} />
         <Notices />
         <Offers />
