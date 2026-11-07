@@ -3,10 +3,12 @@
  * - Simple shows only: what, format, "Make it as loud as streaming songs" (on), file name and a
  *   folded "More options" (sample rate, bit depth, tail, mastering or not); Advanced shows them all.
  * - Escape closes the dialog, also with a list box focused.
- * - "Make it as loud as streaming songs" renders, measures and, once the file is saved, sets
- *   Loudness drive (one undo step) so the file lands on −14 LUFS, never above the −1 dBTP ceiling,
- *   and says what it did. It is for the whole song: a scene is saved at the level it plays.
- * - Smaller file for sharing (Opus in Ogg): decodes in the browser, the right length, not silent.
+ * - "Make it as loud as streaming songs" renders, measures and renders a copy with Loudness drive
+ *   moved so the file lands on −14 LUFS, never above the −1 dBTP ceiling, and says what it did. Only
+ *   the file changes (round 7): the song's mastering and undo history stay as they were. It is for
+ *   the whole song: a scene is saved at the level it plays.
+ * - Smaller file for sharing (Opus in Ogg, saved as .ogg, audio/ogg): decodes in the browser, the right
+ *   length, not silent.
  * - Parts as separate files: a .zip with one WAV per part that plays, each soloed and not silent.
  * - MIDI file: a type-1 file with a track per part that plays, the project's tempo.
  * - While it renders, the progress shows in the export button's place.
@@ -180,7 +182,8 @@ describe('Simple shows only what a first export needs', () => {
     const ext = () => dialog().querySelector('[class*="ext"]')!.textContent;
     expect(ext()).toBe('.wav');
     await choose(selects(dialog())[1], 'opus');
-    expect(ext()).toBe('.opus');
+    // Opus in Ogg: .ogg, the extension players know (round 7; 2.4 saved .opus).
+    expect(ext()).toBe('.ogg');
     await choose(selects(dialog())[1], 'stems');
     expect(ext()).toBe('.zip');
     expect(dialog().querySelector('[role="switch"]')).toBeNull();
@@ -206,7 +209,8 @@ describe('Simple shows only what a first export needs', () => {
 });
 
 describe('Make it as loud as streaming songs', () => {
-  it('sets Loudness drive so the file lands on −14 LUFS (one undo step), under the ceiling, and says what it did', async () => {
+  // Round 7 (intended change): the file is made loud from a copy; 2.4 also set the song's Loudness drive (one undo step).
+  it('makes the file land on −14 LUFS, under the ceiling, says what it did, and leaves the song’s mastering and undo history as they were', async () => {
     const drive = () => readParam(MASTERING_PARAMS, session.store.getState().mastering.params, 'loudness');
     // A short song (scene 2's loops for 4 bars) keeps the renders quick.
     act(() => {
@@ -231,19 +235,19 @@ describe('Make it as loud as streaming songs', () => {
     console.info(`[export-loud] ${lufs.toFixed(2)} LUFS, peak ${peakDb(wav.channels).toFixed(2)} dBFS, drive ${before} → ${drive()} | ${loud}`);
     expect(Math.abs(lufs + 14)).toBeLessThanOrEqual(1);
     expect(peakDb(wav.channels)).toBeLessThan(-0.9);
-    expect(drive()).toBeGreaterThan(before);
     expect(loud).toMatch(
-      /^Raised the song’s loudness by \d+\.\d dB to reach −14 LUFS, the Streaming level: Loudness drive in Mix is \+\d+\.\d dB now, was \+\d\.\d dB \(Undo puts it back\)\. The limiter keeps every peak under −1 dB, so nothing clips\.$/,
+      /^The file was made \d+\.\d dB louder to reach −14 LUFS, the Streaming level\. Your song’s mastering in Mix was not changed\. The limiter keeps every peak under −1 dB, so nothing clips\.$/,
     );
-    expect(session.store.historySize().undo).toBe(1);
-    expect(session.store.undoLabel()).toBe('Match loudness target');
-    act(() => session.undo());
-    expect(drive()).toBeCloseTo(before, 5);
-    // Already there: a second export changes nothing and renders once.
-    act(() => session.redo());
+    // Only the file changed.
+    expect(drive()).toBe(before);
+    expect(session.store.historySize().undo).toBe(0);
+    // So a second export makes the same loud file again, and still changes nothing.
     const again = await exportAndWait(dialog, /^Export WAV$/, 120_000);
     console.info(`[export-loud] again: ${again.join(', ')} | ${dialog().querySelector('[data-testid="export-loud"]')?.textContent}`);
-    expect(again).not.toContain('Making it louder');
+    expect(again).toContain('Making it louder');
+    expect(saved).toHaveLength(2);
+    expect(drive()).toBe(before);
+    expect(session.store.historySize().undo).toBe(0);
   }, 240_000);
 
   it('a scene is saved at the level it plays: no switch, the song’s mastering stays, and it says how to make it louder', async () => {
@@ -274,7 +278,8 @@ describe('the other formats', () => {
     expect(dialog().querySelector('[role="switch"]')).toBeNull();
     await exportAndWait(dialog, /^Export small file$/);
     expect(saved).toHaveLength(1);
-    expect(saved[0].name).toMatch(/\.opus$/);
+    expect(saved[0].name).toMatch(/\.ogg$/);
+    expect(saved[0].blob.type).toBe('audio/ogg');
     const bytes = new Uint8Array(await saved[0].blob.arrayBuffer());
     expect(String.fromCharCode(...bytes.subarray(0, 4))).toBe('OggS');
     const plan = session.renderPlan({ kind: 'scene', row: 1, bars: 2 }, session.store.getState().arrangement.tailSeconds);
@@ -285,7 +290,7 @@ describe('the other formats', () => {
     expect(lufsOf(decoded)).toBeGreaterThan(-40);
     // About a tenth of a 24-bit WAV of the same length.
     expect(bytes.length).toBeLessThan(plan.fileSeconds * 48000 * 6 * 0.15);
-    expect(dialog().querySelector('[data-testid="export-result"]')!.textContent).toMatch(/^Saved .+\.opus \(\d\.\d+ MB, /);
+    expect(dialog().querySelector('[data-testid="export-result"]')!.textContent).toMatch(/^Saved .+\.ogg \(\d\.\d+ MB, /);
   }, 120_000);
 
   it('Parts as separate files: one WAV per part that plays, each that part alone, none silent, without mastering', async () => {

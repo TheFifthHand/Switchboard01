@@ -1,6 +1,6 @@
 /**
- * A loud export only changes the song once its file is saved: cancelled while it renders louder, or
- * failing to save, it leaves the mastering exactly as it was and no undo step.
+ * A loud export never changes the song (round 7: only the file is made louder); cancelled while it
+ * renders louder, or failing to save, it leaves the mastering exactly as it was and no undo step.
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -54,7 +54,7 @@ it('Cancel during “Making it louder”: the Loudness drive and the undo histor
   expect(cancelled).toBe(true);
   const text = dialog().textContent ?? '';
   console.info('[review] after cancel:', drive(), 'was', before, '| undo', session.store.undoLabel(), '|', text.match(/Export cancelled[^.]*\./)?.[0]);
-  // The file was not saved, but the song itself changed:
+  // The file was not saved, and the song did not change:
   expect(drive()).toBeCloseTo(before, 5);
   expect(session.store.historySize().undo).toBe(steps);
   expect(text).toContain('Export cancelled. Nothing was saved.');
