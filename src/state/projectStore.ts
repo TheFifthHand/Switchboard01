@@ -328,6 +328,11 @@ export class ProjectStore implements ReadableStore<Project> {
     this.openGesture = null;
   }
 
+  /** An undo group is open (beginGroup): edits made now join its step. */
+  grouping(): boolean {
+    return this.group !== null;
+  }
+
   /**
    * Close the undo group. A group step whose edits ended where the step began
    * (sounds tried, then Cancel back to the original) is dropped, so Undo

@@ -53,7 +53,7 @@ import { loopPlaces, rangeText } from './songModel';
 import { isMac } from '../hints/shortcuts';
 import { DragOverlay } from './DragOverlay';
 import { EmptySong } from './library/EmptySong';
-import { editorStore, openLoopEditor } from './editorStore';
+import { cancelLoopEditorSoon, editorStore, openLoopEditor, openLoopEditorSoon } from './editorStore';
 import { LaneController, type Carry, type LaneHost } from './laneController';
 import type { BarRange } from './laneGestures';
 import { laneKey } from './laneKeys';
@@ -345,9 +345,12 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
         live.current.busy = on;
         if (on) hoverStore.setState(null);
       },
-      // Simple: a click on a loop opens it in the editor below (a drag still moves it; Shift and Ctrl still select).
-      regionClick: (id) => {
-        if (live.current.simple) openLoopEditor(session.store.getState(), id);
+      // Simple: a click on a loop opens it in the editor below (a drag still moves it; Shift and Ctrl still select),
+      // once the double-click time has passed: a double-click opens it at once, and its second press never
+      // lands on the editor that the first one opened (the rows shrink when it opens).
+      simple: () => live.current.simple,
+      regionClick: (id, at) => {
+        if (live.current.simple) openLoopEditorSoon(() => session.store.getState(), id, at);
       },
     };
     return new LaneController(host);
@@ -541,6 +544,8 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
   }, []);
   const timelineX = (clientX: number) => clientX - (originRef.current?.getBoundingClientRect().left ?? 0);
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    // A new press (a drag, the second click of a double-click): a click's waiting editor opening waits no more.
+    cancelLoopEditorSoon();
     if (e.button !== 0) return;
     const t = e.target as Element;
     if (t.closest('button, input, [data-hover-more]') && !t.closest('[data-region-id], [data-section-id]')) return;

@@ -67,7 +67,7 @@ export function applyReadyLoop(trackId: Id, slot: number, loop: LibraryLoop): bo
   try {
     if (existing.bars !== fit.bars) ok = session.accepted(cmd.setClipBars(store, trackId, slot, fit.bars));
     if (ok) ok = session.accepted(cmd.setClipNotes(store, trackId, slot, fit.notes.map((n) => ({ ...n, id: uid('n') })), words));
-    if (ok) followInSong(trackId, slot, existing.id, loop.name);
+    if (ok) followInSong(trackId, slot, existing.id, loop.name, existing.bars);
   } finally {
     store.endGroup();
   }
@@ -81,16 +81,17 @@ export function applyReadyLoop(trackId: Id, slot: number, loop: LibraryLoop): bo
  * (the block reads "Four Chord Pop", not the old name), and the song plays
  * it through when it got longer (fitSongToLoop). Pad loops and Advanced keep
  * 2.4's ways (the name stays, the regions keep their length). Runs inside
- * the caller's undo group.
+ * the caller's undo group. `fromBars`: the loop's length before the change
+ * (only a loop that got longer makes the song play more of it).
  */
-export function followInSong(trackId: Id, slot: number, clipId: Id, name: string): void {
+export function followInSong(trackId: Id, slot: number, clipId: Id, name: string | null, fromBars: number): void {
   if (!isSongSlot(slot) || uiStore.getState().uiMode !== 'simple') return;
   const store = session.store;
   const t = store.getState().tracks.find((x) => x.id === trackId);
   const clip = t ? clipAtSlot(t, slot) : null;
   if (!t || !clip) return;
-  if (clip.name !== name) session.accepted(cmd.renameClip(store, trackId, slot, freshName(t, name)));
-  session.accepted(cmd.fitSongToLoop(store, trackId, clipId));
+  if (name !== null && clip.name !== name) session.accepted(cmd.renameClip(store, trackId, slot, freshName(t, name)));
+  session.accepted(cmd.fitSongToLoop(store, trackId, clipId, fromBars));
 }
 
 /** Forget the last try (another loop opened: its next try is a step of its own). */

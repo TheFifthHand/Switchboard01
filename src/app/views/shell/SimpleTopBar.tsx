@@ -56,7 +56,7 @@ function StopKey() {
       icon="stop"
       disabled={idle}
       onClick={() => session.stop()}
-      tip={idle ? 'Stopped.' : 'Stop, and go back to where you started playing.'}
+      tip={idle ? 'Stopped.' : 'Stop, and go back to the start of your song.'}
       detail={`${keysFor('stop')} also stops.`}
       aria-keyshortcuts="Shift+Space"
       className={styles.stop}

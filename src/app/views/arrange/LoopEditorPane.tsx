@@ -70,6 +70,7 @@ import {
   loopSecondsText,
   openLoopEditor,
   placesText,
+  pressIsClickEcho,
   readEditorHeight,
   resolveEditor,
   setEditorMode,
@@ -78,7 +79,7 @@ import {
   type EditorMode,
   type EditorTarget,
 } from './editorStore';
-import { ReadyLoops } from './library/ReadyLoops';
+import { ReadyLoops, followInSong } from './library/ReadyLoops';
 import { instrumentName } from './songHome';
 import { readyLoopsFor } from './library/readyLoops';
 import { selectionStore, setSelection } from './laneStore';
@@ -317,8 +318,22 @@ function Pane({ trackId, clipId, regionId, slot, focusAsk }: { trackId: Id; clip
   const lengthText = advanced ? barsLabel(bars) : loopSecondsText(bars, bpm);
   const setLength = (to: ClipBars) => {
     const before = clip?.notes.length ?? 0;
-    const r = to > bars ? cmd.repeatClipToBars(session.store, trackId, slot, to) : cmd.setClipBars(session.store, trackId, slot, to);
-    if (!session.accepted(r) || !r.changed) return;
+    const store = session.store;
+    // Simple: the song plays all of a loop that got longer (every place that played it once now plays the new
+    // length, as a ready-made loop does: followInSong), in the same undo step. A shorter loop simply repeats more
+    // often where it plays. Advanced keeps 2.4's regions as they were.
+    const follow = !advanced && to > bars;
+    // (A recording into this loop already holds one undo step open: the change joins it.)
+    const own = follow && !store.grouping();
+    if (own) store.beginGroup(`clip:Make ${clip?.name ?? 'the loop'} longer`);
+    let ok = false;
+    try {
+      ok = session.accepted(to > bars ? cmd.repeatClipToBars(store, trackId, slot, to) : cmd.setClipBars(store, trackId, slot, to));
+      if (follow && ok) followInSong(trackId, slot, clipId, null, bars);
+    } finally {
+      if (own) store.endGroup();
+    }
+    if (!ok) return;
     const now = resolveEditor(session.store.getState(), { trackId, clipId, regionId })?.clip;
     const cut = now ? before - now.notes.length : 0;
     const words = advanced ? barsLabel(to) : loopSecondsText(to, bpm);
@@ -357,6 +372,12 @@ function Pane({ trackId, clipId, regionId, slot, focusAsk }: { trackId: Id; clip
       data-steps-root=""
       data-mode={mode}
       data-locked={(locked && !playing) || undefined}
+      onPointerDownCapture={(e) => {
+        // The second press of a double-click whose first click opened the pane: it never edits the loop.
+        if (!pressIsClickEcho(e.clientX, e.clientY)) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
     >
       <div
         className={styles.grip}

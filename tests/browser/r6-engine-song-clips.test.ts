@@ -273,6 +273,7 @@ describe('Record in the Song view (recording into the song)', () => {
     expect(s.transport!.getPosition().tick).toBeLessThan(5 * BAR);
     s.stop();
     expect(takes).toEqual([{ trackId: 't4', startBar: 5, bars: 1, notes: [], quantize: 'off' }]);
-    expect(rt()).toMatchObject({ playing: false, songCursor: 5, songRecording: null });
+    // (Simple, the default: Stop goes back to the start of the song, round 7 fix 2a; Advanced keeps 2.4's bar 6.)
+    expect(rt()).toMatchObject({ playing: false, songCursor: 0, songRecording: null });
   });
 });

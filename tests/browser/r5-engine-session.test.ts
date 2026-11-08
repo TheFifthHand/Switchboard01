@@ -33,7 +33,7 @@ import type { Clip, ClipBars, Id, Project, SongRegion } from '../../src/project/
 import { bandEnergy, rms } from '../../src/render/analysis';
 import { RENDER_START_OFFSET, computeRenderPlan, renderOffline } from '../../src/render/offline';
 import { deleteDb } from '../../src/persistence/db';
-import { setView } from '../../src/state/uiStore';
+import { setUiMode, setView } from '../../src/state/uiStore';
 import type { SeqEvent } from '../../src/time/contracts';
 import { TipsProvider } from '../../src/ui/components';
 import { cleanup, mount, wait } from './ui-harness';
@@ -209,6 +209,11 @@ describe('an export of a song with gaps and a region that starts into its clip',
 });
 
 describe('playing the song (session API)', () => {
+  // 2.4's song transport (Stop back to where playback started, Play at the loop's start): Advanced keeps it;
+  // Simple goes back to the song's start (round 7 fix 2a, tests/browser/r7-fix2a).
+  beforeEach(() => setUiMode('advanced'));
+  afterEach(() => setUiMode('simple'));
+
   it('Play starts at the cursor; Stop puts the cursor back where playback started, so Play plays the same part again', async () => {
     const s = await started(quickSong(220));
     s.setSongCursor(2);
@@ -452,6 +457,11 @@ describe('a stall in the song', () => {
 });
 
 describe('the transport in song mode', () => {
+  // 2.4's song transport (Stop back to where playback started, Play at the loop's start): Advanced keeps it;
+  // Simple goes back to the song's start (round 7 fix 2a, tests/browser/r7-fix2a).
+  beforeEach(() => setUiMode('advanced'));
+  afterEach(() => setUiMode('simple'));
+
   it('the readout shows the song’s bar and beat (also after a seek and across a loop seam); stopped in the Song view, the cursor', async () => {
     // 40 BPM: one beat is 1.5 s, so the readout holds still while it is read.
     appSession.store.replace(quickSong(40), { resetHistory: true });

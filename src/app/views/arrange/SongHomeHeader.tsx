@@ -28,7 +28,7 @@ import { selectTrack } from '../../../state/uiStore';
 import { session, useProject } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { songPlayheadBar, useSongPlaying } from '../../songPlayback';
-import { MenuHeader, MenuItem, Popover, LOCKED_REASON, anchorFromElement, useEditLocked, type MenuAnchor } from '../ClipMenu';
+import { MenuHeader, MenuItem, MenuSeparator, Popover, LOCKED_REASON, anchorFromElement, useEditLocked, type MenuAnchor } from '../ClipMenu';
 import { editorStore, openLoopEditor } from './editorStore';
 import { browserTabStore } from './LoopBrowser';
 import { LaneIcon } from './laneIcons';
@@ -37,8 +37,8 @@ import { rangeStore, revealRow, shownRowsStore, usePxPerBar } from './laneStore'
 import { libraryQueryStore } from './library/LibraryPanel';
 import { loopRoleOf } from './library/libraryModel';
 import { closeSound, openSound } from './sidePanelStore';
-import { addEndingNow, addInstrumentNow, addIntroNow, growSongNow } from './songActions';
-import { hiddenInstruments, instrumentName, repeatName, secondsWords, songClock, songSeconds } from './songHome';
+import { addEndingNow, addInstrumentNow, addIntroNow, growSongNow, shortenSongNow } from './songActions';
+import { hiddenInstruments, instrumentName, repeatName, secondsWords, shorterChoices, songClock, songEdges, songSeconds } from './songHome';
 import { MAX_PX_PER_BAR, MIN_PX_PER_BAR } from './songLayout';
 import type { TimelineHandle } from './SongTimeline';
 import styles from './SongView.module.css';
@@ -138,7 +138,7 @@ export function SongHomeHeader({ handle, browserOpen, onBrowser, folded, onUnfol
         aria-disabled={!hasRegions || undefined}
         onClick={toggleRepeat}
         data-testid="repeat-part"
-        tip={loop ? `Stop repeating ${loopName}: the song plays on to its end.` : here ? `Play ${here.name ?? 'the whole song'} again and again, until you press this again.` : 'Put some music in your song first.'}
+        tip={loop ? `Press to hear your whole song: ${loopName} stops repeating and the song plays on to its end.` : here ? `Play ${here.name ?? 'the whole song'} again and again, until you press this again.` : 'Put some music in your song first.'}
       >
         <LaneIcon name="loop" size={14} />
         <span>{loop ? `Repeating: ${loopName}` : here?.name ? `Repeat this section: ${here.name}` : 'Repeat the whole song'}</span>
@@ -151,7 +151,7 @@ export function SongHomeHeader({ handle, browserOpen, onBrowser, folded, onUnfol
         aria-haspopup="menu"
         aria-expanded={!!longer}
         data-testid="make-longer"
-        tip="Add an intro, an ending, or more of your song, made from its own music."
+        tip="Add an intro, an ending, or more of your song, made from its own music. Or take a section out."
       >
         Make it longer
       </Button>
@@ -173,7 +173,7 @@ export function SongHomeHeader({ handle, browserOpen, onBrowser, folded, onUnfol
           Show the song
         </Button>
       )}
-      {longer && <LongerMenu anchor={longer} onClose={() => setLonger(null)} onDone={() => handle?.fit()} />}
+      {longer && <LongerMenu anchor={longer} playheadBar={bar} onClose={() => setLonger(null)} onDone={() => handle?.fit()} />}
       <span className={styles.srOnly} role="status" aria-live="polite" data-testid="lane-status">
         {status}
       </span>
@@ -181,33 +181,62 @@ export function SongHomeHeader({ handle, browserOpen, onBrowser, folded, onUnfol
   );
 }
 
-/** Make it longer ▾ (each item unavailable, with the reason, while there is no music to make it from). */
-function LongerMenu({ anchor, onClose, onDone }: { anchor: MenuAnchor; onClose(): void; onDone(): void }) {
+/**
+ * Make it longer ▾ (each item unavailable, with the reason, while there is no
+ * music to make it from): Add an intro and Add an ending while the song has
+ * none (songEdges), Repeat <main part> again, Add a section after <part>; and
+ * Make it shorter: Remove the last section, Remove <the section at the
+ * playhead> (never the only one). Each is one undo step, said with Undo.
+ */
+function LongerMenu({ anchor, playheadBar, onClose, onDone }: { anchor: MenuAnchor; playheadBar: number; onClose(): void; onDone(): void }) {
   const locked = useEditLocked();
   const hasRegions = useProject(selectHasRegions);
   const reason = locked ? LOCKED_REASON : !hasRegions ? 'Put some music in first' : undefined;
   // The song's main part (the most music), whatever the playhead is on; null while no section names it.
   const names = useProject(selectGrowNames, (a, b) => a.main === b.main && a.after === b.after);
+  const edges = useProject(songEdges, (a, b) => a.intro === b.intro && a.ending === b.ending);
+  const shorter = useProject(
+    useCallback((p: Project) => {
+      const c = shorterChoices(p, playheadBar);
+      return { last: c.last ? { id: c.last.id, name: c.last.name } : null, here: c.here ? { id: c.here.id, name: c.here.name } : null };
+    }, [playheadBar]),
+    (a, b) => a.last?.id === b.last?.id && a.last?.name === b.last?.name && a.here?.id === b.here?.id && a.here?.name === b.here?.name,
+  );
   const part = names.main;
   const run = (fn: () => unknown) => () => {
     onClose();
     if (fn()) onDone();
   };
+  const cut = locked ? LOCKED_REASON : !shorter.last ? 'Only one section' : undefined;
   return (
-    <Popover anchor={anchor} label="Make it longer" onClose={onClose} align="end" ignore={document.querySelector('[data-testid="make-longer"]')}>
+    <Popover anchor={anchor} label="Make it longer or shorter" onClose={onClose} align="end" ignore={document.querySelector('[data-testid="make-longer"]')}>
       <MenuHeader eyebrow="Your song" title="Make it longer" />
-      <LaneMenuItem icon="intro" disabled={!!reason} disabledReason={reason} onSelect={run(() => addIntroNow({ plain: true })?.changed)}>
-        Add an intro
-      </LaneMenuItem>
-      <LaneMenuItem icon="ending" disabled={!!reason} disabledReason={reason} onSelect={run(() => addEndingNow({ plain: true })?.changed)}>
-        Add an ending
-      </LaneMenuItem>
+      {!edges.intro && (
+        <LaneMenuItem icon="intro" disabled={!!reason} disabledReason={reason} onSelect={run(() => addIntroNow({ plain: true })?.changed)}>
+          Add an intro
+        </LaneMenuItem>
+      )}
+      {!edges.ending && (
+        <LaneMenuItem icon="ending" disabled={!!reason} disabledReason={reason} onSelect={run(() => addEndingNow({ plain: true })?.changed)}>
+          Add an ending
+        </LaneMenuItem>
+      )}
       <LaneMenuItem icon="loop" disabled={!!reason} disabledReason={reason} onSelect={run(() => growSongNow('again')?.changed)}>
         {part ? `Repeat ${part} again` : 'Repeat it all again'}
       </LaneMenuItem>
       <LaneMenuItem icon="layers" disabled={!!reason} disabledReason={reason} onSelect={run(() => growSongNow('after')?.changed)}>
         {names.after ? `Add a section after ${names.after}` : 'Add a section after it'}
       </LaneMenuItem>
+      <MenuSeparator />
+      <MenuHeader title="Make it shorter" />
+      <MenuItem icon="minus" disabled={!!cut} disabledReason={cut} onSelect={run(() => shorter.last && shortenSongNow(shorter.last.id)?.changed)}>
+        {shorter.last ? `Remove the last section (${shorter.last.name})` : 'Remove the last section'}
+      </MenuItem>
+      {shorter.here && !cut && (
+        <MenuItem icon="minus" onSelect={run(() => shorter.here && shortenSongNow(shorter.here.id)?.changed)}>
+          {`Remove ${shorter.here.name} (where the song is now)`}
+        </MenuItem>
+      )}
     </Popover>
   );
 }
@@ -255,9 +284,7 @@ function AddInstrumentButton({
     browserTabStore.setState({ projectId, tab: 'library' });
     libraryQueryStore.setState({ text: '', role, genre: null });
     onBrowser(true);
-    // Heard at once: the song plays from where the new loop starts (it keeps playing if it already does).
-    const rt = runtimeStore.getState();
-    if (!(rt.mode === 'song' && rt.playing && !rt.paused)) void session.playSong({ fromBar: r.start });
+    // (Heard at once: addInstrumentNow plays the song where the new loop is, out of a repeat that leaves it out.)
   };
   return (
     <>

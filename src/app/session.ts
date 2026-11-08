@@ -265,8 +265,15 @@ export class Session {
   private replayingId: Id | null = null;
   /** What was playing when playback stalled, so Resume restarts the same thing (the song from the bar it reached). */
   private stallResume: { mode: PlayMode; songBar: number | null; replayId: Id | null } | null = null;
-  /** Where the song playing (or paused) now started: Stop puts the song's cursor back there. */
+  /** Where the song playing (or paused) now started: Stop puts the song's cursor back there (Advanced). */
   private songStartBar = 0;
+  /**
+   * Simple: a repeat that an edit switched off (its music went, or Make it
+   * longer turned it off to play what it added), and that edit's undo step:
+   * undoing that step brings the repeat back. `after`: the range is the one
+   * after the edit (it follows the music back on Undo); else the one before.
+   */
+  private repeatGone: { entryId: number; loop: SongLoop; after: boolean } | null = null;
   private loadedSampleIds = new Set<Id>();
   /** Keys pressed before the engine existed: played as soon as audio is ready. */
   private pendingKeys = new Map<string, { released: boolean }>();
@@ -407,6 +414,7 @@ export class Session {
     this.setMasteringListen(false);
     this.stopEverything();
     this.setSongLoop(null);
+    this.repeatGone = null;
     this.songStartBar = 0;
     patchRuntime({ songCursor: 0 });
     await this.autosaver?.flush();
@@ -983,11 +991,23 @@ export class Session {
    */
   private followSongLoopEdit(p: Project, prev: Project): void {
     const loop = runtimeStore.getState().songLoop;
-    if (!loop || uiStore.getState().uiMode !== 'simple') return;
-    const next = followSongLoop(prev, p, loop, this.store.lastChange().time);
+    if (uiStore.getState().uiMode !== 'simple') return;
+    const change = this.store.lastChange();
+    if (!loop) {
+      // Undo of the edit that switched the repeat off: it comes back with the music.
+      const gone = this.repeatGone;
+      if (gone && change.kind === 'undo' && change.entryId === gone.entryId) {
+        this.repeatGone = null;
+        const back = gone.after ? followSongLoop(prev, p, gone.loop, change.time) : gone.loop;
+        if (back) this.setSongLoop(back);
+      }
+      return;
+    }
+    const next = followSongLoop(prev, p, loop, change.time);
     if (next === loop) return;
     this.setSongLoop(next);
     if (next) return;
+    if (change.kind === 'edit' && change.entryId !== null) this.repeatGone = { entryId: change.entryId, loop, after: false };
     // Said after the edit's own words (they come right after this change), added to them so its Undo stays.
     const before = runtimeStore.getState().notice?.id;
     const words = 'What you were repeating is gone, so repeat is off: the song plays on to its end.';
@@ -1271,7 +1291,8 @@ export class Session {
    * Stop: everything ends and the transport goes back to bar 1. After song
    * playback the song's cursor goes back to where that playback started
    * (GarageBand's and Logic's "return to start position"), so Play plays the
-   * same part again.
+   * same part again. Simple: it goes back to the start of the song, so the
+   * next Play plays the whole song (into the repeated part, when one is set).
    */
   stop(): void {
     const song = runtimeStore.getState().mode === 'song';
@@ -1282,8 +1303,23 @@ export class Session {
     if (this.transport) this.transport.stop();
     if (this.replayingId) this.endReplay();
     this.stallResume = null;
-    patchRuntime({ playing: false, paused: false, mode: 'live', songLooping: false, countingIn: false, recordStartsAtTick: null, ...(song ? { songCursor: this.songStartBar } : {}) });
+    const back = uiStore.getState().uiMode === 'simple' ? 0 : this.songStartBar;
+    patchRuntime({ playing: false, paused: false, mode: 'live', songLooping: false, countingIn: false, recordStartsAtTick: null, ...(song ? { songCursor: back } : {}) });
     this.refreshLauncherRuntime();
+  }
+
+  /**
+   * Simple: switch the repeat off because the edit just made (undo step
+   * `entryId`) added music outside it (Make it longer), so that music is
+   * heard. Undoing that step brings the repeat back. False when nothing
+   * repeated.
+   */
+  releaseSongLoopFor(entryId: number | null): boolean {
+    const loop = runtimeStore.getState().songLoop;
+    if (!loop) return false;
+    this.setSongLoop(null);
+    this.repeatGone = entryId !== null ? { entryId, loop, after: true } : null;
+    return true;
   }
 
   /**
@@ -1386,7 +1422,10 @@ export class Session {
       return;
     }
     const rt = runtimeStore.getState();
-    const asked = opts.fromBar !== undefined ? wholeBar(opts.fromBar) : null;
+    // Simple: a playhead before the repeated part plays from there into it (Stop puts it at the song's start,
+    // so Play plays the intro, then repeats the part); Advanced jumps to the loop's start, as 2.4 did.
+    const simpleLead = uiStore.getState().uiMode === 'simple' && rt.songLoop && rt.songCursor < rt.songLoop.fromBar ? rt.songCursor : null;
+    const asked = opts.fromBar !== undefined ? wholeBar(opts.fromBar) : simpleLead;
     this.startSongAt(songPlayFrom(length, rt.songCursor, rt.songLoop, asked));
   }
 

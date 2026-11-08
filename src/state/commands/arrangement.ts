@@ -602,12 +602,17 @@ export function setRegionClip(store: ProjectStore, id: Id, clipId: Id): SongEdit
  * with it grows to the same end (its loop repeats), so the instruments keep
  * playing together. One undo step (the caller may group
  * it with the loop change); `ids`: the regions that grew.
+ *
+ * `fromBars`: the loop's length before the change. Then nothing grows unless
+ * the loop got longer, and only regions that played at most one pass of it
+ * before do (a loop someone trimmed on purpose, its loop unchanged, stays).
  */
-export function fitSongToLoop(store: ProjectStore, trackId: Id, clipId: Id): SongEditResult {
+export function fitSongToLoop(store: ProjectStore, trackId: Id, clipId: Id, fromBars?: number): SongEditResult {
   const p = store.getState();
   const t = p.tracks.find((x) => x.id === trackId);
   const clip = t ? clipById(t, clipId) : null;
   if (!t || !clip) return NOT_FOUND('loop');
+  if (fromBars !== undefined && clip.bars <= fromBars) return { changed: false };
   const sections = sortSections(p.arrangement.sections);
   const regions = p.arrangement.regions;
   /** The first bar after `r` its row has music again (or the end of the song's range). */
@@ -619,6 +624,7 @@ export function fitSongToLoop(store: ProjectStore, trackId: Id, clipId: Id): Son
   const grow = new Map<Id, number>();
   for (const r of regions) {
     if (r.trackId !== trackId || r.clipId !== clipId || r.offset !== 0 || r.bars >= clip.bars) continue;
+    if (fromBars !== undefined && r.bars > fromBars) continue;
     const end = Math.min(r.start + clip.bars, reach(r));
     if (end <= regionEnd(r)) continue;
     grow.set(r.id, end - r.start);
@@ -780,7 +786,7 @@ export function reorderSection(store: ProjectStore, id: Id, before: Id | null, o
   const target = res.sections.find((x) => x.id === id)!.start;
   const time: TimeShift[] = [
     { at: s.start, bars: -s.bars },
-    { at: target, bars: s.bars },
+    { at: target, bars: s.bars, moved: true },
   ];
   const r = commit(store, p, 'arrange:Move section', display, { regions: res.regions, sections: res.sections, time });
   return edited(r, { sectionId: id, ids: res.moved.map((x) => x.id) });
@@ -1123,13 +1129,27 @@ export function shapeSection(store: ProjectStore, id: Id, kind: ShapeKind): Song
 /** Seconds of echo tail an added ending makes sure of (when the tail was off). */
 export const ENDING_TAIL_SECONDS = 2;
 
-/** Where an intro or ending takes its clips from: the first (last) section with music, else the song's first (last) 8 bars. */
+/** A section that is an intro (named Intro…) or an ending (named Ending… or Outro…, or fading out). */
+function isIntro(s: SongSection): boolean {
+  return /^intro\b/i.test(s.name.trim());
+}
+function isEnding(s: SongSection): boolean {
+  return /^(ending|outro)\b/i.test(s.name.trim()) || !!s.moves?.some((m) => m.kind === 'fadeOut');
+}
+
+/**
+ * Where an intro or ending takes its clips from: the first (last) section
+ * with music, else the song's first (last) 8 bars. When that section is an
+ * intro (an ending) already, the song's main part instead: a new intro is
+ * not a build-up of a build-up.
+ */
 function edgeRange(p: Project, which: 'first' | 'last'): [number, number] | null {
   const regions = p.arrangement.regions;
   const span = spanOf(regions);
   if (!span) return null;
   const sections = sortSections(p.arrangement.sections).filter((s) => regions.some((r) => r.start < regionEnd(s) && regionEnd(r) > s.start));
-  const s = which === 'first' ? sections[0] : sections[sections.length - 1];
+  let s = which === 'first' ? sections[0] : sections[sections.length - 1];
+  if (s && (which === 'first' ? isIntro(s) : isEnding(s))) s = mainSection(p) ?? s;
   if (s) return [s.start, regionEnd(s)];
   return which === 'first' ? [span[0], Math.min(span[1], span[0] + 8)] : [Math.max(span[0], span[1] - 8), span[1]];
 }
@@ -1189,9 +1209,12 @@ export function addIntro(store: ProjectStore, opts: PlainEdge = {}): SongEditRes
   const te = insertTime(p, p.arrangement.regions, p.arrangement.sections, 0, bars, newRegionId);
   const intro: SongRegion[] = clips.map((c) => ({ id: newRegionId(), trackId: c.trackId, clipId: c.clip.id, start: 0, bars, offset: 0 }));
   const shaped = clips.length > 1 ? shapePlan(p, intro, 0, bars, 'build').regions : intro;
-  const section: SongSection = { id: newSectionId(), name: uniqueSectionName(te.sections, 'Intro'), start: 0, bars };
+  // Read left to right: the new intro, which plays first, is "Intro"; an intro the song had becomes "Intro 2".
+  const old = sortSections(te.sections)[0];
+  const renamed = old && old.name.trim().toLowerCase() === 'intro' ? te.sections.map((x) => (x.id === old.id ? { ...x, name: uniqueSectionName(te.sections, 'Intro') } : x)) : te.sections;
+  const section: SongSection = { id: newSectionId(), name: uniqueSectionName(renamed, 'Intro'), start: 0, bars };
   const time: TimeShift[] = [...(named?.time ?? []), { at: 0, bars }];
-  const r = commit(store, was, 'arrange:Add an intro', 'Add an intro', { regions: sortRegions(p, [...te.regions, ...shaped]), sections: placeSection(te.sections, section), time });
+  const r = commit(store, was, 'arrange:Add an intro', 'Add an intro', { regions: sortRegions(p, [...te.regions, ...shaped]), sections: placeSection(renamed, section), time });
   return edited(r, { ids: shaped.map((x) => x.id), sectionId: section.id });
 }
 
