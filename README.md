@@ -6,7 +6,7 @@ WAV file. Everything runs on your own device: no account, no uploads, no interne
 loaded. All sounds are synthesized by the app itself.
 
 Omni Song is the app that was called **SWITCHBOARD / 01**, renamed with version 2.0; this is version
-2.4. Projects, settings and project files from 1.0 carry over (see
+3.0. Projects, settings and project files from 1.0 carry over (see
 [Coming from SWITCHBOARD / 01](#coming-from-switchboard--01)).
 
 ## What it does

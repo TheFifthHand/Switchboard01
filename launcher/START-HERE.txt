@@ -83,7 +83,8 @@ Use headphones or speakers; start with a moderate volume.
       each with a loop that fits. "Loops" on the right has many more:
       press the play arrow to hear one, then drag it onto an instrument.
     * "Make it longer" adds an intro, an ending or a new section made
-      from your own music.
+      from your own music; "Make it shorter" (same menu) takes a
+      section out.
     * "Record" (at the top) plays along into the song from where it is.
     * "Share" (top right) saves a music file to send to anyone (a WAV,
       optionally as loud as streaming songs - only the file changes), or

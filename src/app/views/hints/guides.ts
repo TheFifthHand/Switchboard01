@@ -63,6 +63,17 @@ export interface ReleaseNotes {
 /** What changed in this version, newest first (only the first entry is shown). */
 export const WHATS_NEW: readonly ReleaseNotes[] = [
   {
+    version: '3.0.0',
+    notes: [
+      'One screen: your song. Every instrument has a row; press Play to hear the whole song, any time.',
+      'Click a loop to change it underneath: Draw to click notes in, Play to play it yourself and record. Try a ready-made beat or loop when you don’t know what to play.',
+      'Click an instrument’s name for its sound: change it, make it louder or quieter, and turn its six big knobs. + Add instrument puts a new one in, already playing.',
+      'Make it longer adds an intro, more of your song or an ending; Make it shorter takes a section out. A tip line at the bottom always suggests a next step.',
+      'Share saves a music file to send, or the project to keep working. Your song is never changed by saving.',
+      'Plain words everywhere. Every control from before is still there: ⋯ → Show every control.',
+    ],
+  },
+  {
     version: '2.4.0',
     notes: [
       'Make a beat from scratch (on the first screen): a drum grid that plays while you click, and Start from a beat… with 52 ready beats in many styles.',
