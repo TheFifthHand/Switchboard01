@@ -1,7 +1,23 @@
 import { expect, type Page } from '@playwright/test';
 
-/** Open the app in a fresh profile and wait for the Jump In card. */
-export async function openFresh(page: Page): Promise<void> {
+export type UiMode = 'simple' | 'advanced';
+
+/**
+ * Open the app in a fresh profile and wait for the Jump In card. Everyone starts in Simple (3.0's one
+ * song screen); `mode: 'advanced'` opens a profile that already chose ⋯ › Show every control (2.4's
+ * views and controls), as a returning expert would. The choice is only seeded while the profile has no
+ * remembered settings, so what the app remembers after that (a reload, a switch) is left alone.
+ */
+export async function openFresh(page: Page, opts: { mode?: UiMode } = {}): Promise<void> {
+  if (opts.mode) {
+    await page.addInitScript((mode) => {
+      try {
+        if (!localStorage.getItem('switchboard01.ui')) localStorage.setItem('switchboard01.ui', JSON.stringify({ uiMode: mode }));
+      } catch {
+        /* storage blocked: the app starts in Simple */
+      }
+    }, opts.mode);
+  }
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   (page as Page & { __errors?: string[] }).__errors = errors;

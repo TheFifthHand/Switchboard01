@@ -12,7 +12,7 @@ import { createClip, createProject } from '../../src/project/factory';
 import type { Project, SamplerInstrument } from '../../src/project/types';
 import { encodeWav } from '../../src/render/wav';
 import * as db from '../../src/persistence/db';
-import { selectSlot, uiStore } from '../../src/state/uiStore';
+import { selectSlot, setUiMode, uiStore } from '../../src/state/uiStore';
 
 const SR = 48000;
 
@@ -41,11 +41,14 @@ function project(): Project {
 let live: Session[] = [];
 beforeEach(async () => {
   await db.deleteDb();
+  // Advanced: the part goes by its stored name ("Sampler"); Simple says "Recording" (the picker's word).
+  setUiMode('advanced');
   patchRuntime({ playing: false, paused: false, mode: 'live', stalled: null });
 });
 afterEach(async () => {
   for (const s of live) s.dispose();
   live = [];
+  setUiMode('simple');
   await db.deleteDb();
 });
 

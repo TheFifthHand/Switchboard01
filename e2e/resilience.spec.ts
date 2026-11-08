@@ -1,7 +1,8 @@
 /**
  * Reliability evidence:
  *  - the production build works offline once cached (service worker), and
- *    the transport says so ("Offline ready"),
+ *    the app says so ("Offline ready": in Simple in ⋯, in Advanced on the
+ *    strip),
  *  - background throttling (a hidden tab) stops playback coherently; the
  *    banner says so and its Play restarts what was playing (live pads, the
  *    song, or a take),
@@ -15,19 +16,26 @@ const CEILING = 0.8912509381337456;
 
 const stats = (page: Page) => page.evaluate(() => (window as any).__switchboard.stats());
 
-test('reopens and plays a built-in starter with the network unavailable', async ({ page, context }) => {
-  await openFresh(page);
+for (const mode of ['simple', 'advanced'] as const) test(`${mode === 'simple' ? 'Simple' : 'Advanced'}: reopens and plays a built-in starter with the network unavailable`, async ({ page, context }) => {
+  await openFresh(page, { mode });
   // First visit: the service worker installs (precaching every asset) and activates.
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
   // A later visit is served by the service worker.
   await page.reload();
   await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
-  // The app reports that it is ready to work offline (the transport's status sits behind the Welcome card).
-  // The indicator is on the strip from 1440 px; narrower windows list it in the More menu.
-  await page.setViewportSize({ width: 1440, height: 800 });
-  const offline = page.locator('header[aria-label="Transport"] [role="status"]', { hasText: 'Offline ready' });
-  await expect(offline).toBeVisible();
-  await page.setViewportSize({ width: 1366, height: 768 });
+  // The app reports that it is ready to work offline. Advanced: on the strip from 1440 px (behind the Welcome
+  // card; narrower windows list it in the More menu). Simple: in ⋯, under its items.
+  if (mode === 'advanced') {
+    await page.setViewportSize({ width: 1440, height: 800 });
+    const offline = page.locator('header[aria-label="Transport"] [role="status"]', { hasText: 'Offline ready' });
+    await expect(offline).toBeVisible();
+    await page.setViewportSize({ width: 1366, height: 768 });
+  } else {
+    await page.getByRole('button', { name: 'Just look around' }).click();
+    await page.getByRole('button', { name: 'More', exact: true }).click();
+    await expect(page.getByRole('menu', { name: 'More' }).locator('[role="status"]', { hasText: 'Offline ready' })).toBeVisible();
+    await page.keyboard.press('Escape');
+  }
   await context.setOffline(true);
   await page.reload();
   await expect(page.getByRole('button', { name: 'Jump In' })).toBeVisible();
@@ -71,9 +79,33 @@ test('a stalled (throttled) tab stops coherently and offers Play', async ({ page
   expect(pageErrors(page)).toEqual([]);
 });
 
-test('Play after a stall plays the song on from the bar where it stopped, and a stalled take replay frees the keys', async ({ page }) => {
+test('Simple: Play after a stall plays the song on from the bar where it stopped', async ({ page }) => {
   await openFresh(page);
   await jumpIn(page);
+  /** The bar under the song's playhead (0-based), or null. */
+  const songBar = () =>
+    page.evaluate(() => {
+      const sb = (window as any).__switchboard.session;
+      return sb.sequencer?.songBarAt(sb.transport.getPosition().tick) ?? null;
+    });
+  // Jump In plays the song (its main part on repeat); from bar 8 on, as if the person had played on.
+  expect(await page.evaluate(() => (window as any).__switchboard.runtime.getState().mode)).toBe('song');
+  await page.evaluate(() => (window as any).__switchboard.session.playSong({ fromBar: 8 }));
+  await expect.poll(async () => (await songBar()) ?? -1).toBeGreaterThanOrEqual(8);
+  await stallHidden(page);
+  await expect(page.getByRole('alert')).toContainText('Playback stopped');
+  // The top bar's Play reads Play while stopped, and the banner's Play plays the song on from there.
+  await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
+  await playAgain(page).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState())).toMatchObject({ playing: true, mode: 'song' });
+  expect(await songBar()).toBeGreaterThanOrEqual(8);
+  expect(pageErrors(page)).toEqual([]);
+});
+
+test('Advanced: Play after a stall plays the song on from the bar where it stopped, and a stalled take replay frees the keys', async ({ page }) => {
+  await openFresh(page, { mode: 'advanced' });
+  await jumpIn(page);
+  await page.getByRole('button', { name: 'Skip guide' }).click();
   const state = () => page.evaluate(() => {
     const s = (window as any).__switchboard.runtime.getState();
     return { playing: s.playing, mode: s.mode, replayId: s.replayId, held: Object.values(s.held).flat().length };
@@ -97,8 +129,6 @@ test('Play after a stall plays the song on from the bar where it stopped, and a 
 
   // A take: record a short one, replay it, stall.
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
-  // Record Performance is an Advanced control (r6).
-  await page.getByRole('radio', { name: 'Advanced', exact: true }).click();
   await page.getByRole('button', { name: 'Record Performance' }).click();
   await page.waitForTimeout(1500);
   await page.getByRole('button', { name: 'Stop recording performance' }).click();
@@ -143,10 +173,11 @@ test('repeated Play/Stop does not accumulate voices, handles or listeners', asyn
   expect(pageErrors(page)).toEqual([]);
 });
 
-test('three minutes of playback: bounded resources, no drift, output within the ceiling', async ({ page }) => {
+test('Advanced: three minutes of playback: bounded resources, no drift, output within the ceiling', async ({ page }) => {
   test.setTimeout(260_000);
-  await openFresh(page);
+  await openFresh(page, { mode: 'advanced' });
   await jumpIn(page);
+  await page.getByRole('button', { name: 'Skip guide' }).click();
   // Play the fullest scene for more voices.
   await page.getByRole('button', { name: /^Play row Lift/ }).click();
   const samples: { voices: number; pending: number; sounding: number; peak: number; tick: number; t: number }[] = [];

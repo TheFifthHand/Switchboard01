@@ -1,6 +1,8 @@
 /**
  * Helpers for the r4-persist e2e specs (two pages of one browser context;
- * the stored copy is read straight from IndexedDB).
+ * the stored copy is read straight from IndexedDB). They use 2.4's strip
+ * (Autosave, More › Projects…, Tempo), so the profile is Advanced (⋯ › Show
+ * every control); Simple's save state is checked in persistence.spec.ts.
  */
 import { expect, type Page } from '@playwright/test';
 
@@ -10,6 +12,14 @@ export const readonly = (page: Page) => sb<string | null>(page, '(sb) => sb.sess
 export const bpm = (page: Page) => page.evaluate(() => (window as any).__switchboard.project().bpm as number);
 
 export async function openFresh(page: Page): Promise<void> {
+  // Advanced, unless the profile (shared by the context's pages) already remembers a choice.
+  await page.addInitScript(() => {
+    try {
+      if (!localStorage.getItem('switchboard01.ui')) localStorage.setItem('switchboard01.ui', JSON.stringify({ uiMode: 'advanced' }));
+    } catch {
+      /* storage blocked */
+    }
+  });
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   (page as Page & { __errors?: string[] }).__errors = errors;

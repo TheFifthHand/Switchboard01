@@ -6,6 +6,8 @@
  * - the tab's title names the open project;
  * - after an update, What's new is offered once; Help → About shows the
  *   version from package.json.
+ * Both in Simple (the Speed slider in Project ▾) and in Advanced (2.4's Tempo
+ * field and Autosave key).
  */
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
@@ -13,18 +15,29 @@ import { jumpIn, openFresh, pageErrors, startNewGroove } from './helpers';
 
 const version = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
-test('Continue is the main key; Start a new groove says what it replaced, and Open it brings that back', async ({ page }) => {
-  await openFresh(page);
+for (const mode of ['simple', 'advanced'] as const) test(`${mode === 'simple' ? 'Simple' : 'Advanced'}: Continue is the main key; Start a new groove says what it replaced, and Open it brings that back`, async ({ page }) => {
+  await openFresh(page, { mode });
   await jumpIn(page);
   const skip = page.getByRole('button', { name: 'Skip guide' });
   if (await skip.isVisible().catch(() => false)) await skip.click();
   await page.getByRole('button', { name: 'Stop', exact: true }).click().catch(() => undefined);
-  const tempo = page.getByRole('spinbutton', { name: /Tempo/ }).first();
-  await tempo.click();
-  await page.keyboard.press('Control+A');
-  await page.keyboard.type('100');
-  await page.keyboard.press('Enter');
-  await expect(page.getByRole('button', { name: 'Autosave: Saved' })).toBeVisible({ timeout: 10_000 });
+  if (mode === 'simple') {
+    // Project ▾ › Speed (slow ↔ fast; Simple shows no BPM), set to 100.
+    await page.getByRole('button', { name: /^Project: / }).click();
+    const speed = page.getByRole('slider', { name: 'Speed' });
+    await speed.focus();
+    await speed.fill('100');
+    await expect.poll(() => page.evaluate(() => (window as any).__switchboard.project().bpm)).toBe(100);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button', { name: /^Project: .*\. Saved$/ })).toBeVisible({ timeout: 10_000 });
+  } else {
+    const tempo = page.getByRole('spinbutton', { name: /Tempo/ }).first();
+    await tempo.click();
+    await page.keyboard.press('Control+A');
+    await page.keyboard.type('100');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('button', { name: 'Autosave: Saved' })).toBeVisible({ timeout: 10_000 });
+  }
   const name = await page.evaluate(() => (window as any).__switchboard.project().name as string);
   await expect(page).toHaveTitle(`${name} — Omni Song`);
 
@@ -53,7 +66,7 @@ test('after an update What’s new is offered once; Help → About shows the ver
   await jumpIn(page);
   const skip = page.getByRole('button', { name: 'Skip guide' });
   if (await skip.isVisible().catch(() => false)) await skip.click();
-  await expect(page.getByRole('button', { name: 'Autosave: Saved' })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('button', { name: /^Project: .*\. Saved$/ })).toBeVisible({ timeout: 10_000 });
   // The first run recorded this version.
   expect(await page.evaluate(() => localStorage.getItem('switchboard01.seenVersion'))).toBe(version);
   // As if an older version had been used last.

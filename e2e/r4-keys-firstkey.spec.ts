@@ -2,7 +2,8 @@
  * The first computer key after "Just look around" starts audio and sounds, now that a kit's keys
  * always use the drum-pad layout (PLAY-07): with the Drums part selected (the default), Z is the
  * Kick and A the Closed Hat, in every pad mode. The level is measured from the key press (a
- * closed hat is short), against the production build.
+ * closed hat is short), against the production build. The keyboard strip that names the key is
+ * 2.4's, so this runs in Advanced; Simple's first key is checked in firstnote.spec.ts.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { openFresh, pageErrors } from './helpers';
@@ -33,8 +34,8 @@ for (const [code, sound, voice] of [
   ['KeyZ', 'Kick', 0],
   ['KeyA', 'Closed Hat', 4],
 ] as const) {
-  test(`the first key (${code.slice(3)}) after "Just look around" starts audio and plays the ${sound}`, async ({ page }) => {
-    await openFresh(page);
+  test(`Advanced: the first key (${code.slice(3)}) after "Just look around" starts audio and plays the ${sound}`, async ({ page }) => {
+    await openFresh(page, { mode: 'advanced' });
     await page.getByRole('button', { name: 'Just look around' }).click();
     expect(await page.evaluate(() => (window as any).__switchboard.ui.getState().selectedTrackId)).toBe('t1');
     expect(await page.evaluate(() => (window as any).__switchboard.audioState())).toBe('none');

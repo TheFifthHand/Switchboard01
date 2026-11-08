@@ -3,7 +3,8 @@
  * (shell-03): the page writes a rescue copy synchronously when it goes away,
  * and the next visit takes it back ("Recovered your last edits.").
  * Real input: the Tempo field is typed into and confirmed with Enter; Mute
- * is clicked.
+ * is clicked. These use 2.4's strip (Tempo, Autosave), so they run in Advanced;
+ * the rescue copy is the same in Simple.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { openFresh, pageErrors } from './helpers';
@@ -40,7 +41,7 @@ async function setTempo(page: Page, value: number): Promise<void> {
 
 /** Jump In, stop, and wait until the starter is stored. Returns its name. */
 async function startedSong(page: Page): Promise<string> {
-  await openFresh(page);
+  await openFresh(page, { mode: 'advanced' });
   await jumpIn(page);
   await stopPlayback(page);
   await expect(page.getByRole('button', { name: 'Autosave: Saved' })).toBeVisible({ timeout: 5000 });

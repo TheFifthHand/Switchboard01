@@ -7,6 +7,8 @@
  *    and is offered again after a reload;
  *  - a storage failure shows an understandable recovery path, and the
  *    recovery export downloads a project file and says so.
+ * The save state is checked where each mode shows it (Simple: Project ▾;
+ * Advanced: the strip's Autosave key).
  */
 import { expect, test, type Page } from '@playwright/test';
 import { jumpIn, openFresh, pageErrors } from './helpers';
@@ -124,63 +126,77 @@ test('a project with an imported sample survives export and import into a fresh 
   await ctx2.close();
 });
 
-test('autosave reopens the last project after a reload', async ({ page }) => {
-  await openFresh(page);
-  await jumpIn(page);
-  await stopPlayback(page);
-  await page.evaluate(() => {
-    const sb = (window as any).__switchboard;
-    sb.session.setBpm(97);
-  });
-  await expect(page.getByRole('button', { name: 'Autosave: Saved' })).toBeVisible({ timeout: 5000 });
-  const name = await page.evaluate(() => (window as any).__switchboard.project().name);
-  await page.reload();
-  await expect(page.getByRole('button', { name: `Continue “${name}”` })).toBeVisible();
-  expect(await page.evaluate(() => (window as any).__switchboard.project().bpm)).toBe(97);
-});
+/** Where each mode shows the save state: Simple on Project ▾ ("Project: <name>. Saved"), Advanced on the strip's Autosave key. */
+const SAVE = {
+  simple: { saved: /^Project: .*\. Saved$/, preview: /^Project: .*\. Not kept yet$/, failed: /^Project: .*\. Not saved$/ },
+  advanced: { saved: /^Autosave: Saved$/, preview: /^Autosave: Preview, not stored until you change it$/, failed: /Not saved/ },
+} as const;
 
-test('the preview from "Just look around" is stored on its first change and reopens after a reload', async ({ page }) => {
-  await openFresh(page);
-  await page.getByRole('button', { name: 'Just look around' }).click();
-  await expect(page.getByRole('button', { name: 'Autosave: Preview, not stored until you change it' })).toBeVisible();
-  // Looking around stores nothing.
-  await page.waitForTimeout(1200);
-  expect(await page.evaluate(() => (window as any).__switchboard.session.isPreview)).toBe(true);
-  // The first change makes it a normal, saved project.
-  await page.evaluate(() => (window as any).__switchboard.session.setBpm(97));
-  await expect(page.getByRole('button', { name: 'Autosave: Saved' })).toBeVisible({ timeout: 5000 });
-  const name = await page.evaluate(() => (window as any).__switchboard.project().name);
-  await page.reload();
-  await expect(page.getByRole('button', { name: `Continue “${name}”` })).toBeVisible();
-  expect(await page.evaluate(() => (window as any).__switchboard.project().bpm)).toBe(97);
-  expect(pageErrors(page)).toEqual([]);
-});
+for (const mode of ['simple', 'advanced'] as const) {
+  const say = SAVE[mode];
+  const label = mode === 'simple' ? 'Simple' : 'Advanced';
 
-test('a storage failure shows "Not saved" with Try again and Export project file', async ({ page }) => {
-  await openFresh(page);
-  await jumpIn(page);
-  await stopPlayback(page);
-  // Simulate a full disk: every IndexedDB write now fails with a quota error.
-  await page.evaluate(() => {
-    const orig = IDBObjectStore.prototype.put;
-    (window as any).__restorePut = () => (IDBObjectStore.prototype.put = orig);
-    IDBObjectStore.prototype.put = function () {
-      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
-    };
+  test(`${label}: autosave reopens the last project after a reload`, async ({ page }) => {
+    await openFresh(page, { mode });
+    await jumpIn(page);
+    await stopPlayback(page);
+    await page.evaluate(() => {
+      const sb = (window as any).__switchboard;
+      sb.session.setBpm(97);
+    });
+    await expect(page.getByRole('button', { name: say.saved })).toBeVisible({ timeout: 5000 });
+    const name = await page.evaluate(() => (window as any).__switchboard.project().name);
+    await page.reload();
+    await expect(page.getByRole('button', { name: `Continue “${name}”` })).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__switchboard.project().bpm)).toBe(97);
   });
-  await page.evaluate(() => (window as any).__switchboard.session.setBpm(101));
-  const status = page.getByRole('button', { name: /Not saved/ });
-  await expect(status).toBeVisible({ timeout: 5000 });
-  await status.click();
-  const pop = page.getByRole('dialog', { name: 'Saving failed' });
-  await expect(pop).toContainText('storage is full');
-  await expect(pop.getByRole('button', { name: 'Try again' })).toBeVisible();
-  // The recovery export downloads the project file and says so.
-  const [download] = await Promise.all([page.waitForEvent('download'), pop.getByRole('button', { name: 'Export project file' }).click()]);
-  expect(download.suggestedFilename()).toMatch(/\.omnisong\.zip$/);
-  await expect(page.getByText(`Saved “${download.suggestedFilename()}” to your downloads. Keep it as your backup.`)).toBeVisible();
-  // Recovery: storage frees up, Try again saves.
-  await page.evaluate(() => (window as any).__restorePut());
-  await pop.getByRole('button', { name: 'Try again' }).click();
-  await expect(page.getByRole('button', { name: 'Autosave: Saved' })).toBeVisible({ timeout: 5000 });
-});
+
+  test(`${label}: the preview from "Just look around" is stored on its first change and reopens after a reload`, async ({ page }) => {
+    await openFresh(page, { mode });
+    await page.getByRole('button', { name: 'Just look around' }).click();
+    await expect(page.getByRole('button', { name: say.preview })).toBeVisible();
+    // Looking around stores nothing.
+    await page.waitForTimeout(1200);
+    expect(await page.evaluate(() => (window as any).__switchboard.session.isPreview)).toBe(true);
+    // The first change makes it a normal, saved project.
+    await page.evaluate(() => (window as any).__switchboard.session.setBpm(97));
+    await expect(page.getByRole('button', { name: say.saved })).toBeVisible({ timeout: 5000 });
+    const name = await page.evaluate(() => (window as any).__switchboard.project().name);
+    await page.reload();
+    await expect(page.getByRole('button', { name: `Continue “${name}”` })).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__switchboard.project().bpm)).toBe(97);
+    expect(pageErrors(page)).toEqual([]);
+  });
+
+  test(`${label}: a storage failure shows "Not saved" with Try again and a way to save the project file`, async ({ page }) => {
+    await openFresh(page, { mode });
+    await jumpIn(page);
+    await stopPlayback(page);
+    // Simulate a full disk: every IndexedDB write now fails with a quota error.
+    await page.evaluate(() => {
+      const orig = IDBObjectStore.prototype.put;
+      (window as any).__restorePut = () => (IDBObjectStore.prototype.put = orig);
+      IDBObjectStore.prototype.put = function () {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      };
+    });
+    await page.evaluate(() => (window as any).__switchboard.session.setBpm(101));
+    const status = page.getByRole('button', { name: say.failed });
+    await expect(status).toBeVisible({ timeout: 5000 });
+    await status.click();
+    // Simple: Project ▾ says why, with Try again and Save a copy to my computer. Advanced: 2.4's Saving failed.
+    const pop = page.getByRole('dialog', { name: mode === 'simple' ? 'Project' : 'Saving failed' });
+    await expect(pop).toContainText('storage is full');
+    await expect(pop.getByRole('button', { name: 'Try again' })).toBeVisible();
+    // The recovery export downloads the project file and says so.
+    const save = pop.getByRole('button', { name: mode === 'simple' ? 'Save a copy to my computer' : 'Export project file' });
+    const [download] = await Promise.all([page.waitForEvent('download'), save.click()]);
+    expect(download.suggestedFilename()).toMatch(/\.omnisong\.zip$/);
+    await expect(page.getByText(`Saved “${download.suggestedFilename()}” to your downloads. Keep it as your backup.`)).toBeVisible();
+    // Recovery: storage frees up, Try again saves.
+    await page.evaluate(() => (window as any).__restorePut());
+    if (!(await pop.isVisible())) await status.click();
+    await pop.getByRole('button', { name: 'Try again' }).click();
+    await expect(page.getByRole('button', { name: say.saved })).toBeVisible({ timeout: 5000 });
+  });
+}

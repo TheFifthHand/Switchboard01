@@ -3,6 +3,7 @@
  * second page on the same project is read-only and writes nothing while the
  * first keeps saving; Take over swaps them; a stale tab never writes its old
  * copy over newer work. The stored copy is read straight from IndexedDB.
+ * They use 2.4's strip (Tempo, Autosave), so the profile is Advanced.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { openFresh, pageErrors } from './helpers';
@@ -61,7 +62,7 @@ async function setTempo(page: Page, value: number): Promise<void> {
 }
 
 test('the second tab is read-only and writes nothing; the first keeps saving; Take over swaps them; the stale tab never overwrites', async ({ context, page: a }) => {
-  await openFresh(a);
+  await openFresh(a, { mode: 'advanced' });
   await jumpIn(a);
   await stopPlayback(a);
   await setTempo(a, 100);
@@ -122,7 +123,7 @@ test('the second tab is read-only and writes nothing; the first keeps saving; Ta
 });
 
 test('a second tab that takes over before the first saved anything new writes its edits', async ({ context, page: a }) => {
-  await openFresh(a);
+  await openFresh(a, { mode: 'advanced' });
   await jumpIn(a);
   await stopPlayback(a);
   await expect(a.getByRole('button', { name: 'Autosave: Saved' })).toBeVisible({ timeout: 5000 });

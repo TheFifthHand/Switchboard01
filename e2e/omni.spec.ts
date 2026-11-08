@@ -2,8 +2,9 @@
  * Omni Song 2.0 against the production build: the app's new name where
  * people see it (title, Welcome card, the installable app's manifest) while
  * the offline worker keeps its address, so earlier installs update in place;
- * and the "Try this" hints after Jump In, which follow what you actually do,
- * never cover the transport or the pads, and stay hidden once hidden.
+ * and the next-step tips after Jump In, which follow what you actually do and
+ * stay hidden once hidden: in Simple the tip line under the song, in Advanced
+ * the "Try this" chip, which never covers the transport or the pads.
  */
 import { expect, test } from '@playwright/test';
 import { jumpIn, openFresh, pageErrors, startNewGroove } from './helpers';
@@ -23,8 +24,8 @@ test('it is called Omni Song: page title, Welcome card and app manifest; the off
   expect(pageErrors(page)).toEqual([]);
 });
 
-test('after Jump In, "Try this" hints suggest one thing at a time, follow what you do, and stay hidden once hidden', async ({ page }) => {
-  await openFresh(page);
+test('Advanced: after Jump In, "Try this" hints suggest one thing at a time, follow what you do, and stay hidden once hidden', async ({ page }) => {
+  await openFresh(page, { mode: 'advanced' });
   await jumpIn(page);
   // The quick guide comes first.
   await page.getByRole('button', { name: 'Skip guide' }).click();
@@ -59,5 +60,37 @@ test('after Jump In, "Try this" hints suggest one thing at a time, follow what y
   await startNewGroove(page);
   await page.waitForTimeout(600);
   await expect(page.getByRole('complementary', { name: /^Try this/ })).toHaveCount(0);
+  expect(pageErrors(page)).toEqual([]);
+});
+
+test('Simple: after Jump In, the tip line says one next step, follows what you do, and stays hidden once hidden', async ({ page }) => {
+  await openFresh(page);
+  await jumpIn(page);
+  // No quick guide and no floating chip in Simple: one plain line under the song.
+  await expect(page.getByRole('button', { name: 'Skip guide' })).toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: /^Try this/ })).toHaveCount(0);
+  const tip = page.locator('[role="status"]', { hasText: 'Next:' });
+  // Jump In repeats the starter's main part: the first tip says how to hear the whole song.
+  await expect(tip).toContainText('To hear your whole song, press ⟳ Repeating: Groove');
+  // It sits clear of the top bar and the song.
+  const box = (await tip.boundingBox())!;
+  const bar = (await page.locator('header[aria-label="Transport"]').boundingBox())!;
+  expect(box.y).toBeGreaterThanOrEqual(bar.y + bar.height);
+
+  // Do it: the repeat stops, the whole song plays on, and the tip moves on to something new.
+  await page.getByRole('button', { name: 'Repeating: Groove' }).click();
+  await expect(page.getByRole('button', { name: /^Repeat this section: |^Repeat the whole song$/ })).toHaveAttribute('aria-pressed', 'false');
+  await expect(tip).not.toContainText('To hear your whole song');
+  await expect(tip).toContainText('Next:');
+
+  // Hidden is remembered: not even a new groove brings it back.
+  await page.getByRole('button', { name: 'Hide tips' }).click();
+  await expect(tip).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('button', { name: /^Continue “/ })).toBeFocused();
+  await startNewGroove(page);
+  await page.waitForTimeout(600);
+  await expect(page.locator('[role="status"]', { hasText: 'Next:' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Hide tips' })).toHaveCount(0);
   expect(pageErrors(page)).toEqual([]);
 });

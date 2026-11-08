@@ -1695,7 +1695,7 @@ export class Session {
     const clip = src?.clips[from.slot];
     if (!src || !dst || !clip) return false;
     const replaced = dst.clips[to.slot] ?? null;
-    const where = `${dst.name} · ${p.scenes[to.slot]?.name ?? `row ${to.slot + 1}`}`;
+    const where = `${this.partName(dst.id)} · ${p.scenes[to.slot]?.name ?? `row ${to.slot + 1}`}`;
     const run = runtimeStore.getState();
     const rt = run.tracks[from.trackId];
     const wasPlaying = !copy && from.trackId !== to.trackId && (run.playing || run.paused) && (rt?.playingSlot === from.slot || rt?.queued?.slot === from.slot);
@@ -1706,7 +1706,7 @@ export class Session {
     let text: string;
     if (copy) text = replaced ? `Copied “${clip.name}” onto ${where}, replacing “${replaced.name}”.` : `Copied “${clip.name}” to ${where}.`;
     else text = replaced ? `Swapped “${clip.name}” and “${replaced.name}”.` : `Moved “${clip.name}” to ${where}.`;
-    if (wasPlaying) text += ` ${src.name} stopped playing it; tap the pad to play it on ${dst.name}.`;
+    if (wasPlaying) text += ` ${this.partName(src.id)} stopped playing it; tap the pad to play it on ${this.partName(dst.id)}.`;
     notify(text, 'info', 'undo', this.store.undoEntryId());
     return true;
   }
@@ -2660,11 +2660,13 @@ export class Session {
     selectSlot(trackId, r.slot);
     const after = this.store.getState();
     const part = after.tracks.find((t) => t.id === trackId);
-    const where = `${part?.name ?? 'the part'} · ${after.scenes[r.slot]?.name ?? `row ${r.slot + 1}`}`;
-    let message = `Imported “${res.meta.name}” as a new loop on ${where}. ${importPitchWords(part, r.partRecording === true)}`;
+    // The part as the interface names it (Simple: the picker's word, as the sampler editor shows it).
+    const partName = part ? this.partName(trackId) : null;
+    const where = `${partName ?? 'the part'} · ${after.scenes[r.slot]?.name ?? `row ${r.slot + 1}`}`;
+    let message = `Imported “${res.meta.name}” as a new loop on ${where}. ${importPitchWords(part, partName, r.partRecording === true)}`;
     // A synth or drum part became a sampler: its other clips now play the recording at their notes' pitches.
     if (track && track.instrument.kind !== 'sampler' && trackClips(track).some((x) => x.slot !== r.slot && x.clip.notes.length > 0)) {
-      message += ` ${part?.name ?? 'The part'} plays recordings now, so its other loops play this one at their notes’ pitches.`;
+      message += ` ${partName ?? 'The part'} plays recordings now, so its other loops play this one at their notes’ pitches.`;
     }
     return { ok: true, message };
   }
@@ -2981,14 +2983,14 @@ function pumpChanged(p: Project, prev: Project): boolean {
 }
 
 /** What an imported clip's pitch is, in words: as recorded, unless the part's own settings move it. */
-function importPitchWords(part: Track | undefined, partRecording: boolean): string {
+function importPitchWords(part: Track | undefined, partName: string | null, partRecording: boolean): string {
   const inst = part?.instrument;
   if (partRecording || inst?.kind !== 'sampler') return 'It plays at its recorded pitch.';
   const v = (id: string) => inst.params[id] ?? specById(SAMPLER_PARAMS, id)?.default ?? 0;
   // The part's sampler settings apply to every clip on it, its own recordings too.
   const how = [v('mode') >= 1 ? 'Loop mode' : '', v('pitch') !== 0 || v('fine') !== 0 ? 'transposed' : '', v('sync') >= 1 ? 'Tempo sync, which changes speed and pitch together' : ''].filter(Boolean);
   if (!how.length) return 'It plays at its recorded pitch.';
-  return `It plays with ${part!.name}’s sampler settings (${how.join(', ')}): set them in Shape to hear it as recorded.`;
+  return `It plays with ${partName ?? part!.name}’s sampler settings (${how.join(', ')}): set them in Shape to hear it as recorded.`;
 }
 
 /** Longest stretch of start-up warm-up work between two yields (ms). */

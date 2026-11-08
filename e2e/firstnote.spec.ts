@@ -2,8 +2,9 @@
  * The very first touch makes sound, and Play is never silent:
  *  - after "Just look around", the first computer key both starts audio and plays its note (measured
  *    from the key press: on a drum part A plays a short kit sound);
- *  - pressing Play with nothing armed arms the starter's groove instead of running silently;
- *  - a starter opened from the library plays when Play is pressed.
+ *  - Simple: Play plays the song (the one way to play), also for a starter opened from the library;
+ *  - Advanced: pressing Play with nothing armed arms the starter's groove instead of running silently,
+ *    and a starter opened from the library plays when Play is pressed.
  */
 import { expect, test } from '@playwright/test';
 import { masterPeakFrom, masterPeakOver, openFresh, pageErrors } from './helpers';
@@ -23,7 +24,30 @@ test('the first key after "Just look around" starts audio and sounds', async ({ 
   expect(pageErrors(page)).toEqual([]);
 });
 
-test('Play with nothing armed plays the groove, and a starter from the library plays', async ({ page }) => {
+test('Simple: Play plays the song, and a starter from the library plays', async ({ page }) => {
+  await openFresh(page);
+  await page.getByRole('button', { name: 'Just look around' }).click();
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().playing)).toBe(true);
+  expect(await page.evaluate(() => (window as any).__switchboard.runtime.getState().mode)).toBe('song');
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  expect((await masterPeakOver(page, 1500)).rms).toBeGreaterThan(0.005);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+
+  // Load another starter through the session (as the library does) and press Play.
+  await page.evaluate(() => (window as any).__switchboard.session.newFromStarter('techno'));
+  await expect.poll(() => page.evaluate(() => (window as any).__switchboard.project().starterId)).toBe('techno');
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().mode)).toBe('song');
+  expect((await masterPeakOver(page, 1500)).rms).toBeGreaterThan(0.005);
+  expect(pageErrors(page)).toEqual([]);
+});
+
+test('Advanced: Play with nothing armed plays the groove, and a starter from the library plays', async ({ page }) => {
+  // An expert who left Advanced on the Play view (a fresh Advanced profile opens on the Song view).
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('switchboard01.ui')) localStorage.setItem('switchboard01.ui', JSON.stringify({ uiMode: 'advanced', view: 'play' }));
+  });
   await openFresh(page);
   await page.getByRole('button', { name: 'Just look around' }).click();
   await page.getByRole('button', { name: 'Play', exact: true }).click();

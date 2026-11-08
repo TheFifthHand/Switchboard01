@@ -9,7 +9,11 @@
  * them). A banner under the transport (playback stopped, a project open in
  * another tab) stays uncovered too. Checked at 1024 x 768, 1366 x 768 and
  * 960 x 540 at 2x (200 % zoom of a 1920 x 1080 screen, where the page
- * scrolls), also after the page has scrolled.
+ * scrolls), also after the page has scrolled. That is Advanced (2.4's views).
+ * Simple's song screen has no keyboard strip: there a toast rests just above
+ * the window's bottom edge, centred, clear of the top bar, a banner, the song's
+ * rows and the editor's grid (where the page scrolls, as at 200 %, the song
+ * runs on under the window's edge and the toast floats over it there).
  */
 import { expect, test, type Page } from '@playwright/test';
 import { jumpIn, openFresh, pageErrors } from './helpers';
@@ -57,6 +61,8 @@ async function placed(page: Page, words: string): Promise<Placement> {
         guidance: all('[data-toast-below][data-ready]'),
         'Loops action bar': all('[data-pad-actions]'),
         'velocity lane': all('[data-testid="velocity-lane"]'),
+        'song rows': all('[aria-label^="Your song: a row of loops"]'),
+        'editor grid': all('[aria-label^="Editor:"] [role="grid"]'),
       },
       floor: floors[0] ?? null,
     };
@@ -66,7 +72,7 @@ async function placed(page: Page, words: string): Promise<Placement> {
 const overlaps = (a: Box, b: Box) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 
 /** The toast is whole on screen, covers none of the working areas or guidance, and rests on the keyboard strip when that is on screen. */
-function expectClear(p: Placement, where: string, want: string[] = []): void {
+function expectClear(p: Placement, where: string, want: string[] = [], ignore: string[] = []): void {
   const t = p.toast;
   const at = `${where}: toast ${Math.round(t.left)},${Math.round(t.top)}–${Math.round(t.right)},${Math.round(t.bottom)}`;
   expect(t.left, at).toBeGreaterThanOrEqual(0);
@@ -76,6 +82,7 @@ function expectClear(p: Placement, where: string, want: string[] = []): void {
   expect(Math.abs((t.left + t.right) / 2 - p.vw / 2), `${at}: centred`).toBeLessThanOrEqual(4);
   for (const name of want) expect(p.avoid[name].length, `${where}: the ${name} is on screen`).toBeGreaterThan(0);
   for (const [name, boxes] of Object.entries(p.avoid)) {
+    if (ignore.includes(name)) continue;
     for (const b of boxes) expect(overlaps(t, b), `${at} covers the ${name} (${Math.round(b.left)},${Math.round(b.top)}–${Math.round(b.right)},${Math.round(b.bottom)})`).toBe(false);
   }
   // Moved above the guide or the hint chip: its own place.
@@ -110,8 +117,8 @@ for (const s of [
   test.describe(`${s.width} x ${s.height} at ${s.scale}x`, () => {
     test.use({ viewport: { width: s.width, height: s.height }, deviceScaleFactor: s.scale });
 
-    test('a toast lands bottom centre on the keyboard strip, clear of the transport, guidance, banners and working areas', async ({ page }) => {
-      await openFresh(page);
+    test('Advanced: a toast lands bottom centre on the keyboard strip, clear of the transport, guidance, banners and working areas', async ({ page }) => {
+      await openFresh(page, { mode: 'advanced' });
       await jumpIn(page);
       const skip = page.getByRole('button', { name: 'Skip guide' });
       if (await skip.isVisible().catch(() => false)) await skip.click();
@@ -151,6 +158,44 @@ for (const s of [
       await dismiss(page, SAVED);
       await page.evaluate(() => window.scrollTo(0, 0));
 
+      await page.evaluate(() => {
+        const rt = (window as any).__switchboard.runtime;
+        rt.setState((st: any) => ({ ...st, stalled: null }));
+      });
+      expect(pageErrors(page)).toEqual([]);
+    });
+
+    test('Simple: a toast lands bottom centre, clear of the top bar, banners, the song and the editor', async ({ page }) => {
+      await openFresh(page);
+      await jumpIn(page);
+      await page.getByRole('button', { name: 'Stop', exact: true }).click();
+      // 1024 x 768 and larger fit the song screen without page scroll; at 960 x 540 the page scrolls.
+      const scrolls = await page.evaluate(() => document.documentElement.scrollHeight > document.documentElement.clientHeight + 1);
+      expect(scrolls).toBe(s.height < 768);
+      const under = scrolls ? ['song rows', 'editor grid'] : [];
+
+      // The song screen.
+      await saveNow(page);
+      expectClear(await placed(page, SAVED), 'song screen', ['transport', 'song rows'], under);
+      await dismiss(page, SAVED);
+
+      // The editor open under the song (a single click on a loop), scrolled into view where the page scrolls.
+      await page.getByRole('button', { name: /^Hats & Rim, Drums, from / }).click();
+      await page.locator('[aria-label^="Editor:"] [role="grid"]').scrollIntoViewIfNeeded();
+      await saveNow(page);
+      expectClear(await placed(page, SAVED), 'editor', ['editor grid'], under);
+      await dismiss(page, SAVED);
+      await page.evaluate(() => window.scrollTo(0, 0));
+
+      // A banner under the top bar: the toast leaves it uncovered.
+      await page.evaluate(() => {
+        const rt = (window as any).__switchboard.runtime;
+        rt.setState((st: any) => ({ ...st, stalled: 'Playback stopped because the tab was in the background or the audio device paused. Press Play to continue.' }));
+      });
+      await expect(page.getByRole('alert').filter({ hasText: 'Playback stopped' })).toBeVisible();
+      await saveNow(page);
+      expectClear(await placed(page, SAVED), 'with a banner', ['banner'], under);
+      await dismiss(page, SAVED);
       await page.evaluate(() => {
         const rt = (window as any).__switchboard.runtime;
         rt.setState((st: any) => ({ ...st, stalled: null }));

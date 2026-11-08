@@ -2,9 +2,10 @@
  * What re-renders (review M2), against the production build, counted with a
  * React DevTools-style commit hook: the components whose props or state
  * changed in each commit.
- * - Play / Pause in Mix re-renders the transport's keys and a few readers of
+ * - Play / Pause re-renders the transport's keys and a few readers of
  *   "playing" (the tab's title), never the whole app (it was about 174
- *   components when the app itself read "playing");
+ *   components when the app itself read "playing"): in Advanced in Mix, in
+ *   Simple on the song screen;
  * - an edit and its save: the edit's own commit, then the save's commits
  *   (Saving…, Saved) re-render only the save state's readers, not the app.
  */
@@ -49,13 +50,13 @@ async function countCommits(page: Page): Promise<void> {
 const commits = (page: Page) => page.evaluate(() => (window as unknown as { __commits: number[] }).__commits);
 const reset = (page: Page) => page.evaluate(() => void ((window as unknown as { __commits: number[] }).__commits = []));
 
-test('Play / Pause and a save do not re-render the app', async ({ page }) => {
+for (const mode of ['simple', 'advanced'] as const) test(`${mode === 'simple' ? 'Simple' : 'Advanced'}: Play / Pause and a save do not re-render the app`, async ({ page }) => {
   await countCommits(page);
-  await openFresh(page);
+  await openFresh(page, { mode });
   await jumpIn(page);
   const skip = page.getByRole('button', { name: 'Skip guide' });
   if (await skip.isVisible().catch(() => false)) await skip.click();
-  await page.getByRole('tab', { name: 'Mix', exact: true }).click();
+  if (mode === 'advanced') await page.getByRole('tab', { name: 'Mix', exact: true }).click();
   await page.waitForTimeout(2500);
   // Start counting: the first commits only record what each component looked like.
   await page.evaluate(() => void ((window as unknown as { __count: boolean }).__count = true));

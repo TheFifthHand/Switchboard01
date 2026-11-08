@@ -19,7 +19,7 @@ import { getStarter } from '../../src/content/starters';
 import { describeMacro } from '../../src/project/resolve';
 import type { Id, Instrument } from '../../src/project/types';
 import { removeMacroTarget, setArp, setBpm } from '../../src/state/commands';
-import { selectSlot, selectTrack, setPadMode, uiStore } from '../../src/state/uiStore';
+import { selectSlot, selectTrack, setPadMode, setUiMode, uiStore } from '../../src/state/uiStore';
 import { cleanup, fire, key, mount, wait } from './ui-harness';
 
 type Call = ['on', Id, number, number, string] | ['off', Id, number, string] | ['stop'];
@@ -28,6 +28,9 @@ const real = { noteOn: session.noteOn, noteOff: session.noteOff, startAudio: ses
 
 beforeEach(() => {
   calls = [];
+  // Simple (the Jam pads sheet): parts go by the picker's words ("Melody"). Pinned, so a file run before this
+  // one that left Advanced on changes nothing here.
+  act(() => setUiMode('simple'));
   // No audio device in these tests: record what previews ask the session to play.
   session.noteOn = (trackId, pitch, velocity, source) => {
     calls.push(['on', trackId, pitch, velocity, source]);

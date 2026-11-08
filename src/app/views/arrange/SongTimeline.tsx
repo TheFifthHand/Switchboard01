@@ -680,6 +680,9 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
     if (!k) return;
     // Enter and Home, ↑ ↓, the menu key and Esc belong to whatever button has focus outside the timeline.
     if (!inLane && (k.kind === 'home' || k.kind === 'focus' || k.kind === 'menu' || k.kind === 'escape')) return;
+    // Enter on a real button in the timeline (an instrument's name, Mute, Solo, Add a section) presses it; only on a
+    // loop or on nothing does it take the playhead home.
+    if (k.kind === 'home' && e.key === 'Enter' && t?.closest('button')) return;
     // Copying text the person selected on the page is the browser's.
     if ((k.kind === 'copy' || k.kind === 'cut') && !window.getSelection()?.isCollapsed) return;
     const p = session.store.getState();

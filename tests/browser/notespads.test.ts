@@ -13,7 +13,7 @@ import { noteName, pitchClass, scaleDegreesInRange } from '../../src/music/scale
 import { createProject } from '../../src/project/factory';
 import type { Id } from '../../src/project/types';
 import { setAssist, setKey } from '../../src/state/commands';
-import { selectTrack, setNotesOctave, setPadMode, uiStore } from '../../src/state/uiStore';
+import { selectTrack, setNotesOctave, setPadMode, setUiMode, uiStore } from '../../src/state/uiStore';
 import { PAD_KEY_VELOCITY } from '../../src/ui/components';
 import { actFrame, cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
 
@@ -42,6 +42,9 @@ beforeEach(() => {
   session.accepted(setAssist(session.store, true));
   act(() => {
     patchRuntime({ held: {} });
+    // Simple (everyone's start: the Jam pads sheet): parts go by the instrument picker's words, so Chords is
+    // "Keys & chords" and Lead is "Melody" (Advanced keeps the stored names).
+    setUiMode('simple');
     selectTrack('t3'); // Bass
     setNotesOctave(3);
     setPadMode('notes');
@@ -194,7 +197,7 @@ describe('Notes pad mode', () => {
 
   it('the part switch changes which part the pads play', () => {
     const { m, pad, click } = setup();
-    const chords = m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label^="Chords"]')!;
+    const chords = m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label^="Keys & chords"]')!;
     click(chords);
     expect(uiStore.getState().selectedTrackId).toBe('t4');
     const p0 = pad(0)!;
@@ -211,7 +214,7 @@ describe('Notes pad mode', () => {
     expect(m.container.textContent).toContain('Drums is a drum kit.');
     const options = [...m.container.querySelectorAll<HTMLButtonElement>('[aria-label="Melodic parts"] button')];
     expect(options).toHaveLength(6);
-    click(options.find((b) => b.getAttribute('aria-label')!.startsWith('Play Lead'))!);
+    click(options.find((b) => b.getAttribute('aria-label')!.startsWith('Play Melody'))!);
     expect(uiStore.getState().selectedTrackId).toBe('t5');
     expect(pad(0)).not.toBeNull();
     expect(calls).toEqual([]);
@@ -257,7 +260,7 @@ describe('Notes pad mode', () => {
   it('choosing a part in the chooser puts keyboard focus on the note pads', async () => {
     act(() => selectTrack('t1'));
     const { m, pad, click } = setup();
-    const lead = m.container.querySelector<HTMLButtonElement>('button[aria-label^="Play Lead"]')!;
+    const lead = m.container.querySelector<HTMLButtonElement>('button[aria-label^="Play Melody"]')!;
     act(() => lead.focus());
     click(lead);
     await actFrame();
@@ -269,6 +272,6 @@ describe('Notes pad mode', () => {
     act(() => bass.focus());
     key(bass, 'keydown', { key: 'ArrowRight', code: 'ArrowRight' });
     expect(uiStore.getState().selectedTrackId).toBe('t4');
-    expect(document.activeElement).toBe(m.container.querySelector('[role="radio"][aria-label^="Chords"]'));
+    expect(document.activeElement).toBe(m.container.querySelector('[role="radio"][aria-label^="Keys & chords"]'));
   });
 });

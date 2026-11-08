@@ -19,6 +19,7 @@ import * as db from '../../src/persistence/db';
 import { createProject } from '../../src/project/factory';
 import type { Project, SamplerInstrument } from '../../src/project/types';
 import { encodeWav } from '../../src/render/wav';
+import { setUiMode } from '../../src/state/uiStore';
 import { cleanup, fire, key, mount, pointer, wait } from './ui-harness';
 
 const project = (): Project => session.store.getState();
@@ -156,6 +157,8 @@ function toneWav(seconds: number, sampleRate = 48000): ArrayBuffer {
 const createdSamples: string[] = [];
 
 beforeEach(() => {
+  // Simple, everyone's start: parts go by the instrument picker's words (Chords is "Keys & chords").
+  act(() => setUiMode('simple'));
   runtimeStore.setState((s) => ({ ...s, notice: null, recording: 'off', recordTarget: null, replayId: null, held: {} }));
   importStore.setState({});
 });
@@ -516,9 +519,9 @@ describe('Sampler import', () => {
     expect(document.activeElement?.id).toBe('sampler-recording-t4');
     // The file's own rate (44.1 kHz), not the rate the browser decoded it at.
     await until(() => m.container.textContent?.includes('0.50 s · 44.1 kHz · Mono · WAV') ?? false, 'the recording details');
-    await until(() => statusText(m.container).includes('Imported “Test Tone” as a new loop on Chords · Intro. It plays at its recorded pitch.'), 'the result message');
+    await until(() => statusText(m.container).includes('Imported “Test Tone” as a new loop on Keys & chords · Intro. It plays at its recorded pitch.'), 'the result message');
     // The editor edits the new clip's own recording, and says so.
-    expect(m.container.textContent).toContain('Test Tone — plays in Chords · Intro');
+    expect(m.container.textContent).toContain('Test Tone — plays in Keys & chords · Intro');
     const picker = m.container.querySelector<HTMLSelectElement>('#sampler-recording-t4')!;
     expect(picker.value).toBe(meta.id);
     expect([...picker.options].some((o) => o.value === meta.id && o.textContent === 'Test Tone (0.50 s)')).toBe(true);
