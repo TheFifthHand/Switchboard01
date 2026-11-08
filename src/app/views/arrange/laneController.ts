@@ -76,6 +76,7 @@ import { notify } from '../../runtime';
 import { addLibraryLoop, addLoop, addScene, moveLoops, moveSectionBy, resizeLoops, resizeSectionBy } from './songActions';
 import { barAt, edgeAt, rowAt, rulerBarAt, xToBar } from './songLayout';
 import { lengthBadge, moveBadge, partHue, sectionLengthBadge, startBadge } from './songModel';
+import { simpleDropBar } from './songHome';
 
 /** Simple mode's drag badges speak in times and seconds (the song's tempo); Advanced's in bars (undefined). */
 function plainBpm(): number | undefined {
@@ -130,8 +131,10 @@ export interface LaneHost {
   sectionClick(id: Id, add: boolean): void;
   /** A gesture began or ended (the playhead stops following meanwhile). */
   busy(on: boolean): void;
-  /** A plain click on a loop (no drag, no Shift or Ctrl): Simple opens it in the editor. */
-  regionClick?(id: Id): void;
+  /** A plain click on a loop (no drag, no Shift or Ctrl) at client point `at`: Simple opens it in the editor. */
+  regionClick?(id: Id, at: { x: number; y: number }): void;
+  /** Simple mode (a loop from LOOPS lands at a section's start). */
+  simple?(): boolean;
 }
 
 /**
@@ -612,7 +615,11 @@ export class LaneController {
       libraryGhostStore.setState({ kind: 'no', text: partProblemShort(item.loop), x: this.tx(a.cx), y: this.ty(a.cy) });
       return;
     }
-    const start = Math.max(0, Math.min(barAt(this.tx(a.cx), ppb), MAX_SONG_BARS - item.bars));
+    // Simple: it lands at the start of the section under the pointer (never leaving silence at the start of a
+    // repeat; simpleDropBar); Alt, and Advanced, keep the bar under the pointer.
+    const under = barAt(this.tx(a.cx), ppb);
+    const snapped = this.host.simple?.() && !a.alt ? simpleDropBar(p, under) : under;
+    const start = Math.max(0, Math.min(snapped, MAX_SONG_BARS - item.bars));
     a.last = { delta: 0, copy: false, drop: { bar: start, ok: true, trackId: t.id } };
     const key = `ok|${t.id}|${start}`;
     if (key === a.key) return;
@@ -743,7 +750,7 @@ export class LaneController {
         if (g.toggleOnClick) setSelection(clickSelect(sel, g.anchor.id, 'toggle'));
         else if (!g.additive) {
           setSelection(clickSelect(sel, g.anchor.id, 'replace'));
-          this.host.regionClick?.(g.anchor.id);
+          this.host.regionClick?.(g.anchor.id, { x: e.clientX, y: e.clientY });
         }
         return;
       }

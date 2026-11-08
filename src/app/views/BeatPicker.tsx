@@ -107,7 +107,7 @@ export function applyBeat(trackId: Id, slot: number, beat: BeatDef): boolean {
       const notes = realizeBeat(beat, { bars: bars as 1 | 2 | 4 | 8, kitId }).notes.map((n) => ({ ...n, id: uid('n') }));
       ok = session.accepted(cmd.setClipNotes(store, trackId, slot, notes, words));
     }
-    if (ok && existing) followInSong(trackId, slot, existing.id, beat.name);
+    if (ok && existing) followInSong(trackId, slot, existing.id, beat.name, existing.bars);
   } finally {
     store.endGroup();
   }

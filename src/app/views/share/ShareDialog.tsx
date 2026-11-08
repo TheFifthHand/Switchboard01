@@ -13,7 +13,9 @@
  * words ("Saved “My beat.wav” — as loud as streaming songs").
  *
  * An empty song (no loops in it) offers no music file: "Your song is empty —
- * add a loop first".
+ * add a loop first"; nor does a song of loops with nothing in them yet ("add
+ * sounds to your loop first"). A save marks the song shared, so the tip line
+ * goes on to what to do next.
  *
  * The project: saves the portable project file (.omnisong.zip, the same file
  * as My projects › Export this project) named after the project, and says
@@ -34,6 +36,8 @@ import { encodeWav } from '../../../render/wav';
 import { renameProject } from '../../../state/commands';
 import { uiStore } from '../../../state/uiStore';
 import { session, useProject } from '../../instance';
+import { songHasSound } from '../arrange/songHome';
+import { noteShared } from '../arrange/tipMemory';
 import { notify } from '../../runtime';
 import { downloadBlob } from '../../download';
 import { loudnessTarget } from '../mix/mixPrefs';
@@ -116,6 +120,8 @@ export function ShareDialog(props: { onClose(): void; initialChoice?: ShareChoic
   const projectName = useProject((p) => p.name);
   const sections = useProject((p) => p.arrangement.sections);
   const bars = useProject(songBars);
+  // Loops with nothing in them yet (Make a beat before a square is clicked): a file of silence is no song to send.
+  const silent = useProject((p) => songBars(p) > 0 && !songHasSound(p));
   const tail = useProject((p) => p.arrangement.tailSeconds);
   const sound0 = useProject(currentSound);
   // Lengths follow the tempo.
@@ -147,7 +153,7 @@ export function ShareDialog(props: { onClose(): void; initialChoice?: ShareChoic
     if (message) resultRef.current?.scrollIntoView({ block: 'nearest' });
   }, [message]);
 
-  const empty = bars === 0;
+  const empty = bars === 0 || silent;
   const target = loudnessTarget();
   const loudLabel = target.id === 'streaming' ? 'As loud as streaming songs' : `As loud as the ${target.name} level`;
   const loudShort = loudLabel.replace(/^As/, 'as');
@@ -299,6 +305,8 @@ export function ShareDialog(props: { onClose(): void; initialChoice?: ShareChoic
     try {
       const text = choice === 'project' ? await saveProject() : await saveMusic(controller.signal);
       if (choice === 'music') session.exportSaved();
+      // The tip line goes on to what to do next.
+      noteShared(session.store.getState().id);
       finish({ tone: 'ok', text });
     } catch (e) {
       if ((e as Error)?.name === 'AbortError') finish({ tone: 'error', text: 'Cancelled. Nothing was saved.' });
@@ -385,7 +393,7 @@ export function ShareDialog(props: { onClose(): void; initialChoice?: ShareChoic
         {choice === 'music' && empty && (
           <p className={styles.empty} data-testid="share-empty">
             <Icon name="info" size={16} />
-            Your song is empty — add a loop first.
+            {silent ? 'Your song makes no sound yet — add sounds to your loop first.' : 'Your song is empty — add a loop first.'}
           </p>
         )}
 

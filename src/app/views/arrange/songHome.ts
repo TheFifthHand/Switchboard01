@@ -8,9 +8,9 @@
  * - the song's length in minutes and seconds ("Your song · 1:04"),
  * - the one next step the tip line offers, read from the real song.
  */
-import { mainSection, musicPerBar, regionEnd, songBars, sortSections, spanOf } from '../../../project/arrangement';
+import { mainSection, musicPerBar, regionEnd, sectionAt, songBars, sortSections, spanOf } from '../../../project/arrangement';
 import { clipById } from '../../../project/clips';
-import type { Id, Project, TrackRole } from '../../../project/types';
+import type { Id, Project, SongSection, TrackRole } from '../../../project/types';
 import type { IconName } from '../../../ui/components';
 import { INSTRUMENT_WORDS, simpleTrackName } from '../../labels';
 import { clockText } from './songModel';
@@ -145,14 +145,26 @@ export const SHARE_INSTRUMENTS = 3;
 
 /**
  * The first session the tip line walks through, in order: a beat (from LOOPS,
- * or squares in an empty loop), a look inside a ready-made song's loop, drums,
- * a bass, chords, a song long enough to be a song, then Share.
+ * or squares in an empty loop), hearing a ready-made song whole (Jump In
+ * repeats its main part), a look inside a ready-made song's loop, drums, a
+ * bass, chords, a song long enough to be a song, then Share; after Share
+ * ('next'), one idea of what to do next, so the line never runs out.
  */
-export type TipStep = 'loops' | 'fill' | 'try' | 'beat' | 'bass' | 'chords' | 'longer' | 'share';
+export type TipStep = 'loops' | 'fill' | 'whole' | 'try' | 'beat' | 'bass' | 'chords' | 'longer' | 'share' | 'next';
 
 const BEAT_ROLES: readonly TrackRole[] = ['drums', 'percussion'];
 /** Instruments that carry the harmony or a tune (the "chords" step: Keys & chords, a Melody or a Pad). */
 const HARMONY_ROLES: readonly TrackRole[] = ['chords', 'lead', 'pad'];
+
+/** What the tip asks for, by instrument ("Add chords: press + Add instrument, then Keys & chords"). */
+const ASK_FOR: Partial<Record<TrackRole, string>> = {
+  drums: 'Add drums',
+  percussion: 'Add a beat',
+  bass: 'Add a bass',
+  chords: 'Add chords',
+  lead: 'Add a melody',
+  pad: 'Add a pad',
+};
 
 /** The instruments with a loop in the song that has notes or its own recording (an empty new loop plays nothing). */
 function soundingTracks(p: Pick<Project, 'tracks' | 'arrangement'>): Pick<Project['tracks'][number], 'id' | 'role'>[] {
@@ -165,6 +177,11 @@ function soundingTracks(p: Pick<Project, 'tracks' | 'arrangement'>): Pick<Projec
   return p.tracks.filter((t) => ids.has(t.id));
 }
 
+/** The song makes a sound: some loop in it has notes or a recording (Share has something to save). */
+export function songHasSound(p: Pick<Project, 'tracks' | 'arrangement'>): boolean {
+  return soundingTracks(p).length > 0;
+}
+
 /** A ready-made song nobody has changed yet: built from a starter (not the blank one) and never edited since. */
 export function isUntouchedStarter(p: Pick<Project, 'starterId' | 'createdAt' | 'updatedAt'>): boolean {
   return !!p.starterId && p.starterId !== 'blank' && p.updatedAt === p.createdAt;
@@ -175,32 +192,91 @@ export interface TipState {
   editorOpen?: boolean;
   /** A ready-made song nobody has changed or opened a loop of yet (Jump In): suggest something to try in it. */
   fresh?: boolean;
+  /**
+   * What a ready-made song repeats while the person has not yet heard it
+   * whole (Jump In repeats its main part): the 'whole' step names it.
+   */
+  repeating?: string | null;
+  /** Where LOOPS is: beside the song ('shown', the default), closed, or covered by the Sound panel. */
+  loops?: 'shown' | 'closed' | 'sound';
+  /** The rows the Song screen shows (what + Add instrument offers is the rest); default: Simple's rows. */
+  shown?: readonly Id[];
+  /** The song was shared (a music file or the project saved from Share): 'next' ideas follow. */
+  shared?: boolean;
+  /** Which of the 'next' ideas to offer (counts up; wraps). */
+  idea?: number;
+}
+
+/**
+ * The step for an instrument the song lacks (`roles`, in the order they are
+ * suggested): when its row shows with only an empty loop, fill that loop
+ * in; else add it with + Add instrument when the picker offers it; when no
+ * such instrument can be added at all, null (the tip moves on, never pointing at
+ * a choice that is not there).
+ */
+function addStep(p: Pick<Project, 'tracks' | 'arrangement'>, step: TipStep, roles: readonly TrackRole[], offered: ReadonlySet<TrackRole>): { step: TipStep; text: string } | null {
+  const placed = playingIds(p);
+  for (const role of roles) {
+    // (Its loop is in the song already: it only needs sounds.)
+    const t = p.tracks.find((x) => x.role === role && placed.has(x.id));
+    if (t) return { step, text: `Click the empty ${instrumentName(t.name, t.role)} loop to add sounds to it` };
+    if (offered.has(role)) return { step, text: `${ASK_FOR[role]}: press + Add instrument, then ${INSTRUMENT_KINDS[role].name}` };
+  }
+  return null;
+}
+
+/** What to do once the song is shared: a few plain ideas, in turn (`idea` picks one). */
+export function nextIdeas(offered: ReadonlySet<TrackRole>): string[] {
+  return [
+    ...(offered.has('lead') ? ['Add a melody: press + Add instrument, then Melody'] : []),
+    'Try another sound: click an instrument’s name, then Change sound',
+    'Make a loop sound new: click it, then Make it different',
+    'Keep your project to work on later: press Share, then The project, to keep working',
+    ...(offered.size > 0 ? ['Add another instrument: press + Add instrument'] : []),
+    'Make your song longer: press Make it longer',
+  ];
 }
 
 /**
  * The one next step the tip line offers, from the song as it is, in the
  * order a song is built: no music → pick a beat; only empty loops (Make a
  * beat from scratch) → fill one in (the editor's grid when it is open); a
- * ready-made song untouched (Jump In) → click a loop to change it; then a
- * beat, a bass, chords (or a melody or pad), each while the song has none;
- * then make it longer until it lasts SHARE_SONG_S; and only then, with
- * SHARE_INSTRUMENTS instruments or more playing, share it.
+ * ready-made song still repeating its main part → hear it whole; untouched
+ * (Jump In) → click a loop to change it; then a beat, a bass, chords (or a
+ * melody or pad), each while the song has none and + Add instrument offers
+ * one (else its empty loop, else on to the next step); then make it longer
+ * until it lasts SHARE_SONG_S; and only then, with SHARE_INSTRUMENTS
+ * instruments or more playing, share it. Once shared, ideas of what next.
  */
 export function songTip(p: Pick<Project, 'tracks' | 'arrangement' | 'bpm'>, state: TipState | boolean = {}): { step: TipStep; text: string } {
-  const { editorOpen = false, fresh = false } = typeof state === 'boolean' ? { editorOpen: state } : state;
-  if (playingIds(p).size === 0) return { step: 'loops', text: 'Pick a beat from Loops on the right' };
+  const { editorOpen = false, fresh = false, repeating = null, loops = 'shown', shown, shared = false, idea = 0 } = typeof state === 'boolean' ? { editorOpen: state } : state;
+  if (playingIds(p).size === 0) {
+    const text = loops === 'shown' ? 'Pick a beat from Loops on the right' : loops === 'sound' ? 'Close the sound panel on the right (✕), then pick a beat from Loops' : 'Press Loops at the top of your song, then pick a beat';
+    return { step: 'loops', text };
+  }
   const sounding = soundingTracks(p);
   if (!sounding.length)
     return { step: 'fill', text: editorOpen ? 'Click squares in the grid below to add sounds to your loop' : 'Click your loop to add sounds to it' };
+  if (repeating) return { step: 'whole', text: `To hear your whole song, press ⟳ Repeating: ${repeating} at the top` };
   if (fresh && !editorOpen) return { step: 'try', text: 'Click any loop in your song to change its notes' };
+  const offered = new Set(hiddenInstruments(p, shown ?? simpleRowIds(p, new Set())).map((h) => h.role));
   const roles = new Set(sounding.map((t) => t.role));
   const has = (list: readonly TrackRole[]) => list.some((r) => roles.has(r));
-  if (!has(BEAT_ROLES)) return { step: 'beat', text: 'Add drums: press + Add instrument, then Drums' };
-  if (!roles.has('bass')) return { step: 'bass', text: 'Add a bass: press + Add instrument, then Bass' };
-  if (!has(HARMONY_ROLES)) return { step: 'chords', text: 'Add chords: press + Add instrument, then Keys & chords' };
+  const lacking: [TipStep, readonly TrackRole[]][] = [
+    ['beat', BEAT_ROLES],
+    ['bass', ['bass']],
+    ['chords', HARMONY_ROLES],
+  ];
+  for (const [step, list] of lacking) {
+    if (has(list)) continue;
+    const ask = addStep(p, step, list, offered);
+    if (ask) return ask;
+  }
   if (songSeconds(p) < SHARE_SONG_S) return { step: 'longer', text: 'Make your song longer: press Make it longer' };
-  if (sounding.length < SHARE_INSTRUMENTS) return { step: 'chords', text: 'Add another instrument: press + Add instrument' };
-  return { step: 'share', text: 'Share your song: press Share at the top right' };
+  if (sounding.length < SHARE_INSTRUMENTS && offered.size > 0) return { step: 'chords', text: 'Add another instrument: press + Add instrument' };
+  if (!shared) return { step: 'share', text: 'Share your song: press Share at the top right' };
+  const ideas = nextIdeas(offered);
+  return { step: 'next', text: ideas[((idea % ideas.length) + ideas.length) % ideas.length] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -239,4 +315,53 @@ export function repeatName(sections: readonly { id: Id; name: string; start: num
   const last = sections.find((x) => x.start + x.bars === range.toBar);
   if (first && last && first.start <= last.start) return first.id === last.id ? first.name : `${first.name} to ${last.name}`;
   return 'the marked stretch';
+}
+
+/* ------------------------------------------------------------------ */
+/* Make it longer / shorter                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The song has an intro (its first section is called Intro…) and an ending
+ * (its last section is called Ending… or fades out): Make it longer offers
+ * Add an intro and Add an ending only while the song has none.
+ */
+export function songEdges(p: Pick<Project, 'arrangement'>): { intro: boolean; ending: boolean } {
+  const sorted = sortSections(p.arrangement.sections);
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  return {
+    intro: !!first && /^intro\b/i.test(first.name.trim()),
+    ending: !!last && (/^(ending|outro)\b/i.test(last.name.trim()) || !!last.moves?.some((m) => m.kind === 'fadeOut')),
+  };
+}
+
+/**
+ * What "Make it shorter" can take out (Simple), never the song's only
+ * section: its last section, and the section at the playhead (`bar`) when
+ * that is another one. Null for each when there is nothing to take out.
+ */
+export function shorterChoices(p: Pick<Project, 'arrangement'>, bar: number): { last: SongSection | null; here: SongSection | null } {
+  const sorted = sortSections(p.arrangement.sections);
+  if (sorted.length < 2) return { last: null, here: null };
+  const last = sorted[sorted.length - 1];
+  const at = sectionAt(sorted, bar);
+  return { last, here: at && at.id !== last.id ? at : null };
+}
+
+/**
+ * Where a loop dropped from LOOPS lands in Simple, at the bar under the
+ * pointer (`bar`): the start of the section there, so a repeat of that
+ * section never starts with silence; with no section there, right after the
+ * section before (no gap after the music); with no sections at all, the start
+ * of the song's music (it plays along with what is there).
+ */
+export function simpleDropBar(p: Pick<Project, 'arrangement'>, bar: number): number {
+  const sorted = sortSections(p.arrangement.sections);
+  const b = Math.max(0, Math.floor(bar));
+  if (!sorted.length) return spanOf(p.arrangement.regions)?.[0] ?? 0;
+  const at = sectionAt(sorted, b);
+  if (at) return at.start;
+  const before = sorted.filter((s) => regionEnd(s) <= b);
+  return before.length ? Math.max(...before.map((s) => regionEnd(s))) : sorted[0].start;
 }

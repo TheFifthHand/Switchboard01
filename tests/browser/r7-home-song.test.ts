@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { commands, page } from 'vitest/browser';
 import { session } from '../../src/app/instance';
 import { browserTabStore } from '../../src/app/views/arrange/LoopBrowser';
-import { editorStore } from '../../src/app/views/arrange/editorStore';
+import { CLICK_OPEN_MS, editorStore } from '../../src/app/views/arrange/editorStore';
 import { libraryQueryStore } from '../../src/app/views/arrange/library/LibraryPanel';
 import { closeSound, sidePanelStore } from '../../src/app/views/arrange/sidePanelStore';
 import { songClock } from '../../src/app/views/arrange/songHome';
@@ -154,12 +154,12 @@ describe('Make it longer', () => {
     await clickAt(centre(byTestId('make-longer')!));
     await clickAt(centre(menuItem('Repeat Groove again')));
     expect(sections().filter((s) => s.name === 'Groove').length).toBe(2);
+    // The song has an intro: Make it longer offers no second one (round 7 fix 2a), but still an ending.
     await clickAt(centre(byTestId('make-longer')!));
-    await clickAt(centre(menuItem('Add an intro')));
-    await clickAt(centre(byTestId('make-longer')!));
-    await clickAt(centre(menuItem('Add an intro')));
-    // Never two new intros with the same name.
-    expect(sections().map((s) => s.name).filter((n) => n.startsWith('Intro'))).toEqual(['Intro 3', 'Intro 2', 'Intro']);
+    const items = [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].map((x) => x.textContent?.trim());
+    expect(items).not.toContain('Add an intro');
+    expect(items).toContain('Add an ending');
+    await clickAt(centre(menuItem('Add an ending')));
     // Undo takes back exactly the last step.
     const n = sections().length;
     act(() => session.undo());
@@ -223,6 +223,8 @@ describe('loops and sounds', () => {
     drumsOnly();
     await settle();
     await clickAt(on('d2'));
+    // (Once the double-click time has passed: a double-click's second press must not land on the editor.)
+    await settle(CLICK_OPEN_MS + 100);
     expect(editorStore.getState()?.regionId).toBe('d2');
     act(() => editorStore.setState(null));
     await settle();
@@ -234,6 +236,7 @@ describe('loops and sounds', () => {
     act(() => setUiMode('advanced'));
     await settle();
     await clickAt(on('d2'));
+    await settle(CLICK_OPEN_MS + 100);
     expect(editorStore.getState()).toBeNull();
   });
 

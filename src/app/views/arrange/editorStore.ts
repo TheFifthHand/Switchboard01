@@ -37,12 +37,78 @@ export function openLoopEditor(p: Project, regionId: Id, opts: { focus?: boolean
   const r = p.arrangement.regions.find((x) => x.id === regionId);
   const t = r ? p.tracks.find((x) => x.id === r.trackId) : undefined;
   if (!r || !t || slotOfClip(t, r.clipId) < 0) return false;
+  cancelLoopEditorSoon();
+  clickOpened = null;
   editorStore.setState({ trackId: t.id, clipId: r.clipId, regionId, ...(opts.focus ? { focus: ++focusAsks } : {}) });
   return true;
 }
 
 export function closeLoopEditor(): void {
+  cancelLoopEditorSoon();
   editorStore.setState(null);
+}
+
+/* ------------------------------------------------------------------ */
+/* A single click opens it (Simple), never a double-click's second press */
+/* ------------------------------------------------------------------ */
+
+/**
+ * How long a single click on a loop waits before it opens the editor in
+ * Simple (ms): a second click within it is a double-click, which opens the
+ * editor itself (as in 2.4). Opening shrinks the rows; without the wait the
+ * second press of a double-click would land on the new editor's grid and add
+ * a note no one asked for.
+ */
+export const CLICK_OPEN_MS = 320;
+
+/**
+ * After a click opened the editor, a press this soon (ms) and this close (px)
+ * to where the click was is the rest of a slow double-click: the pane ignores
+ * it, so it never edits the loop.
+ */
+export const EDITOR_GUARD_MS = 600;
+export const EDITOR_GUARD_PX = 12;
+
+let soon: { timer: ReturnType<typeof setTimeout>; regionId: Id } | null = null;
+let clickOpened: { x: number; y: number; at: number } | null = null;
+
+/**
+ * A single click on loop `regionId` at client point `at` (Simple): the editor
+ * opens on it after CLICK_OPEN_MS unless a double-click, another press or a
+ * drag comes first (cancelLoopEditorSoon). `read` gives the project then.
+ */
+export function openLoopEditorSoon(read: () => Project, regionId: Id, at: { x: number; y: number }): void {
+  cancelLoopEditorSoon();
+  const timer = setTimeout(() => {
+    soon = null;
+    if (openLoopEditor(read(), regionId)) clickOpened = { ...at, at: performance.now() };
+  }, CLICK_OPEN_MS);
+  soon = { timer, regionId };
+}
+
+/** The loop a click's editor opening still waits for (null: none waits). */
+export function loopEditorSoon(): Id | null {
+  return soon?.regionId ?? null;
+}
+
+export function cancelLoopEditorSoon(): void {
+  if (soon) clearTimeout(soon.timer);
+  soon = null;
+}
+
+/**
+ * A press on the editor pane at client point (x, y): true when it is the rest
+ * of the double-click whose first click opened the pane (soon after, in the
+ * same place), so the pane must ignore it.
+ */
+export function pressIsClickEcho(x: number, y: number): boolean {
+  const c = clickOpened;
+  if (!c) return false;
+  if (performance.now() - c.at > EDITOR_GUARD_MS) {
+    clickOpened = null;
+    return false;
+  }
+  return Math.abs(x - c.x) <= EDITOR_GUARD_PX && Math.abs(y - c.y) <= EDITOR_GUARD_PX;
 }
 
 /**

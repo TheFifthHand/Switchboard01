@@ -22,8 +22,9 @@ import { realizeFor } from '../../src/app/views/arrange/library/libraryModel';
 import { editorStore, openLoopEditor } from '../../src/app/views/arrange/editorStore';
 import { closeSound, openSound, sidePanelStore } from '../../src/app/views/arrange/sidePanelStore';
 import { songSeconds } from '../../src/app/views/arrange/songHome';
-import { regionEnd, songBars, sortSections } from '../../src/project/arrangement';
-import { clipById } from '../../src/project/clips';
+import { regionEnd, sortSections } from '../../src/project/arrangement';
+import { clipById, slotOfClip } from '../../src/project/clips';
+import * as cmd from '../../src/state/commands';
 import type { Id } from '../../src/project/types';
 import { setTipsEnabled, setUiMode, setView } from '../../src/state/uiStore';
 import { centre, clickAt, menuItem, on, openSong, project, region, regions, resetSong, rt, sections, setSong, settle, teardownSong, trackId, waitFor } from './r5-song-helpers';
@@ -71,7 +72,7 @@ afterEach(async () => {
 });
 
 describe('Repeat this part follows the music', () => {
-  it('Add an intro while the beat repeats: the whole song repeats, beat included (not the intro’s first bar)', async () => {
+  it('Add an intro while the beat repeats: repeat goes off and Play starts at the intro, then the beat (fix 2a: the whole song is heard)', async () => {
     await openSong(1366, 768);
     oneBarBeat();
     act(() => session.setSongLoop({ fromBar: 0, toBar: 1 }));
@@ -79,15 +80,21 @@ describe('Repeat this part follows the music', () => {
     expect(byTestId('repeat-part')!.textContent).toBe('Repeating: the whole song');
     await longer('Add an intro');
     expect(sortSections(sections()).map((s) => s.name)).toEqual(['Intro', 'Verse']);
-    // The repeat covers the intro and the beat (now the Verse), and says so.
-    expect(rt().songLoop).toEqual({ fromBar: 0, toBar: songBars(project()) });
-    expect(byTestId('repeat-part')!.textContent).toBe('Repeating: the whole song');
+    // Round 7 fix 2a: repeat goes off so what was added is heard, and says so; Play starts at the intro.
+    expect(rt().songLoop).toBeNull();
+    expect(rt().songCursor).toBe(0);
+    expect(rt().notice?.text).toMatch(/Repeat is off: press Play to hear it\.$/);
+    expect(byTestId('repeat-part')!.getAttribute('aria-pressed')).toBe('false');
     const drums = trackId('Drums');
     const verse = sections().find((s) => s.name === 'Verse')!;
-    expect(regions().some((r) => r.trackId === drums && r.start < rt().songLoop!.toBar && regionEnd(r) > verse.start)).toBe(true);
+    expect(regions().some((r) => r.trackId === drums && regionEnd(r) > verse.start)).toBe(true);
+    // Undo brings the repeat back with the beat.
+    act(() => session.undo());
+    await settle();
+    expect(rt().songLoop).toEqual({ fromBar: 0, toBar: 1 });
   });
 
-  it('a repeated section keeps playing its music after an intro goes in before it (meters), and Undo brings it back', async () => {
+  it('a repeated section keeps playing its music after a section goes in before it (meters), and Undo brings it back', async () => {
     await openSong(1366, 768);
     const groove = sections().find((s) => s.name === 'Groove')!;
     act(() => session.setSongLoop({ fromBar: groove.start, toBar: regionEnd(groove) }));
@@ -96,7 +103,12 @@ describe('Repeat this part follows the music', () => {
       await session.playSong();
     });
     await waitFor(() => rt().playing, 'the song playing');
-    await longer('Add an intro');
+    // (Fix 2a: Make it longer now turns the repeat off to play what it added; the Intro played twice moves Groove too.)
+    const { duplicateSectionNow } = await import('../../src/app/views/arrange/songActions');
+    act(() => {
+      duplicateSectionNow(sortSections(sections())[0].id);
+    });
+    await settle();
     const now = sections().find((s) => s.id === groove.id)!;
     expect(rt().songLoop).toEqual({ fromBar: now.start, toBar: regionEnd(now) });
     expect(now.start).toBeGreaterThan(groove.start);
@@ -156,7 +168,7 @@ describe('Make it longer', () => {
     expect(menuItem('Add a section after Verse')).toBeTruthy();
     await clickAt(centre(menuItem('Add a section after Verse')));
     await settle();
-    expect(rt().notice?.text).toBe('Added Chorus after Verse: it plays the music of Verse, ready to change');
+    expect(rt().notice?.text).toBe('Added Chorus after Verse: it plays the music of Verse, ready to change. Press Play to hear it.');
     await longer('Add an ending');
     const p = project();
     expect(sortSections(p.arrangement.sections).map((s) => s.name)).toEqual(['Intro', 'Verse', 'Chorus', 'Ending']);
@@ -188,6 +200,12 @@ describe('a ready-made loop in the song', () => {
     const { makeLoopDifferent } = await import('../../src/app/views/arrange/songActions');
     act(() => {
       makeLoopDifferent('r-Chords');
+    });
+    // The copy is a 1-bar loop, as + Add instrument's are (fix 2a: only a loop that gets longer grows in the song).
+    act(() => {
+      const t2 = project().tracks.find((x) => x.id === chords)!;
+      const r0 = regions().find((x) => x.id === 'r-Chords')!;
+      cmd.setClipBars(session.store, chords, slotOfClip(t2, r0.clipId), 1);
     });
     await clickAt(on('r-Chords'));
     await waitFor(() => !!editorStore.getState(), 'the editor');
@@ -262,7 +280,7 @@ describe('the tip line and the instrument being worked on', () => {
     // The Sound panel shows what the editor shows: Bass's sound open, then a click on the drums loop.
     act(() => openSound(trackId('Bass')));
     await clickAt(on('r-Drums'));
-    expect(editorStore.getState()?.trackId).toBe(trackId('Drums'));
+    await waitFor(() => editorStore.getState()?.trackId === trackId('Drums'), 'the editor on the drums');
     expect(sidePanelStore.getState()).toEqual({ kind: 'sound', trackId: trackId('Drums') });
   });
 });

@@ -1632,3 +1632,11 @@
 .tipText strong {
   color: var(--ink);
 }
+/* Tips hidden: only the small "What next?" key stays, at the end of the line, without the line's box. */
+.tipLine[data-off] {
+  justify-content: flex-end;
+  min-height: 0;
+  padding: 0;
+  border-color: transparent;
+  background: none;
+}

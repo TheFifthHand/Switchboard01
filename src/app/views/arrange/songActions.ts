@@ -12,19 +12,20 @@
  * loops (part, clip, length, where in the clip and where from each other),
  * Ctrl+V puts copies at the playhead on the same parts.
  */
-import { regionEnd } from '../../../project/arrangement';
+import { regionEnd, sortSections } from '../../../project/arrangement';
 import { clipById, isSongSlot, slotOfClip } from '../../../project/clips';
 import type { ClipBars, Id, SongMoveKind } from '../../../project/types';
 import { uiStore } from '../../../state/uiStore';
 import { session } from '../../instance';
 import { replacedLoopsText } from '../../replacedLoops';
 import { notify, runtimeStore } from '../../runtime';
+import { songPlayheadBar } from '../../songPlayback';
 import * as songCmd from '../../../state/commands';
 import type { Edge, RegionClipboard, ShapeKind, SongEditResult } from '../../../state/commands';
 import { editorStore } from './editorStore';
 import { clearSelection, setSelection } from './laneStore';
 import { freshName, libraryLoop, libraryResults, loopRoleOf, loopTarget, partProblem, realizeFor } from './library/libraryModel';
-import { INSTRUMENT_KINDS, instrumentName, instrumentRange, lastsText, timeAt } from './songHome';
+import { INSTRUMENT_KINDS, instrumentName, instrumentRange, lastsText, songClock, timeAt } from './songHome';
 import { nameNow } from '../useInstrumentName';
 import { quietly } from './sceneOffer';
 import { barsText, scenePlaces } from './songModel';
@@ -371,8 +372,8 @@ export function deleteSelection(ids: readonly Id[], sectionIds: readonly Id[] = 
   const loopWords = loops.length ? loopsWords(loops) : '';
   const labelWords = labels.length === 1 ? `the section ${sectionName(labels[0])}` : `${labels.length} sections`;
   const words = loopWords ? `${loopWords} and ${labelWords}` : labelWords;
-  // One undo step for both (a Record Notes pass already groups every edit it makes).
-  const group = runtimeStore.getState().recording !== 'notes';
+  // One undo step for both (unless an undo group is already open, such as a Record Notes pass: they join it).
+  const group = !session.store.grouping();
   if (group) session.store.beginGroup(`arrange:Delete ${words}`);
   let changed = false;
   try {
@@ -465,17 +466,29 @@ export function shapeSectionNow(id: Id, kind: ShapeKind): SongEditResult | null 
 }
 
 
-/** "Add an intro" / "Add an ending" (Shape the song…): the new bars are selected. */
+/**
+ * "Add an intro" / "Add an ending" (Shape the song…): the new bars are
+ * selected. `plain` (Simple's Make it longer): said in plain words, and what
+ * was added is heard (playWhatWasAdded).
+ */
 export function addIntroNow(opts: { plain?: boolean } = {}): SongEditResult | null {
   if (lockedNow()) return null;
   const r = songCmd.addIntro(session.store, { plain: opts.plain });
-  return run(r, { text: opts.plain ? `Added ${madeName(r) ?? 'an intro'} at the start: your instruments come in one at a time` : 'Added an intro' });
+  if (!opts.plain) return run(r, { text: 'Added an intro' });
+  if (!session.accepted(r)) return r;
+  select(r.ids);
+  said(`Added ${madeName(r) ?? 'an intro'} at the start: your instruments come in one at a time.${playWhatWasAdded(r.sectionId)}`, r);
+  return r;
 }
 
 export function addEndingNow(opts: { plain?: boolean } = {}): SongEditResult | null {
   if (lockedNow()) return null;
   const r = songCmd.addEnding(session.store, { plain: opts.plain });
-  return run(r, { text: opts.plain ? `Added ${madeName(r) ?? 'an ending'} at the end: your instruments drop out one at a time` : 'Added an ending' });
+  if (!opts.plain) return run(r, { text: 'Added an ending' });
+  if (!session.accepted(r)) return r;
+  select(r.ids);
+  said(`Added ${madeName(r) ?? 'an ending'} at the end: your instruments drop out one at a time.${playWhatWasAdded(r.sectionId)}`, r);
+  return r;
 }
 
 /** The name of the section an edit made ("Intro 2"). */
@@ -484,23 +497,75 @@ function madeName(r: SongEditResult & { sectionId?: Id }): string | null {
 }
 
 /**
+ * Simple's Make it longer, right after it added section `sectionId`: the
+ * repeat goes off (Undo brings it back with the music) and the playhead goes
+ * to the start of what was added, so the song playing now plays it at once
+ * and a stopped song plays it on the next Play. Returns the words that say
+ * so (" Repeat is off: playing it now.").
+ */
+function playWhatWasAdded(sectionId: Id | undefined): string {
+  const s = sectionId ? project().arrangement.sections.find((x) => x.id === sectionId) : undefined;
+  if (!s) return '';
+  const released = session.releaseSongLoopFor(session.store.undoEntryId());
+  const rt = runtimeStore.getState();
+  const playing = rt.mode === 'song' && rt.playing && !rt.paused;
+  if (rt.mode === 'song' && (rt.playing || rt.paused)) session.seekSong(s.start);
+  else session.setSongCursor(s.start);
+  const hear = playing ? 'playing it now.' : 'press Play to hear it.';
+  return released ? ` Repeat is off: ${hear}` : ` ${hear.charAt(0).toUpperCase()}${hear.slice(1)}`;
+}
+
+/** How many times in a row the section named like `id` plays, counting the run of same-named sections it is in. */
+function timesInARow(id: Id | undefined): number {
+  const sorted = sortSections(project().arrangement.sections);
+  const i = sorted.findIndex((x) => x.id === id);
+  if (i < 0) return 1;
+  const name = sorted[i].name.trim().toLowerCase();
+  const same = (k: number, next: number) => sorted[next] && sorted[next].name.trim().toLowerCase() === name && (next > k ? regionEnd(sorted[k]) === sorted[next].start : regionEnd(sorted[next]) === sorted[k].start);
+  let a = i;
+  let b = i;
+  while (same(a, a - 1)) a--;
+  while (same(b, b + 1)) b++;
+  return b - a + 1;
+}
+
+/**
  * "Make it longer" › Repeat <main part> again / Add a part after <part>: the
  * song's main part (the one with the most music) plays again after itself,
  * or a new part with its music (the next plain name: Verse, Chorus, Bridge,
- * Verse 2…) goes after the main parts, before an ending; said with Undo. The
- * new loops are left unselected: a click on one opens it.
+ * Verse 2…) goes after the main parts, before an ending; said with Undo, and
+ * what was added is heard (playWhatWasAdded). The new loops are left
+ * unselected: a click on one opens it.
  */
 export function growSongNow(kind: songCmd.GrowKind): (SongEditResult & { sectionId?: Id }) | null {
   if (lockedNow()) return null;
   const r = songCmd.growSong(session.store, kind);
   if (!session.accepted(r)) return r;
   clearSelection();
-  said(
-    kind === 'again'
-      ? `${r.from} now plays twice in a row`
-      : `Added ${r.name} after ${r.after}: it plays the music of ${r.from}, ready to change`,
-    r,
-  );
+  const n = kind === 'again' ? timesInARow(r.sectionId) : 0;
+  const what = kind === 'again' ? `${r.from} now plays ${n === 2 ? 'twice' : `${n} times`} in a row.` : `Added ${r.name} after ${r.after}: it plays the music of ${r.from}, ready to change.`;
+  said(`${what}${playWhatWasAdded(r.sectionId)}`, r);
+  return r;
+}
+
+/**
+ * "Make it shorter" (Simple): section `id` and its music come out of the
+ * song, and what follows moves up to close the gap, in one undo step, said
+ * with Undo and the song's new length. Never the song's only section.
+ */
+export function shortenSongNow(id: Id): SongEditResult | null {
+  if (lockedNow()) return null;
+  const p = project();
+  const s = p.arrangement.sections.find((x) => x.id === id);
+  if (!s) return null;
+  if (p.arrangement.sections.length < 2) {
+    notify('Your song has one section left: there is nothing more to take out.', 'warn');
+    return null;
+  }
+  const r = songCmd.removeSection(session.store, id, { withMusic: true });
+  if (!session.accepted(r)) return r;
+  clearSelection();
+  said(`Took ${s.name} out: your song is ${songClock(project())} now.`, r);
   return r;
 }
 
@@ -509,11 +574,18 @@ export function growSongNow(kind: songCmd.GrowKind): (SongEditResult & { section
  * loop of its kind (in the song's key), repeated over the song's main parts
  * (instrumentRange; a short song without sections plays on as long as the
  * new loop, the other instruments' loops repeating with it), as one undo
- * step "Add <instrument>", said with Undo. `loop` is null when no library
- * loop suits it (a Recording); the row then just shows, ready to record into.
+ * step "Add <instrument>", said with Undo. A muted instrument is unmuted in
+ * the same step; while another instrument plays alone, the words say why it
+ * is not heard yet. Refused while something records (stop it first). `loop`
+ * is null when no library loop suits it (a Recording); the row then just
+ * shows, ready to record into.
  */
 export function addInstrumentNow(trackId: Id, bar: number): { regionId?: Id; start: number; loop: string | null } | null {
   if (lockedNow()) return null;
+  if (runtimeStore.getState().recording !== 'off') {
+    notify('Stop recording first, then add an instrument.', 'warn');
+    return null;
+  }
   const p = project();
   const t = p.tracks.find((x) => x.id === trackId);
   if (!t) return null;
@@ -524,10 +596,12 @@ export function addInstrumentNow(trackId: Id, bar: number): { regionId?: Id; sta
   const start = range.start;
   if (!loop || !notes) return { start, loop: null };
   const name = freshName(t, notes.name);
-  // One undo step for the loop and its length (a Record Notes pass already groups every edit it makes).
-  const group = runtimeStore.getState().recording !== 'notes';
+  const word = (x: { name: string; role: Parameters<typeof instrumentName>[1]; renamed?: boolean }) => (uiStore.getState().uiMode === 'advanced' ? x.name : instrumentName(x.name, x.role, x.renamed));
+  // One undo step for the loop, its length and its unmute (unless an undo group is already open, which it joins).
+  const group = !session.store.grouping();
   if (group) session.store.beginGroup(`arrange:Add ${t.name}`);
   let regionId: Id | undefined;
+  let unmuted = false;
   try {
     const r = songCmd.addLoopToSong(session.store, trackId, start, { name, bars: notes.bars, notes: notes.notes }, { display: `Add ${t.name}` });
     if (session.accepted(r) && r.regionId) {
@@ -536,14 +610,43 @@ export function addInstrumentNow(trackId: Id, bar: number): { regionId?: Id; sta
       if (placed && range.bars !== null && range.bars > placed.bars) session.accepted(songCmd.resizeRegions(session.store, [regionId], 'end', range.bars - placed.bars));
       // A song of short loops and no sections yet: the others play on with the new, longer loop.
       else if (placed && r.clipId && range.bars !== null && range.bars < placed.bars && !project().arrangement.sections.length) carryOn(trackId, start, regionEnd(placed));
+      // Added to be heard: an instrument muted before its row hid is unmuted.
+      if (t.mute) unmuted = session.accepted(songCmd.setMute(session.store, trackId, false));
     }
   } finally {
     if (group) session.store.endGroup();
   }
   if (!regionId) return null;
   clearSelection();
-  notify(`Added ${uiStore.getState().uiMode === 'advanced' ? t.name : instrumentName(t.name, t.role, t.renamed)}: it plays “${name}”${range.name ? ` in ${range.name}` : ''}. Try other ${INSTRUMENT_KINDS[t.role].name.toLowerCase()} loops in Loops.`, 'info', 'undo');
+  const alone = project().tracks.filter((x) => x.solo && x.id !== trackId);
+  const soloWords = alone.length && !project().tracks.find((x) => x.id === trackId)?.solo ? ` You will not hear it while ${alone.map(word).join(' and ')} ${alone.length === 1 ? 'plays' : 'play'} alone: turn off Hear it alone to hear everything.` : '';
+  const heard = hearAddedLoop(regionId);
+  notify(
+    `Added ${word(t)}: it plays “${name}”${range.name ? ` in ${range.name}` : ''}.${unmuted ? ' It was muted: now it is heard.' : ''}${soloWords}${heard} Try other ${INSTRUMENT_KINDS[t.role].name.toLowerCase()} loops in Loops.`,
+    'info',
+    'undo',
+  );
   return { regionId, start, loop: loop.id };
+}
+
+/**
+ * The loop "+ Add instrument" just put in the song (region `regionId`) is
+ * heard: a repeat that leaves it out goes off (Undo brings it back), and the
+ * song plays from the loop's start unless it already plays inside it.
+ * Returns the words that say what changed (" Repeat is off.").
+ */
+function hearAddedLoop(regionId: Id): string {
+  const r = regions().find((x) => x.id === regionId);
+  if (!r) return '';
+  const rt = runtimeStore.getState();
+  const loop = rt.songLoop;
+  const outside = !!loop && (r.start >= loop.toBar || regionEnd(r) <= loop.fromBar);
+  if (outside) session.releaseSongLoopFor(session.store.undoEntryId());
+  const playing = rt.mode === 'song' && rt.playing && !rt.paused;
+  const at = playing ? songPlayheadBar() : null;
+  if (!playing) void session.playSong({ fromBar: r.start });
+  else if (at === null || at < r.start || at >= regionEnd(r)) session.seekSong(r.start);
+  return outside ? ' Repeat is off, so you hear it.' : '';
 }
 
 /** The last loop on every other row that plays from `start` grows to end at `end` (its loop repeats). */

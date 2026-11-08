@@ -291,16 +291,34 @@ export function swapRegionClip(regions: readonly SongRegion[], id: Id, clipId: I
  * a place in the song, such as the repeat range, can follow the music):
  * `bars` > 0: that many bars inserted at bar `at` (everything from `at` on
  * plays later); `bars` < 0: bars [at, at − bars) taken out (everything
- * after plays earlier). An edit's shifts apply in order.
+ * after plays earlier). An edit's shifts apply in order. `moved` (on an
+ * insert right after a removal of as many bars): the bars that came out come
+ * back here (a section moved with its music), so a place inside them moves
+ * with them instead of being lost.
  */
 export interface TimeShift {
   at: number;
   bars: number;
+  moved?: boolean;
 }
 
-/** The shifts that take an edit's shifts back (Undo): each one reversed, in reverse order. */
+/** A removal and the insert that puts the same bars back elsewhere (a move): `shifts[i]` and `shifts[i + 1]`. */
+function isMove(shifts: readonly TimeShift[], i: number): boolean {
+  const a = shifts[i];
+  const b = shifts[i + 1];
+  return !!a && !!b && a.bars < 0 && !!b.moved && b.bars === -a.bars;
+}
+
+/** The shifts that take an edit's shifts back (Undo): each one reversed, in reverse order (a move moved back). */
 export function invertShifts(shifts: readonly TimeShift[]): TimeShift[] {
-  return [...shifts].reverse().map((s) => ({ at: s.at, bars: -s.bars }));
+  const units: TimeShift[][] = [];
+  for (let i = 0; i < shifts.length; i++) {
+    if (isMove(shifts, i)) {
+      units.push([{ at: shifts[i + 1].at, bars: shifts[i].bars }, { at: shifts[i].at, bars: shifts[i + 1].bars, moved: true }]);
+      i++;
+    } else units.push([{ at: shifts[i].at, bars: -shifts[i].bars }]);
+  }
+  return units.reverse().flat();
 }
 
 /**
@@ -311,7 +329,25 @@ export function invertShifts(shifts: readonly TimeShift[]): TimeShift[] {
 export function shiftRange(shifts: readonly TimeShift[], from: number, to: number): [number, number] | null {
   let a = from;
   let b = to;
-  for (const s of shifts) {
+  for (let i = 0; i < shifts.length; i++) {
+    const s = shifts[i];
+    if (isMove(shifts, i)) {
+      // Bars [at, end) moved to shifts[i + 1].at: a place inside them goes with them; others shift as usual.
+      const end = s.at - s.bars;
+      const to2 = shifts[i + 1].at;
+      const n = -s.bars;
+      const out = (x: number, isEnd: boolean) => {
+        const y = x <= s.at ? x : x >= end ? x - n : s.at;
+        return y > to2 || (!isEnd && y === to2) ? y + n : y;
+      };
+      const na = a >= s.at && a < end ? to2 + (a - s.at) : out(a, false);
+      const nb = b > s.at && b <= end ? to2 + (b - s.at) : out(b, true);
+      a = na;
+      b = nb;
+      i++;
+      if (b <= a) return null;
+      continue;
+    }
     if (s.bars > 0) {
       if (a >= s.at) a += s.bars;
       if (b > s.at) b += s.bars;
