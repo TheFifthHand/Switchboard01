@@ -24,6 +24,7 @@
  * loading another project.
  */
 import { applyPatches, enablePatches, freeze, produce, produceWithPatches, type Draft, type Patch as ImmerPatch } from 'immer';
+import { invertShifts, type TimeShift } from '../project/arrangement';
 import type { Project } from '../project/types';
 import { createStore, type Listener, type ReadableStore, type Store } from './store';
 
@@ -49,6 +50,12 @@ export interface ApplyOptions {
    * names the step); a gesture keeps the words of its first edit.
    */
   display?: string;
+  /**
+   * How the edit moved the song's time line (bars inserted or taken out), for
+   * listeners that keep a place in the song (the repeat range). Undo reports
+   * the shifts reversed, Redo as they were.
+   */
+  time?: readonly TimeShift[];
 }
 
 export interface ApplyResult {
@@ -72,6 +79,8 @@ export interface ChangeInfo {
   kind: 'edit' | 'undo' | 'redo' | 'other';
   /** The history entry the change belongs to (null for 'other'). */
   entryId: number | null;
+  /** How this change moved the song's time line (ApplyOptions.time; reversed for an undo). */
+  time?: readonly TimeShift[];
 }
 
 export interface HistoryEntry {
@@ -83,6 +92,8 @@ export interface HistoryEntry {
   gesture?: string;
   patches: ImmerPatch[];
   inverse: ImmerPatch[];
+  /** How the step moved the song's time line (ApplyOptions.time), in order. */
+  time?: TimeShift[];
   /**
    * The state before this step, kept only while its gesture is still open, so
    * a gesture that ends where it started leaves no step behind.
@@ -261,6 +272,7 @@ export class ProjectStore implements ReadableStore<Project> {
         top.patches.push(...patches);
         // Inverses run newest-first.
         top.inverse = [...inverse, ...top.inverse];
+        if (opts.time?.length) top.time = [...(top.time ?? []), ...opts.time];
         // A gesture back where it started leaves no undo step (its next edit starts a new one).
         if (!inGroup && top.base && netUnchanged(top, top.base, next)) {
           this.undoStack.pop();
@@ -270,6 +282,7 @@ export class ProjectStore implements ReadableStore<Project> {
         if (top) delete top.base;
         const entry: HistoryEntry = { id: nextEntryId(), label: this.group?.label ?? label, gesture: opts.gesture, patches, inverse };
         if (opts.display !== undefined && !this.group) entry.display = opts.display;
+        if (opts.time?.length) entry.time = [...opts.time];
         if (opts.gesture !== undefined && !this.group) entry.base = base;
         this.undoStack.push(entry);
         if (this.group) {
@@ -284,6 +297,7 @@ export class ProjectStore implements ReadableStore<Project> {
       this.redoStack = [];
     }
     this.change = entryId === null ? { kind: 'other', entryId: null } : { kind: 'edit', entryId };
+    if (opts.time?.length) this.change.time = opts.time;
     this.commit(next);
     // No undo step left for this edit: a message about it must not offer Undo (that would undo an older step).
     return undone ? { changed: true, noStep: true } : { changed: true };
@@ -372,7 +386,7 @@ export class ProjectStore implements ReadableStore<Project> {
     this.undoStack.pop();
     this.redoStack.push(entry);
     this.openGesture = null;
-    this.change = { kind: 'undo', entryId: entry.id };
+    this.change = { kind: 'undo', entryId: entry.id, ...(entry.time ? { time: invertShifts(entry.time) } : {}) };
     this.commit(applyPatches(this.store.getState(), entry.inverse));
     return { changed: true };
   }
@@ -384,7 +398,7 @@ export class ProjectStore implements ReadableStore<Project> {
     this.redoStack.pop();
     this.undoStack.push(entry);
     this.openGesture = null;
-    this.change = { kind: 'redo', entryId: entry.id };
+    this.change = { kind: 'redo', entryId: entry.id, ...(entry.time ? { time: entry.time } : {}) };
     this.commit(applyPatches(this.store.getState(), entry.patches));
     return { changed: true };
   }

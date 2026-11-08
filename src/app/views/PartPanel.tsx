@@ -422,9 +422,12 @@ export function PartPanel() {
               {status}
             </span>
           </div>
-          <Button size="sm" variant="ghost" icon="sliders" onClick={() => setView('shape')} tip="Open the Shape view: every sound setting and effect of this part.">
-            Shape
-          </Button>
+          {/* Simple shows Play as the Jam pads sheet: nothing in it leads to another sheet. */}
+          {advanced && (
+            <Button size="sm" variant="ghost" icon="sliders" onClick={() => setView('shape')} tip="Open the Shape view: every sound setting and effect of this part.">
+              Shape
+            </Button>
+          )}
         </div>
 
         <div className={styles.mix} role="group" aria-label={`${header.name}: mute, solo and volume`}>

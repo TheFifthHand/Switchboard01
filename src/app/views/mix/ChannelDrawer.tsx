@@ -39,6 +39,8 @@ const QUICK: readonly { type: ModuleType; words: string; tip: string }[] = [
 export function ChannelDrawer(props: { className?: string }) {
   const { open, seq } = useChannelDrawer();
   const selected = useUi((s) => s.selectedTrackId);
+  // Simple shows Mix as a sheet: nothing in it leads to another sheet (Every setting opens from the song's Sound panel).
+  const advanced = useUi((s) => s.uiMode === 'advanced');
   const trackId = useProject<Id | null>((p) => (p.tracks.some((t) => t.id === selected) ? selected : (p.tracks[0]?.id ?? null)));
   const index = useProject((p) => p.tracks.findIndex((t) => t.id === trackId));
   const name = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
@@ -107,9 +109,11 @@ export function ChannelDrawer(props: { className?: string }) {
               {q.words}
             </Button>
           ))}
-          <Button size="sm" variant="ghost" icon="sliders" onClick={openInShape} tip={`Open ${name} in Shape: its instrument, big knobs and effects together.`}>
-            Open in Shape
-          </Button>
+          {advanced && (
+            <Button size="sm" variant="ghost" icon="sliders" onClick={openInShape} tip={`Open ${name} in Shape: its instrument, big knobs and effects together.`}>
+              Open in Shape
+            </Button>
+          )}
         </div>
         {why && (
           <p id={noteId} className={styles.note} role="note" data-testid="channel-drawer-note">

@@ -21,7 +21,7 @@
  */
 import { useCallback, useState } from 'react';
 import { Button, IconButton, useRafLoop } from '../../../ui/components';
-import { regionEnd, sectionAt, sectionToGrow, songBars, sortSections } from '../../../project/arrangement';
+import { mainSection, partPlace, regionEnd, sectionAt, songBars, sortSections } from '../../../project/arrangement';
 import type { Id, Project, SongSection } from '../../../project/types';
 import { useStore } from '../../../state/store';
 import { selectTrack } from '../../../state/uiStore';
@@ -29,6 +29,7 @@ import { session, useProject } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { songPlayheadBar, useSongPlaying } from '../../songPlayback';
 import { MenuHeader, MenuItem, Popover, LOCKED_REASON, anchorFromElement, useEditLocked, type MenuAnchor } from '../ClipMenu';
+import { editorStore, openLoopEditor } from './editorStore';
 import { browserTabStore } from './LoopBrowser';
 import { LaneIcon } from './laneIcons';
 import { LaneMenuItem } from './SongMenus';
@@ -46,6 +47,11 @@ const selectHasRegions = (p: Project) => p.arrangement.regions.length > 0;
 const selectSections = (p: Project) => p.arrangement.sections;
 const selectSeconds = (p: Project) => Math.round(songSeconds(p));
 const selectClock = (p: Project) => songClock(p);
+/** What Make it longer names: the main part it repeats, and the part a new one goes after. */
+const selectGrowNames = (p: Project) => {
+  const main = mainSection(p);
+  return { main: main?.name ?? null, after: main ? partPlace(p, main).name : null };
+};
 
 /** The whole bar the playhead is in (live while the song plays, else where Play starts). */
 function usePlayheadBar(): number {
@@ -68,6 +74,16 @@ function repeatRange(sections: readonly SongSection[], bar: number, length: numb
   return length > 0 ? { fromBar: 0, toBar: length, name: null } : null;
 }
 
+/** What the repeat plays, in words: a section's name, "Verse to Chorus" for a run of them, the whole song, else part of it. */
+function repeatName(sections: readonly SongSection[], loop: { fromBar: number; toBar: number }, length: number): string {
+  // As the repeat follows edits (followSongLoop): the whole song first, then whole sections.
+  if (loop.fromBar === 0 && loop.toBar >= length) return 'the whole song';
+  const first = sections.find((s) => s.start === loop.fromBar);
+  const last = sections.find((s) => regionEnd(s) === loop.toBar);
+  if (first && last && first.start <= last.start) return first.id === last.id ? first.name : `${first.name} to ${last.name}`;
+  return 'part of the song';
+}
+
 export interface SongHomeHeaderProps {
   handle: TimelineHandle | null;
   browserOpen: boolean;
@@ -88,7 +104,7 @@ export function SongHomeHeader({ handle, browserOpen, onBrowser, folded, onUnfol
   const bar = usePlayheadBar();
   const length = useProject(songBars);
   const here = repeatRange(sections, bar, length);
-  const loopName = loop ? (sections.find((s) => s.start === loop.fromBar && regionEnd(s) === loop.toBar)?.name ?? (loop.fromBar === 0 && loop.toBar >= length ? 'the whole song' : 'part of the song')) : null;
+  const loopName = loop ? repeatName(sections, loop, length) : null;
   const [longer, setLonger] = useState<MenuAnchor | null>(null);
   const [add, setAdd] = useState<MenuAnchor | null>(null);
 
@@ -167,7 +183,7 @@ export function SongHomeHeader({ handle, browserOpen, onBrowser, folded, onUnfol
           Show the song
         </Button>
       )}
-      {longer && <LongerMenu anchor={longer} bar={bar} onClose={() => setLonger(null)} />}
+      {longer && <LongerMenu anchor={longer} onClose={() => setLonger(null)} onDone={() => handle?.fit()} />}
       <span className={styles.srOnly} role="status" aria-live="polite" data-testid="lane-status">
         {status}
       </span>
@@ -176,30 +192,31 @@ export function SongHomeHeader({ handle, browserOpen, onBrowser, folded, onUnfol
 }
 
 /** Make it longer ▾ (each item unavailable, with the reason, while there is no music to make it from). */
-function LongerMenu({ anchor, bar, onClose }: { anchor: MenuAnchor; bar: number; onClose(): void }) {
+function LongerMenu({ anchor, onClose, onDone }: { anchor: MenuAnchor; onClose(): void; onDone(): void }) {
   const locked = useEditLocked();
   const hasRegions = useProject(selectHasRegions);
-  const sections = useProject(selectSections);
   const reason = locked ? LOCKED_REASON : !hasRegions ? 'Put some music in first' : undefined;
-  const part = sectionToGrow(sections, bar)?.name ?? null;
-  const run = (fn: () => void) => () => {
+  // The song's main part (the most music), whatever the playhead is on; null while no section names it.
+  const names = useProject(selectGrowNames, (a, b) => a.main === b.main && a.after === b.after);
+  const part = names.main;
+  const run = (fn: () => unknown) => () => {
     onClose();
-    fn();
+    if (fn()) onDone();
   };
   return (
     <Popover anchor={anchor} label="Make it longer" onClose={onClose} align="end" ignore={document.querySelector('[data-testid="make-longer"]')}>
       <MenuHeader eyebrow="Your song" title="Make it longer" />
-      <LaneMenuItem icon="intro" disabled={!!reason} disabledReason={reason} onSelect={run(() => addIntroNow({ plain: true }))}>
+      <LaneMenuItem icon="intro" disabled={!!reason} disabledReason={reason} onSelect={run(() => addIntroNow({ plain: true })?.changed)}>
         Add an intro
       </LaneMenuItem>
-      <LaneMenuItem icon="ending" disabled={!!reason} disabledReason={reason} onSelect={run(() => addEndingNow({ plain: true }))}>
+      <LaneMenuItem icon="ending" disabled={!!reason} disabledReason={reason} onSelect={run(() => addEndingNow({ plain: true })?.changed)}>
         Add an ending
       </LaneMenuItem>
-      <LaneMenuItem icon="loop" disabled={!!reason} disabledReason={reason} onSelect={run(() => growSongNow('again', bar))}>
+      <LaneMenuItem icon="loop" disabled={!!reason} disabledReason={reason} onSelect={run(() => growSongNow('again')?.changed)}>
         {part ? `Repeat ${part} again` : 'Repeat it all again'}
       </LaneMenuItem>
-      <LaneMenuItem icon="layers" disabled={!!reason} disabledReason={reason} onSelect={run(() => growSongNow('after', bar))}>
-        {part ? `Add a part after ${part}` : 'Add a part after it'}
+      <LaneMenuItem icon="layers" disabled={!!reason} disabledReason={reason} onSelect={run(() => growSongNow('after')?.changed)}>
+        {names.after ? `Add a part after ${names.after}` : 'Add a part after it'}
       </LaneMenuItem>
     </Popover>
   );
@@ -241,6 +258,8 @@ function AddInstrumentButton({
       notify(`Added ${t.name}: its row is ready. Choose its sound on the right, then press Record to play into it.`);
       return;
     }
+    // The editor, when it is open, follows the instrument just added (its loop, ready to change).
+    if (editorStore.getState() && r.regionId) openLoopEditor(session.store.getState(), r.regionId);
     // LOOPS shows this kind of instrument's loops, to try others.
     closeSound();
     browserTabStore.setState({ projectId, tab: 'library' });

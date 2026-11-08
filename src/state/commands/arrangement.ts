@@ -36,7 +36,10 @@ import {
   rowBars,
   sceneRegions,
   sectionRegions,
-  sectionToGrow,
+  mainSection,
+  sectionAt,
+  partPlace,
+  unlabelledMusic,
   songBars,
   timelineBars,
   sortRegions,
@@ -47,6 +50,7 @@ import {
   swapRegionClip,
   type Edge,
   type NewId,
+  type TimeShift,
 } from '../../project/arrangement';
 import { cloneClip, cloneClipWithNewIds } from '../../project/clone';
 import { clipById } from '../../project/clips';
@@ -176,6 +180,8 @@ interface SongChange {
   regions?: SongRegion[];
   sections?: SongSection[];
   tailSeconds?: number;
+  /** How the edit moves the song's time line (bars inserted or taken out; see TimeShift). */
+  time?: TimeShift[];
 }
 
 /**
@@ -199,7 +205,7 @@ function commit(store: ProjectStore, p: Project, label: string, display: string,
       if (tail !== null) d.arrangement.tailSeconds = tail;
     },
     gesture,
-    { display },
+    { display, time: change.time },
   );
 }
 
@@ -587,6 +593,49 @@ export function setRegionClip(store: ProjectStore, id: Id, clipId: Id): SongEdit
   return edited(r, { ids: [id] });
 }
 
+/**
+ * Simple: a loop of the song that got longer (a ready-made loop or beat put
+ * in it) is heard through, not cut short. Every region that plays it from
+ * its start and is shorter than one pass now plays one pass, as far as its
+ * section reaches (with no section: up to the next loop on its row). In a
+ * song with no sections yet, the last loop on each other row that plays
+ * with it grows to the same end (its loop repeats), so the instruments keep
+ * playing together. One undo step (the caller may group
+ * it with the loop change); `ids`: the regions that grew.
+ */
+export function fitSongToLoop(store: ProjectStore, trackId: Id, clipId: Id): SongEditResult {
+  const p = store.getState();
+  const t = p.tracks.find((x) => x.id === trackId);
+  const clip = t ? clipById(t, clipId) : null;
+  if (!t || !clip) return NOT_FOUND('loop');
+  const sections = sortSections(p.arrangement.sections);
+  const regions = p.arrangement.regions;
+  /** The first bar after `r` its row has music again (or the end of the song's range). */
+  const rowFree = (r: SongRegion) => Math.min(MAX_SONG_BARS, ...regions.filter((q) => q.trackId === r.trackId && q.id !== r.id && q.start >= regionEnd(r)).map((q) => q.start));
+  const reach = (r: SongRegion) => {
+    const s = sectionAt(sections, r.start);
+    return Math.min(rowFree(r), s ? Math.max(regionEnd(r), regionEnd(s)) : MAX_SONG_BARS);
+  };
+  const grow = new Map<Id, number>();
+  for (const r of regions) {
+    if (r.trackId !== trackId || r.clipId !== clipId || r.offset !== 0 || r.bars >= clip.bars) continue;
+    const end = Math.min(r.start + clip.bars, reach(r));
+    if (end <= regionEnd(r)) continue;
+    grow.set(r.id, end - r.start);
+    if (sections.length) continue;
+    // No sections yet: the other instruments playing with it (the last loop on their rows) carry on with it.
+    for (const q of regions) {
+      if (q.trackId === trackId || grow.has(q.id) || q.start >= regionEnd(r) || regionEnd(q) <= r.start || regionEnd(q) >= end) continue;
+      if (rowFree(q) < MAX_SONG_BARS) continue;
+      grow.set(q.id, end - q.start);
+    }
+  }
+  if (!grow.size) return { changed: false };
+  const next = regions.map((r) => (grow.has(r.id) ? { ...r, bars: grow.get(r.id)! } : r));
+  const r = commit(store, p, 'arrange:Resize loops', `Play ${clip.name} through`, { regions: next });
+  return edited(r, { ids: [...grow.keys()] });
+}
+
 /* ------------------------------------------------------------------ */
 /* Time: insert and remove bars                                        */
 /* ------------------------------------------------------------------ */
@@ -605,7 +654,7 @@ export function insertBars(store: ProjectStore, at: number, bars: number): SongE
   if (end + bars > MAX_SONG_BARS) return refuse('limit', `There is no room for ${barsText(bars)} more: ${TOO_LONG}`);
   const te = insertTime(p, p.arrangement.regions, p.arrangement.sections, at, bars, newRegionId);
   const split = p.arrangement.regions.filter((r) => r.start < at && at < regionEnd(r)).length;
-  const r = commit(store, p, 'arrange:Insert bars', `Insert ${barsText(bars)}`, te);
+  const r = commit(store, p, 'arrange:Insert bars', `Insert ${barsText(bars)}`, { ...te, time: [{ at, bars }] });
   return edited(r, { trimmed: split });
 }
 
@@ -620,7 +669,7 @@ export function removeBars(store: ProjectStore, from: number, to: number): SongE
   if (!isInt(from) || !isInt(to) || from < 0 || to <= from) return refuse('invalid', 'Remove whole bars: pick where they start and end.');
   if (from >= timelineBars(p)) return refuse('empty', 'There is nothing there to remove.');
   const te = removeTime(p, p.arrangement.regions, p.arrangement.sections, from, to, newRegionId);
-  const r = commit(store, p, 'arrange:Remove bars', `Remove ${barsText(to - from)}`, te);
+  const r = commit(store, p, 'arrange:Remove bars', `Remove ${barsText(to - from)}`, { ...te, time: [{ at: from, bars: from - to }] });
   return edited(r, gapChanges(p.arrangement.regions, from, to));
 }
 
@@ -727,7 +776,13 @@ export function reorderSection(store: ProjectStore, id: Id, before: Id | null, o
   const res = reorderPure(p, p.arrangement.regions, p.arrangement.sections, id, before, newRegionId);
   if (!res) return { changed: false };
   const display = opts.display ?? (other ? `Move ${s.name} before ${other.name}` : `Move ${s.name} to the end`);
-  const r = commit(store, p, 'arrange:Move section', display, { regions: res.regions, sections: res.sections });
+  // As time: the section's bars go, then come back at their new place.
+  const target = res.sections.find((x) => x.id === id)!.start;
+  const time: TimeShift[] = [
+    { at: s.start, bars: -s.bars },
+    { at: target, bars: s.bars },
+  ];
+  const r = commit(store, p, 'arrange:Move section', display, { regions: res.regions, sections: res.sections, time });
   return edited(r, { sectionId: id, ids: res.moved.map((x) => x.id) });
 }
 
@@ -763,7 +818,7 @@ export function duplicateSection(store: ProjectStore, id: Id): SongEditResult & 
   if (!s) return NOT_FOUND('section');
   if (timelineBars(p) + s.bars > MAX_SONG_BARS) return refuse('limit', `There is no room to play ${s.name} twice: ${TOO_LONG}`);
   const res = playAgain(p, p.arrangement.regions, p.arrangement.sections, s, { name: s.name, moves: copyMoves(s.moves) });
-  const r = commit(store, p, 'arrange:Duplicate section', `Duplicate ${s.name}`, { regions: res.regions, sections: res.sections });
+  const r = commit(store, p, 'arrange:Duplicate section', `Duplicate ${s.name}`, { regions: res.regions, sections: res.sections, time: [{ at: regionEnd(s), bars: s.bars }] });
   return edited(r, { ids: res.copies.map((x) => x.id), sectionId: res.section.id });
 }
 
@@ -771,6 +826,8 @@ export function duplicateSection(store: ProjectStore, id: Id): SongEditResult & 
  * Section `s` played again right after itself: its length is inserted after
  * it (insertTime) and a new section `name` fills those bars with a copy of
  * what plays in `s` (the part of every region inside it, in the same phase).
+ * `at` (at or after the end of `s`, on a section line): play the copy there
+ * instead, after the sections between.
  */
 function playAgain(
   p: Project,
@@ -778,52 +835,98 @@ function playAgain(
   sections: readonly SongSection[],
   s: SongSection,
   copy: { name: string; moves?: SongMove[] },
+  at = regionEnd(s),
 ): { regions: SongRegion[]; sections: SongSection[]; copies: SongRegion[]; section: SongSection } {
   const end = regionEnd(s);
-  const te = insertTime(p, regions, sections, end, s.bars, newRegionId);
+  const te = insertTime(p, regions, sections, at, s.bars, newRegionId);
   const copies: SongRegion[] = [];
   for (const r of te.regions) {
     if (regionEnd(r) <= s.start || r.start >= end) continue;
     const from = Math.max(r.start, s.start);
-    copies.push({ ...r, id: newRegionId(), start: from + s.bars, bars: Math.min(regionEnd(r), end) - from, offset: clipBarAt(r, clipBarsOf(p, r), from) });
+    copies.push({ ...r, id: newRegionId(), start: at + (from - s.start), bars: Math.min(regionEnd(r), end) - from, offset: clipBarAt(r, clipBarsOf(p, r), from) });
   }
   const placed = placeRegions(p, te.regions, copies, { newId: newRegionId }).regions;
-  const section = withMoves({ id: newSectionId(), name: copy.name, start: end, bars: s.bars }, copy.moves);
+  const section = withMoves({ id: newSectionId(), name: copy.name, start: at, bars: s.bars }, copy.moves);
   return { regions: placed, sections: placeSection(te.sections, section), copies, section };
 }
 
-/** What "Make it longer" does with the part of the song at the playhead. */
+/** A part of the song "Make it longer" makes is at least this long (16 seconds at 120 BPM). */
+export const MIN_PART_BARS = 8;
+
+/**
+ * Simple's song, named before it grows (pure apart from new ids): music no
+ * section covers gets one, with the next plain name (Verse, Chorus…). A song
+ * with no sections at all is one part; with `fill` it is played again until
+ * it lasts MIN_PART_BARS or more (a 1-bar beat becomes 8 bars of it), so
+ * what is built from it is a real song, not a row of 2-second blocks.
+ * `time`: the bars that were added (TimeShift).
+ */
+function labelMusic(p: Project, opts: { fill?: boolean } = {}): { regions: SongRegion[]; sections: SongSection[]; time: TimeShift[] } {
+  let regions = p.arrangement.regions;
+  let sections = p.arrangement.sections;
+  const time: TimeShift[] = [];
+  if (!sections.length) {
+    const span = spanOf(regions);
+    if (!span) return { regions: [...regions], sections: [...sections], time };
+    const len = span[1] - span[0];
+    const s: SongSection = { id: newSectionId(), name: nextPartName(sections), start: span[0], bars: len };
+    sections = placeSection(sections, s);
+    const times = opts.fill ? Math.ceil(MIN_PART_BARS / len) : 1;
+    if (times > 1 && span[0] + len * times <= MAX_SONG_BARS) {
+      // The music played again after itself, in the same phase, under the one name.
+      const te = insertTime(p, regions, sections, span[1], len * (times - 1), newRegionId);
+      const copies: SongRegion[] = [];
+      for (let k = 1; k < times; k++) {
+        for (const r of te.regions) {
+          if (regionEnd(r) <= span[0] || r.start >= span[1]) continue;
+          copies.push({ ...r, id: newRegionId(), start: r.start + k * len });
+        }
+      }
+      regions = mergeTouching(p, placeRegions(p, te.regions, copies, { newId: newRegionId }).regions);
+      sections = placeSection(te.sections, { ...s, bars: len * times });
+      time.push({ at: span[1], bars: len * (times - 1) });
+    }
+    return { regions: [...regions], sections: [...sections], time };
+  }
+  for (const [from, to] of unlabelledMusic(p)) sections = placeSection(sections, { id: newSectionId(), name: nextPartName(sections), start: from, bars: to - from });
+  return { regions: [...regions], sections: [...sections], time };
+}
+
+/** What "Make it longer" does with the song's main part. */
 export type GrowKind = 'again' | 'after';
 
 /**
- * "Make it longer" in the Song screen: the part of the song at bar `bar`
- * (sectionToGrow; a song with music but no sections first gets one over all
- * of it, named Verse) plays again right after itself, as duplicateSection
- * does. 'again' keeps its name ("Repeat Groove again"); 'after' names the new
- * part with the next plain name no section has (Verse, Chorus, Bridge,
- * Verse 2…: nextPartName) and starts it without the original's song moves,
- * so a growing song never has two new parts called the same. Refused while
- * the song has no music, or when it would pass MAX_SONG_BARS. One undo step;
- * `sectionId`: the new part, `ids`: its loops, `from`: the part it repeats.
+ * "Make it longer" in the Song screen, built from the song's main part (the
+ * section with the most music, mainSection; music without a section is
+ * named first, labelMusic, in the same step):
+ * - 'again' ("Repeat Verse again"): it plays again right after itself, under
+ *   its own name and with its song moves, as duplicateSection does;
+ * - 'after' ("Add a part after Chorus"): a new part with the main part's
+ *   music and the next plain name no section has (Verse, Chorus, Bridge,
+ *   Verse 2…: nextPartName), without song moves, after the last part that
+ *   plays as much (partPlace): after the other main parts and before an
+ *   ending, so the names run in order.
+ * Refused while the song has no music, or when it would pass MAX_SONG_BARS.
+ * One undo step; `sectionId`: the new part, `ids`: its loops, `from`: the
+ * part it repeats, `name`: the new part's, `after`: the part it follows.
  */
-export function growSong(store: ProjectStore, bar: number, kind: GrowKind): SongEditResult & { sectionId?: Id; from?: string; name?: string } {
+export function growSong(store: ProjectStore, kind: GrowKind): SongEditResult & { sectionId?: Id; from?: string; name?: string; after?: string } {
   const p = store.getState();
-  if (!isFiniteNumber(bar)) return refuse('invalid', 'Choose a bar in the song.');
   if (kind !== 'again' && kind !== 'after') return refuse('invalid', 'Repeat the part again, or add a part after it.');
-  const span = spanOf(p.arrangement.regions);
-  if (!span) return refuse('empty', 'The song has no music yet: add some loops first.');
-  let sections = p.arrangement.sections;
-  let s = sectionToGrow(sections, bar);
-  if (!s) {
-    s = { id: newSectionId(), name: nextPartName(sections), start: span[0], bars: span[1] - span[0] };
-    sections = placeSection(sections, s);
-  }
-  if (timelineBars(p) + s.bars > MAX_SONG_BARS) return refuse('limit', `There is no room to play ${s.name} again: ${TOO_LONG}`);
-  const name = kind === 'again' ? s.name : nextPartName(sections);
-  const res = playAgain(p, p.arrangement.regions, sections, s, { name, moves: kind === 'again' ? copyMoves(s.moves) : undefined });
-  const display = kind === 'again' ? `Repeat ${s.name} again` : `Add ${name} after ${s.name}`;
-  const r = commit(store, p, kind === 'again' ? 'arrange:Repeat a part' : 'arrange:Add a part', display, { regions: res.regions, sections: res.sections });
-  return edited(r, { ids: res.copies.map((x) => x.id), sectionId: res.section.id, from: s.name, name });
+  if (!spanOf(p.arrangement.regions)) return refuse('empty', 'The song has no music yet: add some loops first.');
+  const named = labelMusic(p, { fill: true });
+  const q: Project = { ...p, arrangement: { ...p.arrangement, regions: named.regions, sections: named.sections } };
+  const s = mainSection(q);
+  if (!s) return refuse('empty', 'The song has no music yet: add some loops first.');
+  if (timelineBars(q) + s.bars > MAX_SONG_BARS) return refuse('limit', `There is no room to play ${s.name} again: ${TOO_LONG}`);
+  const after = kind === 'again' ? s : partPlace(q, s);
+  const name = kind === 'again' ? s.name : nextPartName(named.sections);
+  const at = regionEnd(after);
+  const res = playAgain(q, named.regions, named.sections, s, { name, moves: kind === 'again' ? copyMoves(s.moves) : undefined }, at);
+  const display = kind === 'again' ? `Repeat ${s.name} again` : `Add ${name} after ${after.name}`;
+  const time: TimeShift[] = [...named.time, { at, bars: s.bars }];
+  const r = commit(store, p, kind === 'again' ? 'arrange:Repeat a part' : 'arrange:Add a part', display, { regions: res.regions, sections: res.sections, time });
+  return edited(r, { ids: res.copies.map((x) => x.id), sectionId: res.section.id, from: s.name, name, after: after.name });
 }
 
 /**
@@ -838,7 +941,7 @@ export function removeSection(store: ProjectStore, id: Id, opts: { withMusic?: b
   if (!s) return NOT_FOUND('section');
   if (!opts.withMusic) return commit(store, p, 'arrange:Delete section', `Delete ${s.name}`, { sections: p.arrangement.sections.filter((x) => x.id !== id) });
   const te = removeTime(p, p.arrangement.regions, p.arrangement.sections, s.start, regionEnd(s), newRegionId);
-  const r = commit(store, p, 'arrange:Delete section with its music', `Delete ${s.name} and its music`, te);
+  const r = commit(store, p, 'arrange:Delete section with its music', `Delete ${s.name} and its music`, { ...te, time: [{ at: s.start, bars: -s.bars }] });
   return edited(r, gapChanges(p.arrangement.regions, s.start, regionEnd(s)));
 }
 
@@ -1048,12 +1151,22 @@ function edgeClips(p: Project, from: number, to: number, which: 'first' | 'last'
  * clip, one pass per part as 2.2's helpers had it (2 to 4 passes), fewer when
  * that would pass 8 bars and more when it would be under 4.
  */
-function edgeBars(clips: readonly { clip: Clip }[]): number {
+function edgeBars(clips: readonly { clip: Clip }[], least = 4): number {
   const pass = Math.max(1, ...clips.map((c) => c.clip.bars));
   let n = clamp(clips.length, 2, 4);
   while (n > 1 && n * pass > 8) n--;
-  while (n * pass < 4) n++;
+  while (n * pass < least) n++;
   return n * pass;
+}
+
+/**
+ * Simple's "Make it longer" › Add an intro / Add an ending (`plain`): music
+ * without a section is named first and a short song is played again until
+ * it lasts MIN_PART_BARS (labelMusic), and the intro or ending lasts
+ * MIN_PART_BARS or more, in the same step.
+ */
+export interface PlainEdge {
+  plain?: boolean;
 }
 
 /**
@@ -1063,18 +1176,22 @@ function edgeBars(clips: readonly { clip: Clip }[]): number {
  * named Intro. The song moves later to make room. One undo step;
  * `sectionId`: the Intro, `ids`: its regions.
  */
-export function addIntro(store: ProjectStore): SongEditResult & { sectionId?: Id } {
-  const p = store.getState();
+export function addIntro(store: ProjectStore, opts: PlainEdge = {}): SongEditResult & { sectionId?: Id } {
+  const was = store.getState();
+  if (!spanOf(was.arrangement.regions)) return refuse('empty', 'The song has no music yet: add some loops first.');
+  const named = opts.plain ? labelMusic(was, { fill: true }) : null;
+  const p: Project = named ? { ...was, arrangement: { ...was.arrangement, regions: named.regions, sections: named.sections } } : was;
   const range = edgeRange(p, 'first');
   if (!range) return refuse('empty', 'The song has no music yet: add some loops first.');
   const clips = edgeClips(p, range[0], range[1], 'first');
-  const bars = edgeBars(clips);
+  const bars = edgeBars(clips, opts.plain ? MIN_PART_BARS : 4);
   if (timelineBars(p) + bars > MAX_SONG_BARS) return refuse('limit', `There is no room for an intro: ${TOO_LONG}`);
   const te = insertTime(p, p.arrangement.regions, p.arrangement.sections, 0, bars, newRegionId);
   const intro: SongRegion[] = clips.map((c) => ({ id: newRegionId(), trackId: c.trackId, clipId: c.clip.id, start: 0, bars, offset: 0 }));
   const shaped = clips.length > 1 ? shapePlan(p, intro, 0, bars, 'build').regions : intro;
   const section: SongSection = { id: newSectionId(), name: uniqueSectionName(te.sections, 'Intro'), start: 0, bars };
-  const r = commit(store, p, 'arrange:Add an intro', 'Add an intro', { regions: sortRegions(p, [...te.regions, ...shaped]), sections: placeSection(te.sections, section) });
+  const time: TimeShift[] = [...(named?.time ?? []), { at: 0, bars }];
+  const r = commit(store, was, 'arrange:Add an intro', 'Add an intro', { regions: sortRegions(p, [...te.regions, ...shaped]), sections: placeSection(te.sections, section), time });
   return edited(r, { ids: shaped.map((x) => x.id), sectionId: section.id });
 }
 
@@ -1085,20 +1202,24 @@ export function addIntro(store: ProjectStore): SongEditResult & { sectionId?: Id
  * ENDING_TAIL_SECONDS so the end rings out. One undo step; `sectionId`: the
  * Ending, `ids`: its regions.
  */
-export function addEnding(store: ProjectStore): SongEditResult & { sectionId?: Id } {
-  const p = store.getState();
+export function addEnding(store: ProjectStore, opts: PlainEdge = {}): SongEditResult & { sectionId?: Id } {
+  const was = store.getState();
+  if (!spanOf(was.arrangement.regions)) return refuse('empty', 'The song has no music yet: add some loops first.');
+  const named = opts.plain ? labelMusic(was, { fill: true }) : null;
+  const p: Project = named ? { ...was, arrangement: { ...was.arrangement, regions: named.regions, sections: named.sections } } : was;
   const range = edgeRange(p, 'last');
   if (!range) return refuse('empty', 'The song has no music yet: add some loops first.');
   const clips = edgeClips(p, range[0], range[1], 'last');
-  const bars = edgeBars(clips);
+  const bars = edgeBars(clips, opts.plain ? MIN_PART_BARS : 4);
   const start = songBars(p);
   if (start + bars > MAX_SONG_BARS) return refuse('limit', `There is no room for an ending: ${TOO_LONG}`);
   const ending: SongRegion[] = clips.map((c) => ({ id: newRegionId(), trackId: c.trackId, clipId: c.clip.id, start, bars, offset: 0 }));
   const shaped = clips.length > 1 ? shapePlan(p, ending, start, start + bars, 'strip').regions : ending;
   const section: SongSection = { id: newSectionId(), name: uniqueSectionName(p.arrangement.sections, 'Ending'), start, bars, moves: [{ id: uid('mv'), kind: 'fadeOut' }] };
   const change: SongChange = { regions: sortRegions(p, [...p.arrangement.regions, ...shaped]), sections: placeSection(p.arrangement.sections, section) };
+  if (named?.time.length) change.time = named.time;
   if (p.arrangement.tailSeconds === 0) change.tailSeconds = ENDING_TAIL_SECONDS;
-  const r = commit(store, p, 'arrange:Add an ending', 'Add an ending', change);
+  const r = commit(store, was, 'arrange:Add an ending', 'Add an ending', change);
   return edited(r, { ids: shaped.map((x) => x.id), sectionId: section.id });
 }
 

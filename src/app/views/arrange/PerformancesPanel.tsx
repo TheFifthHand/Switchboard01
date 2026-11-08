@@ -29,7 +29,7 @@ import { formatParam, type ParamSpec } from '../../../project/params';
 import type { Id, Performance } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { setView } from '../../../state/uiStore';
-import { session, useProject } from '../../instance';
+import { session, useProject, useUi } from '../../instance';
 import { notify, useRuntime } from '../../runtime';
 import { formatSeconds } from '../../session';
 import { eventCounts, formatPosition, parsePosition, performanceRows, performanceSeconds, takeTempoMap, type EventKind, type EventRow } from './perfEvents';
@@ -800,6 +800,8 @@ export function PerformancesPanel(props: PerformancesPanelProps = {}) {
   const openTake = props.openTake !== undefined ? props.openTake : ownTake;
   const setOpenTake = props.onOpenTake ?? setOwnTake;
   const ordered = useMemo(() => [...performances].reverse(), [performances]);
+  // Simple has no Play view to go to (its Jam pads are a sheet behind ⋯): the takes stay on the song.
+  const advanced = useUi((s) => s.uiMode === 'advanced');
   const bodyId = useId();
   const none = performances.length === 0;
   const take = openTake ? performances.find((p) => p.id === openTake) ?? null : null;
@@ -894,9 +896,11 @@ export function PerformancesPanel(props: PerformancesPanelProps = {}) {
                   Press <b>Performance</b> in the transport’s Record group, play pads, keys and knobs, then press it again to keep the take. It shows up here to replay, edit, export or put in the song.
                 </span>
               </div>
-              <Button size="sm" icon="chevronRight" onClick={() => setView('play')} tip="Go to the pads and keyboard to play something to record.">
-                Go to Play
-              </Button>
+              {advanced && (
+                <Button size="sm" icon="chevronRight" onClick={() => setView('play')} tip="Go to the pads and keyboard to play something to record.">
+                  Go to Play
+                </Button>
+              )}
             </div>
           ) : (
             <ul className={styles.list} aria-label="Recorded performances, newest first" data-testid="take-list">

@@ -143,7 +143,8 @@ describe('Make it longer', () => {
       const made = sections().filter((s) => !['sIntro', 'sGroove'].includes(s.id)).map((s) => s.name);
       names.push(made.find((n) => !names.includes(n))!);
       expect(undoCount()).toBe(steps + i + 1);
-      expect(notice()).toMatch(/^Added (Verse|Chorus|Bridge)( 2)? after Groove/);
+      // Each new part plays Groove's music (the main part) and goes after the last of them, so the names run in order.
+      expect(notice()).toMatch(/^Added (Verse|Chorus|Bridge)( 2)? after (Groove|Verse|Chorus|Bridge): it plays the music of Groove/);
     }
     expect(names).toEqual(['Verse', 'Chorus', 'Bridge', 'Verse 2']);
     // Each new part plays the same music as Groove (2 loops, 8 bars each).
@@ -276,14 +277,24 @@ describe('the tip line', () => {
     drumsOnly();
     await settle();
     const tip = () => byTestId('song-tip');
+    // The ready-made song as it opened: try a loop first. The editor opened on one moves the tip on.
+    await settle();
+    expect(tip()!.textContent).toContain('Next: Click a loop to change it');
+    await clickAt(on(regions()[0].id));
+    await settle();
+    act(() => editorStore.setState(null));
+    await settle();
     expect(tip()!.textContent).toContain('Next: Add a bass: + Add instrument');
     setSong([]);
     await settle();
     expect(tip()!.textContent).toContain('Next: Pick a beat from LOOPS on the right');
-    // A short song with a bass: make it longer.
+    // A short song with a bass: chords next, then make it longer.
     const drums = trackId('Drums');
     const bass = trackId('Bass');
     setSong([region('d', drums, clipOf(0, 1).id, 0, 4), region('b', bass, clipOf(2, 1).id, 0, 4)]);
+    await settle();
+    expect(tip()!.textContent).toContain('Next: Add chords');
+    setSong([...regions(), region('c', trackId('Chords'), clipOf(3, 1).id, 0, 4)]);
     await settle();
     expect(tip()!.textContent).toContain('Next: Make it longer');
     setSong(full.regions, full.sections);

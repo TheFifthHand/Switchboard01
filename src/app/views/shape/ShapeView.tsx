@@ -68,14 +68,17 @@ function ShapeHeader(props: { trackId: Id; advanced: boolean }) {
   }, shallowEqual);
   return (
     <div className={styles.header}>
-      <Button
-        className={styles.big}
-        icon="chevronLeft"
-        onClick={() => setView('play')}
-        tip="Go back to the pads to play and record. This part stays selected."
-      >
-        Back to Play
-      </Button>
+      {/* Simple shows this view as a sheet: its bar's "Back to my song" is the way back (there is no Play view). */}
+      {advanced && (
+        <Button
+          className={styles.big}
+          icon="chevronLeft"
+          onClick={() => setView('play')}
+          tip="Go back to the pads to play and record. This part stays selected."
+        >
+          Back to Play
+        </Button>
+      )}
       {info && (
         <h2 className={styles.context}>
           <span className={styles.contextLabel}>Shaping:</span> <span className={`${styles.contextNum} mono`}>{info.num}</span> <span className={styles.contextName}>{info.name}</span>{' '}

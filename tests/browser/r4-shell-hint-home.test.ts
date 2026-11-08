@@ -13,7 +13,7 @@
 import { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HINT_IDS, markHintDone, showHintsAgain, type HintId } from '../../src/app/views/hints/hintsState';
-import { setUiMode, setView, type UiMode } from '../../src/state/uiStore';
+import { setUiMode, type UiMode } from '../../src/state/uiStore';
 import { chipPlaced } from './r4-shell-chip';
 import { button, click, closeShell, openShell, settle, transport, until } from './r4-shell-harness';
 
@@ -56,18 +56,16 @@ function showStep(step: HintId) {
 const home = () => [...document.querySelectorAll<HTMLElement>('main [data-hint-home]')].find((el) => el.getBoundingClientRect().width > 1);
 
 describe('the hint home', () => {
+  // Round 7 fix: the chip is Advanced's only (Simple's Mixer sheet shows none: tests/browser/r7-fix1.test.ts).
   for (const [w, hh, mode] of [
-    [1366, 768, 'simple'],
     [1366, 768, 'advanced'],
-    [1920, 1080, 'simple'],
+    [1920, 1080, 'advanced'],
   ] as const) {
     it(`in Mix at ${w} x ${hh} (${mode}) the chip sits on the mixer header's line, over no control or readout`, async () => {
       await openShell({ width: w, height: hh });
       await click(button('Just look around')!);
       act(() => setUiMode(mode as UiMode));
-      // Round 7: Simple opens the Mixer as a sheet (⋯ › Mixer); Advanced has the Mix tab.
-      if (mode === 'simple') act(() => setView('mix'));
-      else await click(tab('Mix'));
+      await click(tab('Mix'));
       showStep('master');
       await until(() => chip()?.hasAttribute('data-ready'), 'the chip');
       await chipPlaced();

@@ -131,10 +131,11 @@ export function deepEqual(a: unknown, b: unknown): boolean {
  * song is kept consistent with the clips in the same undo step (see
  * keepSongWithClips).
  */
-export function run(store: ProjectStore, label: string, recipe: (d: Project) => void, gesture?: string, opts: { display?: string } = {}): CommandResult {
+export function run(store: ProjectStore, label: string, recipe: (d: Project) => void, gesture?: string, opts: { display?: string; time?: ApplyOptions['time'] } = {}): CommandResult {
   const o: ApplyOptions = {};
   if (gesture !== undefined) o.gesture = gesture;
   if (opts.display !== undefined) o.display = opts.display;
+  if (opts.time?.length) o.time = opts.time;
   return store.apply(
     label,
     (d) => {

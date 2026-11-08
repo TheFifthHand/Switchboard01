@@ -19,7 +19,8 @@ import { useMemo, useState } from 'react';
 import { Button, Icon, Tooltip } from '../../../../ui/components';
 import type { LibraryLoop } from '../../../../content/loops';
 import { uid } from '../../../../project/factory';
-import { clipAtSlot } from '../../../../project/clips';
+import { clipAtSlot, isSongSlot } from '../../../../project/clips';
+import { uiStore } from '../../../../state/uiStore';
 import type { Id } from '../../../../project/types';
 import * as cmd from '../../../../state/commands';
 import { shallowEqual } from '../../../../state/store';
@@ -27,7 +28,7 @@ import { session, useProject } from '../../../instance';
 import { startPreview, stopPreview, usePreviewKey } from '../../../preview';
 import { notify, useRuntime } from '../../../runtime';
 import { MenuHeader, Popover, isEditLocked, LOCKED_TEXT, type MenuAnchor } from '../../ClipMenu';
-import { partProblem, realizeFor, styleName } from './libraryModel';
+import { freshName, partProblem, realizeFor, styleName } from './libraryModel';
 import { fitReadyLoop, readyLoopsFor } from './readyLoops';
 import beat from '../../BeatPicker.module.css';
 import styles from './Library.module.css';
@@ -66,12 +67,30 @@ export function applyReadyLoop(trackId: Id, slot: number, loop: LibraryLoop): bo
   try {
     if (existing.bars !== fit.bars) ok = session.accepted(cmd.setClipBars(store, trackId, slot, fit.bars));
     if (ok) ok = session.accepted(cmd.setClipNotes(store, trackId, slot, fit.notes.map((n) => ({ ...n, id: uid('n') })), words));
+    if (ok) followInSong(trackId, slot, existing.id, loop.name);
   } finally {
     store.endGroup();
   }
   if (!ok) return false;
   lastTry = { trackId, slot, entry: store.undoEntryId() };
   return true;
+}
+
+/**
+ * Simple: a loop of the song that now holds another loop is called by it
+ * (the block reads "Four Chord Pop", not the old name), and the song plays
+ * it through when it got longer (fitSongToLoop). Pad loops and Advanced keep
+ * 2.4's ways (the name stays, the regions keep their length). Runs inside
+ * the caller's undo group.
+ */
+export function followInSong(trackId: Id, slot: number, clipId: Id, name: string): void {
+  if (!isSongSlot(slot) || uiStore.getState().uiMode !== 'simple') return;
+  const store = session.store;
+  const t = store.getState().tracks.find((x) => x.id === trackId);
+  const clip = t ? clipAtSlot(t, slot) : null;
+  if (!t || !clip) return;
+  if (clip.name !== name) session.accepted(cmd.renameClip(store, trackId, slot, freshName(t, name)));
+  session.accepted(cmd.fitSongToLoop(store, trackId, clipId));
 }
 
 /** Forget the last try (another loop opened: its next try is a step of its own). */
