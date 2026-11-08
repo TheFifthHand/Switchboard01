@@ -225,12 +225,12 @@ describe('adding a library loop to the song', () => {
     const before = undoCount();
     const to = { x: barX(2) + 8, y: rowY(bass) };
     await dragTo(centre(libRow('beat-steady-four'), 0.6), to, { release: false });
-    expect(document.querySelector('[data-testid="library-not-here"]')!.textContent).toBe('Needs a drum part');
+    expect(document.querySelector('[data-testid="library-not-here"]')!.textContent).toBe('Drums only');
     expect(dragCursorNow()).toBe('not-allowed');
     await release(to);
     expect(regions()).toEqual([]);
     expect(undoCount()).toBe(before);
-    expect(notice()).toBe('“Steady Four” is a drum loop and Bass plays notes: put it on a drum or percussion part.');
+    expect(notice()).toBe('“Steady Four” is a drum loop and Bass plays notes: put it on a drum or percussion instrument.');
   });
 
   it('Escape while carrying adds nothing', async () => {

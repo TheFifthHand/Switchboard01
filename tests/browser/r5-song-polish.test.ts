@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
 import { ppbStore, selectionStore } from '../../src/app/views/arrange/laneStore';
 import { MIN_PX_PER_BAR } from '../../src/app/views/arrange/songLayout';
+import { clockAt } from '../../src/app/views/arrange/songModel';
 import { songPlayheadBar } from '../../src/app/songPlayback';
 import type { Project } from '../../src/project/types';
 import { uiStore } from '../../src/state/uiStore';
@@ -178,10 +179,12 @@ describe('playing', () => {
     await clickAt({ x: barX(1) + 3, y: rulerY() });
     await press(' ');
     await waitFor(() => rt().playing && rt().mode === 'song', 'the song to play');
-    const toast = () => [...document.querySelectorAll<HTMLElement>('[role="status"]')].find((e) => /Looping bars 9–12/.test(e.textContent ?? ''));
+    // Round 7 (Simple words): the toast names what repeats, never bar numbers.
+    const toast = () => [...document.querySelectorAll<HTMLElement>('[role="status"]')].find((e) => /Repeating the marked stretch/.test(e.textContent ?? ''));
     await waitFor(() => !!toast(), 'the loop toast');
-    expect(toast()!.textContent).toContain('Play starts at the loop');
-    const off = [...toast()!.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Loop off')!;
+    expect(toast()!.textContent).toContain('Play starts there');
+    expect(toast()!.textContent).not.toMatch(/bar/i);
+    const off = [...toast()!.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Stop repeating')!;
     await clickAt(centre(off));
     expect(rt().songLoop).toBeNull();
     expect((songPlayheadBar() ?? 0) >= 8).toBe(true);
@@ -221,6 +224,8 @@ describe('hit areas', () => {
   });
 
   it('a narrow loop band shows its sign, never cut words; a narrow gap shows "+"; there is "+ Add section" after the song; a new section opens for its name', async () => {
+    // 2.4's words (bar numbers in the section strip's labels): Advanced since round 7 (Simple: r7-words-simple).
+    advancedMode();
     await open(8);
     // A one-bar loop at 8 px per bar.
     await dragTo({ x: barX(4) + 2, y: rulerY() }, { x: barX(5) + 2, y: rulerY() });
@@ -259,11 +264,12 @@ describe('drags and menus', () => {
     await open(16);
     const from = centre(sectionEl('S1'), 0.4);
     await dragTo(from, { x: from.x + 4 * ppb(), y: from.y }, { release: false, modifiers: 1 });
-    const badge = () => [...document.querySelectorAll<HTMLElement>('[role="status"]')].find((e) => /Bar \d+$/.test(e.textContent ?? ''));
-    expect(badge()?.textContent).toBe('Bar 5');
+    // Round 7 (Simple words): the place is a time, never a bar number.
+    const badge = () => [...document.querySelectorAll<HTMLElement>('[role="status"]')].find((e) => /At \d+:\d\d$/.test(e.textContent ?? ''));
+    expect(badge()?.textContent).toBe(`At ${clockAt(4, project().bpm)}`);
     await press('Escape');
     await dragTo(from, { x: from.x + 64 * ppb(), y: from.y }, { release: false, modifiers: 2 });
-    expect(badge()?.textContent).toMatch(/^\+ Copy · Bar \d+$/);
+    expect(badge()?.textContent).toMatch(/^\+ Copy · At \d+:\d\d$/);
     await press('Escape');
   });
 
@@ -274,7 +280,7 @@ describe('drags and menus', () => {
       p.arrangement.sections = [];
     });
     await rightClickAt(on('D', 0.4));
-    await clickAt(centre(menuItem('Name these bars as a section')));
+    await clickAt(centre(menuItem('Name it as a section')));
     await settle(120);
     const field = document.querySelector<HTMLInputElement>('input[aria-label^="Name of the section"]');
     expect(field).not.toBeNull();

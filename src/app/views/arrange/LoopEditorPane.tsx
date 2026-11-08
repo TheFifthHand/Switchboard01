@@ -79,6 +79,7 @@ import {
   type EditorTarget,
 } from './editorStore';
 import { ReadyLoops } from './library/ReadyLoops';
+import { instrumentName } from './songHome';
 import { readyLoopsFor } from './library/readyLoops';
 import { selectionStore, setSelection } from './laneStore';
 import styles from './LoopEditorPane.module.css';
@@ -200,8 +201,10 @@ function Pane({ trackId, clipId, regionId, slot, focusAsk }: { trackId: Id; clip
   const follow = useUi((s) => s.stepsFollow);
   const gridName = useUi((s) => s.stepGrid);
   const storedPage = useUi((s) => stepPageFor(s, trackId));
-  const [name, kind, kitId, role] = track.split('\u0001') as [string, string, string, TrackRole];
+  const [given, kind, kitId, role] = track.split('\u0001') as [string, string, string, TrackRole];
   const advanced = useUi((s) => s.uiMode === 'advanced');
+  // Simple calls the instrument by the picker's word when it has 2.4's default name (Lead → Melody).
+  const name = advanced ? given : instrumentName(given, role);
   const mode = useStore(editorModeStore, (s) => s);
   const bpm = useProject((p) => p.bpm);
   const recHere = useRuntime((s) => recordingInto(s, trackId, slot));

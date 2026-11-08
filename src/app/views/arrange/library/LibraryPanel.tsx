@@ -22,12 +22,13 @@ import type { LibraryLoop, LoopRole } from '../../../../content/loops';
 import { TICKS_PER_BAR, type Id, type Project } from '../../../../project/types';
 import { createStore, useStore } from '../../../../state/store';
 import { uiStore } from '../../../../state/uiStore';
-import { session, useProject } from '../../../instance';
+import { session, useProject, useUi } from '../../../instance';
 import { startPreview, stopPreview, usePreviewKey } from '../../../preview';
 import { useRuntime } from '../../../runtime';
 import type { Carry } from '../laneController';
 import { addLibraryLoopHere } from '../songActions';
 import { barsText, partHue } from '../songModel';
+import { INSTRUMENT_KINDS, shortOrLong } from '../songHome';
 import { LIBRARY_PAGE, PART_CHIPS, libraryResults, loopRoleOf, loopTarget, realizeFor, styleChips, styleName, type LibraryQuery } from './libraryModel';
 import styles from './Library.module.css';
 
@@ -62,7 +63,7 @@ function targetOf(p: Project, loop: LibraryLoop, selected: Id | null): Target | 
   const i = p.tracks.findIndex((x) => x.id === t.trackId);
   const track = p.tracks[i];
   const anySolo = p.tracks.some((x) => x.solo);
-  const quiet = track.mute ? `${track.name} is muted: unmute it to hear this loop` : anySolo && !track.solo ? `Another part is soloed: ${track.name} is not heard` : null;
+  const quiet = track.mute ? `${track.name} is muted: unmute it to hear this loop` : anySolo && !track.solo ? `${track.name} is not heard: another instrument plays alone` : null;
   return { trackId: track.id, name: track.name, hue: partHue(i), quiet };
 }
 
@@ -97,6 +98,8 @@ export const LibraryPanel = memo(function LibraryPanel({ playheadBar, onCarry }:
   useEffect(() => setShown(LIBRARY_PAGE), [q.text, q.role, q.genre]);
   // Stop hearing a loop when the library goes away.
   useEffect(() => () => stopPreview(), []);
+  // Simple speaks of instruments, never parts or bars.
+  const simple = useUi((s) => s.uiMode === 'simple');
   const results = useMemo(() => libraryResults(q), [q.text, q.role, q.genre]);
   const styleList = useMemo(() => styleChips(q.role), [q.role]);
   const visible = results.slice(0, shown);
@@ -140,14 +143,14 @@ export const LibraryPanel = memo(function LibraryPanel({ playheadBar, onCarry }:
           data-testid="library-search"
         />
       </label>
-      <div className={styles.chipGroup} role="group" aria-label="Part">
+      <div className={styles.chipGroup} role="group" aria-label={simple ? 'Instrument' : 'Part'}>
         <span className={styles.chipLabel} aria-hidden="true">
-          Part
+          {simple ? 'Instrument' : 'Part'}
         </span>
         {PART_CHIPS.map((c) => (
           <button key={c.role} type="button" className={styles.filter} aria-pressed={q.role === c.role} data-role-chip={c.role} onClick={() => chooseRole(c.role)}>
             {q.role === c.role && <Icon name="check" size={10} />}
-            {c.name}
+            {simple ? INSTRUMENT_KINDS[c.role].name : c.name}
           </button>
         ))}
       </div>
@@ -168,14 +171,14 @@ export const LibraryPanel = memo(function LibraryPanel({ playheadBar, onCarry }:
         ) : null}
       </div>
       <p className={styles.count} role="status" data-testid="library-count">
-        {results.length === 0 ? 'No loops match.' : `${results.length === 1 ? '1 loop' : `${results.length} loops`} · drag onto a part, or press Enter`}
+        {results.length === 0 ? 'No loops match.' : `${results.length === 1 ? '1 loop' : `${results.length} loops`} · drag onto ${simple ? 'an instrument' : 'a part'}, or press Enter`}
       </p>
       {results.length === 0 && (
         <button type="button" className={styles.more} onClick={() => libraryQueryStore.setState({ text: '', role: null, genre: null })}>
           Show every loop
         </button>
       )}
-      <LibraryRows loops={visible} onRowKey={onRowKey} onCarry={onCarry} />
+      <LibraryRows loops={visible} onRowKey={onRowKey} onCarry={onCarry} simple={simple} />
       {results.length > shown && (
         <button type="button" className={styles.more} onClick={() => setShown((n) => n + LIBRARY_PAGE)} data-testid="library-more">
           Show {Math.min(LIBRARY_PAGE, results.length - shown)} more
@@ -185,7 +188,7 @@ export const LibraryPanel = memo(function LibraryPanel({ playheadBar, onCarry }:
   );
 });
 
-function LibraryRows({ loops, onRowKey, onCarry }: { loops: readonly LibraryLoop[]; onRowKey(e: KeyboardEvent<HTMLLIElement>, loop: LibraryLoop): void; onCarry: LibraryPanelProps['onCarry'] }) {
+function LibraryRows({ loops, onRowKey, onCarry, simple }: { loops: readonly LibraryLoop[]; onRowKey(e: KeyboardEvent<HTMLLIElement>, loop: LibraryLoop): void; onCarry: LibraryPanelProps['onCarry']; simple: boolean }) {
   // The rows follow the parts, the key and the selection (where Enter puts a loop and ▶ plays it).
   const p = useProject((x) => x);
   const selected = useStore(uiStore, (s) => s.selectedTrackId);
@@ -199,7 +202,8 @@ function LibraryRows({ loops, onRowKey, onCarry }: { loops: readonly LibraryLoop
         const notes = ok ? notesFor(p, loop, target.trackId) : null;
         const isOn = hearing === loop.id;
         const why = isOn ? null : !ok ? target.problem : (block ?? target.quiet);
-        const meta = `${barsText(loop.bars)} · ${styleName(loop.genres[0])}`;
+        // Simple: "Short · House" (no bar counts); Advanced: "2 bars · House".
+        const meta = `${simple ? shortOrLong(loop.bars) : barsText(loop.bars)} · ${styleName(loop.genres[0])}`;
         return (
           <li
             key={loop.id}
@@ -207,7 +211,11 @@ function LibraryRows({ loops, onRowKey, onCarry }: { loops: readonly LibraryLoop
             tabIndex={0}
             data-library-loop={loop.id}
             style={{ '--h': ok ? target.hue : 210 } as CSSProperties}
-            aria-label={`${loop.name}, ${meta}${ok ? `, for ${target.name}` : ''}. Drag it onto a part, or press Enter to add it at the playhead${ok ? ` on ${target.name}` : ''}.`}
+            aria-label={
+              simple
+                ? `${loop.name}, ${meta}${ok ? `, for ${target.name}` : ''}. Drag it onto an instrument, or press Enter to add it where the song is${ok ? ` on ${target.name}` : ''}.`
+                : `${loop.name}, ${meta}${ok ? `, for ${target.name}` : ''}. Drag it onto a part, or press Enter to add it at the playhead${ok ? ` on ${target.name}` : ''}.`
+            }
             onPointerDown={(e) => {
               if ((e.target as Element).closest('button')) return;
               onCarry(e, { kind: 'library', loop, name: loop.name, bars: loop.bars, hue: ok ? target.hue : 210 });

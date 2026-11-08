@@ -57,17 +57,15 @@ const home = () => [...document.querySelectorAll<HTMLElement>('main [data-hint-h
 
 describe('the hint home', () => {
   for (const [w, hh, mode] of [
-    [1366, 768, 'simple'],
+    // Round 7 words: the chip is Advanced's; Simple's Mixer sheet shows none (the next test).
     [1366, 768, 'advanced'],
-    [1920, 1080, 'simple'],
+    [1920, 1080, 'advanced'],
   ] as const) {
     it(`in Mix at ${w} x ${hh} (${mode}) the chip sits on the mixer header's line, over no control or readout`, async () => {
       await openShell({ width: w, height: hh });
       await click(button('Just look around')!);
       act(() => setUiMode(mode as UiMode));
-      // Round 7: Simple opens the Mixer as a sheet (⋯ › Mixer); Advanced has the Mix tab.
-      if (mode === 'simple') act(() => setView('mix'));
-      else await click(tab('Mix'));
+      await click(tab('Mix'));
       showStep('master');
       await until(() => chip()?.hasAttribute('data-ready'), 'the chip');
       await chipPlaced();
@@ -85,6 +83,18 @@ describe('the hint home', () => {
       for (const s of document.querySelectorAll('[data-testid^="strip-"]')) expect(overlaps(c, s.getBoundingClientRect()), 'over a channel strip').toBe(false);
     });
   }
+
+  it('Simple’s Mixer sheet shows no chip (the "Try this" hints are Advanced’s since round 7)', async () => {
+    await openShell({ width: 1366, height: 768 });
+    await click(button('Just look around')!);
+    act(() => {
+      setUiMode('simple');
+      setView('mix');
+    });
+    showStep('master');
+    await chipPlaced();
+    expect(chip()).toBeNull();
+  });
 
   // Round 7: the quick guide is Advanced's (Simple's Song screen has its tip line). Advanced at 1280 x 800, its
   // denser Mix header puts the home lower; 2.4 checked that width in Simple only.

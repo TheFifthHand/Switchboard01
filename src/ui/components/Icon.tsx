@@ -62,6 +62,7 @@ export const ICON_NAMES = [
   'join',
   'layers',
   'scene',
+  'home',
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];
@@ -174,6 +175,7 @@ const GLYPHS: Record<IconName, ReactElement[]> = {
   // Layer / replace parts: stacked sheets.
   layers: [P('M8 2.6 L14 5.8 L8 9 L2 5.8 Z'), P('M2 9 L8 12.2 L14 9')],
   // A scene: a row of clips.
+  home: [P('M2.4 7.6 L8 2.8 L13.6 7.6'), P('M4 6.4 V13.2 H12 V6.4'), P('M6.6 13.2 V9.8 H9.4 V13.2')],
   scene: [
     <rect key="a" x={1.8} y={5} width={3.6} height={6} rx={1} {...S} />,
     <rect key="b" x={6.2} y={5} width={3.6} height={6} rx={1} {...S} />,

@@ -26,7 +26,7 @@
  * the objects of what an edit did not touch), and each region only when it
  * or its clip changes.
  */
-import { memo, useCallback, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { memo, useCallback, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { Icon, Tooltip } from '../../../ui/components';
 import { clipById } from '../../../project/clips';
 import type { Clip, Id, Project, SongRegion } from '../../../project/types';
@@ -39,7 +39,7 @@ import { SoundBrowser } from '../SoundBrowser';
 import { TrackMenu } from '../TrackMenu';
 import { PartControls } from './PartControls';
 import { openSound, sidePanelStore } from './sidePanelStore';
-import { INSTRUMENT_KINDS } from './songHome';
+import { INSTRUMENT_KINDS, instrumentName } from './songHome';
 import { RegionView } from './RegionView';
 import { barsText, partStatus, type RowView } from './songModel';
 import styles from './SongView.module.css';
@@ -275,7 +275,10 @@ export interface PartRowProps {
   onFocusKey(row: number, col: HeadCol): void;
 }
 
-export const PartRow = memo(function PartRow({ row, anySolo, tab, onFocusKey }: PartRowProps) {
+export const PartRow = memo(function PartRow({ row: given, anySolo, tab, onFocusKey }: PartRowProps) {
+  // Simple calls an instrument by the picker's word when it still has 2.4's default name (Lead → Melody).
+  const simple = useUi((s) => s.uiMode !== 'advanced');
+  const row = useMemo(() => (simple ? { ...given, name: instrumentName(given.name, given.role) } : given), [simple, given]);
   const regions = useRowRegions(row.id);
   const { clips, songClips } = useRowClips(row.id);
   const kind = useRowKind(row.id);

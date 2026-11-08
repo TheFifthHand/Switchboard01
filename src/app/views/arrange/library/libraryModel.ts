@@ -71,13 +71,13 @@ export function libraryLoop(id: string): LibraryLoop | null {
 export function partProblem(loop: LibraryLoop, t: Pick<Track, 'name' | 'instrument'>): string | null {
   if (loopFitsKind(loop, t.instrument.kind)) return null;
   return loop.part.kind === 'drums'
-    ? `“${loop.name}” is a drum loop and ${t.name} plays notes: put it on a drum or percussion part.`
-    : `“${loop.name}” plays notes and ${t.name} is a drum kit: put it on a synth or sampler part.`;
+    ? `“${loop.name}” is a drum loop and ${t.name} plays notes: put it on a drum or percussion instrument.`
+    : `“${loop.name}” plays notes and ${t.name} is a drum kit: put it on an instrument that plays notes.`;
 }
 
 /** Short words for a part that cannot play a loop (shown at the pointer while it is dragged). */
 export function partProblemShort(loop: LibraryLoop): string {
-  return loop.part.kind === 'drums' ? 'Needs a drum part' : 'Needs a synth part';
+  return loop.part.kind === 'drums' ? 'Drums only' : 'Not for drums';
 }
 
 /**
@@ -91,7 +91,7 @@ export function loopTarget(p: Pick<Project, 'tracks'>, loop: LibraryLoop, select
   const sameRole = fits.filter((t) => t.role === loop.role);
   const pick = sameRole.find((t) => t.id === selectedId) ?? sameRole[0] ?? fits.find((t) => t.id === selectedId) ?? fits[0];
   if (pick) return { trackId: pick.id };
-  return { problem: loop.part.kind === 'drums' ? `This song has no drum part to play “${loop.name}”.` : `This song has no synth or sampler part to play “${loop.name}”.` };
+  return { problem: loop.part.kind === 'drums' ? `This song has no drums to play “${loop.name}”.` : `This song has no instrument that plays notes for “${loop.name}”.` };
 }
 
 /** The register a pitched loop is placed in on a part: the part's own job when it has one, else the loop's. */

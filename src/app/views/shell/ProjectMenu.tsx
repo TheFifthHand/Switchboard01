@@ -27,7 +27,8 @@ import { renameProject, transposeSong } from '../../../state/commands';
 import { session, useAutosave, useProject } from '../../instance';
 import { notify, useRuntime } from '../../runtime';
 import { Popover, anchorFromElement } from '../ClipMenu';
-import { SCALE_MOOD } from '../keyMood';
+import { MOOD_WORD } from '../keyMood';
+import { SCALES } from '../../../music/scales';
 import styles from './ProjectMenu.module.css';
 
 /** The moods Simple offers: every scale with a mood word ("Every note", chromatic, is not a mood). */
@@ -68,7 +69,7 @@ function chooseMood(scale: ScaleId): void {
   const r = transposeSong(session.store, { root: p.root, scale });
   if (!session.accepted(r)) return;
   const moved = r.notes > 0 ? ' The song’s notes moved to fit; drums stay as they are.' : '';
-  notify(`Mood: ${SCALE_MOOD[scale]}.${moved}`, 'info', 'undo');
+  notify(`Mood: ${MOOD_WORD[scale]}.${moved}`, 'info', 'undo');
 }
 
 function Speed() {
@@ -139,13 +140,13 @@ function Mood() {
     <div className={styles.mood} role="group" aria-label="Mood">
       <div className={styles.rowHead}>
         <span className={styles.label}>Mood</span>
-        <span className={styles.value}>{scale === 'chromatic' ? 'every note' : SCALE_MOOD[scale]}</span>
+        <span className={styles.value}>{MOOD_WORD[scale]}</span>
       </div>
       <div className={styles.moods}>
         {MOODS.map((m) => (
-          <button key={m} type="button" className={styles.moodKey} aria-pressed={m === scale} onClick={() => chooseMood(m)}>
+          <button key={m} type="button" className={styles.moodKey} aria-pressed={m === scale} title={`${SCALES[m].name} scale`} onClick={() => chooseMood(m)}>
             {m === scale && <Icon name="check" size={12} />}
-            {SCALE_MOOD[m]}
+            {MOOD_WORD[m]}
           </button>
         ))}
       </div>

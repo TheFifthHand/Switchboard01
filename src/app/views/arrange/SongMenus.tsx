@@ -22,7 +22,7 @@ import { regionEnd, sectionAt } from '../../../project/arrangement';
 import { clipById } from '../../../project/clips';
 import { SONG_MOVE_KINDS, TICKS_PER_BAR, type ClipBars, type Id, type SongRegion, type SongSection } from '../../../project/types';
 import { shapeProblem, type ShapeKind } from '../../../state/commands';
-import { session, useProject } from '../../instance';
+import { session, useProject, useUi } from '../../instance';
 import { startPreview, stopPreview, usePreviewKey } from '../../preview';
 import { useRuntime } from '../../runtime';
 import { MenuHeader, MenuItem, MenuSeparator, Popover, LOCKED_REASON, MOD_KEY, useEditLocked, type MenuAnchor } from '../ClipMenu';
@@ -34,6 +34,7 @@ import libStyles from './library/Library.module.css';
 import { MOVE_ICON, MOVE_WORDS } from './SectionStrip';
 import * as act from './songActions';
 import { barsText, loopPlaces, partLoops, rangeText, sectionLabel } from './songModel';
+import { lastsText } from './songHome';
 import styles from './SongView.module.css';
 
 /** Reasons longer than this wrap under the label (a hint on the right would be cut off). */
@@ -118,6 +119,10 @@ export function RegionMenu(props: {
   const hasSection = useProject((p) => p.arrangement.sections.some((s) => s.start < regionEnd(region) && regionEnd(s) > region.start));
   const many = targets.length > 1;
   const what = many ? `${targets.length} loops` : clipName;
+  // Simple speaks of instruments, places and seconds: no bar numbers, no pads.
+  const simple = useUi((s) => s.uiMode === 'simple');
+  const bpm = useProject((p) => p.bpm);
+  const regionSection = useProject((p) => sectionAt(p.arrangement.sections, region.start)?.name ?? null);
   const playhead = host.playheadBar();
   const splitAt = (bar: number) => region.start < bar && bar < regionEnd(region);
   const canSplitPlayhead = targets.some((id) => {
@@ -141,7 +146,7 @@ export function RegionMenu(props: {
           const now = l.clipId === region.clipId;
           // The loop it plays now is ticked (choosing it again changes nothing).
           return (
-            <MenuItem key={l.clipId} icon={now ? 'check' : undefined} role="menuitemcheckbox" checked={now} hint={now ? `Playing · ${barsText(l.bars)}` : barsText(l.bars)} disabled={locked} disabledReason={reason} onSelect={run(() => !now && act.swapLoopClip(region.id, l.clipId))}>
+            <MenuItem key={l.clipId} icon={now ? 'check' : undefined} role="menuitemcheckbox" checked={now} hint={simple ? (now ? 'Playing' : undefined) : now ? `Playing · ${barsText(l.bars)}` : barsText(l.bars)} disabled={locked} disabledReason={reason} onSelect={run(() => !now && act.swapLoopClip(region.id, l.clipId))}>
               {l.name}
             </MenuItem>
           );
@@ -151,12 +156,12 @@ export function RegionMenu(props: {
   }
   return (
     <Popover anchor={anchor} label={`Actions for ${what}`} onClose={onClose} returnFocus={returnFocus} ignore={ignore}>
-      <MenuHeader eyebrow={many ? 'Selected loops' : partName} title={many ? what : `${clipName} · ${rangeText(region.start, regionEnd(region))}`} />
+      <MenuHeader eyebrow={many ? 'Selected loops' : partName} title={many ? what : simple ? (regionSection ? `${clipName} · ${regionSection}` : clipName) : `${clipName} · ${rangeText(region.start, regionEnd(region))}`} />
       <MenuItem icon="play" onSelect={run(() => host.playFrom(region.start))}>
         Play from here
       </MenuItem>
       <LaneMenuItem icon="loop" onSelect={run(() => host.loopBars(region.start, regionEnd(region)))}>
-        Loop this
+        {simple ? 'Repeat this' : 'Loop this'}
       </LaneMenuItem>
       <MenuSeparator />
       <MenuItem icon="duplicate" hint={`${MOD_KEY}D`} keyShortcut={`${MOD_KEY === '⌘' ? 'Meta' : 'Control'}+D`} disabled={locked} disabledReason={reason} onSelect={run(() => act.duplicateLoops(targets))}>
@@ -167,13 +172,13 @@ export function RegionMenu(props: {
         hint={`${MOD_KEY}E`}
         keyShortcut={canSplitPlayhead ? `${MOD_KEY === '⌘' ? 'Meta' : 'Control'}+E` : undefined}
         disabled={locked || !canSplitPlayhead}
-        disabledReason={reason ?? (targets.length > 1 ? 'Playhead not in these loops' : 'Playhead not in this loop')}
+        disabledReason={reason ?? (simple ? 'The playing line is not on this loop' : targets.length > 1 ? 'Playhead not in these loops' : 'Playhead not in this loop')}
         onSelect={run(() => act.splitLoops(targets, playhead))}
       >
-        Split at playhead
+        {simple ? 'Split at the playing line' : 'Split at playhead'}
       </MenuItem>
       {clickedBar !== null && splitAt(clickedBar) && (
-        <MenuItem icon="cut" hint={`Bar ${clickedBar + 1}`} disabled={locked} disabledReason={reason} onSelect={run(() => act.splitLoops([region.id], clickedBar))}>
+        <MenuItem icon="cut" hint={simple ? undefined : `Bar ${clickedBar + 1}`} disabled={locked} disabledReason={reason} onSelect={run(() => act.splitLoops([region.id], clickedBar))}>
           Split here
         </MenuItem>
       )}
@@ -187,14 +192,14 @@ export function RegionMenu(props: {
         </LaneMenuItem>
       )}
       {!many && (
-        <MenuItem icon="pencil" hint="Double-click" onSelect={run(() => host.editNotes(region.id))}>
+        <MenuItem icon="pencil" hint={simple ? 'Click' : 'Double-click'} onSelect={run(() => host.editNotes(region.id))}>
           Edit notes
         </MenuItem>
       )}
       {!many && loop && (places > 1 || !loop.inSong) && (
         <MenuItem
           icon="copy"
-          hint={places > 1 ? `Plays in ${places} places` : 'Also on a pad'}
+          hint={places > 1 ? `Plays in ${places} places` : simple ? 'Also on the jam pads' : 'Also on a pad'}
           disabled={locked}
           disabledReason={reason}
           onSelect={run(() => act.makeLoopDifferent(region.id))}
@@ -202,14 +207,14 @@ export function RegionMenu(props: {
           Make this one different
         </MenuItem>
       )}
-      {!many && loop?.inSong && (
+      {!many && loop?.inSong && !simple && (
         <MenuItem icon="paste" disabled={locked || padsFull} disabledReason={reason ?? `Every ${partName} pad has a loop`} onSelect={run(() => act.putLoopOnPad(region.trackId, region.clipId))}>
           Put on a pad
         </MenuItem>
       )}
       {!many && (
-        <MenuItem icon="plus" hint={barsText(region.bars * 2)} disabled={locked} disabledReason={reason} onSelect={run(() => act.doubleLoop(region.id))}>
-          Make it 2× longer
+        <MenuItem icon="plus" hint={simple ? lastsText(region.bars * 2, bpm) : barsText(region.bars * 2)} disabled={locked} disabledReason={reason} onSelect={run(() => act.doubleLoop(region.id))}>
+          {simple ? 'Make it twice as long' : 'Make it 2× longer'}
         </MenuItem>
       )}
       {!many && !hasSection && (
@@ -218,7 +223,7 @@ export function RegionMenu(props: {
             const r = act.addSectionAt(region.start, region.bars);
             if (r.changed && r.sectionId) host.renameSection(r.sectionId);
           })}>
-          Name these bars as a section
+          {simple ? 'Name it as a section' : 'Name these bars as a section'}
         </MenuItem>
       )}
     </Popover>
@@ -230,14 +235,15 @@ export function RegionMenu(props: {
 /* ------------------------------------------------------------------ */
 
 const SHAPES: { kind: ShapeKind; icon: LaneIconName; what: string }[] = [
-  { kind: 'build', icon: 'buildUp', what: 'Parts come in one by one across the section.' },
-  { kind: 'strip', icon: 'stripDown', what: 'Every part first, then they drop out one by one.' },
+  { kind: 'build', icon: 'buildUp', what: 'Instruments come in one by one across the section.' },
+  { kind: 'strip', icon: 'stripDown', what: 'Every instrument first, then they drop out one by one.' },
   { kind: 'breakdown', icon: 'breakdown', what: 'The drums, percussion and bass leave this section.' },
 ];
 
 export function SectionMenu(props: { section: SongSection; anchor: MenuAnchor; returnFocus: HTMLElement | null; host: MenuHost; onClose(): void }) {
   const { section, anchor, returnFocus, host, onClose } = props;
   const locked = useEditLocked();
+  const simple = useUi((s) => s.uiMode === 'simple');
   const live = useProject((p) => p.arrangement.sections.find((s) => s.id === section.id) ?? section);
   const problems = useProject((p) => SHAPES.map((s) => shapeProblem(p, section.id, s.kind)).join('\u0000'));
   const problemOf = (i: number) => problems.split('\u0000')[i] || null;
@@ -254,12 +260,12 @@ export function SectionMenu(props: { section: SongSection; anchor: MenuAnchor; r
   }, (a, b) => a.first === b.first && a.last === b.last);
   return (
     <Popover anchor={anchor} label={`Actions for the section ${live.name}`} onClose={onClose} returnFocus={returnFocus} className={styles.sectionMenu}>
-      <MenuHeader eyebrow="Section" title={sectionLabel(live)} />
+      <MenuHeader eyebrow="Section" title={simple ? live.name : sectionLabel(live)} />
       <MenuItem icon="play" onSelect={run(() => host.playFrom(live.start))}>
         Play from here
       </MenuItem>
       <LaneMenuItem icon="loop" onSelect={run(() => host.loopBars(live.start, regionEnd(live)))}>
-        Loop this section
+        {simple ? 'Repeat this section' : 'Loop this section'}
       </LaneMenuItem>
       <MenuSeparator />
       <MenuItem icon="pencil" hint="F2" disabled={locked} disabledReason={reason} onSelect={run(() => host.renameSection(live.id))}>
@@ -314,10 +320,14 @@ export function LoopPicker(props: { trackId: Id; bar: number; anchor: MenuAnchor
   const track = useProject((p) => p.tracks.find((t) => t.id === trackId) ?? null);
   const kind = track?.instrument.kind === 'drums' ? 'drums' : 'notes';
   const section = useProject((p) => sectionAt(p.arrangement.sections, bar)?.name ?? null);
-  const eyebrow = `${track?.name ?? 'Part'} · bar ${bar + 1}${section ? ` · ${section}` : ''}`;
+  const simple = useUi((s) => s.uiMode === 'simple');
+  const bpm = useProject((p) => p.bpm);
+  // Simple: lengths in seconds and places by name, never bars.
+  const len = (n: number) => (simple ? lastsText(n, bpm) : barsText(n));
+  const eyebrow = simple ? `${track?.name ?? 'Instrument'}${section ? ` · ${section}` : ''}` : `${track?.name ?? 'Part'} · bar ${bar + 1}${section ? ` · ${section}` : ''}`;
   if (view === 'beats' && track) return <BeatPicker trackId={trackId} bar={bar} eyebrow={eyebrow} anchor={anchor} returnFocus={returnFocus} onBack={() => setView('main')} onClose={onClose} />;
   return (
-    <Popover anchor={anchor} label={`Add a loop to ${track?.name ?? 'this part'} at bar ${bar + 1}`} onClose={onClose} returnFocus={returnFocus} className={styles.picker}>
+    <Popover anchor={anchor} label={simple ? `Add a loop to ${track?.name ?? 'this instrument'}${section ? ` in ${section}` : ''}` : `Add a loop to ${track?.name ?? 'this part'} at bar ${bar + 1}`} onClose={onClose} returnFocus={returnFocus} className={styles.picker}>
       <MenuHeader eyebrow={eyebrow} title="Add a loop here" />
       {loops.map((l) => (
         <button
@@ -327,7 +337,7 @@ export function LoopPicker(props: { trackId: Id; bar: number; anchor: MenuAnchor
           tabIndex={-1}
           className={`${menuStyles.item} ${styles.pickerItem}`}
           aria-disabled={locked || undefined}
-          aria-label={`${l.name}, ${barsText(l.bars)}`}
+          aria-label={`${l.name}, ${len(l.bars)}`}
           onClick={() => {
             if (locked) return;
             onClose();
@@ -338,7 +348,7 @@ export function LoopPicker(props: { trackId: Id; bar: number; anchor: MenuAnchor
             <ClipSketch notes={(track && clipById(track, l.clipId)?.notes) || []} lengthTicks={l.bars * TICKS_PER_BAR} kind={kind} />
           </span>
           <span className={menuStyles.itemText}>{l.name}</span>
-          <span className={menuStyles.itemHint}>{locked ? LOCKED_REASON : barsText(l.bars)}</span>
+          <span className={menuStyles.itemHint}>{locked ? LOCKED_REASON : len(l.bars)}</span>
         </button>
       ))}
       {loops.length > 0 && <MenuSeparator />}
@@ -352,9 +362,9 @@ export function LoopPicker(props: { trackId: Id; bar: number; anchor: MenuAnchor
             tabIndex={-1}
             data-row="new-loop"
             className={libStyles.barsKey}
-            aria-label={`New empty loop, ${barsText(n)}`}
+            aria-label={`New empty loop, ${len(n)}`}
             aria-disabled={locked || undefined}
-            title={locked ? LOCKED_REASON : `An empty loop of ${barsText(n)} here, opened below to add notes`}
+            title={locked ? LOCKED_REASON : `An empty loop of ${len(n)} here, opened below to add notes`}
             data-bars={n}
             onClick={() => {
               if (locked) return;
@@ -362,7 +372,7 @@ export function LoopPicker(props: { trackId: Id; bar: number; anchor: MenuAnchor
               act.newEmptyLoop(trackId, bar, n);
             }}
           >
-            {n}
+            {simple ? `${Math.round((n * 240) / Math.max(1, bpm))} s` : n}
           </button>
         ))}
       </div>

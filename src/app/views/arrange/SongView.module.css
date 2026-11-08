@@ -639,6 +639,10 @@
   white-space: nowrap;
   pointer-events: none;
 }
+/* Simple: no dB text, the level travels the whole slider. */
+.level[data-plain] .levelTrack {
+  --level-value: 0px;
+}
 .level[data-readonly] .levelTrack,
 .level[data-disabled] .levelTrack {
   cursor: default;

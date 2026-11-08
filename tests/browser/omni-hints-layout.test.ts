@@ -158,11 +158,12 @@ describe('where the hint chip sits', () => {
             setView(view);
             setPadMode(pad);
           });
-          if (mode === 'simple' && view === 'arrange') {
-            // Round 7: Simple's home (the Song screen) has its tip line at the bottom instead of the chip.
-            await showStep('song-play');
-            expect(document.querySelector('[data-hint]'), `${w}x${hh} simple home: no chip`).toBeNull();
-            expect(document.querySelector('[data-testid="song-tip"]'), `${w}x${hh} simple home: the tip line`).not.toBeNull();
+          if (mode === 'simple') {
+            // Round 7: the chip is Advanced's. Simple's home (the Song screen) has its tip line at the bottom instead,
+            // and the sheets (Jam pads, Every setting, Mixer) show no chip either.
+            await showStep(view === 'arrange' ? 'song-play' : STEPS_FOR[view][0]);
+            expect(document.querySelector('[data-hint]'), `${w}x${hh} simple ${view}: no chip`).toBeNull();
+            if (view === 'arrange') expect(document.querySelector('[data-testid="song-tip"]'), `${w}x${hh} simple home: the tip line`).not.toBeNull();
             continue;
           }
           for (const id of STEPS_FOR[view]) {
@@ -179,8 +180,11 @@ describe('where the hint chip sits', () => {
 
   it('moves away when a control appears under it', async () => {
     await openApp(1366, 768);
-    // Simple opens on the Song screen, whose tip line replaces the chip: the chip shows on the Jam pads sheet.
-    act(() => setView('play'));
+    // The chip is Advanced's (round 7: Simple's guide is the Song screen's tip line).
+    act(() => {
+      setUiMode('advanced');
+      setView('play');
+    });
     await settle();
     await chipPlaced();
     const before = chip().getBoundingClientRect();

@@ -153,3 +153,37 @@
   color: var(--ink-2);
   font: var(--type-value);
 }
+
+/* Simple: How Omni Song works, one line per thing on the screen. */
+.how {
+  display: grid;
+  gap: 12px;
+}
+.howList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.howItem {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: var(--ink-2);
+  font: var(--fw-regular) var(--fs-sm) / 20px var(--font-ui);
+}
+.howItem strong {
+  color: var(--ink);
+}
+.howIcon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--shell);
+  color: var(--ink-2);
+}

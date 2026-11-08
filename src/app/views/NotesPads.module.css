@@ -72,6 +72,16 @@
   pointer-events: none;
 }
 
+/* Simple (the Song screen's editor): the home note or chord, with the home icon, on a soft neutral tint. */
+.homeMark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.cell[data-root]:has(.homeMark)::after {
+  background: rgba(20, 24, 28, 0.06);
+}
+
 /* Chord pads: the chord's step in the key, small, in the top-right corner. */
 .degree {
   position: absolute;

@@ -33,6 +33,7 @@ import { LOCKED_TEXT, useEditLocked } from '../ClipMenu';
 import { channelController, channelOf, channelValue } from '../mix/mixState';
 import { KIND_ICON, MacroTile } from '../shape/SimpleShape';
 import { SoundBrowser } from '../SoundBrowser';
+import { instrumentName } from './songHome';
 import styles from './SoundPanel.module.css';
 
 const LEVEL = specById(CHANNEL_PARAMS, 'level')!;
@@ -65,7 +66,8 @@ function useInfo(trackId: Id): Info | null {
             : 'No recording yet: choose one, or record your own.'
           : (presetInfo(inst.presetId)?.description ?? '');
     return {
-      name: t.name,
+      // The picker's word for 2.4's default names (Lead → Melody); the project keeps its names.
+      name: instrumentName(t.name, t.role),
       kind: inst.kind,
       sound: soundName(p, inst),
       description,

@@ -818,9 +818,10 @@ export function App({ boot }: { boot: BootInfo }) {
             <KeyboardStrip />
           </footer>
         </div>
-        {/* After the instrument in the DOM: a non-blocking chip in a free spot, shown after the guide. Simple's
-            home has its own tip line at the bottom instead (one next step, never two guides at once). */}
-        <Hints active={!welcome && !guide && !(simple && shownView === 'arrange')} shownView={shownView} />
+        {/* After the instrument in the DOM: a non-blocking chip in a free spot, shown after the guide. Advanced only:
+            its steps point at 2.4's tabs and pads. Simple's guide is the tip line at the bottom of the song
+            (one next step, never two guides at once), also while a sheet is open. */}
+        <Hints active={!welcome && !guide && !simple} shownView={shownView} />
         {welcome && (
           <Welcome
             lastProject={boot.lastProject}

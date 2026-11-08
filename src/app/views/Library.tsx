@@ -68,14 +68,16 @@ const SPACE_CONTROLS = 'button, input, select, textarea, a[href], [role="tab"], 
 /** A freshly loaded project has no clips running: a pad or scene tap starts playback with it. */
 /** How to hear what just loaded, in the words of the view the person is in (the Song view plays the song). */
 export function hearIt(): string {
-  return uiStore.getState().view === 'arrange' ? 'Press Play to hear the song.' : 'Tap a pad or a scene to hear it.';
+  // Simple always plays the song (its Play key is the one way to play), whatever sheet is open.
+  const ui = uiStore.getState();
+  return ui.view === 'arrange' || ui.uiMode === 'simple' ? 'Press Play to hear the song.' : 'Tap a pad or a scene to hear it.';
 }
 /**
  * A blank project has no loops: there is nothing to hear yet. A tap on a pad makes the first one; in
  * Simple (round 7) a blank song opens on the Song screen, where a loop comes from LOOPS.
  */
 function blankHint(): string {
-  return uiStore.getState().uiMode === 'simple' ? 'Drag a loop in from LOOPS on the right to start your song.' : 'Tap a pad to make a loop and fill it in.';
+  return uiStore.getState().uiMode === 'simple' ? 'Drag a loop in from Loops on the right to start your song.' : 'Tap a pad to make a loop and fill it in.';
 }
 
 /**

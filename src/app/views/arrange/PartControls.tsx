@@ -75,13 +75,15 @@ export interface LevelSliderProps {
   controlledBy?: string;
   disabled?: boolean;
   tip: string;
+  /** Simple mode: no dB text (the level is read from the bar alone; screen readers still hear the value). */
+  plain?: boolean;
 }
 
 /** Width of the slider's value zone (its dB text, at the left); the level travels in the rest, so the two never cross. Matches --level-value in SongView.module.css. */
 const LEVEL_VALUE_PX = 52;
 
 /** A horizontal level slider in dB (see the file comment for its keys and gestures). */
-export function LevelSlider({ spec, value, label, onChange, controlledBy, disabled, tip }: LevelSliderProps) {
+export function LevelSlider({ spec, value, label, onChange, controlledBy, disabled, tip, plain = false }: LevelSliderProps) {
   const ref = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
   const hold = useRef<{ pointerId: number; x: number; y: number; timer: number } | null>(null);
@@ -131,7 +133,7 @@ export function LevelSlider({ spec, value, label, onChange, controlledBy, disabl
     } catch {
       /* the pointer is gone */
     }
-    drag.current = { pointerId, lastX: x, pos: faderPosition(spec, latest.current), width: Math.max(24, el.getBoundingClientRect().width - LEVEL_VALUE_PX), gesture: newGestureId('song-level'), raf: 0, pending: null };
+    drag.current = { pointerId, lastX: x, pos: faderPosition(spec, latest.current), width: Math.max(24, el.getBoundingClientRect().width - (plain ? 0 : LEVEL_VALUE_PX)), gesture: newGestureId('song-level'), raf: 0, pending: null };
     setDragging(true);
   };
 
@@ -254,11 +256,11 @@ export function LevelSlider({ spec, value, label, onChange, controlledBy, disabl
 
   const style = { '--pos': pos } as CSSProperties;
   return (
-    <span className={styles.level} data-dragging={dragging || undefined} data-readonly={readOnly || undefined} data-disabled={disabled || undefined}>
+    <span className={styles.level} data-plain={plain || undefined} data-dragging={dragging || undefined} data-readonly={readOnly || undefined} data-disabled={disabled || undefined}>
       <Tooltip
         name={label}
         tip={controlledBy ? `${tip} It is set by the ${controlledBy} big knob now: turn ${controlledBy} to change it.` : tip}
-        hint={live ? 'Drag sideways (Shift: finer). Arrow keys move 0.5 dB. Double-click returns it to 0 dB; type a number for an exact value.' : undefined}
+        hint={live ? (plain ? 'Drag sideways: right is louder. Double-click puts it back.' : 'Drag sideways (Shift: finer). Arrow keys move 0.5 dB. Double-click returns it to 0 dB; type a number for an exact value.') : undefined}
       >
         <div
           ref={ref}
@@ -287,9 +289,11 @@ export function LevelSlider({ spec, value, label, onChange, controlledBy, disabl
         >
           <span className={styles.levelFill} aria-hidden="true" />
           <span className={styles.levelCap} aria-hidden="true" />
-          <span className={styles.levelValue} aria-hidden="true" style={entry ? { visibility: 'hidden' } : undefined}>
-            {short}
-          </span>
+          {!plain && (
+            <span className={styles.levelValue} aria-hidden="true" style={entry ? { visibility: 'hidden' } : undefined}>
+              {short}
+            </span>
+          )}
         </div>
       </Tooltip>
       {entry && (
@@ -358,6 +362,7 @@ export const PartControls = memo(function PartControls({ trackId, name, pan = tr
           controlledBy={info.levelBy ?? undefined}
           disabled={!channel}
           tip={pan ? `How loud ${name} is in the song. It is the same level as ${name}’s fader in Mix.` : `How loud ${name} is in your song.`}
+          plain={!pan}
         />
         <Meter read={read} label={`${name} meter`} orientation="horizontal" thickness={2} segments={20} floorDb={LEVEL.min} scale={METER_SCALE} showClip={false} className={styles.partMeter} />
       </span>

@@ -242,6 +242,6 @@ describe('Starting starters from the Library', () => {
     open('starters');
     await click(await until(() => buttonNamed(/^Start Blank project/), 'Blank card'), 'Blank card');
     await until(() => loaded.length === 3, 'Blank loaded in Simple');
-    expect(runtimeStore.getState().notice?.text).toMatch(/Drag a loop in from LOOPS on the right to start your song\.$/);
+    expect(runtimeStore.getState().notice?.text).toMatch(/Drag a loop in from Loops on the right to start your song\.$/);
   });
 });

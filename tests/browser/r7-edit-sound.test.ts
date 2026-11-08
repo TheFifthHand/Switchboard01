@@ -10,6 +10,7 @@ import { act, createElement as h } from 'react';
 import { page } from 'vitest/browser';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import '../../src/ui/theme.css';
+import { instrumentName } from '../../src/app/views/arrange/songHome';
 import { session } from '../../src/app/instance';
 import { SoundPanel } from '../../src/app/views/arrange/SoundPanel';
 import { channelValue } from '../../src/app/views/mix/mixState';
@@ -57,7 +58,8 @@ describe('the Sound panel', () => {
   it('shows the instrument, its sound, Change sound…, Volume, Mute, Hear it alone, six captioned big knobs and Every setting', async () => {
     await show();
     const text = panel().textContent!;
-    expect(text).toContain(chords().name);
+    // Simple names it by the picker's word (2.4's "Chords" is "Keys & chords").
+    expect(text).toContain(instrumentName(chords().name, chords().role));
     for (const words of ['Change sound…', 'Mute', 'Hear it alone', 'Every setting ▸']) expect(text, words).toContain(words);
     for (const m of MACRO_IDS) expect(text, m).toContain(MACRO_CAPTION[m]);
     const sliders = [...panel().querySelectorAll('[role="slider"]')].map((s) => s.getAttribute('aria-label') ?? '');

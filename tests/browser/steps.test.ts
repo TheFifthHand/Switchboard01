@@ -235,7 +235,7 @@ describe('drum steps', () => {
     cmd.toggleStep(session.store, 't1', 0, 16, 0); // bar 2, step 1
     const m = mountEditor(NARROW);
     const tabs = () => [...m.container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
-    expect(tabs().map((t) => t.getAttribute('aria-label'))).toEqual(['Bar 1', 'Bar 2']);
+    expect(tabs().map((t) => t.getAttribute('aria-label'))).toEqual(['Page 1 of 2', 'Page 2 of 2']); // Round 7: Simple calls them pages;
     expect(tabs().map((t) => t.textContent?.trim())).toEqual(['1', '2']);
     expect(byLabel(m.container, `Step 1, ${KICK}`).getAttribute('aria-pressed')).toBe('false');
 

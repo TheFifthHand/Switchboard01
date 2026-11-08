@@ -113,6 +113,47 @@ export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
   },
 ];
 
+/**
+ * Simple mode's Help: the few keys the Song screen uses, in its own words (no parts, pads, bars or scenes).
+ * Advanced shows SHORTCUT_GROUPS, every key.
+ */
+export const SIMPLE_SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
+  {
+    id: 'everywhere',
+    title: 'Everywhere',
+    where: 'Not while you type in a field.',
+    items: [
+      { id: 'play', keys: ['Space'], does: 'Play or pause your song.' },
+      { id: 'stop', keys: ['Shift+Space'], does: 'Stop and go back to the start.' },
+      { id: 'undo', keys: ['Ctrl+Z'], does: 'Undo the last change.' },
+      { id: 'redo', keys: ['Ctrl+Shift+Z', 'Ctrl+Y'], does: 'Redo what you undid.' },
+      { id: 'save', keys: ['Ctrl+S'], does: 'Save now (it also saves by itself).' },
+      { id: 'help', keys: ['?'], does: 'Open this Help.' },
+      { id: 'escape', keys: ['Esc'], does: 'Close a menu, the editor or a screen, and go back to your song.' },
+    ],
+  },
+  {
+    id: 'song',
+    title: 'In your song',
+    where: 'With a loop chosen (click it once).',
+    items: [
+      { id: 'song-delete', keys: ['Delete', 'Backspace'], does: 'Take the loop out of the song (Undo puts it back).' },
+      { id: 'song-edit', keys: ['Ctrl+C', 'Ctrl+V'], does: 'Copy the loop, and paste it where the song is playing.' },
+      { id: 'song-duplicate', keys: ['Ctrl+D'], does: 'Play the loop again right after itself.' },
+      { id: 'song-mouse', keys: ['Alt+drag'], does: 'Drag a copy of the loop.' },
+    ],
+  },
+  {
+    id: 'notes',
+    title: 'Playing along',
+    where: 'In the editor under your song, on its Play side.',
+    items: [
+      { id: 'scale-keys', keys: ['A S D F G H J K L'], does: 'Play notes that fit your song, low to high.' },
+      { id: 'drum-pads', keys: ['1 2 3 4', 'Q W E R', 'A S D F', 'Z X C V'], does: 'Drums: the big squares, top row to bottom row.' },
+    ],
+  },
+];
+
 /** The shortcut with this id, or undefined. */
 export function shortcut(id: string): Shortcut | undefined {
   for (const g of SHORTCUT_GROUPS) {

@@ -37,7 +37,7 @@ import { libraryQueryStore } from './library/LibraryPanel';
 import { loopRoleOf } from './library/libraryModel';
 import { closeSound, openSound } from './sidePanelStore';
 import { addEndingNow, addInstrumentNow, addIntroNow, growSongNow } from './songActions';
-import { hiddenInstruments, secondsWords, songClock, songSeconds } from './songHome';
+import { hiddenInstruments, instrumentName, repeatName, secondsWords, songClock, songSeconds } from './songHome';
 import { MAX_PX_PER_BAR, MIN_PX_PER_BAR } from './songLayout';
 import type { TimelineHandle } from './SongTimeline';
 import styles from './SongView.module.css';
@@ -61,7 +61,7 @@ function usePlayheadBar(): number {
   return songOn ? bar : Math.max(0, Math.round(cursor));
 }
 
-/** The part of the song "Repeat this part" would repeat at `bar`: its section, else the whole song. */
+/** The stretch of the song "Repeat this section" would repeat at `bar`: its section, else the whole song. */
 function repeatRange(sections: readonly SongSection[], bar: number, length: number): { fromBar: number; toBar: number; name: string | null } | null {
   const s = sectionAt(sortSections(sections), bar);
   if (s) return { fromBar: s.start, toBar: regionEnd(s), name: s.name };
@@ -88,7 +88,7 @@ export function SongHomeHeader({ handle, browserOpen, onBrowser, folded, onUnfol
   const bar = usePlayheadBar();
   const length = useProject(songBars);
   const here = repeatRange(sections, bar, length);
-  const loopName = loop ? (sections.find((s) => s.start === loop.fromBar && regionEnd(s) === loop.toBar)?.name ?? (loop.fromBar === 0 && loop.toBar >= length ? 'the whole song' : 'part of the song')) : null;
+  const loopName = loop ? repeatName(sections, loop, length) : null;
   const [longer, setLonger] = useState<MenuAnchor | null>(null);
   const [add, setAdd] = useState<MenuAnchor | null>(null);
 
@@ -135,7 +135,7 @@ export function SongHomeHeader({ handle, browserOpen, onBrowser, folded, onUnfol
         tip={loop ? `Stop repeating ${loopName}: the song plays on to its end.` : here ? `Play ${here.name ?? 'the whole song'} again and again, until you press this again.` : 'Put some music in your song first.'}
       >
         <LaneIcon name="loop" size={14} />
-        <span>{loop ? `Repeating: ${loopName}` : `Repeat this part${here?.name ? `: ${here.name}` : ''}`}</span>
+        <span>{loop ? `Repeating: ${loopName}` : here?.name ? `Repeat this section: ${here.name}` : 'Repeat the whole song'}</span>
       </Button>
       <Button
         size="sm"
@@ -199,7 +199,7 @@ function LongerMenu({ anchor, bar, onClose }: { anchor: MenuAnchor; bar: number;
         {part ? `Repeat ${part} again` : 'Repeat it all again'}
       </LaneMenuItem>
       <LaneMenuItem icon="layers" disabled={!!reason} disabledReason={reason} onSelect={run(() => growSongNow('after', bar))}>
-        {part ? `Add a part after ${part}` : 'Add a part after it'}
+        {part ? `Add a section after ${part}` : 'Add a section after it'}
       </LaneMenuItem>
     </Popover>
   );
@@ -238,7 +238,7 @@ function AddInstrumentButton({
       // Nothing to play yet (a Recording): its row shows, with its sound open beside it.
       revealRow(projectId, trackId);
       openSound(trackId);
-      notify(`Added ${t.name}: its row is ready. Choose its sound on the right, then press Record to play into it.`);
+      notify(`Added ${instrumentName(t.name, t.role)}: its row is ready. Choose its sound on the right, then press Record to play into it.`);
       return;
     }
     // LOOPS shows this kind of instrument's loops, to try others.

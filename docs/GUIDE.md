@@ -4,6 +4,61 @@ Start Omni Song first (Windows: double-click **Start Omni Song.bat** in the rele
 `START HERE.txt`). It opens in your browser at `http://127.0.0.1:4173/`. Use headphones or speakers
 at a moderate volume.
 
+Omni Song opens in **Simple**: one screen, your song, in plain words. The first part of this
+guide is for that screen. Everything after **Advanced: every control** is for people who press
+**⋯ → Show every control**; nothing there is needed to make a song.
+
+## Your first song (Simple, about five minutes)
+
+The screen is your song. Each **row** is an instrument (Drums, Bass, Keys & chords, Melody …); each
+block on a row is a **loop**, a short piece of music that repeats. The ruler above the rows counts
+time (0:00, 0:15 …). Press **Play** (or Space) to hear it all; **Stop** goes back to the start.
+
+1. **Start.** Press **Jump In**: a House song plays at once and repeats its main section until you
+   press Stop. Or press **Make a beat from scratch**: a Drums row with an empty loop that is
+   already playing, open under the song so you can click squares into it. Coming back later, the
+   first key is **Continue**; starting something new keeps your earlier project in My projects.
+2. **Change a loop.** Click any loop: it opens under the song. **Draw** shows its squares (drums) or
+   its notes; click to add or take away, drag a note to make it longer. **Play** turns it into big
+   squares you play with the mouse or the computer keys; **● Record into this loop** keeps what you
+   play. Squares only play notes that fit your song; the **home** note is marked with a house icon.
+   **Try a ready-made beat…** (drums) or **Try a ready-made loop…** (other instruments) puts one in,
+   in your song's key. **Make it different** changes a few notes; **Just here** gives one place its
+   own copy. Undo takes anything back.
+3. **Change a sound.** Click an instrument's name (left of its row): its sound opens on the right.
+   **Change sound…** picks another one; the six big knobs (Tone, Space, Echo, Motion, Drive, Pump)
+   shape it; **Hear it alone** plays it on its own.
+4. **Add an instrument.** **+ Add instrument** offers what the song does not have yet: Drums,
+   Percussion, Bass, Keys & chords, Melody, Pad, Texture or Recording. It arrives with a loop that
+   fits, and **Loops** on the right shows more of that kind: press ▶ to hear one, drag it onto the
+   row. Loops say whether they are **Short** or **Long** and which style they are.
+5. **Make it longer.** **Make it longer ▾** adds an intro, an ending, the section you are in again,
+   or a new section after it (Verse, Chorus, Bridge …), made from your own music, one Undo each.
+   **Repeat this section** keeps one section playing while you work on it.
+6. **Record.** **● Record** at the top records the instrument you chose into the song from where
+   it is, after a count-in. It reads **Stop recording** while it records.
+7. **Share.** **Share** saves a **music file to send** (a WAV that works everywhere, optionally as
+   loud as streaming songs: only the file is made louder, your project does not change; **Smaller
+   file** saves an .ogg) or the **project to keep working** (an .omnisong.zip that opens in any
+   browser with Omni Song).
+
+The line at the bottom of the screen says one next step, read from your song: pick a beat, add a
+bass, add chords, open a loop, make it longer, share it. **Hide tips** (or ⋯ → Tips) turns it off.
+**Project ▾** (top left) holds My projects, New song, Rename, **Speed** (slow ↔ fast) and **Mood**
+(bright, moody, jazzy …: changing it moves the notes to fit). **⋯** holds the **Jam pads** (play
+loops live), the **Mixer**, **Every setting** of a sound, Mute all sound, MIDI & audio, Help and
+Tips. Each opens over your song with **← Back to my song** (Esc does the same).
+
+Lost? Press **?** (or **⋯ → Help…**): **How it works** says all of this in eight lines, **Keys**
+lists the keys the song screen uses, and **Show every control** switches to Advanced.
+
+# Advanced: every control
+
+Press **⋯ → Show every control** for the 2.4 screens: the **Play**, **Shape**, **Song** and **Mix**
+tabs and every setting. Your music does not change, and the same item brings Simple back. The
+sections below describe Advanced; in Simple most of these screens are also reachable as sheets from
+⋯ (Jam pads, Mixer, Every setting).
+
 Words used here: a **part** is one instrument (Drums, Bass, Chords …), shown as a column of pads.
 A **loop** is a short piece of music, 1 to 8 bars long; on the pads each part has one loop per pad.
 A **scene** is a row of pads, launched together; a project has 1 to 8 scenes. In the **Song**,
@@ -11,10 +66,10 @@ every part has a row, loops are placed along it, and a **section** (Intro, Drop 
 of bars. The song can also hold loops of its own (from the loop library, or recorded into the
 song) that are not on any pad.
 
-Lost? Press **?** (or **⋯ → Help…**) at any time: Help lists every keyboard shortcut, has these
-walkthroughs as short steps, and can show the quick guide and the hints again.
+In Advanced, **?** (or **⋯ → Help…**) lists every keyboard shortcut, has these walkthroughs as
+short steps, and can show the quick guide and the hints again.
 
-## Make a beat from scratch (about two minutes)
+## Make a beat from scratch (Advanced, about two minutes)
 
 1. On the first screen press **Make a beat from scratch** (or ⋯ → New project → Make a beat from
    scratch). A new project opens on the Drums grid with an empty 1-bar loop that is already
@@ -325,9 +380,10 @@ Advanced view.
    - **Parts as separate files**: a .zip with one WAV per part, without the mastering (the limiter
      still protects each one).
    - **MIDI file (notes only)**: the song's notes, one track per part, for another music app.
-3. **Make it as loud as streaming songs** is on for the whole song: the export measures the song,
-   adjusts the mastering's Loudness drive and renders again. Afterwards it says what it changed,
-   and Undo puts it back. Cancel changes nothing.
+3. **Make it as loud as streaming songs** is on for the whole song: the export measures the song
+   and makes only the exported file louder; your project and its mastering stay as they are.
+   (**Match target** in Mix is the way to make the song itself louder.) Cancel changes nothing.
+   The smaller file for sharing is saved with the .ogg extension.
 4. Type a file name and press the export button. Progress shows in its place, with **Cancel
    export**. The file starts exactly on the first beat and is rendered by the same engine you hear.
    **More options** (Advanced shows them all) holds the echo tail, sample rate, bit depth and

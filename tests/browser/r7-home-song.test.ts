@@ -98,11 +98,11 @@ describe('the header', () => {
     // No bars, no BPM in Simple's header.
     expect(document.querySelector('header[data-simple]')!.textContent).not.toMatch(/bars|BPM/);
 
-    // The playhead in Groove (bar 9): Repeat this part names it and repeats exactly it.
+    // The playhead in Groove (bar 9): Repeat this section names it and repeats exactly it.
     act(() => session.setSongCursor(10));
     await settle();
     const repeat = byTestId('repeat-part')!;
-    expect(repeat.textContent).toBe('Repeat this part: Groove');
+    expect(repeat.textContent).toBe('Repeat this section: Groove');
     await clickAt(centre(repeat));
     const g = sectionAt(sections(), 10)!;
     expect(rt().songLoop).toEqual({ fromBar: g.start, toBar: regionEnd(g) });
@@ -111,7 +111,7 @@ describe('the header', () => {
     // Pressed again: off.
     await clickAt(centre(repeat));
     expect(rt().songLoop).toBeNull();
-    expect(repeat.textContent).toBe('Repeat this part: Groove');
+    expect(repeat.textContent).toBe('Repeat this section: Groove');
   });
 
   it('keeps 2.4’s header in Advanced', async () => {
@@ -139,7 +139,7 @@ describe('Make it longer', () => {
     const names: string[] = [];
     for (let i = 0; i < 4; i++) {
       await clickAt(centre(byTestId('make-longer')!));
-      await clickAt(centre(menuItem('Add a part after')));
+      await clickAt(centre(menuItem('Add a section after')));
       const made = sections().filter((s) => !['sIntro', 'sGroove'].includes(s.id)).map((s) => s.name);
       names.push(made.find((n) => !names.includes(n))!);
       expect(undoCount()).toBe(steps + i + 1);
@@ -200,7 +200,7 @@ describe('rows', () => {
     expect([added[0].start, added[0].bars]).toEqual([8, 8]);
     expect(undoCount()).toBe(steps + 1);
     expect(rt().notice?.action).toBe('undo');
-    expect(notice()).toMatch(/^Added Bass: it plays “.+” in Groove\. Try other bass loops in LOOPS\.$/);
+    expect(notice()).toMatch(/^Added Bass: it plays “.+” in Groove\. Try other bass loops in Loops\.$/);
     expect(rowIds()).toContain(bass);
     // LOOPS shows bass loops; the song plays from where it went.
     expect(libraryQueryStore.getState()?.role).toBe('bass');
@@ -276,20 +276,26 @@ describe('the tip line', () => {
     drumsOnly();
     await settle();
     const tip = () => byTestId('song-tip');
-    expect(tip()!.textContent).toContain('Next: Add a bass: + Add instrument');
+    expect(tip()!.textContent).toContain('Next: Add a bass: press + Add instrument, then Bass');
     setSong([]);
     await settle();
-    expect(tip()!.textContent).toContain('Next: Pick a beat from LOOPS on the right');
-    // A short song with a bass: make it longer.
+    expect(tip()!.textContent).toContain('Next: Pick a beat from Loops on the right');
+    // Drums and a bass: chords next.
     const drums = trackId('Drums');
     const bass = trackId('Bass');
     setSong([region('d', drums, clipOf(0, 1).id, 0, 4), region('b', bass, clipOf(2, 1).id, 0, 4)]);
     await settle();
-    expect(tip()!.textContent).toContain('Next: Make it longer');
+    expect(tip()!.textContent).toContain('Next: Add chords: press + Add instrument, then Keys & chords');
+    // A short song with chords: a look inside a loop (until one was opened in this visit), then make it longer.
+    setSong([region('d', drums, clipOf(0, 1).id, 0, 4), region('b', bass, clipOf(2, 1).id, 0, 4), region('c', trackId('Chords'), clipOf(3, 1).id, 0, 4)]);
+    await settle();
+    expect(['change', 'longer']).toContain(tip()!.dataset.step);
+    if (tip()!.dataset.step === 'change') expect(tip()!.textContent).toContain('Next: Click any loop in your song to change its notes');
+    else expect(tip()!.textContent).toContain('Next: Make your song longer');
     setSong(full.regions, full.sections);
     await settle();
     expect(tip()!.dataset.step).toBe('share');
-    expect(tip()!.textContent).toContain('Next: Share your song');
+    expect(tip()!.textContent).toContain('Next: Share your song: press Share');
     await clickAt(centre(byTestId('hide-tips')!));
     expect(tip()).toBeNull();
   });

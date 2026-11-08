@@ -55,24 +55,45 @@ Omni Song is the app that was called **SWITCHBOARD / 01**, renamed with version 
 
 ### Simple and Advanced
 
-Omni Song starts in **Simple**: the essentials, large, in plain words. The **Simple · Advanced**
-switch at the top (or **Show every setting** in Shape) shows every control that exists: swing, key
-and scale pickers, the arpeggiator, pan, every instrument and effect setting, macro mappings and the
-cable panel. Switching never changes your music, and it is remembered.
+Omni Song starts in **Simple**: one screen, your song, in plain words (Play, Song, Instrument, Loop,
+Sound, Record, Share, Undo). Each row is an instrument, each block a loop; click a loop to change it,
+click an instrument's name for its sound. **⋯ → Show every control** switches to **Advanced**: the
+Play, Shape, Song and Mix tabs with every control that exists (swing, key and scale pickers, the
+arpeggiator, pan, every instrument and effect setting, macro mappings and the cable panel). Switching
+never changes your music, and it is remembered.
 
 ### Help while you play
 
-After **Jump In**, a three-step **quick guide** points at Play / Pause, the pads with Mute and Solo,
-and Change instrument with the big knobs. Then small **"Try this"** hints suggest one next thing at a
-time and move on when you do it; once you open Song they also teach the song. They never block
-anything. **Help** (press **?**, or ⋯ → Help…) lists every keyboard shortcut, has short
-walkthroughs and the version, and can start the guide and the hints again. Pointing at any control
-explains it; **Tips** in the More menu turns explanations and hints on or off.
+In Simple, a line at the bottom of the song says one next step, read from the song itself (pick a
+beat, add a bass, add chords, open a loop, make it longer, share it); **Hide tips** turns it off.
+**Help** (press **?**, or ⋯ → Help…) says how the one screen works in eight lines, lists its keys,
+and has **Show every control**. In Advanced, a three-step **quick guide** and small **"Try this"**
+hints teach the 2.4 views, and Help lists every keyboard shortcut with short walkthroughs. Pointing
+at any control explains it; **Tips** in the More menu turns explanations and hints on or off.
 
 Knobs: drag up or down (hold Shift for fine steps), double-click to reset (in Shape: to where the
 sound had it), or click the value and type (`2.5k`, `-6`); in Shape, right-click a knob to give it
 to a big knob. Arrow keys, Page Up/Down and Home/End work once a knob has focus. Space plays and
 pauses, Shift+Space stops, M mutes the selected part, Ctrl+Z undoes, Ctrl+S saves, ? opens Help.
+
+### New in 3.0: one song screen
+
+- **One home, your song.** Simple shows no tabs: rows of instruments with their loops, Play, Stop,
+  Record, Undo, Redo, Share and ⋯. Jump In plays a song at once; Make a beat from scratch opens an
+  empty drum loop that plays while you click.
+- **Click a loop to change it** in the editor under the song: **Draw** or **Play** (big squares, and
+  Record into this loop), ready-made beats and loops in your song's key, Make it different, Just here.
+- **Click an instrument's name** for its Sound panel: Change sound…, volume, Hear it alone and the
+  six big knobs; **Every setting** opens the full sound screen over the song.
+- **+ Add instrument** and **Make it longer** (an intro, an ending, more sections made from your own
+  music), each one Undo.
+- **Share**: a music file to send (WAV, or a smaller .ogg; as loud as streaming songs without
+  changing the project) or the project to keep working.
+- **Plain words everywhere in Simple:** times instead of bar numbers, Short / Long loops, moods
+  instead of scale names, no note names in the editor (the home note is marked), and a tip line
+  that walks a first session from beat to share.
+- The Jam pads, Mixer and every setting are a click away in ⋯, over the song with **← Back to my
+  song**. **Advanced** keeps 2.4 exactly.
 
 ### New in 2.4: make beats and songs faster
 

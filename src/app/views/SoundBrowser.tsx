@@ -569,7 +569,7 @@ function SoundBrowserDialog({ trackId: openedFor, onClose }: { trackId: Id; onCl
       title={`Change instrument: ${info.name}`}
       description={
         <>
-          Any part can play any sound. Choosing one changes <strong>{info.name}</strong> right away, so you can compare: Done keeps your choice (one Undo goes back), Cancel goes back to {browse.baseName || 'its sound'} as you had it.
+          Any instrument can play any sound. Choosing one changes <strong>{info.name}</strong> right away, so you can compare: Done keeps your choice (one Undo goes back), Cancel goes back to {browse.baseName || 'its sound'} as you had it.
         </>
       }
       size="lg"

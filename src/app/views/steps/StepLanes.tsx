@@ -6,7 +6,7 @@
 import { memo, useRef, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import type { Id } from '../../../project/types';
 import { newGestureId } from '../../../ui/components';
-import { session } from '../../instance';
+import { session, useUi } from '../../instance';
 import { STEP_GRID, barCells, cellColumn, cellIndices, cellLabel, cellSpan, clampVelocity, spanColumns, type GridSpec, type VelocityVoice } from './model';
 import grid from './StepGrid.module.css';
 
@@ -17,11 +17,19 @@ export function gridStyle(spec: GridSpec): CSSProperties {
   return (span ? { '--per-beat': String(spec.perBeat), '--span-cols': span } : { '--per-beat': String(spec.perBeat) }) as unknown as CSSProperties;
 }
 
+/** What Simple calls bar `b` of `bars` shown side by side: "1st half" / "2nd half", else "Page 3". */
+export function simpleBarName(b: number, bars: number): string {
+  if (bars === 2) return b === 0 ? '1st half' : '2nd half';
+  return `Page ${b + 1}`;
+}
+
 /** Cell numbers (1-16 on the 1/16 grid), beat starts emphasised. The current cell lights amber while the clip plays. */
 export const StepNumbers = memo(function StepNumbers(props: { label?: ReactNode; className?: string; grid?: GridSpec }) {
   const spec = props.grid ?? STEP_GRID;
   const bars = spec.bars ?? 1;
   const per = barCells(spec);
+  // Simple never says "bar": two side by side are the loop's halves, more are its pages.
+  const simple = useUi((s) => s.uiMode === 'simple');
   return (
     <div className={[grid.cols, grid.numbers, props.className].filter(Boolean).join(' ')} style={gridStyle(spec)} data-cells={barCells(spec)} data-bars={spec.bars ?? 1}>
       {/* The label may hold controls, so only the decorative numbers are hidden from assistive tech. */}
@@ -32,7 +40,7 @@ export const StepNumbers = memo(function StepNumbers(props: { label?: ReactNode;
       {bars > 1 &&
         cellIndices(bars).map((b) => (
           <div key={`bar${b}`} className={grid.barLabel} style={{ gridColumn: cellSpan(b * per, b * per + per - 1, spec.perBeat), gridRow: 1 }} data-bar-label={b} aria-hidden="true">
-            Bar {b + 1}
+            {simple ? simpleBarName(b, bars) : `Bar ${b + 1}`}
           </div>
         ))}
       {cellIndices(spec.cells).map((s) => {

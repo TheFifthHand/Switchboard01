@@ -96,7 +96,7 @@ describe('sound browser', () => {
       expect(expected, c.name).toBeGreaterThanOrEqual(c.id === 'recordings' ? 5 : 10);
     }
     // The description says plainly that a part can become anything.
-    expect(dialog().textContent).toMatch(/Any part can play any sound/);
+    expect(dialog().textContent).toMatch(/Any instrument can play any sound/);
   });
 
   it('opens on the current sound: its category selected and marked, its card marked "Current" and focused', () => {

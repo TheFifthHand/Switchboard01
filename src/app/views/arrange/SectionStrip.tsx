@@ -23,7 +23,8 @@ import { LaneIcon, type LaneIconName } from './laneIcons';
 import { useSelectedSections } from './laneStore';
 import { moveSectionStepNow } from './laneEdits';
 import { addSectionAt, renameSectionTo } from './songActions';
-import { sectionLabel } from './songModel';
+import { clockAt, sectionLabel } from './songModel';
+import { useProject, useUi } from '../../instance';
 import styles from './SongView.module.css';
 
 export const MOVE_ICON: Record<SongMoveKind, LaneIconName> = { fadeIn: 'fadeIn', fadeOut: 'fadeOut', filterRise: 'filterRise', echoThrow: 'echoThrow' };
@@ -92,6 +93,11 @@ export const AFTER_END_BARS = 8;
 
 export const SectionStrip = memo(function SectionStrip({ sections, songBars, dragged, newSection, insertAt, renaming, onRenameDone, onMenu, onRename }: SectionStripProps) {
   const [tabId, setTabId] = useState<Id | null>(null);
+  // Simple names places by time ("Intro, 0:00 to 0:15"), never bars.
+  const simple = useUi((s) => s.uiMode !== 'advanced');
+  const bpm = useProject((p) => p.bpm);
+  const label = (s: SongSection) => (simple ? `${s.name}, ${clockAt(s.start, bpm)} to ${clockAt(s.start + s.bars, bpm)}` : sectionLabel(s));
+  const gapWords = (a: number, b: number) => (simple ? `Add a section from ${clockAt(a, bpm)} to ${clockAt(b, bpm)}` : `Add a section over bars ${a + 1} to ${b}`);
   const selected = useSelectedSections();
   // The section under the pointer shows a ⋯ at its end (its actions, as a right-click opens them).
   const [hovered, setHovered] = useState<Id | null>(null);
@@ -141,7 +147,7 @@ export const SectionStrip = memo(function SectionStrip({ sections, songBars, dra
             className={styles.section}
             role="button"
             tabIndex={s.id === tab ? 0 : -1}
-            aria-label={`Section ${sectionLabel(s)}${moves.length ? `, with ${moves.map((m) => MOVE_WORDS[m.kind].toLowerCase()).join(', ')}` : ''}`}
+            aria-label={`Section ${label(s)}${moves.length ? `, with ${moves.map((m) => MOVE_WORDS[m.kind].toLowerCase()).join(', ')}` : ''}`}
             aria-haspopup="menu"
             data-section-id={s.id}
             data-dragged={isDragged || undefined}
@@ -203,8 +209,8 @@ export const SectionStrip = memo(function SectionStrip({ sections, songBars, dra
           className={styles.addSection}
           data-section-gap=""
           style={{ '--s': a, '--b': b - a } as CSSProperties}
-          aria-label={`Add a section over bars ${a + 1} to ${b}`}
-          title={`Add a section over bars ${a + 1} to ${b}`}
+          aria-label={gapWords(a, b)}
+          title={gapWords(a, b)}
           data-after-end={a >= afterEnd || undefined}
           tabIndex={-1}
           onClick={() => add(a, b)}

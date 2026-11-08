@@ -24,7 +24,7 @@ import type { Edge, RegionClipboard, ShapeKind, SongEditResult } from '../../../
 import { editorStore } from './editorStore';
 import { clearSelection, setSelection } from './laneStore';
 import { freshName, libraryLoop, libraryResults, loopRoleOf, loopTarget, partProblem, realizeFor } from './library/libraryModel';
-import { INSTRUMENT_KINDS } from './songHome';
+import { INSTRUMENT_KINDS, instrumentName, lastsText, timeAt } from './songHome';
 import { quietly } from './sceneOffer';
 import { barsText, scenePlaces } from './songModel';
 
@@ -58,6 +58,17 @@ export function loopsWords(ids: readonly Id[]): string {
   return ids.length === 1 ? regionName(ids[0]) : `${ids.length} loops`;
 }
 
+/** Simple mode: toasts name places by time ("at 0:15") and lengths in seconds, never bars. */
+const plainWords = (): boolean => uiStore.getState().uiMode !== 'advanced';
+/** "at bar 9" (Advanced) or "at 0:15" (Simple); `bar` is 0-based. */
+function atBar(bar: number, word = 'at'): string {
+  return plainWords() ? `${word} ${timeAt(bar, project().bpm)}` : `${word} bar ${bar + 1}`;
+}
+/** "4 bars" (Advanced) or "7.7 seconds" (Simple). */
+function lastsWords(bars: number): string {
+  return plainWords() ? lastsText(bars, project().bpm) : barsText(bars);
+}
+
 function said(text: string, r: { noStep?: boolean }): void {
   notify(text, 'info', r.noStep ? undefined : 'undo');
 }
@@ -87,7 +98,7 @@ export function moveLoops(ids: readonly Id[], delta: number, opts: { copy?: bool
   const before = project();
   const r = songCmd.moveRegions(session.store, ids, delta, { copy: opts.copy });
   const first = opts.say && r.ids?.length ? regions().find((x) => x.id === r.ids![0]) : null;
-  const out = run(r, { text: opts.say ? `${opts.copy ? 'Copied' : 'Moved'} ${words}${first ? ` to bar ${first.start + 1}` : ''}` : undefined });
+  const out = run(r, { text: opts.say ? `${opts.copy ? 'Copied' : 'Moved'} ${words}${first ? ` ${atBar(first.start, 'to')}` : ''}` : undefined });
   if (!opts.say) sayCovered(before, ids, `${opts.copy ? 'The copy of' : 'Moved'} ${loopsWords(ids)}${opts.copy ? ' went' : ''} over other music.`, r);
   return out;
 }
@@ -118,7 +129,7 @@ export function resizeLoops(ids: readonly Id[], edge: Edge, delta: number, opts:
   const before = project();
   const r = songCmd.resizeRegions(session.store, ids, edge, delta);
   const one = ids.length === 1 ? regions().find((x) => x.id === ids[0]) : null;
-  const text = edge === 'end' ? (one ? `${words} now lasts ${barsText(one.bars)}` : `${delta > 0 ? 'Lengthened' : 'Shortened'} ${words}`) : one ? `${words} now starts at bar ${one.start + 1}` : `Trimmed ${words}`;
+  const text = edge === 'end' ? (one ? `${words} now lasts ${lastsWords(one.bars)}` : `${delta > 0 ? 'Lengthened' : 'Shortened'} ${words}`) : one ? `${words} now starts ${atBar(one.start)}` : `Trimmed ${words}`;
   const out = run(r, { select: false, text: opts.say ? text : undefined });
   if (!opts.say) sayCovered(before, ids, `${loopsWords(ids)} grew over other music.`, r);
   return out;
@@ -155,14 +166,14 @@ export function splitLoops(ids: readonly Id[], at: number): SongEditResult | nul
     return r && r.start < at && at < regionEnd(r);
   });
   if (!crossing.length) {
-    notify(`Nothing to split at bar ${at + 1}: put the playhead inside a selected loop.`, 'warn');
+    notify(plainWords() ? 'Nothing to split there: put the playing line inside the loop first.' : `Nothing to split at bar ${at + 1}: put the playhead inside a selected loop.`, 'warn');
     return null;
   }
   const words = loopsWords(crossing);
   const r = songCmd.splitRegions(session.store, crossing, at);
   if (!session.accepted(r)) return r;
   select(r.ids);
-  said(`Split ${words} at bar ${at + 1}`, r);
+  said(`Split ${words} ${atBar(at)}`, r);
   return r;
 }
 
@@ -223,7 +234,7 @@ export function addLibraryLoop(loopId: string, trackId: Id, bar: number, opts: {
   const placed = r.regionId ? regions().find((x) => x.id === r.regionId) : undefined;
   // A loop it covered up on the row is named (Undo brings it back).
   const replaced = replacedLoopsText(before, project(), trackId);
-  if (opts.say) said(`Added ${name} to ${t.name}${placed ? ` at bar ${placed.start + 1}` : ''}${replaced ? `. ${replaced.replace(/\.$/, '')}` : ''}`, r);
+  if (opts.say) said(`Added ${name} to ${t.name}${placed ? ` ${atBar(placed.start)}` : ''}${replaced ? `. ${replaced.replace(/\.$/, '')}` : ''}`, r);
   return r;
 }
 
@@ -247,7 +258,10 @@ export function newEmptyLoop(trackId: Id, bar: number, bars: ClipBars): (songCmd
   select([r.regionId]);
   editorStore.setState({ trackId, clipId: r.clipId, regionId: r.regionId });
   const name = clipById(project().tracks.find((t) => t.id === trackId)!, r.clipId)?.name ?? 'a new loop';
-  said(`Added ${name}, an empty ${barsText(bars).replace(/s$/, '')} loop on ${partNameOf(trackId)}: add notes in the editor below`, r);
+  said(
+    plainWords() ? `Added ${name}, an empty loop on ${partNameOf(trackId)}: add notes in the editor below` : `Added ${name}, an empty ${barsText(bars).replace(/s$/, '')} loop on ${partNameOf(trackId)}: add notes in the editor below`,
+    r,
+  );
   return r;
 }
 
@@ -272,7 +286,7 @@ export function makeLoopDifferent(regionId: Id): (songCmd.CommandResult & { clip
   const e = editorStore.getState();
   if (e && e.regionId === regionId) editorStore.setState({ ...e, clipId: r.clipId });
   select([regionId]);
-  said(`This loop now plays its own copy, ${regionName(regionId)}: edits to it change only ${before.bars === 1 ? `bar ${before.start + 1}` : `bars ${before.start + 1}–${regionEnd(before)}`}`, r);
+  said(`This loop now plays its own copy, ${regionName(regionId)}: edits to it change only ${plainWords() ? 'this place' : before.bars === 1 ? `bar ${before.start + 1}` : `bars ${before.start + 1}–${regionEnd(before)}`}`, r);
   return r;
 }
 
@@ -377,15 +391,15 @@ export function cutLoops(ids: readonly Id[]): SongEditResult | null {
   return deleteLoops(ids, { cut: true });
 }
 
-export function pasteLoops(atBar: number): SongEditResult | null {
+export function pasteLoops(bar: number): SongEditResult | null {
   if (!clipboard?.items.length) {
     notify('Nothing to paste yet: select loops and press Ctrl+C first.', 'warn');
     return null;
   }
   if (lockedNow()) return null;
   const n = clipboard.items.length;
-  const r = songCmd.pasteRegions(session.store, clipboard, atBar);
-  return run(r, { text: `Pasted ${r.ids?.length === 1 ? regionName(r.ids[0]) : `${r.ids?.length ?? n} loops`} at bar ${atBar + 1}` });
+  const r = songCmd.pasteRegions(session.store, clipboard, bar);
+  return run(r, { text: `Pasted ${r.ids?.length === 1 ? regionName(r.ids[0]) : `${r.ids?.length ?? n} loops`} ${atBar(bar)}` });
 }
 
 /* ------------------------------------------------------------------ */
@@ -515,7 +529,7 @@ export function addInstrumentNow(trackId: Id, bar: number): { regionId?: Id; sta
   }
   if (!regionId) return null;
   clearSelection();
-  notify(`Added ${t.name}: it plays “${name}”${section ? ` in ${section.name}` : ''}. Try other ${INSTRUMENT_KINDS[t.role].name.toLowerCase()} loops in LOOPS.`, 'info', 'undo');
+  notify(`Added ${uiStore.getState().uiMode === 'advanced' ? t.name : instrumentName(t.name, t.role)}: it plays “${name}”${section ? ` in ${section.name}` : ''}. Try other ${INSTRUMENT_KINDS[t.role].name.toLowerCase()} loops in Loops.`, 'info', 'undo');
   return { regionId, start, loop: loop.id };
 }
 
@@ -524,7 +538,7 @@ export function takeToSong(takeId: Id, name: string): SongEditResult | null {
   if (lockedNow()) return null;
   const at = songEnd();
   const r = songCmd.songFromTake(session.store, takeId, { at });
-  return run(r, { text: `Put ${name} in the song from bar ${at + 1}` });
+  return run(r, { text: `Put ${name} in the song ${plainWords() ? `from ${timeAt(at, project().bpm)}` : `from bar ${at + 1}`}` });
 }
 
 function songEnd(): number {

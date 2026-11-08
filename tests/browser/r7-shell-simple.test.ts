@@ -241,11 +241,11 @@ describe('Project ▾', () => {
     const p = await openProject();
     const before = session.store.getState();
     expect(before.scale).toBe('dorian');
-    await click(button(/moody minor/, p)!);
+    await click(button(/^moody$/, p)!);
     const after = session.store.getState();
     expect(after.scale).toBe('minor');
     expect(after.root).toBe(before.root);
-    await until(() => toasts().find((t) => t.startsWith('Mood: moody minor.')), 'the mood toast');
+    await until(() => toasts().find((t) => t.startsWith('Mood: moody.')), 'the mood toast');
     act(() => session.undo());
     expect(session.store.getState().scale).toBe('dorian');
     expect(JSON.stringify(session.store.getState().tracks)).toBe(JSON.stringify(before.tracks));

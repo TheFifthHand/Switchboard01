@@ -34,6 +34,7 @@ import {
   teardownSong,
   undoCount,
   waitFor,
+  advancedMode,
 } from './r5-song-helpers';
 
 /** Drums: A over bars 1–8, B over 13–16; Bass: C over 1–16. */
@@ -73,6 +74,8 @@ describe('the loop menu', () => {
   });
 
   it('Duplicate, Make it 2× longer and Delete', async () => {
+    // 2.4's words (bar numbers, Make it 2× longer, Split at playhead): Advanced since round 7 (Simple: r7-words-simple).
+    advancedMode();
     await open();
     await rightClickAt(on('B'));
     await clickAt(centre(menuItem('Duplicate')));
@@ -110,6 +113,8 @@ describe('the loop menu', () => {
   });
 
   it('Split at playhead says when the playhead is not in the loop; nothing in the menu is cut off', async () => {
+    // 2.4's words (bar numbers, Make it 2× longer, Split at playhead): Advanced since round 7 (Simple: r7-words-simple).
+    advancedMode();
     await open();
     act(() => session.setSongCursor(20));
     await rightClickAt(on('A'));
@@ -150,7 +155,7 @@ describe('keys', () => {
     expect(get('A')).toBeUndefined();
     expect(document.querySelectorAll('[data-region-id][data-selected]').length).toBe(0);
     // Focus is on the rows as a whole (in the song), not on a loop that would look chosen.
-    await waitFor(() => document.activeElement?.getAttribute('aria-label') === 'The song: a row of loops for each part', 'focus on the rows');
+    await waitFor(() => /^(The|Your) song: a row of loops for each (part|instrument)$/.test(document.activeElement?.getAttribute('aria-label') ?? ''), 'focus on the rows');
     await press('Delete');
     await press('Backspace');
     expect(regions().length).toBe(all - 1);
@@ -201,6 +206,8 @@ describe('keys', () => {
   });
 
   it('regions are named for screen readers and the song is one Tab stop', async () => {
+    // 2.4's words (bar numbers, Make it 2× longer, Split at playhead): Advanced since round 7 (Simple: r7-words-simple).
+    advancedMode();
     await open();
     expect(regionEl('A').getAttribute('aria-label')).toMatch(/^.+, Drums, bars 1 to 8, plays .+$/);
     const tabbable = [...document.querySelectorAll('[data-region-id]')].filter((e) => (e as HTMLElement).tabIndex === 0);

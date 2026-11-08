@@ -149,7 +149,7 @@ describe('the ruler’s menu', () => {
     await open();
     act(() => session.setSongCursor(12));
     await settle(60);
-    act(() => document.querySelector<HTMLElement>('[aria-label^="The song: a row"]')!.focus());
+    act(() => document.querySelector<HTMLElement>('[aria-label$="a row of loops for each part"], [aria-label$="a row of loops for each instrument"]')!.focus());
     await press('F10', 8);
     const menu = document.querySelector('[role="menu"]');
     expect(menu?.textContent).toContain('At bar 13');

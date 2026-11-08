@@ -47,7 +47,8 @@ import { clipBarsOf, regionEnd, reorderSection, reorderTarget, type Edge } from 
 import { TOUCH_HOLD_MS, TOUCH_SLOP_PX } from '../../../ui/components';
 import type { LibraryLoop } from '../../../content/loops';
 import { MAX_SONG_BARS, type Id, type Project, type SongRegion } from '../../../project/types';
-import { selectTrack } from '../../../state/uiStore';
+import { selectTrack, uiStore } from '../../../state/uiStore';
+import { session } from '../../instance';
 import {
   DRAG_SLOP_PX,
   barsMoved,
@@ -74,7 +75,12 @@ import { partProblem, partProblemShort, realizeFor } from './library/libraryMode
 import { notify } from '../../runtime';
 import { addLibraryLoop, addLoop, addScene, moveLoops, moveSectionBy, resizeLoops, resizeSectionBy } from './songActions';
 import { barAt, edgeAt, rowAt, rulerBarAt, xToBar } from './songLayout';
-import { lengthBadge, moveBadge, partHue, startBadge } from './songModel';
+import { lengthBadge, moveBadge, partHue, sectionLengthBadge, startBadge } from './songModel';
+
+/** Simple mode's drag badges speak in times and seconds (the song's tempo); Advanced's in bars (undefined). */
+function plainBpm(): number | undefined {
+  return uiStore.getState().uiMode === 'advanced' ? undefined : session.store.getState().bpm;
+}
 
 /**
  * The drag's cursor (grabbing, ↔, not allowed), shown by one transparent
@@ -443,11 +449,11 @@ export class LaneController {
         const n = g.ids.length;
         if (isMove) {
           const start = g.anchor.start + pv.delta;
-          badge = { text: moveBadge(start, copy, n), x: start * ppb, row, align: 'start' };
+          badge = { text: moveBadge(start, copy, n, plainBpm()), x: start * ppb, row, align: 'start' };
         } else {
           const m = pv.moved.find((r) => r.id === g.anchor.id) ?? g.anchor;
           const clipBars = clipBarsOf(p, m);
-          badge = g.edge === 'end' ? { text: lengthBadge(m.bars, clipBars, n), x: regionEnd(m) * ppb, row, align: 'end' } : { text: startBadge(m.start, n), x: m.start * ppb, row, align: 'start' };
+          badge = g.edge === 'end' ? { text: lengthBadge(m.bars, clipBars, n, plainBpm()), x: regionEnd(m) * ppb, row, align: 'end' } : { text: startBadge(m.start, n, plainBpm()), x: m.start * ppb, row, align: 'start' };
         }
         this.publish({ kind: isMove ? 'move' : g.edge, preview: pv, slide: isMove ? pv.delta : undefined, badge, notAllowed: off, touches: pv.touches });
         if (!a.touch) dragCursor(off ? 'not-allowed' : CURSOR[g.edge]);
@@ -515,7 +521,7 @@ export class LaneController {
           const d = pv.section ? pv.section.start - (sections.find((s) => s.id === g.id)?.start ?? 0) : 0;
           a.last = { delta: d, copy: dup };
           const at = pv.section?.start ?? 0;
-          this.publish({ kind: 'section', preview: pv.regions, slide: pv.regions.delta, sections: pv.sections, section: pv.section, touches: [], badge: pv.section ? { text: moveBadge(at, dup), x: at * ppb, row: 0, align: 'start', top: true } : undefined });
+          this.publish({ kind: 'section', preview: pv.regions, slide: pv.regions.delta, sections: pv.sections, section: pv.section, touches: [], badge: pv.section ? { text: moveBadge(at, dup, 1, plainBpm()), x: at * ppb, row: 0, align: 'start', top: true } : undefined });
         } else {
           const key = `${delta}`;
           if (key === a.key) return;
@@ -529,7 +535,7 @@ export class LaneController {
             kind: 'section',
             sections: pv.sections,
             section: s,
-            badge: s ? (g.edge === 'end' ? { text: `${s.bars} ${s.bars === 1 ? 'bar' : 'bars'}`, x: regionEnd(s) * ppb, row: 0, align: 'end', top: true } : { text: startBadge(s.start), x: s.start * ppb, row: 0, align: 'start', top: true }) : undefined,
+            badge: s ? (g.edge === 'end' ? { text: sectionLengthBadge(s.bars, plainBpm()), x: regionEnd(s) * ppb, row: 0, align: 'end', top: true } : { text: startBadge(s.start, 1, plainBpm()), x: s.start * ppb, row: 0, align: 'start', top: true }) : undefined,
           });
         }
         return;
@@ -571,7 +577,7 @@ export class LaneController {
           ownRow: item.kind === 'loop' ? item.trackId : undefined,
           touches: pv.touches,
           newSection,
-          badge: { text: `Bar ${bar + 1}`, x: bar * ppb, row: item.kind === 'loop' ? tracks.indexOf(item.trackId) : 0, align: 'start' },
+          badge: { text: moveBadge(bar, false, 1, plainBpm()), x: bar * ppb, row: item.kind === 'loop' ? tracks.indexOf(item.trackId) : 0, align: 'start' },
         });
         return;
       }
@@ -614,7 +620,7 @@ export class LaneController {
     const pv = previewPlace(p, p.arrangement.regions, [placed]);
     // The new loop is drawn by LibraryGhost, not by the overlay.
     const shown = pv.shown.filter((r) => r.id !== placed.id);
-    this.publish({ kind: 'drop', preview: { ...pv, shown, moved: [] }, ownRow: t.id, touches: pv.touches, badge: { text: `Bar ${start + 1}`, x: start * ppb, row, align: 'start' } }, key);
+    this.publish({ kind: 'drop', preview: { ...pv, shown, moved: [] }, ownRow: t.id, touches: pv.touches, badge: { text: moveBadge(start, false, 1, plainBpm()), x: start * ppb, row, align: 'start' } }, key);
     libraryGhostStore.setState({ kind: 'loop', trackId: t.id, row, hue: partHue(row), start, bars: item.bars, name: item.name, notes: realizeFor(p, item.loop, t)?.notes ?? [], drums: item.loop.part.kind === 'drums' });
   }
 

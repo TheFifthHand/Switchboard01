@@ -265,6 +265,12 @@ describe('the chip never covers a heading or a status line', () => {
         await settle();
         act(() => selectTrack('t2'));
         await settle(900);
+        if (mode === 'simple') {
+          // Round 7 words: the "Try this" chip is Advanced's (its steps point at 2.4's tabs and pads); Simple's guide
+          // is the Song screen's tip line, and no chip shows on a sheet either.
+          expect(chip(), `${w} simple shape sheet: no chip`).toBeNull();
+          return;
+        }
         await chipPlaced();
         const heading = [...document.querySelectorAll('h2')].find((el) => el.textContent?.includes('Hand Percussion'));
         expect(heading, 'the Shape heading').toBeTruthy();
@@ -279,13 +285,6 @@ describe('the chip never covers a heading or a status line', () => {
           showStep(step);
           await settle();
           await chipPlaced();
-          // (Round 7: Simple's Song screen has no pads chip; 2.4's header with it is Advanced's. Nor does it show the
-          // hint chip: its tip line at the bottom is the one guide there.)
-          if (mode === 'simple') {
-            expect(chip(), `${w} simple arrange ${step}: no chip on the home`).toBeNull();
-            expect(document.querySelector('[data-testid="song-tip"]'), `${w} simple arrange: the tip line`).not.toBeNull();
-            continue;
-          }
           expect(document.querySelector('[data-testid="pads-playing"]')!.textContent).toContain('Pads are playing');
           // Its home is the Song header's free middle. Where that has no room (960 x 540 with the two-row transport, the
           // song filling the rows) it waits off screen, unseen, rather than cover anything (the rulebook's rule).

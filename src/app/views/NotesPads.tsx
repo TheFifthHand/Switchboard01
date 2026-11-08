@@ -28,7 +28,7 @@
  * project.
  */
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
-import { Button, IconButton, Pad, SegmentedControl, Select, Switch, type PadPressEvent } from '../../ui/components';
+import { Button, Icon, IconButton, Pad, SegmentedControl, Select, Switch, type PadPressEvent } from '../../ui/components';
 import { chordAt, chordName } from '../../music/chords';
 import { isInScale, keyLabel, noteName, pitchClass, scaleDegreesInRange, type MusicalKey } from '../../music/scales';
 import type { Id, Project, ScaleId } from '../../project/types';
@@ -181,8 +181,12 @@ function inversionOptions(size: 3 | 4) {
 const NOTE_PAD_ID = 'note-pad-';
 const onNoteGridKey = padGridKeyDown(NOTE_PAD_ID);
 
-const NotePad = memo(function NotePad(props: { trackId: Id; index: number; pitch: number; name: string; isRoot: boolean; inKey: boolean; disabled: boolean; onHit(name: string, velocity: number): void }) {
-  const { trackId, index, pitch, name, isRoot, inKey, disabled, onHit } = props;
+/**
+ * One note pad. `plain` (Simple, in the Song screen's editor): no note names; the song's home note says "Home"
+ * with the home icon (and keeps its outline), the rest are plain squares, numbered for screen readers.
+ */
+const NotePad = memo(function NotePad(props: { trackId: Id; index: number; pitch: number; name: string; isRoot: boolean; inKey: boolean; disabled: boolean; plain?: boolean; onHit(name: string, velocity: number): void }) {
+  const { trackId, index, pitch, name, isRoot, inKey, disabled, plain = false, onHit } = props;
   const lit = useRuntime((s) => s.held[trackId]?.includes(pitch) ?? false);
   // Releases the pitch sounding under this pad as struck, even if the octave moves meanwhile.
   const release = useRef<(() => void) | null>(null);
@@ -199,31 +203,38 @@ const NotePad = memo(function NotePad(props: { trackId: Id; index: number; pitch
     release.current = null;
     r?.();
   }, []);
-  const spoken = `${name}${isRoot ? ', root note' : ''}${inKey ? '' : ', outside the key'}`;
+  const spoken = plain ? `${isRoot ? 'Home note' : 'Note'}${inKey ? '' : ', outside the song’s key'}` : `${name}${isRoot ? ', root note' : ''}${inKey ? '' : ', outside the key'}`;
   return (
     <div className={styles.cell} data-root={isRoot || undefined} data-outside={!inKey || undefined}>
       <Pad
         id={`${NOTE_PAD_ID}${index}`}
         state={lit ? 'playing' : 'ready'}
         caption={null}
-        label={name}
+        label={plain ? '' : name}
         disabled={disabled}
         onPress={onPress}
         onRelease={onRelease}
         ariaLabel={spoken}
         className={styles.pad}
       />
-      {isRoot && (
-        <span className={styles.rootMark} aria-hidden="true">
-          Root
-        </span>
-      )}
+      {isRoot &&
+        (plain ? (
+          <span className={`${styles.rootMark} ${styles.homeMark}`} aria-hidden="true">
+            <Icon name="home" size={12} />
+            Home
+          </span>
+        ) : (
+          <span className={styles.rootMark} aria-hidden="true">
+            Root
+          </span>
+        ))}
     </div>
   );
 });
 
-const ChordPad = memo(function ChordPad(props: { trackId: Id; index: number; chord: ChordPadInfo; spelled: string; disabled: boolean; onHit(name: string, velocity: number): void }) {
-  const { trackId, index, chord, spelled, disabled, onHit } = props;
+/** One chord pad. `plain` (Simple, in the Song screen's editor): no chord names; the home chord says "Home". */
+const ChordPad = memo(function ChordPad(props: { trackId: Id; index: number; chord: ChordPadInfo; spelled: string; disabled: boolean; plain?: boolean; onHit(name: string, velocity: number): void }) {
+  const { trackId, index, chord, spelled, disabled, plain = false, onHit } = props;
   const notesKey = chord.notes.join(',');
   // Lit while every note of this chord sounds on the part.
   const lit = useRuntime((s) => {
@@ -250,21 +261,30 @@ const ChordPad = memo(function ChordPad(props: { trackId: Id; index: number; cho
     r?.();
   }, []);
   return (
-    <div className={styles.cell} data-chord="" data-notes={notesKey}>
+    <div className={styles.cell} data-chord="" data-notes={notesKey} data-root={(plain && chord.degree === 0) || undefined}>
       <Pad
         id={`${NOTE_PAD_ID}${index}`}
         state={lit ? 'playing' : 'ready'}
         caption={null}
-        label={chord.name}
+        label={plain ? '' : chord.name}
         disabled={disabled}
         onPress={onPress}
         onRelease={onRelease}
-        ariaLabel={`${chord.name} chord, degree ${chord.degree + 1}: ${spelled}`}
+        ariaLabel={plain ? `${chord.degree === 0 ? 'Home chord' : `Chord ${chord.degree + 1}`}` : `${chord.name} chord, degree ${chord.degree + 1}: ${spelled}`}
         className={styles.pad}
       />
-      <span className={`${styles.degree} mono`} aria-hidden="true">
-        {chord.degree + 1}
-      </span>
+      {plain ? (
+        chord.degree === 0 && (
+          <span className={`${styles.rootMark} ${styles.homeMark}`} aria-hidden="true">
+            <Icon name="home" size={12} />
+            Home
+          </span>
+        )
+      ) : (
+        <span className={`${styles.degree} mono`} aria-hidden="true">
+          {chord.degree + 1}
+        </span>
+      )}
     </div>
   );
 });
@@ -319,6 +339,8 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[]; 
         ? 'Chromatic: every semitone.'
         : `Chromatic: every semitone. Shaded pads are outside ${keyName}.`;
 
+  // Simple's Song-screen editor: squares without note or chord names (the home one marked).
+  const plainPads = embedded && !advanced;
   const canDown = octave > OCTAVE_RANGE.min;
   const canUp = octave < top;
   const writeDisabled = locked || refusal !== null;
@@ -333,8 +355,12 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[]; 
           role="group"
           aria-label={
             chordsOn
-              ? `Chord pads for ${part.name} in ${keyName}, 4 by 4, the home chord bottom-left. Arrow keys move between pads.`
-              : `Note pads for ${part.name}, ${rangeText}, 4 by 4, lowest note bottom-left. Arrow keys move between pads.`
+              ? plainPads
+                ? `Chord squares for ${part.name}, 4 by 4, the home chord bottom-left. Arrow keys move between them.`
+                : `Chord pads for ${part.name} in ${keyName}, 4 by 4, the home chord bottom-left. Arrow keys move between pads.`
+              : plainPads
+                ? `Note squares for ${part.name}, 4 by 4, lowest note bottom-left. Arrow keys move between them.`
+                : `Note pads for ${part.name}, ${rangeText}, 4 by 4, lowest note bottom-left. Arrow keys move between pads.`
           }
           onKeyDown={onNoteGridKey}
           onFocus={onFocus}
@@ -352,6 +378,7 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[]; 
                     chord={chord}
                     spelled={chord.notes.map(spell).join(', ')}
                     disabled={replaying}
+                    plain={plainPads}
                     onHit={onHit}
                   />
                 );
@@ -369,6 +396,7 @@ function NoteLayout(props: { part: PartInfo; melodicParts: readonly PartInfo[]; 
                     isRoot={pitchClass(pitch) === pitchClass(root)}
                     inKey={assist || chromaticScale || isInScale(pitch, root, scale)}
                     disabled={replaying}
+                    plain={plainPads}
                     onHit={onHit}
                   />
                 );

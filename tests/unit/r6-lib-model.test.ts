@@ -97,14 +97,14 @@ describe('which part a loop goes to', () => {
     const p = house();
     p.tracks = p.tracks.filter((t) => t.instrument.kind !== 'drums');
     const r = loopTarget(p, loop('beat-steady-four'), null);
-    expect(r).toEqual({ problem: 'This song has no drum part to play “Steady Four”.' });
+    expect(r).toEqual({ problem: 'This song has no drums to play “Steady Four”.' });
   });
 
   it('the wrong kind of part is refused in words', () => {
     const p = house();
-    expect(partProblem(loop('beat-steady-four'), track(p, 'Bass'))).toBe('“Steady Four” is a drum loop and Bass plays notes: put it on a drum or percussion part.');
+    expect(partProblem(loop('beat-steady-four'), track(p, 'Bass'))).toBe('“Steady Four” is a drum loop and Bass plays notes: put it on a drum or percussion instrument.');
     const melody = LIBRARY_LOOPS.find((l) => l.role === 'lead')!;
-    expect(partProblem(melody, track(p, 'Drums'))).toMatch(/plays notes and Drums is a drum kit: put it on a synth or sampler part\.$/);
+    expect(partProblem(melody, track(p, 'Drums'))).toMatch(/plays notes and Drums is a drum kit: put it on an instrument that plays notes\.$/);
     expect(partProblem(melody, track(p, 'Vocal'))).toBeNull();
     expect(loopRoleOf(track(p, 'Vocal'))).toBeNull();
     expect(loopRoleOf(track(p, 'Lead'))).toBe('lead');

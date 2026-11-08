@@ -27,14 +27,14 @@ export interface SoundCategoryInfo {
 
 /** The sound browser's categories, in display order. */
 export const SOUND_CATEGORIES: readonly SoundCategoryInfo[] = [
-  { id: 'drums', name: 'Drums & Percussion', blurb: 'Drum kits and percussion sets: sixteen sounds on the pads.' },
+  { id: 'drums', name: 'Drums & Percussion', blurb: 'Drum kits and percussion sets, sixteen sounds each.' },
   { id: 'bass', name: 'Bass', blurb: 'Low lines: subs, 808s, plucks, acid, reese and FM basses.' },
   { id: 'keys', name: 'Keys', blurb: 'Electric pianos, organs, clavinet and harpsichord.' },
-  { id: 'pads', name: 'Pads & Strings', blurb: 'Long, soft chords: pads, string ensembles and choirs.' },
+  { id: 'pads', name: 'Pads & Strings', blurb: 'Long, soft chords: warm synth beds, string ensembles and choirs.' },
   { id: 'leads', name: 'Leads', blurb: 'Melodies that sing on top: synth leads, brass and winds.' },
   { id: 'plucks', name: 'Plucks & Bells', blurb: 'Short, struck and plucked notes: bells, mallets, kalimba, harp.' },
   { id: 'textures', name: 'Textures & FX', blurb: 'Atmospheres, drones, risers, zaps and noise sweeps.' },
-  { id: 'recordings', name: 'Recordings', blurb: 'Built-in recordings and your own WAV or MP3 files, played by the sampler.' },
+  { id: 'recordings', name: 'Recordings', blurb: 'Built-in recordings and your own WAV or MP3 files.' },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -66,7 +66,7 @@ export const KITS: readonly KitInfo[] = [
   { id: 'dust-tape', name: 'Dust Tape', description: 'Soft, saturated, slightly lo-fi kit for downtempo and breaks.', level: -11, family: 'kit', tags: ['lofi', 'tape', 'downtempo', 'hip hop'] },
   { id: 'bright-steel', name: 'Bright Steel', description: 'Crisp, snappy kit with bright metals for garage and drum & bass.', level: -11, family: 'kit', tags: ['garage', 'dnb', 'jungle', 'crisp', 'bright'] },
   // Sparser, quieter hits: less trim for the same loudness.
-  { id: 'hand-percussion', name: 'Hand Percussion', description: 'Congas, bongos, shakers, woodblocks and bells for the percussion part.', level: -4.5, family: 'percussion', tags: ['congas', 'bongos', 'shaker', 'latin', 'world'] },
+  { id: 'hand-percussion', name: 'Hand Percussion', description: 'Congas, bongos, shakers, woodblocks and bells for the Percussion instrument.', level: -4.5, family: 'percussion', tags: ['congas', 'bongos', 'shaker', 'latin', 'world'] },
   { id: 'boom-808', name: '808 Machine', description: 'Classic drum-machine kit: long booming kick, snappy snare, sizzling hats and cowbell.', level: -12, family: 'kit', tags: ['808', 'hip hop', 'electro', 'classic', 'machine'] },
   { id: 'punch-909', name: '909 Punch', description: 'Hard-hitting machine kit: clicky punchy kick, noisy snare and bright cymbals.', level: -11, family: 'kit', tags: ['909', 'house', 'techno', 'classic', 'machine'] },
   { id: 'trap-night', name: 'Trap Night', description: 'Trap kit: hard kick, long distorted 808 on Kick 2, crisp snare and tight hats for rolls.', level: -9.6, family: 'kit', tags: ['trap', '808', 'hip hop', 'drill', 'rolls'] },

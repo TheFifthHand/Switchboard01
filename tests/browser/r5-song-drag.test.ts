@@ -76,6 +76,8 @@ describe('moving a loop', () => {
   }
 
   it('clicks onto each bar line on the way (a short eased slide), with a “Bar N” badge', async () => {
+    // 2.4's words (bar numbers, Make it 2× longer, Split at playhead): Advanced since round 7 (Simple: r7-words-simple).
+    advancedMode();
     await open();
     const from = on('A', 0.3);
     const k = ppb();
@@ -89,6 +91,8 @@ describe('moving a loop', () => {
   });
 
   it('Alt at the drop copies: “+ Copy” shows while it is held, the original stays', async () => {
+    // 2.4's words (bar numbers, Make it 2× longer, Split at playhead): Advanced since round 7 (Simple: r7-words-simple).
+    advancedMode();
     await open();
     const from = on('B', 0.5);
     const k = ppb();
@@ -143,6 +147,8 @@ describe('moving a loop', () => {
 
 describe('edges', () => {
   it('the right edge stretches: “8 bars · plays …” while dragging, the clip repeats to fill it', async () => {
+    // 2.4's words (bar numbers, Make it 2× longer, Split at playhead): Advanced since round 7 (Simple: r7-words-simple).
+    advancedMode();
     await open();
     const k = ppb();
     const cb = project().tracks[0].clips.find((c) => c)!.bars;
@@ -155,6 +161,8 @@ describe('edges', () => {
   });
 
   it('the left edge trims the start (“starts at bar 5”); the music stays where it was', async () => {
+    // 2.4's words (bar numbers, Make it 2× longer, Split at playhead): Advanced since round 7 (Simple: r7-words-simple).
+    advancedMode();
     await open();
     const k = ppb();
     const cb = project().tracks[2].clips.find((c) => c)!.bars;

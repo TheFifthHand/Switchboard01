@@ -131,6 +131,18 @@
   color: var(--ink-3);
   white-space: nowrap;
 }
+/* Simple: the home note, named in words with the home icon (no note letters). */
+.homeTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  white-space: nowrap;
+}
 .outTag {
   color: var(--coral-ink);
 }

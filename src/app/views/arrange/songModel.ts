@@ -132,8 +132,15 @@ export function timesWords(bars: number, clipBars: number): string {
 /* Regions                                                             */
 /* ------------------------------------------------------------------ */
 
-/** A region's name for screen readers: "Four Floor, Drums, bars 9 to 16, plays 4 times" (plus where it starts in its loop). */
-export function regionLabel(clipName: string, partName: string, r: Pick<SongRegion, 'start' | 'bars' | 'offset'>, clipBars: number): string {
+/**
+ * A region's name for screen readers: "Four Floor, Drums, bars 9 to 16, plays 4 times" (plus where it starts in
+ * its loop). With `bpm` (Simple mode) places are times: "Four Floor, Drums, from 0:15 to 0:31, plays 4 times".
+ */
+export function regionLabel(clipName: string, partName: string, r: Pick<SongRegion, 'start' | 'bars' | 'offset'>, clipBars: number, bpm?: number): string {
+  if (bpm !== undefined) {
+    const from = r.offset > 0 ? ', starts in the middle of its loop' : '';
+    return `${clipName}, ${partName}, from ${clockAt(r.start, bpm)} to ${clockAt(r.start + r.bars, bpm)}, ${timesWords(r.bars, clipBars)}${from}`;
+  }
   const where = r.bars === 1 ? `bar ${r.start + 1}` : `bars ${r.start + 1} to ${r.start + r.bars}`;
   const from = r.offset > 0 ? `, starts ${barsText(r.offset)} into its loop` : '';
   return `${clipName}, ${partName}, ${where}, ${timesWords(r.bars, clipBars)}${from}`;
@@ -155,20 +162,40 @@ export function notches(r: Pick<SongRegion, 'bars' | 'offset'>, clipBars: number
 /* Drag badges                                                         */
 /* ------------------------------------------------------------------ */
 
-/** While moving: "Bar 9" (where the first moved region starts), "+ Copy · Bar 9" with the copy key held. */
-export function moveBadge(start: number, copy: boolean, count = 1): string {
+/** Where bar `bar` (0-based) starts, as a clock time ("0:15"). */
+export function clockAt(bar: number, bpm: number): string {
+  return clockText((Math.max(0, bar) * 4 * 60) / Math.max(1, bpm));
+}
+
+/** "8 bars", or with `bpm` (Simple mode) "15 s". */
+function spanText(bars: number, bpm?: number): string {
+  return bpm === undefined ? barsText(bars) : `${Math.round((bars * 4 * 60) / Math.max(1, bpm))} s`;
+}
+
+/**
+ * While moving: "Bar 9" (where the first moved region starts), "+ Copy · Bar 9" with the copy key held. With
+ * `bpm` (Simple mode) the place is a time: "At 0:15".
+ */
+export function moveBadge(start: number, copy: boolean, count = 1, bpm?: number): string {
   const many = count > 1 ? `${count} loops · ` : '';
-  return copy ? `+ Copy · ${many}Bar ${start + 1}` : `${many}Bar ${start + 1}`;
+  const at = bpm === undefined ? `Bar ${start + 1}` : `At ${clockAt(start, bpm)}`;
+  return copy ? `+ Copy · ${many}${at}` : `${many}${at}`;
 }
 
-/** While dragging a right edge: "8 bars · plays 4×" ("4 loops · 8 bars · plays 4×" when several stretch together). */
-export function lengthBadge(bars: number, clipBars: number, count = 1): string {
-  return `${count > 1 ? `${count} loops · ` : ''}${barsText(bars)} · plays ${timesShort(bars, clipBars)}`;
+/** While dragging a right edge: "8 bars · plays 4×" ("4 loops · 8 bars · plays 4×" when several stretch together); with `bpm`, "15 s · plays 4×". */
+export function lengthBadge(bars: number, clipBars: number, count = 1, bpm?: number): string {
+  return `${count > 1 ? `${count} loops · ` : ''}${spanText(bars, bpm)} · plays ${timesShort(bars, clipBars)}`;
 }
 
-/** While dragging a left edge: "starts at bar 5" ("4 loops · start at bar 5"). */
-export function startBadge(start: number, count = 1): string {
-  return count > 1 ? `${count} loops · start at bar ${start + 1}` : `starts at bar ${start + 1}`;
+/** While dragging a left edge: "starts at bar 5" ("4 loops · start at bar 5"); with `bpm`, "starts at 0:08". */
+export function startBadge(start: number, count = 1, bpm?: number): string {
+  const at = bpm === undefined ? `bar ${start + 1}` : clockAt(start, bpm);
+  return count > 1 ? `${count} loops · start at ${at}` : `starts at ${at}`;
+}
+
+/** A section's length while its edge is dragged: "8 bars", or with `bpm` "15 s". */
+export function sectionLengthBadge(bars: number, bpm?: number): string {
+  return spanText(bars, bpm);
 }
 
 /* ------------------------------------------------------------------ */

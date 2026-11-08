@@ -44,6 +44,7 @@ import { clipAtSlot } from '../../../project/clips';
 import { regionEnd, songBars as projectSongBars, timelineBars as projectTimelineBars } from '../../../project/arrangement';
 import type { Id, Project } from '../../../project/types';
 import { useStore } from '../../../state/store';
+import { uiStore } from '../../../state/uiStore';
 import { session, useProject, useUi } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { songPlayheadBar, useSongPlaying } from '../../songPlayback';
@@ -66,7 +67,7 @@ import * as act from './songActions';
 import { LoopPicker, RegionMenu, SectionMenu, type MenuHost } from './SongMenus';
 import { HEADER_W, HEADER_W_NARROW, ROW_SHORT_PX, RULER_H, SECTIONS_H, barAt, fitZoom, followScroll, gridStep, rowHeight, snapBar, timelineBars, zoomScroll, zoomStep } from './songLayout';
 import { rowViews, sameRows, type RowView } from './songModel';
-import { simpleRowIds } from './songHome';
+import { repeatName, simpleRowIds, timeAt } from './songHome';
 import { sidePanelStore } from './sidePanelStore';
 import { TimeMenu, TimelineRuler } from './TimelineRuler';
 import styles from './SongView.module.css';
@@ -281,8 +282,13 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
             sc.scrollLeft = Math.max(0, x - (sc.clientWidth - l.headW) * 0.05);
           }
         }
-        const message = `Looping ${rangeText(loop.fromBar, loop.toBar).toLowerCase()}: Play starts at the loop.`;
-        if (toasts) toasts.show({ id: 'song-loop-start', tone: 'info', message, action: { label: 'Loop off', onAction: () => session.setSongLoop(null) }, duration: 8000 });
+        // Simple names what repeats ("Repeating Groove"), never bar numbers.
+        const plain = uiStore.getState().uiMode !== 'advanced';
+        const now = session.store.getState();
+        const message = plain
+          ? `Repeating ${repeatName(now.arrangement.sections, loop, projectSongBars(now))}: Play starts there.`
+          : `Looping ${rangeText(loop.fromBar, loop.toBar).toLowerCase()}: Play starts at the loop.`;
+        if (toasts) toasts.show({ id: 'song-loop-start', tone: 'info', message, action: { label: plain ? 'Stop repeating' : 'Loop off', onAction: () => session.setSongLoop(null) }, duration: 8000 });
         else notify(message);
       }),
     [toasts],
@@ -695,7 +701,7 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
         const r = act.moveLoops(ids, k.bars);
         if (r?.changed) {
           const first = session.store.getState().arrangement.regions.find((x) => x.id === ids[0]);
-          if (first) say(`${act.loopsWords(ids)} at bar ${first.start + 1}`);
+          if (first) say(`${act.loopsWords(ids)} ${uiStore.getState().uiMode === 'advanced' ? `at bar ${first.start + 1}` : `at ${timeAt(first.start, session.store.getState().bpm)}`}`);
           if (inLane && t?.closest('[data-region-id]')) focusRegion(sel.focus);
         }
         return;
@@ -871,7 +877,7 @@ export function SongTimeline({ follow, handleRef, onStatus, openBrowser }: { fol
             </div>
             <SectionsLayer sections={sections} songBars={songBars} renaming={renaming} onRenameDone={onRenameDone} onRename={onRename} onMenu={onSectionMenu} />
           </div>
-          <div ref={rowsRef} className={styles.rows} role="group" aria-label="The song: a row of loops for each part" aria-describedby="song-keys-help" onKeyDown={onRowsKeyDown} onFocus={onRowsFocus} tabIndex={hasRegions ? -1 : 0}>
+          <div ref={rowsRef} className={styles.rows} role="group" aria-label={simple ? "Your song: a row of loops for each instrument" : "The song: a row of loops for each part"} aria-describedby="song-keys-help" onKeyDown={onRowsKeyDown} onFocus={onRowsFocus} tabIndex={hasRegions ? -1 : 0}>
             <span id="song-keys-help" hidden>
               Arrow keys: ↑ ↓ the part above or below, Ctrl+← → the previous or next loop, ← → move the selected loops a bar, Alt+← → change their length. Delete removes, Ctrl+D duplicates, Ctrl+C and Ctrl+V copy and paste at the playhead, Shift+F10 opens a loop’s actions (with no loop selected: insert or remove bars at the playhead).
             </span>

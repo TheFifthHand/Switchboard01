@@ -14,14 +14,16 @@
 import { memo, type CSSProperties, type Ref } from 'react';
 import { timelineBars } from '../../../project/arrangement';
 import { MAX_SONG_BARS } from '../../../project/types';
-import { useProject } from '../../instance';
+import { songBars } from '../../../project/arrangement';
+import { useProject, useUi } from '../../instance';
 import { LOCKED_REASON, MenuHeader, MenuItem, MenuSeparator, Popover, useEditLocked, type MenuAnchor } from '../ClipMenu';
 import { LaneIcon } from './laneIcons';
 import { INSERT_CHOICES, insertBarsAt, removeBarsRange } from './laneEdits';
 import type { BarRange } from './laneGestures';
 import { rangeWords } from './laneLoop';
 import { rulerMarks } from './songLayout';
-import { barsText, rangeText } from './songModel';
+import { barsText, clockAt, rangeText } from './songModel';
+import { repeatName } from './songHome';
 import styles from './SongView.module.css';
 
 export interface TimelineRulerProps {
@@ -34,14 +36,15 @@ export interface TimelineRulerProps {
   headRef: Ref<HTMLDivElement>;
 }
 
-const Numbers = memo(function Numbers({ pxPerBar, bars }: { pxPerBar: number; bars: number }) {
+/** The ruler's marks: bar numbers, or with `bpm` (Simple mode) the time each mark plays at ("0:15"). */
+const Numbers = memo(function Numbers({ pxPerBar, bars, bpm }: { pxPerBar: number; bars: number; bpm?: number }) {
   return (
     <>
       {rulerMarks(pxPerBar, 0, bars)
         .filter((m) => m.label)
         .map((m) => (
           <span key={m.bar} className={styles.rulerNum} style={{ '--s': m.bar } as CSSProperties}>
-            {m.bar + 1}
+            {bpm === undefined ? m.bar + 1 : clockAt(m.bar, bpm)}
           </span>
         ))}
     </>
@@ -49,9 +52,19 @@ const Numbers = memo(function Numbers({ pxPerBar, bars }: { pxPerBar: number; ba
 });
 
 export function TimelineRuler({ pxPerBar, bars, range, looping, dragging, headRef }: TimelineRulerProps) {
+  const simple = useUi((s) => s.uiMode === 'simple');
+  const bpm = useProject((p) => p.bpm);
+  // Simple names the range by the part of the song it repeats ("Repeating: Groove"), never by bar numbers.
+  const plain = useProject((p) => (simple && range ? repeatName(p.arrangement.sections, range, songBars(p)) : null));
+  const words = range ? (plain === null ? rangeWords(range) : looping || dragging ? `Repeating: ${plain}` : plain) : '';
+  const title = !range
+    ? undefined
+    : plain === null
+      ? `${looping ? 'Looping' : 'Loop range (off)'}: ${rangeWords(range)}. Click to switch the loop ${looping ? 'off' : 'on'}; drag its ends to change it.`
+      : `${looping ? `Repeating ${plain}` : `${plain} (not repeating)`}. Click to switch repeating ${looping ? 'off' : 'on'}; drag its ends to change what repeats.`;
   return (
     <div className={styles.ruler} data-ruler="" aria-hidden="true">
-      <Numbers pxPerBar={pxPerBar} bars={bars} />
+      <Numbers pxPerBar={pxPerBar} bars={bars} bpm={simple ? bpm : undefined} />
       {range && (
         <div
           className={styles.rangeBand}
@@ -61,11 +74,11 @@ export function TimelineRuler({ pxPerBar, bars, range, looping, dragging, headRe
           data-on={looping || dragging || undefined}
           data-dragging={dragging || undefined}
           style={{ '--s': range.fromBar, '--b': range.toBar - range.fromBar } as CSSProperties}
-          title={`${looping ? 'Looping' : 'Loop range (off)'}: ${rangeWords(range)}. Click to switch the loop ${looping ? 'off' : 'on'}; drag its ends to change it.`}
+          title={title}
         >
           <span className={styles.rangeLabel}>
             <LaneIcon name="loop" size={11} />
-            <span>{rangeWords(range)}</span>
+            <span>{words}</span>
           </span>
           <span className={styles.rangeEdge} data-range-edge="start" />
           <span className={styles.rangeEdge} data-range-edge="end" />

@@ -21,6 +21,24 @@ export const SCALE_MOOD: Record<ScaleId, string> = {
   chromatic: 'every note',
 };
 
+/**
+ * The mood alone, one plain word (no "major", "minor" or scale names): Simple's Mood choices and the
+ * Song screen's editor. The scale's proper name stays in tooltips and in Advanced.
+ */
+export const MOOD_WORD: Record<ScaleId, string> = {
+  major: 'bright',
+  minor: 'moody',
+  dorian: 'jazzy',
+  phrygian: 'dark',
+  lydian: 'dreamy',
+  mixolydian: 'easy-going',
+  harmonicMinor: 'dramatic',
+  majorPentatonic: 'sunny',
+  minorPentatonic: 'soulful',
+  blues: 'bluesy',
+  chromatic: 'every note',
+};
+
 /** "G · jazzy minor" (the root as the key spells it, then the mood); "Every note" for chromatic. */
 export function keyMood(root: number, scale: ScaleId): string {
   if (scale === 'chromatic') return 'Every note';

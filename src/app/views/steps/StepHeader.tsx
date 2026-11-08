@@ -285,6 +285,8 @@ export function BarStrip({ trackId, slot, bars, page, kind }: { trackId: Id; slo
   const notes = useProject((p) => clipIn(p, trackId, slot)?.notes ?? NO_NOTES);
   const follow = useUi((s) => s.stepsFollow);
   const gridName = useUi((s) => s.stepGrid);
+  // Simple: the loop's pages ("Page 1 2 3 4"), never bars; the grid choice (16ths, triplets) is Advanced's.
+  const simple = useUi((s) => s.uiMode === 'simple');
   const drums = kind === 'drums';
   const stripRef = useRef<HTMLDivElement>(null);
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -316,7 +318,7 @@ export function BarStrip({ trackId, slot, bars, page, kind }: { trackId: Id; slo
     <div className={styles.barRow}>
       <div className={styles.field}>
         <span className={styles.fieldLabel} id={`steps-bars-${trackId}`}>
-          Bar
+          {simple ? 'Page' : 'Bar'}
         </span>
         <div ref={stripRef} className={styles.strip} data-bars={bars}>
           <div className={styles.stripInner} style={{ '--bars': String(bars) } as CSSProperties}>
@@ -334,7 +336,7 @@ export function BarStrip({ trackId, slot, bars, page, kind }: { trackId: Id; slo
                   type="button"
                   role="tab"
                   id={`steps-page-${i}`}
-                  aria-label={`Bar ${i + 1}`}
+                  aria-label={simple ? `Page ${i + 1} of ${bars}` : `Bar ${i + 1}`}
                   aria-selected={i === page}
                   aria-controls="steps-page-panel"
                   tabIndex={i === page ? 0 : -1}
@@ -359,12 +361,20 @@ export function BarStrip({ trackId, slot, bars, page, kind }: { trackId: Id; slo
         pressed={follow}
         tone="amber"
         onClick={() => setStepsFollow(!follow)}
-        tip={follow ? 'Following: the shown bar turns with the playhead while this loop plays.' : 'Turn the shown bar with the playhead while this loop plays.'}
+        tip={
+          simple
+            ? follow
+              ? 'Following: the page turns by itself while this loop plays.'
+              : 'Turn the page by itself while this loop plays.'
+            : follow
+              ? 'Following: the shown bar turns with the playhead while this loop plays.'
+              : 'Turn the shown bar with the playhead while this loop plays.'
+        }
         detail="It waits while you drag or draw."
       >
         Follow
       </Button>
-      {!drums && (
+      {!drums && !simple && (
         <Select
           label="Grid"
           hideLabel

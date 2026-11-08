@@ -53,7 +53,11 @@ beforeEach(async () => {
   closed = 0;
   guides = 0;
   // Round 7: these cover 2.4's library flows and transport, which Advanced keeps (Simple's Project ▾: r7-shell-simple).
-  act(() => setUiMode('advanced'));
+  act(() => {
+    setUiMode('advanced');
+    // The view other files leave (the Song screen) changes the words of the start notice: start on Play, as 2.4.
+    setView('play');
+  });
   await deleteDb();
 });
 

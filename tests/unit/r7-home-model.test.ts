@@ -76,15 +76,25 @@ describe('length and the tip line', () => {
   });
 
   it('offers one next step from the real song', () => {
-    expect(songTip(withSong(() => []))).toEqual({ step: 'loops', text: 'Pick a beat from LOOPS on the right' });
-    expect(songTip(drumsOnly())).toEqual({ step: 'bass', text: 'Add a bass: + Add instrument' });
-    const short = withSong((p) => [
+    expect(songTip(withSong(() => []))).toEqual({ step: 'loops', text: 'Pick a beat from Loops on the right' });
+    expect(songTip(drumsOnly())).toEqual({ step: 'bass', text: 'Add a bass: press + Add instrument, then Bass' });
+    // Round 7 words: beat → bass → chords → a look inside a loop → longer → share.
+    const beatAndBass = withSong((p) => [
       { id: 'd', trackId: tid(p, 'Drums'), clipId: p.tracks[0].clips[1]!.id, start: 0, bars: 4, offset: 0 },
       { id: 'b', trackId: tid(p, 'Bass'), clipId: p.tracks[2].clips[1]!.id, start: 0, bars: 4, offset: 0 },
     ]);
+    expect(songTip(beatAndBass)).toEqual({ step: 'chords', text: 'Add chords: press + Add instrument, then Keys & chords' });
+    const short = withSong((p) => [
+      { id: 'd', trackId: tid(p, 'Drums'), clipId: p.tracks[0].clips[1]!.id, start: 0, bars: 4, offset: 0 },
+      { id: 'b', trackId: tid(p, 'Bass'), clipId: p.tracks[2].clips[1]!.id, start: 0, bars: 4, offset: 0 },
+      { id: 'c', trackId: tid(p, 'Chords'), clipId: p.tracks[3].clips[1]!.id, start: 0, bars: 4, offset: 0 },
+    ]);
+    // A loop not opened yet in this visit: click one first.
+    expect(songTip(short, false, false)).toEqual({ step: 'change', text: 'Click any loop in your song to change its notes' });
     // 4 bars at 124 BPM: under 8 s.
     expect(songTip(short).step).toBe('longer');
-    expect(songTip(house())).toEqual({ step: 'share', text: 'Share your song' });
+    expect(songTip(short, true, false).step).toBe('longer');
+    expect(songTip(house())).toEqual({ step: 'share', text: 'Share your song: press Share at the top right' });
   });
 
   it('asks for sounds in an empty loop (Make a beat from scratch) before suggesting a bass', () => {

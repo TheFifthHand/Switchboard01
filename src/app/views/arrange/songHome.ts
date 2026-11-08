@@ -30,6 +30,18 @@ export const INSTRUMENT_KINDS: Readonly<Record<TrackRole, { name: string; icon: 
   sampler: { name: 'Recording', icon: 'mic' },
 };
 
+/** 2.4's default names for instruments whose Simple word differs ("Lead" is "Melody" in the picker). */
+const OLD_NAMES: Partial<Record<TrackRole, string>> = { chords: 'Chords', lead: 'Lead', sampler: 'Sampler' };
+
+/**
+ * The name Simple shows for an instrument: the picker's word when the instrument still has 2.4's default
+ * name ("Lead" → "Melody", "Chords" → "Keys & chords", "Sampler" → "Recording"), else the name it was given.
+ * Display only: the project keeps its names.
+ */
+export function instrumentName(name: string, role: TrackRole): string {
+  return OLD_NAMES[role] === name ? INSTRUMENT_KINDS[role].name : name;
+}
+
 /** The picker's order: the order a song is usually built in (beat, bass, harmony, tune, then colour). */
 export const INSTRUMENT_ORDER: readonly TrackRole[] = ['drums', 'percussion', 'bass', 'chords', 'lead', 'pad', 'texture', 'sampler'];
 
@@ -71,7 +83,7 @@ export function hiddenInstruments(
     .map((t) => ({
       trackId: t.id,
       role: t.role,
-      name: t.name,
+      name: instrumentName(t.name, t.role),
       kind: INSTRUMENT_KINDS[t.role].name,
       icon: INSTRUMENT_KINDS[t.role].icon,
     }));
@@ -109,9 +121,16 @@ export function secondsWords(seconds: number): string {
 /** A song shorter than this (seconds) is offered "Make it longer". */
 export const SHORT_SONG_S = 30;
 
-export type TipStep = 'loops' | 'fill' | 'bass' | 'longer' | 'share';
+/**
+ * The first session the tip line walks through, in order: a beat (from LOOPS,
+ * or squares in an empty loop), a bass, chords, a look inside a loop, a song
+ * long enough to be a song, then Share.
+ */
+export type TipStep = 'loops' | 'fill' | 'bass' | 'chords' | 'change' | 'longer' | 'share';
 
 const BEAT_ROLES: readonly TrackRole[] = ['drums', 'percussion'];
+/** Instruments that give a song its harmony (any of them answers "add chords"). */
+const HARMONY_ROLES: readonly TrackRole[] = ['chords', 'pad'];
 
 /** True when some loop in the song has notes or its own recording (an empty new loop plays nothing). */
 function songMakesSound(p: Pick<Project, 'tracks' | 'arrangement'>): boolean {
@@ -125,22 +144,61 @@ function songMakesSound(p: Pick<Project, 'tracks' | 'arrangement'>): boolean {
 /**
  * The one next step the tip line offers, from the song as it is:
  * no music → pick a beat; only empty loops (Make a beat from scratch) → fill
- * one in (the editor's grid when it is open); only drums → add a bass; under
+ * one in (the editor's grid when it is open); only drums → add a bass; no
+ * chords or pad yet → add chords; no loop opened yet
+ * (`opened`: the editor was opened in this visit) → click one; under
  * SHORT_SONG_S → make it longer; else share it.
  */
 export function songTip(
   p: Pick<Project, 'tracks' | 'arrangement' | 'bpm'>,
   editorOpen = false,
+  opened = true,
 ): {
   step: TipStep;
   text: string;
 } {
   const playing = playingIds(p);
-  if (playing.size === 0) return { step: 'loops', text: 'Pick a beat from LOOPS on the right' };
+  if (playing.size === 0) return { step: 'loops', text: 'Pick a beat from Loops on the right' };
   if (!songMakesSound(p))
     return { step: 'fill', text: editorOpen ? 'Click squares in the grid below to add sounds to your loop' : 'Click your loop to add sounds to it' };
   const roles = p.tracks.filter((t) => playing.has(t.id)).map((t) => t.role);
-  if (roles.every((r) => BEAT_ROLES.includes(r))) return { step: 'bass', text: 'Add a bass: + Add instrument' };
-  if (songSeconds(p) < SHORT_SONG_S) return { step: 'longer', text: 'Make it longer' };
-  return { step: 'share', text: 'Share your song' };
+  if (roles.every((r) => BEAT_ROLES.includes(r))) return { step: 'bass', text: 'Add a bass: press + Add instrument, then Bass' };
+  if (!roles.some((r) => HARMONY_ROLES.includes(r))) return { step: 'chords', text: 'Add chords: press + Add instrument, then Keys & chords' };
+  if (!opened && !editorOpen) return { step: 'change', text: 'Click any loop in your song to change its notes' };
+  if (songSeconds(p) < SHORT_SONG_S) return { step: 'longer', text: 'Make your song longer: press Make it longer' };
+  return { step: 'share', text: 'Share your song: press Share at the top right' };
+}
+
+/* ------------------------------------------------------------------ */
+/* Plain words for places and lengths                                  */
+/* ------------------------------------------------------------------ */
+
+/** Where bar `bar` (0-based) starts, as a clock time ("0:15"). */
+export function timeAt(bar: number, bpm: number): string {
+  return clockText((Math.max(0, bar) * 4 * 60) / Math.max(1, bpm));
+}
+
+/** How long `bars` bars last, in words ("8 seconds", "1 minute 4 seconds"); under 10 s with one decimal ("3.9 seconds"). */
+export function lastsText(bars: number, bpm: number): string {
+  const s = (bars * 4 * 60) / Math.max(1, bpm);
+  if (s < 10) {
+    const t = Math.round(s * 10) / 10;
+    return `${t} ${t === 1 ? 'second' : 'seconds'}`;
+  }
+  return secondsWords(s);
+}
+
+/** A loop's length as a beginner hears it: "Short" (up to 2 bars) or "Long". */
+export function shortOrLong(bars: number): 'Short' | 'Long' {
+  return bars <= 2 ? 'Short' : 'Long';
+}
+
+/**
+ * What a repeat range is called in Simple: the section it covers exactly
+ * ("Groove"), the whole song, or "the marked stretch" (a range marked on the ruler).
+ */
+export function repeatName(sections: readonly { name: string; start: number; bars: number }[], range: { fromBar: number; toBar: number }, length: number): string {
+  const s = sections.find((x) => x.start === range.fromBar && x.start + x.bars === range.toBar);
+  if (s) return s.name;
+  return range.fromBar === 0 && range.toBar >= length ? 'the whole song' : 'the marked stretch';
 }

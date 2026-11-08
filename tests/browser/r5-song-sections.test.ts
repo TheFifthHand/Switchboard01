@@ -29,6 +29,7 @@ import {
   settle,
   teardownSong,
   undoCount,
+  advancedMode,
 } from './r5-song-helpers';
 
 /** Intro (bars 1–4: Drums), Drop (bars 5–12: Drums and Bass), then nothing labelled from bar 13 to 16 (Drums). */
@@ -143,6 +144,8 @@ describe('sections', () => {
   });
 
   it('a stretch of the song with no section offers “+ Add section”', async () => {
+    // 2.4's words (bar numbers in the section strip's labels): Advanced since round 7 (Simple: r7-words-simple).
+    advancedMode();
     await open();
     const add = document.querySelector<HTMLElement>('[data-section-gap]')!;
     expect(add.getAttribute('aria-label')).toBe('Add a section over bars 13 to 16');

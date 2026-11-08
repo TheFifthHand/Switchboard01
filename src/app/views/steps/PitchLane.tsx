@@ -28,10 +28,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import { TICKS_PER_BAR, type Clip, type Id, type Note } from '../../../project/types';
 import { keyLabel, keyRootName, keyShortName, noteName, stepsPerOctave, type MusicalKey } from '../../../music/scales';
-import { SCALE_MOOD, keyMood } from '../keyMood';
+import { MOOD_WORD, SCALE_MOOD, keyMood } from '../keyMood';
 import * as cmd from '../../../state/commands';
 import { setStepPage } from '../../../state/uiStore';
-import { IconButton, Tooltip, newGestureId } from '../../../ui/components';
+import { Icon, IconButton, Tooltip, newGestureId } from '../../../ui/components';
 import { session, useProject, useUi } from '../../instance';
 import { notify, runtimeStore } from '../../runtime';
 import { MOD_ARIA, MOD_KEY } from '../ClipMenu';
@@ -148,7 +148,11 @@ type Drag =
 /* Rows and notes                                                      */
 /* ------------------------------------------------------------------ */
 
-const RowBack = memo(function RowBack({ row, index }: { row: PitchRow; index: number }) {
+/**
+ * A row's label. `plain` (Simple, on the Song screen's editor): no note names; the song's home note is marked
+ * with the home icon and the word "home" (its row is also shaded), the rest are plain keyboard rows.
+ */
+const RowBack = memo(function RowBack({ row, index, plain }: { row: PitchRow; index: number; plain: boolean }) {
   return (
     <>
       <div
@@ -159,10 +163,18 @@ const RowBack = memo(function RowBack({ row, index }: { row: PitchRow; index: nu
         data-out={row.outOfKey || undefined}
         data-c={row.pitch % 12 === 0 || undefined}
         data-row-label={row.pitch}
-        title={row.outOfKey ? `${row.name} is outside the key` : undefined}
+        title={row.outOfKey ? (plain ? 'Outside the song’s key' : `${row.name} is outside the key`) : plain && row.root ? 'The song’s home note: tunes like to start and end here' : undefined}
       >
-        <span className={`${styles.rowName} mono`}>{row.name}</span>
-        {row.root && <span className={styles.rootTag}>root</span>}
+        {!plain && <span className={`${styles.rowName} mono`}>{row.name}</span>}
+        {row.root &&
+          (plain ? (
+            <span className={styles.homeTag}>
+              <Icon name="home" size={11} />
+              home
+            </span>
+          ) : (
+            <span className={styles.rootTag}>root</span>
+          ))}
         {row.outOfKey && <span className={styles.outTag}>off key</span>}
       </div>
       <div className={styles.rowStripe} style={{ gridRow: index + 1 }} data-root={row.root || undefined} data-black={row.black || undefined} data-out={row.outOfKey || undefined} data-c={row.pitch % 12 === 0 || undefined} />
@@ -205,7 +217,7 @@ const NoteBlock = memo(
         }
       >
         <span className={styles.noteBody} />
-        {span >= 2 && <span className={styles.noteName}>{name}</span>}
+        {span >= 2 && name && <span className={styles.noteName}>{name}</span>}
         {view.fromPrev && <span className={styles.contPrev}>◂</span>}
         {view.toNext ? <span className={styles.contNext}>▸</span> : <span className={styles.handle} data-handle="" />}
       </div>
@@ -1283,9 +1295,11 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1, lean = fa
   }, []);
 
   // Simple names the key by its mood ("G · jazzy minor"); the scale's name is in the tooltip and the accessible name.
-  const keyText = !inKeyOnly ? 'All notes' : advanced ? keyLabel(root, scale) : keyMood(root, scale);
-  const keyShort = !inKeyOnly ? 'All' : advanced ? keyShortName(root, scale) : `${keyRootName(root, scale)} · ${SCALE_MOOD[scale].split(/[ ,]/)[0]}`;
-  const keyTiny = inKeyOnly ? keyRootName(root, scale) : 'All';
+  // The Song screen's editor in Simple names the mood alone ("Jazzy minor"), no note letters at all.
+  const moodWords = MOOD_WORD[scale].charAt(0).toUpperCase() + MOOD_WORD[scale].slice(1);
+  const keyText = !inKeyOnly ? 'All notes' : advanced ? keyLabel(root, scale) : bare ? moodWords : keyMood(root, scale);
+  const keyShort = !inKeyOnly ? 'All' : advanced ? keyShortName(root, scale) : bare ? moodWords.split(/[ ,]/)[0] : `${keyRootName(root, scale)} · ${SCALE_MOOD[scale].split(/[ ,]/)[0]}`;
+  const keyTiny = !inKeyOnly ? 'All' : bare ? moodWords.split(/[ ,]/)[0] : keyRootName(root, scale);
   const keyName = keyLabel(root, scale);
   const selCount = selSet.size - (selSet.has(DRAW_ID) ? 1 : 0);
   const cols = cellIndices(spec.cells);
@@ -1297,14 +1311,22 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1, lean = fa
         grid={spec}
         label={
           <div className={styles.octNav}>
-            <IconButton icon="chevronUp" label="Show higher notes (an octave up)" size="sm" variant="ghost" onClick={() => scrollOctave(1)} disabled={view.atTop} className={styles.octBtn} />
-            <IconButton icon="chevronDown" label="Show lower notes (an octave down)" size="sm" variant="ghost" onClick={() => scrollOctave(-1)} disabled={view.atBottom} className={styles.octBtn} />
+            <IconButton icon="chevronUp" label={bare ? 'Show higher notes' : 'Show higher notes (an octave up)'} size="sm" variant="ghost" onClick={() => scrollOctave(1)} disabled={view.atTop} className={styles.octBtn} />
+            <IconButton icon="chevronDown" label={bare ? 'Show lower notes' : 'Show lower notes (an octave down)'} size="sm" variant="ghost" onClick={() => scrollOctave(-1)} disabled={view.atBottom} className={styles.octBtn} />
             <KeyChip
               text={keyText}
               short={keyShort}
               tiny={keyTiny}
-              label={inKeyOnly ? `Rows in key: ${keyName}` : 'Rows: all 12 notes'}
-              tip={inKeyOnly ? `Rows show the notes of ${keyName}${advanced ? '' : ` (${SCALE_MOOD[scale]})`}: Musical Assist is on.` : 'Rows show all 12 notes (Musical Assist is off).'}
+              label={bare ? (inKeyOnly ? `Rows: only notes that fit the song (${MOOD_WORD[scale]})` : 'Rows: every note') : inKeyOnly ? `Rows in key: ${keyName}` : 'Rows: all 12 notes'}
+              tip={
+                bare
+                  ? inKeyOnly
+                    ? `Every row is a note that fits your song (${MOOD_WORD[scale]}). The home row is marked.`
+                    : 'Every note is shown; shaded rows are outside the song’s key.'
+                  : inKeyOnly
+                    ? `Rows show the notes of ${keyName}${advanced ? '' : ` (${SCALE_MOOD[scale]})`}: Musical Assist is on.`
+                    : 'Rows show all 12 notes (Musical Assist is off).'
+              }
               detail={bare ? 'Change the mood of the song in the menu under its name, at the top.' : 'Switch Musical Assist or the key on the keyboard strip.'}
             />
           </div>
@@ -1328,7 +1350,7 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1, lean = fa
           data-bars={span}
         >
           {rows.map((r, i) => (
-            <RowBack key={r.pitch} row={r} index={i} />
+            <RowBack key={r.pitch} row={r} index={i} plain={bare} />
           ))}
           {cols.map((s) => (
             <div
@@ -1345,7 +1367,7 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1, lean = fa
           ))}
           {views.map((v) => {
             const row = rowOf.get(v.pitch);
-            return row === undefined ? null : <NoteBlock key={v.id} view={v} row={row} perBeat={spec.perBeat} name={nameOf(v.pitch)} selected={selSet.has(v.id)} />;
+            return row === undefined ? null : <NoteBlock key={v.id} view={v} row={row} perBeat={spec.perBeat} name={bare ? '' : nameOf(v.pitch)} selected={selSet.has(v.id)} />;
           })}
           {box && <div className={styles.box} style={{ left: box.left, top: box.top, width: box.width, height: box.height }} aria-hidden="true" />}
           <button

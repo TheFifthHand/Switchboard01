@@ -59,69 +59,58 @@ Use headphones or speakers; start with a moderate volume.
 
 3. JUMP IN
 ----------
-  Click "Jump In". A starter beat begins playing - this click is what
-  allows the browser to make sound. A short quick guide and small
-  "Try this" hints show you one thing at a time; they never block
-  anything, and you can hide them.
-    * Play / Pause (top left, or the Space bar) pauses and continues
-      exactly where you were. Stop (Shift+Space) goes back to the start.
-    * Each column of pads is one part (Drums, Bass, Chords ...). Tap a
-      pad to switch that part to another loop; it joins on the next bar.
-    * Mute silences a part, Solo plays it on its own. Both are at the
-      top of each column.
-    * Drag a loop onto another pad to move it (hold Ctrl to copy).
-      Undo (Ctrl+Z) puts things back.
-    * "Change instrument" (on the right) picks another drum kit, synth or
-      recording for the selected part. The big knobs below it shape the
-      sound: Tone for darker or brighter, Space for more room around it.
+  Click "Jump In". A song starts playing at once - this click is what
+  allows the browser to make sound. It repeats its main section until
+  you press Stop. Or click "Make a beat from scratch" for an empty drum
+  loop that plays while you click squares into it.
+
+  Omni Song opens on one screen: your song.
+    * Each row is an instrument (Drums, Bass, Keys & chords, Melody ...).
+      Each block on a row is a loop: a short piece of music that repeats.
+    * Play (or the Space bar) plays and pauses your song. Stop
+      (Shift+Space) goes back to the start. Undo (Ctrl+Z) takes back
+      anything you do.
+    * Click a loop to change it: it opens under the song. "Draw" shows
+      its squares or notes (click to add or take away). "Play" turns it
+      into big squares to play with the mouse or the computer keys, and
+      "Record into this loop" keeps what you play. Only notes that fit
+      your song are offered; the home note has a little house on it.
+    * "Try a ready-made beat..." or "Try a ready-made loop..." puts one
+      in that fits your song. Try a few: Undo goes back.
+    * Click an instrument's name (left of its row) for its sound:
+      "Change sound..." picks another one, and the big knobs shape it.
+    * "+ Add instrument" adds a bass, keys & chords, a melody and more,
+      each with a loop that fits. "Loops" on the right has many more:
+      press the play arrow to hear one, then drag it onto an instrument.
+    * "Make it longer" adds an intro, an ending or a new section made
+      from your own music.
+    * "Record" (at the top) plays along into the song from where it is.
+    * "Share" (top right) saves a music file to send to anyone (a WAV,
+      optionally as loud as streaming songs - only the file changes), or
+      the project to keep working on (an .omnisong.zip file).
+    * The line at the bottom says one next thing to try. "Hide tips"
+      turns it off; the More menu (the button with three dots, top
+      right) has "Tips" to bring it back.
+    * Press ? (or More > Help...) for "How it works" on one page.
+    * The More menu also holds the Jam pads (play loops live), the
+      Mixer, every setting of a sound, Mute all sound, and MIDI & audio
+      for a MIDI keyboard or a microphone.
+    * More > "Show every control" switches to Advanced: the Play, Shape,
+      Song and Mix tabs with every control, as in version 2.4.
+      Switching never changes your music. Point at any control to see
+      what it does.
     * Knobs: drag up or down (hold Shift for fine steps). Double-click
-      puts a knob back to its default. For an exact value, click a knob,
-      type a number and press Enter. Arrow keys work too.
-    * Play the little keyboard with the mouse or your computer keys.
-      With Musical Assist on (the switch beside it) it shows only the
-      notes in your key, as even keys: A S D F ... play them from the
-      left, every key its own note. With it off you get a whole piano
-      (A W S E D F T G Y H U J K ...).
-    * Simple shows the essentials; Advanced (switch at the top) shows
-      every control. Switching never changes your music.
-    * Mix (top left) has a fader per part and mastering: pick a preset
-      such as Warm or Punchy and a loudness target for your finished song.
-    * Save your song as a file you can listen to anywhere: press
-      "Export" (top right). The whole song is chosen for you; pick a
-      format (WAV is the best quality) and press the export button.
-    * Build a song in Song (top left): every part has its own row, like
-      GarageBand. Drag loops in from the loop browser (+ Add loops), drag a
-      loop along its row to move it, drag its right edge to make it
-      repeat longer. Everything snaps to the bars. Click the ruler to
-      move the playhead; drag along it to loop a stretch. Hold Alt while
-      dragging to copy; right-click a loop for more. Space plays the song.
-    * New in 2.4: "Make a beat from scratch" on the first screen, with
-      52 ready beats (Start from a beat...); a loop library of 164 loops
-      in Song (+ Add loops > Library) that fit your song's key; press
-      "Record" in Song to record straight into the song; double-click a
-      loop to edit it under the song; volume and pan on every song row;
-      insert or remove bars (right-click the bar numbers); five new
-      starters (Trap, Lo-fi Hip Hop, Pop, Afrobeats, Boom Bap); export as
-      WAV, a smaller file for sharing, separate parts or MIDI, as loud as
-      streaming songs.
-    * New in 2.3: the Song view above, the in-key keyboard, Play / Stop
-      words on the pads and a Pause button beside them. Songs made with
-      earlier versions open as they were, on the new rows.
-    * New in 2.2: up to 8 scenes and 8-bar clips, chord pads and
-      progressions, note selection and drum painting in Steps, song
-      fades and filter rises, Reverb and Echo returns in Mix, and a Help
-      sheet with every shortcut (press ?).
-    * New in 2.1: the first song timeline (2.3 replaces it with the
-      rows described above). Song edits play right away.
-    * New in 2.0: play Omni Song from a MIDI keyboard or controller, and
-      record your voice or a guitar. See the MIDI & audio dialog in the
-      app for what your browser and devices support.
-    * Point at any control to see what it does. "Tips" in the More menu
-      (the button with three dots, top right) turns these explanations
-      and the "Try this" hints on or off.
-  In a narrower window (or while an "Update" or "Not saved" button needs
-  the room), your projects and Export are in the More menu too. There,
-  your projects open with "Projects...".
+      puts a knob back to its default. Arrow keys work too.
+    * New in 3.0: one song screen for everyone (no tabs to learn), click
+      a loop to change it, a Sound panel beside the song, "+ Add
+      instrument", "Make it longer", tips that follow your song, and
+      Share for a music file or the project. Everything from 2.4 is
+      still there in Advanced.
+    * Earlier versions added: make a beat from scratch and 164 loops in
+      your song's key (2.4), songs with a row per instrument like
+      GarageBand (2.3), chord pads and up to 8 scenes (2.2), and MIDI
+      keyboards and audio input (2.0). Songs made with earlier versions
+      open as they were.
 
 
 4. YOUR WORK

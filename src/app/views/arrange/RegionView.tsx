@@ -23,7 +23,7 @@ import { memo, useMemo, type CSSProperties } from 'react';
 import { ClipSketch } from '../../../ui/components';
 import { TICKS_PER_BAR, type Clip, type SongRegion } from '../../../project/types';
 import { useStore } from '../../../state/store';
-import { useProject } from '../../instance';
+import { useProject, useUi } from '../../instance';
 import { selectionStore, useSelected } from './laneStore';
 import { loopPlaces, notches, placesBadge, placesTip, placesWords, regionLabel } from './songModel';
 import libStyles from './library/Library.module.css';
@@ -80,6 +80,9 @@ export const RegionView = memo(function RegionView({ region, clip, partName, kin
   const selected = useSelected(region.id);
   const tabbable = useStore(selectionStore, (s) => s.focus === region.id);
   const places = useProject((p) => loopPlaces(p, region.trackId, region.clipId));
+  // Simple names places by time (screen readers too), never bars.
+  const plainBpm = useProject((p) => p.bpm);
+  const simple = useUi((s) => s.uiMode === 'simple');
   const badge = placesBadge(places);
   const clipBars = clip?.bars ?? 1;
   const name = clip?.name || 'Loop';
@@ -91,7 +94,7 @@ export const RegionView = memo(function RegionView({ region, clip, partName, kin
       style={style}
       role="button"
       tabIndex={tabbable ? 0 : -1}
-      aria-label={`${regionLabel(name, partName, region, clipBars)}${badge ? `, ${placesWords(places)}` : ''}`}
+      aria-label={`${regionLabel(name, partName, region, clipBars, simple ? plainBpm : undefined)}${badge ? `, ${placesWords(places)}` : ''}`}
       aria-pressed={selected}
       aria-keyshortcuts="Shift+F10"
       data-region-id={region.id}
