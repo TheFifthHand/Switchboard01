@@ -39,13 +39,12 @@ beforeEach(resetSong);
 afterEach(teardownSong);
 
 describe('volume and pan in the part headers', () => {
-  it('the slider changes the part’s channel level (Mix’s fader): a drag is one undo step; dB for screen readers, no dB text in Simple', async () => {
+  it('the slider changes the part’s channel level (Mix’s fader): a drag is one undo step, and it shows dB', async () => {
     await openSong(1366, 768, song);
     const bass = project().tracks[2];
     const el = slider(bass.id);
     expect(el.getAttribute('aria-valuetext')).toMatch(/dB/);
-    // Round 7 words: Simple shows the level as the bar alone (no dB text); screen readers still hear it in dB.
-    expect(el.textContent).not.toMatch(/dB/);
+    expect(el.textContent).toMatch(/dB$/);
     const before = channelParam(bass.id, 'level');
     const steps = undoCount();
     const r = el.getBoundingClientRect();
@@ -60,7 +59,7 @@ describe('volume and pan in the part headers', () => {
     expect(after).toBeLessThan(before - 1);
     expect(undoCount()).toBe(steps + 1);
     expect(session.store.undoLabel()).toBe(`${bass.name} level`);
-    expect(el.getAttribute("aria-valuetext")).toContain(Math.abs(after).toFixed(1));
+    expect(el.textContent).toContain(Math.abs(after).toFixed(1));
     // Double-click: back to 0 dB.
     await doubleClickAt(centre(el));
     expect(channelParam(bass.id, 'level')).toBe(0);

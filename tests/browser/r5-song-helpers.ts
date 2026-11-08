@@ -28,7 +28,9 @@ export { mouse, send, toPage, type Pt };
  * Reset what other test files may have left: the song view's settings and state, the runtime, the database.
  * Round 7: 2.4's Song view tests run in Advanced (the default here); the Simple home's tests pass 'simple'.
  */
-export async function resetSong(mode: 'simple' | 'advanced' = 'advanced'): Promise<void> {
+export async function resetSong(asked?: unknown): Promise<void> {
+  // `beforeEach(resetSong)` passes Vitest's test context here: anything but 'simple' means Advanced (2.4's Song view).
+  const mode: 'simple' | 'advanced' = asked === 'simple' ? 'simple' : 'advanced';
   localStorage.removeItem(LANE_SETTINGS_KEY);
   clearLoopClipboard();
   await deleteDb();
