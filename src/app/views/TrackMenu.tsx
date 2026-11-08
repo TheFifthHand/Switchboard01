@@ -15,6 +15,7 @@ import { notify } from '../runtime';
 import { INSTRUMENT_LABEL, soundName } from '../labels';
 import { LOCKED_REASON, MenuHeader, MenuItem, MenuSeparator, Popover, RenameForm, useEditLocked, type MenuAnchor } from './ClipMenu';
 import styles from './TrackMenu.module.css';
+import { useNameOf } from './useInstrumentName';
 
 export interface TrackMenuProps {
   trackId: Id;
@@ -28,11 +29,12 @@ export interface TrackMenuProps {
 }
 
 export function TrackMenu({ trackId, anchor, returnFocus, ignore, startInRename, onClose, onChangeSound }: TrackMenuProps) {
+  const nameOf = useNameOf();
   const info = useProject(
     (p) => {
       const t = p.tracks.find((x) => x.id === trackId);
       return t
-        ? { name: t.name, index: p.tracks.indexOf(t), sound: soundName(p, t.instrument), kind: INSTRUMENT_LABEL[t.instrument.kind], locked: t.locked }
+        ? { name: nameOf(t), index: p.tracks.indexOf(t), sound: soundName(p, t.instrument), kind: INSTRUMENT_LABEL[t.instrument.kind], locked: t.locked }
         : null;
     },
     shallowEqual,

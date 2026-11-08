@@ -687,6 +687,7 @@ function validateTrack(raw: unknown, index: number, rows: number | null, trackId
       arp: validateArp(raw.arp, issues),
       macros: validateMacros(raw.macros, issues),
       ...(macroHome ? { macroHome } : {}),
+      ...(raw.renamed === true ? { renamed: true as const } : {}),
     },
     rawMacroMap: raw.macroMap,
     rawSongClips: raw.songClips,

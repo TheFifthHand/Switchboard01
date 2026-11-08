@@ -111,7 +111,7 @@ describe('Part menu', () => {
 
   it('an empty name is not accepted and Escape keeps the old one', () => {
     mountGrid();
-    const main = document.querySelector<HTMLButtonElement>('button[aria-label^="Select Lead"]')!;
+    const main = document.querySelector<HTMLButtonElement>('button[aria-label^="Select Melody"]')!;
     act(() => main.focus());
     key(main, 'keydown', { key: 'F2' });
     const input = dialog()!.querySelector('input')!;
@@ -127,10 +127,10 @@ describe('Part menu', () => {
 
   it('right-click on a header opens the menu; Keep pattern toggles the part lock (Variation leaves it alone)', () => {
     mountGrid();
-    const header = document.querySelector<HTMLButtonElement>('button[aria-label^="Select Chords"]')!.parentElement!;
+    const header = document.querySelector<HTMLButtonElement>('button[aria-label^="Select Keys & chords"]')!.parentElement!;
     const r = header.getBoundingClientRect();
     fire(header, new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: r.left + 20, clientY: r.top + 10 }));
-    expect(menu()!.getAttribute('aria-label')).toBe('Part Chords');
+    expect(menu()!.getAttribute('aria-label')).toBe('Part Keys & chords');
     const lock = item('Keep pattern (no Variation)');
     expect(lock.getAttribute('aria-checked')).toBe('false');
     click(lock);
@@ -140,12 +140,12 @@ describe('Part menu', () => {
 
   it('Change instrument opens the sound browser for that part; choosing a preset changes the instrument, Undo restores it', () => {
     mountGrid();
-    click(document.querySelector('button[aria-label="Options for part Chords"]')!);
+    click(document.querySelector('button[aria-label="Options for part Keys & chords"]')!);
     click(item('Change instrument'));
     expect(menu()).toBeNull();
     const d = dialog()!;
     expect(d.getAttribute('aria-labelledby')).toBeTruthy();
-    expect(d.textContent).toContain('Change instrument: Chords');
+    expect(d.textContent).toContain('Change instrument: Keys & chords');
     const before = track('t4').instrument;
     expect(before.kind).toBe('poly');
     // Current sound is marked and focused.
@@ -248,7 +248,7 @@ describe('Part menu', () => {
     mount(h(SoundBrowser, { open: true, trackId: 't4', onClose: () => {} }));
     const btn = [...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Preview')!;
     expect(btn.disabled).toBe(true);
-    expect(dialog()!.textContent).toMatch(/Record Notes is recording into Chords, so Preview is off/);
+    expect(dialog()!.textContent).toMatch(/Record Notes is recording into Keys & chords, so Preview is off/);
     // Choosing still works, but "Preview on choose" stays quiet.
     const target = SYNTH_PRESETS.find((p) => p.kind === 'poly' && p.id !== soundIdOf(track('t4').instrument))!;
     click(option(target.name));

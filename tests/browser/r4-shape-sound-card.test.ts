@@ -74,10 +74,10 @@ describe('drums: the drum mix', () => {
   it('Kick, Snare & clap, Hats and Kick tune move the kit’s voices; Hats keeps the closed / open balance, also through 0', async () => {
     await openShape({ mode: 'simple', trackId: 't1' });
     expect(sound().querySelector('h3')?.textContent).toBe('Drum mix');
-    expect(knobNames()).toEqual(['Kick', 'Snare & clap', 'Hats', 'Kick tune']);
+    expect(knobNames()).toEqual(['Kick', 'Snare & clap', 'Hi-hats', 'Kick tune']); // round 7: plain words
     // Make the open hat quieter than the closed one first (as Advanced could), so Hats must keep the ratio.
     act(() => void session.accepted(cmd.setDrumVoice(session.store, 't1', 5, { level: 0.5 })));
-    await keysOn(slider(sound(), 'Hats'), '{PageDown}{PageDown}');
+    await keysOn(slider(sound(), 'Hi-hats'), '{PageDown}{PageDown}');
     const v = voices();
     expect(v[4].level).toBeLessThan(1);
     expect(v[5].level / v[4].level).toBeCloseTo(0.5, 2);
@@ -87,9 +87,9 @@ describe('drums: the drum mix', () => {
     expect(voices()[4].level).toBe(1);
     expect(voices()[5].level).toBe(0.5);
     // Through 0 and back up: the open hat is still half the closed one.
-    await keysOn(slider(sound(), 'Hats'), '{Home}');
+    await keysOn(slider(sound(), 'Hi-hats'), '{Home}');
     expect([voices()[4].level, voices()[5].level]).toEqual([0, 0]);
-    await keysOn(slider(sound(), 'Hats'), '{PageUp}{PageUp}{PageUp}{PageUp}{PageUp}');
+    await keysOn(slider(sound(), 'Hi-hats'), '{PageUp}{PageUp}{PageUp}{PageUp}{PageUp}');
     expect(voices()[4].level).toBeGreaterThan(0.2);
     expect(voices()[5].level / voices()[4].level).toBeCloseTo(0.5, 2);
     await keysOn(slider(sound(), 'Kick'), '{End}');

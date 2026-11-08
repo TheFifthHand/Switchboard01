@@ -23,6 +23,7 @@ import { session, useProject, useUi } from '../../instance';
 import { runtimeStore, useRuntime } from '../../runtime';
 import { defaultSlot } from '../../selection';
 import { readSamplerValues, useSamplerController, type SamplerParamId } from './samplerValues';
+import { nameNow } from '../shownName';
 
 export interface SamplerTarget {
   trackId: Id;
@@ -69,7 +70,7 @@ export function readTarget(p: Project, trackId: Id, slot: number): SamplerTarget
     sceneName: isSongSlot(slot) ? 'Song' : (p.scenes[slot]?.name ?? `Row ${slot + 1}`),
     sampleId: own ? own.id : partSampleId,
     partSampleId,
-    partName: t.name,
+    partName: nameNow(t),
     partKind: inst.kind,
   };
 }

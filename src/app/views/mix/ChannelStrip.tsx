@@ -36,6 +36,7 @@ import { formatDb, formatLevel, formatLevelShort, readMixFrame, trackPeak } from
 import { channelController, channelModulated, channelOf, channelValue, partEffects, sameEffects, sendMacro } from './mixState';
 import { useMixTask } from './useMixTask';
 import styles from './ChannelStrip.module.css';
+import { useNameOf } from '../useInstrumentName';
 
 const LEVEL = specById(CHANNEL_PARAMS, 'level')!;
 const PAN = specById(CHANNEL_PARAMS, 'pan')!;
@@ -73,11 +74,12 @@ interface StripInfo {
 }
 
 function useStripInfo(trackId: Id): StripInfo | null {
+  const nameOf = useNameOf();
   return useProject<StripInfo | null>((p) => {
     const t = p.tracks.find((x) => x.id === trackId);
     if (!t) return null;
     return {
-      name: t.name,
+      name: nameOf(t),
       sound: soundName(p, t.instrument),
       kind: INSTRUMENT_LABEL[t.instrument.kind],
       mute: t.mute,
@@ -202,7 +204,8 @@ export const ChannelStrip = memo(function ChannelStrip({ trackId, index, advance
   const anySolo = useProject((p) => p.tracks.some((t) => t.solo));
   const selected = useUi((s) => s.selectedTrackId === trackId);
   const name = info?.name ?? '';
-  const panSpec = useMemo<ParamSpec>(() => ({ ...PAN, label: `${name} pan`, short: 'Pan' }), [name]);
+  // Simple: "Side" (left or right), the sheet's own word; Advanced: Pan.
+  const panSpec = useMemo<ParamSpec>(() => ({ ...PAN, label: `${name} pan`, short: advanced ? 'Pan' : 'Side' }), [name, advanced]);
   if (!info) return null;
   const { channel } = info;
   const notSoloed = anySolo && !info.solo;

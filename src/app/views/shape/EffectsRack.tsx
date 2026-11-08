@@ -31,6 +31,7 @@ import { gateReason, moduleName, partKey, sameItems } from './paramState';
 import { FlowLine, LockNotice, PartWordsContext, PathWarning, bigKnobsMoveNothing, effectCount, focusLater, onAudiblePath, removedEffectNotice, useEditLock, usePartEffects, usePartWords } from './shared';
 import { useEffectDrag, type EffectDragView } from './useEffectDrag';
 import styles from './EffectsRack.module.css';
+import { useInstrumentName } from '../useInstrumentName';
 
 const ADD_ID = 'shape-add-effect';
 
@@ -412,7 +413,7 @@ function Lfos(props: { trackId: Id; locked: boolean }) {
  */
 export function EffectsRack(props: { trackId: Id; className?: string; embedded?: boolean }) {
   const { trackId, className, embedded = false } = props;
-  const partName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const partName = useInstrumentName(trackId);
   const { chain, effects, offPath } = usePartEffects(trackId);
   const lock = useEditLock();
   const locked = lock !== null;

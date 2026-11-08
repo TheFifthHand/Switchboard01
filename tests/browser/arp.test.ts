@@ -83,7 +83,7 @@ describe('Arpeggiator', () => {
     expect(summary.textContent).toContain('1/16 · Up · 1 oct');
     click(summary);
     const d = dialog()!;
-    expect(d.getAttribute('aria-label')).toBe('Arpeggiator settings for Chords');
+    expect(d.getAttribute('aria-label')).toBe('Arpeggiator settings for Keys & chords');
     expect(summary.getAttribute('aria-expanded')).toBe('true');
 
     click(byRole(d, 'radio', '1/8T'));

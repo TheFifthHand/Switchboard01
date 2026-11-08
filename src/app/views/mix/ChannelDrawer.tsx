@@ -30,6 +30,7 @@ import { closeChannelDrawer, useChannelDrawer } from './channelDrawer';
 import { releaseCompare } from './compare';
 import { chainEffectCount } from './mixState';
 import styles from './ChannelDrawer.module.css';
+import { useInstrumentName } from '../useInstrumentName';
 
 const QUICK: readonly { type: ModuleType; words: string; tip: string }[] = [
   { type: 'eq', words: 'Add EQ', tip: 'Add an EQ at the end of this part’s effects: lows, mids, highs, low cut and high cut. It starts flat (changes nothing) until you turn a band.' },
@@ -43,7 +44,7 @@ export function ChannelDrawer(props: { className?: string }) {
   const advanced = useUi((s) => s.uiMode === 'advanced');
   const trackId = useProject<Id | null>((p) => (p.tracks.some((t) => t.id === selected) ? selected : (p.tracks[0]?.id ?? null)));
   const index = useProject((p) => p.tracks.findIndex((t) => t.id === trackId));
-  const name = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const name = useInstrumentName(trackId);
   const count = useProject((p) => (trackId ? chainEffectCount(p, trackId) : null));
   const lock = useStore(session.store.info, (s) => s.lock);
   const ref = useRef<HTMLDivElement>(null);

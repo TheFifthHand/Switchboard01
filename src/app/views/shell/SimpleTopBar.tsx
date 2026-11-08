@@ -13,11 +13,12 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../../../ui/components';
-import { session, useProject, useUi } from '../../instance';
+import { session, useUi } from '../../instance';
 import { useRuntime } from '../../runtime';
 import { keysFor } from '../hints/shortcuts';
 import { DevicesDialog, DevicesKey, midi } from '../devices';
 import { HistoryKeys, useTransportHeight } from '../TransportBar';
+import { useInstrumentName } from '../useInstrumentName';
 import { MoreMenu } from './MoreMenu';
 import { ProjectMenu } from './ProjectMenu';
 import { playSimple } from './simplePlay';
@@ -80,7 +81,8 @@ function RecordKey() {
   const nothingHere = useRuntime((s) => s.recording === 'notes' && s.mode === 'song' && s.recordTargetAudible === false && !s.songRecording);
   const selected = useUi((s) => s.selectedTrackId);
   const targetId = useRuntime((s) => s.songRecording?.trackId ?? s.recordTarget?.trackId ?? null);
-  const part = useProject((p) => p.tracks.find((t) => t.id === (targetId ?? selected))?.name ?? '');
+  // The row's name (Melody, not Lead): the same name everywhere in Simple.
+  const part = useInstrumentName(targetId ?? selected);
   const on = recording !== 'off';
   const line = on ? simpleRecordLine({ performance: recording === 'performance', countingIn, part, nothingHere }) : null;
   return (

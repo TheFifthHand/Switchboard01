@@ -19,6 +19,7 @@ import { page } from 'vitest/browser';
 import '../../src/ui/theme.css';
 import { FADER_BURST_IDLE_MS, KNOB_BURST_IDLE_MS, TipsProvider } from '../../src/ui/components';
 import { session } from '../../src/app/instance';
+import { simpleTrackName } from '../../src/app/labels';
 import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { TAKE_LOCK_MESSAGE } from '../../src/app/session';
 import { MixView } from '../../src/app/views/mix/MixView';
@@ -145,7 +146,9 @@ describe('Mixer strips', () => {
     const m = await setup();
     const tracks = project().tracks;
     expect(tracks).toHaveLength(8);
-    tracks.forEach((t, i) => {
+    tracks.forEach((track, i) => {
+      // Simple names each strip as the song screen does (round 7: "Melody" for a part stored as "Lead").
+      const t = { ...track, name: simpleTrackName(track) };
       const s = strip(m.container, t.id);
       expect(s.getAttribute('aria-label')).toBe(`${i + 1} ${t.name}`);
       const f = slider(s, `${t.name} level`);
@@ -154,7 +157,7 @@ describe('Mixer strips', () => {
       expect(s.querySelector(`[role="meter"][aria-label="${t.name} meter"]`)).not.toBeNull();
       // Each knob is named after its part (MIX-15); the strip shows the short word.
       const pan = slider(s, `${t.name} pan`);
-      expect(pan.closest('[data-size]')!.textContent).toContain('Pan');
+      expect(pan.closest('[data-size]')!.textContent).toContain('Side'); // Simple's word for Pan
       expect(button(s, `Mute ${t.name}`).getAttribute('aria-pressed')).toBe('false');
       expect(button(s, `Solo ${t.name}`).getAttribute('aria-pressed')).toBe('false');
       // A peak-hold number under the meter.
@@ -218,7 +221,7 @@ describe('Mixer strips', () => {
     expect(track('t2').solo).toBe(true);
     expect(strip(m.container, 't2').textContent).toContain('Solo');
     expect(strip(m.container, 't4').textContent).toContain('Not soloed');
-    expect(m.container.textContent).toContain('Solo on: only the soloed part plays');
+    expect(m.container.textContent).toContain('Solo on: only the soloed instrument is heard');
     act(() => session.undo());
     expect(track('t2').solo).toBe(false);
     expect(strip(m.container, 't4').textContent).not.toContain('Not soloed');
@@ -226,7 +229,7 @@ describe('Mixer strips', () => {
 
   it('Pan changes the channel pan', async () => {
     const m = await setup();
-    const pan = slider(strip(m.container, 't5'), `${track('t5').name} pan`);
+    const pan = slider(strip(m.container, 't5'), `${simpleTrackName(track('t5'))} pan`);
     pan.focus();
     key(pan, 'keydown', { key: 'ArrowUp' });
     expect(project().patch.modules.find((x) => x.id === 't5:ch')!.params.pan).toBeCloseTo(0.02, 5);
@@ -760,7 +763,7 @@ describe('Layout with the real theme', () => {
       } else {
         expect(mr.top).toBeGreaterThanOrEqual(mixer.getBoundingClientRect().bottom);
       }
-      for (const chip of section(view, 'Presets').querySelectorAll<HTMLElement>('button')) expect(chip.getBoundingClientRect().height).toBeGreaterThanOrEqual(40);
+      for (const chip of section(view, c.mode === 'simple' ? 'Sound' : 'Presets').querySelectorAll<HTMLElement>('button')) expect(chip.getBoundingClientRect().height).toBeGreaterThanOrEqual(40);
       expect(button(view, c.mode === 'simple' ? /^Make it as loud as streaming songs/ : /Match target/).getBoundingClientRect().height).toBeGreaterThanOrEqual(40);
       if (c.w === 1366 && c.mode === 'advanced') {
         // Laptop, Advanced: the spectrum is on screen without scrolling the mastering panel.

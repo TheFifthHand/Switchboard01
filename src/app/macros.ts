@@ -23,7 +23,7 @@ export const MACRO_CAPTION: Record<MacroId, string> = {
   echo: 'Echoes in time',
   motion: 'Moves in time',
   drive: 'Warmth to grit',
-  pump: 'Ducks in time',
+  pump: 'Dips with the beat',
 };
 
 export const MACRO_SPECS: Record<MacroId, ParamSpec> = {

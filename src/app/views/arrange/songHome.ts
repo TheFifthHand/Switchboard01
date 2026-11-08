@@ -12,34 +12,32 @@ import { mainSection, musicPerBar, regionEnd, songBars, sortSections, spanOf } f
 import { clipById } from '../../../project/clips';
 import type { Id, Project, TrackRole } from '../../../project/types';
 import type { IconName } from '../../../ui/components';
+import { INSTRUMENT_WORDS, simpleTrackName } from '../../labels';
 import { clockText } from './songModel';
 
 /* ------------------------------------------------------------------ */
 /* Kinds of instrument                                                 */
 /* ------------------------------------------------------------------ */
 
-/** What a beginner calls each kind of instrument, and its picture. */
+/** What a beginner calls each kind of instrument (the picker's words, INSTRUMENT_WORDS), and its picture. */
 export const INSTRUMENT_KINDS: Readonly<Record<TrackRole, { name: string; icon: IconName }>> = {
-  drums: { name: 'Drums', icon: 'drum' },
-  percussion: { name: 'Percussion', icon: 'bell' },
-  bass: { name: 'Bass', icon: 'wave' },
-  chords: { name: 'Keys & chords', icon: 'keys' },
-  lead: { name: 'Melody', icon: 'sparkle' },
-  pad: { name: 'Pad', icon: 'layers' },
-  texture: { name: 'Texture', icon: 'spectrum' },
-  sampler: { name: 'Recording', icon: 'mic' },
+  drums: { name: INSTRUMENT_WORDS.drums, icon: 'drum' },
+  percussion: { name: INSTRUMENT_WORDS.percussion, icon: 'bell' },
+  bass: { name: INSTRUMENT_WORDS.bass, icon: 'wave' },
+  chords: { name: INSTRUMENT_WORDS.chords, icon: 'keys' },
+  lead: { name: INSTRUMENT_WORDS.lead, icon: 'sparkle' },
+  pad: { name: INSTRUMENT_WORDS.pad, icon: 'layers' },
+  texture: { name: INSTRUMENT_WORDS.texture, icon: 'spectrum' },
+  sampler: { name: INSTRUMENT_WORDS.sampler, icon: 'mic' },
 };
-
-/** 2.4's default names for instruments whose Simple word differs ("Lead" is "Melody" in the picker). */
-const OLD_NAMES: Partial<Record<TrackRole, string>> = { chords: 'Chords', lead: 'Lead', sampler: 'Sampler' };
 
 /**
  * The name Simple shows for an instrument: the picker's word when the instrument still has 2.4's default
- * name ("Lead" → "Melody", "Chords" → "Keys & chords", "Sampler" → "Recording"), else the name it was given.
- * Display only: the project keeps its names.
+ * name and was never renamed ("Lead" → "Melody", "Chords" → "Keys & chords", "Sampler" → "Recording"),
+ * else the name it was given (simpleTrackName). Display only: the project keeps its names.
  */
-export function instrumentName(name: string, role: TrackRole): string {
-  return OLD_NAMES[role] === name ? INSTRUMENT_KINDS[role].name : name;
+export function instrumentName(name: string, role: TrackRole, renamed?: boolean): string {
+  return simpleTrackName({ name, role, renamed: renamed ? true : undefined });
 }
 
 /** The picker's order: the order a song is usually built in (beat, bass, harmony, tune, then colour). */
@@ -83,7 +81,7 @@ export function hiddenInstruments(
     .map((t) => ({
       trackId: t.id,
       role: t.role,
-      name: instrumentName(t.name, t.role),
+      name: simpleTrackName(t),
       kind: INSTRUMENT_KINDS[t.role].name,
       icon: INSTRUMENT_KINDS[t.role].icon,
     }));

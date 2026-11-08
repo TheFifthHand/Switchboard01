@@ -24,7 +24,7 @@ import { CHANNEL_PARAMS, DELAY_PARAMS, REVERB_PARAMS, specById, type ParamSpec }
 import type { Id } from '../../../project/types';
 import * as cmd from '../../../state/commands';
 import { shallowEqual } from '../../../state/store';
-import { session, useProject } from '../../instance';
+import { session, useProject, useUi } from '../../instance';
 import { notify } from '../../runtime';
 import { formatDb, returnPeak } from './mixMeters';
 import { controllerName, moduleValue } from './mixState';
@@ -136,6 +136,8 @@ export const ReturnStrip = memo(function ReturnStrip(props: { kind: ReturnKind }
   }, shallowEqual);
   const spec = useMemo(() => levelSpec(def.name), [def.name]);
   const muted = info.bypass;
+  // Simple: plain words for the strip's tag and the echo's Feedback (how many repeats); Advanced keeps 2.4's.
+  const simple = useUi((s) => s.uiMode !== 'advanced');
 
   const setLevel = (db: number, i: FaderChangeInfo) => session.setModuleParam(def.id, 'mix', dbToMix(db), i.gesture, { display: `${def.name} return level` });
   const toggleMute = () => {
@@ -155,7 +157,7 @@ export const ReturnStrip = memo(function ReturnStrip(props: { kind: ReturnKind }
       <div className={styles.top}>
         <Tooltip tip={def.about}>
           <div className={styles.head} data-static="">
-            <span className={`${styles.num} ${styles.returnTag}`}>Return</span>
+            <span className={`${styles.num} ${styles.returnTag}`}>{simple ? 'Effect' : 'Return'}</span>
             <span className={styles.name}>{def.name}</span>
             <span className={styles.sound} data-testid={`return-caption-${def.kind}`}>
               {def.caption}
@@ -171,7 +173,7 @@ export const ReturnStrip = memo(function ReturnStrip(props: { kind: ReturnKind }
           <div className={styles.middle}>
             <div className={styles.returnKnobs}>
               {def.knobs.map((k) => (
-                <ReturnKnob key={k.param} def={def} param={k.param} label={k.label} disabled={false} />
+                <ReturnKnob key={k.param} def={def} param={k.param} label={simple && k.param === 'feedback' ? 'Repeats' : k.label} disabled={false} />
               ))}
             </div>
             <div className={styles.ms}>

@@ -245,7 +245,7 @@ function AddInstrumentButton({
       // Nothing to play yet (a Recording): its row shows, with its sound open beside it.
       revealRow(projectId, trackId);
       openSound(trackId);
-      notify(`Added ${instrumentName(t.name, t.role)}: its row is ready. Choose its sound on the right, then press Record to play into it.`);
+      notify(`Added ${instrumentName(t.name, t.role, t.renamed)}: its row is ready. Choose its sound on the right, then press Record to play into it.`);
       return;
     }
     // The editor, when it is open, follows the instrument just added (its loop, ready to change).

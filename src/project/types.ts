@@ -240,6 +240,13 @@ export interface Track {
    * returns to its default (see macroHomeFor).
    */
   macroHome?: Partial<Record<MacroId, number>>;
+  /**
+   * The person gave this part its name (Rename). Simple shows a renamed part's
+   * name as it is; an unrenamed part with a 2.4 default name ("Lead") shows
+   * the picker's word ("Melody"). Absent = not renamed. Older projects and
+   * older app versions simply lack it.
+   */
+  renamed?: true;
 }
 
 /**

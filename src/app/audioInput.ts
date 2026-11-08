@@ -37,6 +37,7 @@ import { TICKS_PER_BAR, type ClipBars, type Id } from '../project/types';
 import * as cmd from '../state/commands';
 import { createStore, type Store } from '../state/store';
 import { selectSlot, slotFor, uiStore } from '../state/uiStore';
+import { trackNameIn } from './labels';
 import { nextBarTick } from '../time/sequencer';
 import { outputDelaySeconds, type EngineLatency } from '../time/transport';
 import { meterWake } from '../ui/components/meterScheduler';
@@ -915,7 +916,8 @@ export class AudioInputController {
     const rt = runtimeStore.getState();
     if (rt.playing && rt.mode === 'live' && rt.tracks[trackId]?.playingSlot !== slot) void s.pressClip(trackId, slot);
     const after = s.store.getState();
-    const partName = after.tracks.find((t) => t.id === trackId)?.name ?? 'the part';
+    const partTrack = after.tracks.find((t) => t.id === trackId);
+    const partName = partTrack ? trackNameIn(partTrack, uiStore.getState().uiMode) : 'the part';
     const where = `${partName} · ${after.scenes[slot]?.name ?? `row ${slot + 1}`}`;
     const seconds = frames / sr;
     // A synth or drum part becomes a sampler with the take: its other clips then play the take at their notes.

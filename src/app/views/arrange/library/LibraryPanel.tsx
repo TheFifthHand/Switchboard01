@@ -29,6 +29,7 @@ import type { Carry } from '../laneController';
 import { addLibraryLoopHere } from '../songActions';
 import { barsText, partHue } from '../songModel';
 import { INSTRUMENT_KINDS, shortOrLong } from '../songHome';
+import { nameNow } from '../../useInstrumentName';
 import { LIBRARY_PAGE, PART_CHIPS, libraryResults, loopRoleOf, loopTarget, realizeFor, styleChips, styleName, type LibraryQuery } from './libraryModel';
 import styles from './Library.module.css';
 
@@ -63,8 +64,9 @@ function targetOf(p: Project, loop: LibraryLoop, selected: Id | null): Target | 
   const i = p.tracks.findIndex((x) => x.id === t.trackId);
   const track = p.tracks[i];
   const anySolo = p.tracks.some((x) => x.solo);
-  const quiet = track.mute ? `${track.name} is muted: unmute it to hear this loop` : anySolo && !track.solo ? `${track.name} is not heard: another instrument plays alone` : null;
-  return { trackId: track.id, name: track.name, hue: partHue(i), quiet };
+  const name = nameNow(track);
+  const quiet = track.mute ? `${name} is muted: unmute it to hear this loop` : anySolo && !track.solo ? `${name} is not heard: another instrument plays alone` : null;
+  return { trackId: track.id, name, hue: partHue(i), quiet };
 }
 
 /** The notes a row draws and plays (worked out once per loop, part and key). */

@@ -90,7 +90,7 @@ describe('Simple Shape: orientation', () => {
     expect(defaultUiState().uiMode).toBe('simple');
     const m = setup('t4');
     const heading = m.container.querySelector('h2')!;
-    expect(heading.textContent).toBe(`Shaping: 4 Chords — ${soundName(project(), track('t4').instrument)}`);
+    expect(heading.textContent).toBe(`Shaping: 4 Keys & chords — ${soundName(project(), track('t4').instrument)}`);
     // Advanced-only detail stays out of the way: no mapping editor, no cable dock.
     expect(m.container.textContent).not.toContain('Reset mappings');
     expect(m.container.querySelector('[aria-label="Cable panel"]')).toBeNull();
@@ -144,7 +144,7 @@ describe('Simple Shape: macros and instrument', () => {
     for (const k of macros) expect(['lg', 'xl']).toContain(k.closest('[data-size]')!.getAttribute('data-size'));
     const tone = m.container.querySelector<HTMLElement>('[aria-label="Tone big knob"]')!;
     expect(tone.textContent).toContain('Dark ↔ bright');
-    expect(m.container.querySelector('[aria-label="Pump big knob"]')!.textContent).toContain('Ducks in time');
+    expect(m.container.querySelector('[aria-label="Pump big knob"]')!.textContent).toContain('Dips with the beat');
 
     const before = track('t4').macros.tone;
     key(slider(tone, 'Tone'), 'keydown', { key: 'PageUp' });

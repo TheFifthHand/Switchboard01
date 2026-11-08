@@ -40,6 +40,7 @@ import { SHOW_EVERY_SETTING, SHOW_FEWER_SETTINGS, useAdvancedSwitch } from './sh
 import { SimpleShape } from './SimpleShape';
 import styles from './ShapeView.module.css';
 import { endKnobDragsOnPartSwitch } from './partSwitch';
+import { useInstrumentName, useNameOf } from '../useInstrumentName';
 
 endKnobDragsOnPartSwitch();
 
@@ -60,11 +61,12 @@ function ShapeHeader(props: { trackId: Id; advanced: boolean }) {
   useEffect(() => {
     if (!advanced) dismiss();
   }, [advanced, dismiss]);
+  const nameOf = useNameOf();
   const info = useProject<HeaderInfo | null>((p) => {
     const i = p.tracks.findIndex((t) => t.id === trackId);
     if (i < 0) return null;
     const t = p.tracks[i];
-    return { num: i + 1, name: t.name, sound: soundName(p, t.instrument) };
+    return { num: i + 1, name: nameOf(t), sound: soundName(p, t.instrument) };
   }, shallowEqual);
   return (
     <div className={styles.header}>
@@ -116,9 +118,10 @@ interface PartInfo {
 
 const PartButton = memo(function PartButton(props: { id: Id; index: number; selected: boolean; onKey(e: KeyboardEvent<HTMLButtonElement>): void }) {
   const { id, index, selected, onKey } = props;
+  const nameOf = useNameOf();
   const info = useProject<PartInfo | null>((p) => {
     const t = p.tracks.find((x) => x.id === id);
-    return t ? { name: t.name, sound: soundName(p, t.instrument), kind: t.instrument.kind, mute: t.mute } : null;
+    return t ? { name: nameOf(t), sound: soundName(p, t.instrument), kind: t.instrument.kind, mute: t.mute } : null;
   }, shallowEqual);
   const playing = useRuntime((s) => s.playing && (s.tracks[id]?.playingSlot ?? null) !== null);
   if (!info) return null;
@@ -236,7 +239,7 @@ function AdvancedColumns(props: { trackId: Id; tabbed: boolean; inert: boolean }
   const { tabbed, inert } = props;
   const trackId = useDeferredValue(props.trackId);
   const stale = trackId !== props.trackId;
-  const newName = useProject((p) => p.tracks.find((t) => t.id === props.trackId)?.name ?? '');
+  const newName = useInstrumentName(props.trackId);
   const tab = useAdvancedTab();
   const show = (c: ShapeColumn) => !tabbed || tab === c;
   return (
@@ -289,7 +292,7 @@ const SPLITTER = 10;
 function CableDock(props: { trackId: Id; room: number; onCover(full: boolean): void }) {
   const { trackId, room, onCover } = props;
   const open = useUi((s) => s.cablesOpen);
-  const partName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const partName = useInstrumentName(trackId);
   /** The overlay's height when the user resized it (null: the whole workspace). */
   const [userHeight, setUserHeight] = useState<number | null>(null);
   const drag = useRef<{ pointerId: number; startY: number; startH: number } | null>(null);

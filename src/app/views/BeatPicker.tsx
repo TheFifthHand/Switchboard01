@@ -32,6 +32,7 @@ import { notify, runtimeStore, useRuntime } from '../runtime';
 import { startPreview, stopPreview } from '../preview';
 import { MenuHeader, Popover, isEditLocked, LOCKED_TEXT, type MenuAnchor } from './ClipMenu';
 import { followInSong } from './arrange/library/ReadyLoops';
+import { useInstrumentName } from './useInstrumentName';
 import styles from './BeatPicker.module.css';
 
 /** Styles that have beats, in the library's order, each with its beats (main style only). */
@@ -161,7 +162,7 @@ export function BeatPicker({ trackId, slot, inSong = false, anchor, returnFocus,
   const styleList = useMemo(() => beatStyles(), []);
   const bpm = useProject((p) => p.bpm);
   const setsTempo = useProject((p) => beatSetsTempo(p, trackId, slot));
-  const partName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? 'Drums');
+  const partName = useInstrumentName(trackId, 'Drums');
   const [style, setStyle] = useState(() => styleForTempo(bpm));
   const [picked, setPicked] = useState<string | null>(null);
   const plain = useUi((s) => s.uiMode !== 'advanced') && inSong;

@@ -59,6 +59,7 @@ import { Popover, anchorFromElement } from './ClipMenu';
 import { kitKeyLabels, playLive } from './DrumPads';
 import { SCALE_MOOD, keyMood } from './keyMood';
 import styles from './KeyboardStrip.module.css';
+import { nameNow, useInstrumentName } from './useInstrumentName';
 
 const SCALE_OPTIONS = SCALE_ORDER.map((id) => ({ value: id, label: SCALES[id].name }));
 /** A kit keyboard always starts at C4: its keys are sounds, not pitches. */
@@ -238,8 +239,8 @@ function songMovePlan(p: Project): SongMovePlan {
   for (const t of p.tracks) {
     if (!trackClips(t).some((x) => x.clip.notes.length > 0)) continue;
     if (t.instrument.kind === 'drums') plan.drums = true;
-    else if (t.instrument.kind === 'sampler') plan.samplers.push({ id: t.id, name: t.name });
-    else plan.moving.push(t.name);
+    else if (t.instrument.kind === 'sampler') plan.samplers.push({ id: t.id, name: nameNow(t) });
+    else plan.moving.push(nameNow(t));
   }
   return plan;
 }
@@ -364,7 +365,7 @@ export function KeyboardStrip(props: { children?: React.ReactNode }) {
   // Simple shows no strip outside Jam pads: it plays as a folded one does (the computer keys, all three octaves).
   const hidden = !advanced && view !== 'play';
   const collapsed = useUi((s) => keyboardCollapsedFor(s, s.view)) || hidden;
-  const trackName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const trackName = useInstrumentName(trackId);
   const kind = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind);
   const kitId = useProject((p) => {
     const inst = p.tracks.find((t) => t.id === trackId)?.instrument;

@@ -26,6 +26,7 @@ import * as cmd from '../../../state/commands';
 import { drumVoiceFor, selectDrumVoice } from '../../../state/uiStore';
 import { TOUCH_SLOP_PX, Tooltip, newGestureId } from '../../../ui/components';
 import { session, useUi } from '../../instance';
+import { drumNamesIn } from '../../labels';
 import { notify } from '../../runtime';
 import { LOCKED_REASON, MenuHeader, MenuItem, MenuSeparator, MoreIcon, Popover, anchorFromContextEvent, anchorFromElement, isEchoOfKeyboardMenu, isMenuKey, noteKeyboardMenu, useEditLocked, type MenuAnchor } from '../ClipMenu';
 import { STEP_GRID, barsWords, cellColumn, cellIndices, clampVelocity, drumPageGrid, noteIdsAt, percent, spanSpec, velocityBucket } from './model';
@@ -37,8 +38,8 @@ import styles from './DrumSteps.module.css';
 const VOICES = Array.from({ length: DRUM_VOICES }, (_, i) => i);
 
 /**
- * The eight main kit sounds Simple shows (Kick, Snare, Clap, Closed Hat, Open
- * Hat, Rim, Low Tom, Crash): voice ids of every kit.
+ * The eight main kit sounds Simple shows (Kick, Snare, Clap, Closed hi-hat,
+ * Open hi-hat, Rim click, Low drum, Crash cymbal): voice ids of every kit.
  */
 export const CORE_VOICES: readonly number[] = [0, 2, 3, 4, 5, 7, 8, 12];
 
@@ -342,7 +343,9 @@ const StepPad = memo(function StepPad(props: { step: number; span: number; veloc
 
 export function DrumSteps({ trackId, slot, page, clip, kitId, span = 1, pads = true, lean = false }: DrumStepsProps) {
   const voice = useUi((s) => drumVoiceFor(s, trackId));
-  const names = useMemo(() => getKitVoiceNames(kitId), [kitId]);
+  // Simple names the sounds in plain words ("Low drum", not "Low Tom"); Advanced keeps the kit's names.
+  const nameMode = useUi((s) => s.uiMode);
+  const names = useMemo(() => drumNamesIn(getKitVoiceNames(kitId), nameMode), [kitId, nameMode]);
   const spec = useMemo(() => spanSpec(STEP_GRID, span), [span]);
   const cells = spec.cells;
   const lastCol = cells;

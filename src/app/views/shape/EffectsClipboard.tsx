@@ -18,6 +18,7 @@ import { notify } from '../../runtime';
 import { LOCKED_REASON, MenuHeader, MenuItem, Popover, anchorFromElement, useEditLocked } from '../ClipMenu';
 import { possessive } from './shared';
 import shared from './shared.module.css';
+import { useInstrumentName } from '../useInstrumentName';
 
 const count = (n: number) => `${n} effect${n === 1 ? '' : 's'}`;
 
@@ -25,7 +26,7 @@ export function EffectsClipboard(props: { trackId: Id; size?: 'sm' | 'md'; class
   const { trackId, size = 'sm', className, idPrefix = 'shape' } = props;
   const locked = useEditLocked();
   const clip = useUi((s) => s.effectClipboard);
-  const partName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? 'this part');
+  const partName = useInstrumentName(trackId, 'this part');
   const linear = useProject((p) => trackChain(p.patch, trackId) !== null);
   const [open, setOpen] = useState(false);
   const pasteRef = useRef<HTMLButtonElement>(null);

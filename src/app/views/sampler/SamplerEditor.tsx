@@ -80,6 +80,7 @@ import { clipSampleOf, readTargetValues, recordingName, setTargetValue, targetHe
 import { samplerSpec, useSamplerController, useSamplerValues, type SamplerParamId } from './samplerValues';
 import { WaveformTrim } from './WaveformTrim';
 import styles from './SamplerEditor.module.css';
+import { useNameOf } from '../useInstrumentName';
 
 export interface SamplerEditorProps {
   trackId: string;
@@ -780,12 +781,13 @@ function NoRecording(props: { trackId: Id; info: PartInfo; target: SamplerTarget
 /* ------------------------------------------------------------------ */
 
 export function SamplerEditor({ trackId }: SamplerEditorProps) {
+  const nameOf = useNameOf();
   const info = useProject<PartInfo | null>((p) => {
     const t = p.tracks.find((x) => x.id === trackId);
     if (!t) return null;
     const inst = t.instrument;
     return {
-      name: t.name,
+      name: nameOf(t),
       kind: inst.kind,
       sound: soundName(p, inst),
       sampleId: inst.kind === 'sampler' ? inst.sampleId : null,

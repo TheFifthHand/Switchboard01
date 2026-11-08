@@ -50,7 +50,7 @@ coming from 1.0 (the Welcome card's one-time note, START HERE, project-file impo
   card. The card traps Tab. After Jump In, focus goes to the quick guide's Next, else to Play.
 - When a reload or a closed tab came right after an edit, the card says the last edits were
   recovered (the rescue copy).
-- A quiet last line names the version ("Version 2.4.0", from `package.json`), so the person can see
+- A quiet last line names the version ("Version X.Y.Z", read from `package.json` at build time, never typed in), so the person can see
   which version a download opened.
 
 ### Transport (top bar)

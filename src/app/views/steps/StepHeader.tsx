@@ -317,7 +317,8 @@ export function BarStrip({ trackId, slot, bars, page, kind }: { trackId: Id; slo
   return (
     <div className={styles.barRow}>
       <div className={styles.field}>
-        <span className={styles.fieldLabel} id={`steps-bars-${trackId}`}>
+        {/* Simple: the numbers alone (a beginner does not need the word "Page"); screen readers still hear it. */}
+        <span className={simple ? 'visually-hidden' : styles.fieldLabel} id={`steps-bars-${trackId}`}>
           {simple ? 'Page' : 'Bar'}
         </span>
         <div ref={stripRef} className={styles.strip} data-bars={bars}>
@@ -372,7 +373,7 @@ export function BarStrip({ trackId, slot, bars, page, kind }: { trackId: Id; slo
         }
         detail="It waits while you drag or draw."
       >
-        Follow
+        {simple ? 'Turn pages' : 'Follow'}
       </Button>
       {!drums && !simple && (
         <Select

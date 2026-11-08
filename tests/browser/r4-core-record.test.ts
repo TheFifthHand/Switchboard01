@@ -182,7 +182,7 @@ describe('Record Notes in the song: into the region under the playhead', () => {
     // Bar 4: no region on Chords. Nothing records there, and the transport says so once.
     await until(() => rt().recordTargetAudible === false, 'the gap', 6000);
     expect(rt().recording).toBe('notes');
-    expect(rt().notice?.text).toBe('Chords has no loop here in the song, so there is nothing to record into until its next one.');
+    expect(rt().notice?.text).toBe('Keys & chords has no loop here in the song, so there is nothing to record into until its next one.');
     await playAt(s, 't4', 69, 1300);
     // Bar 5 plays Stabs again.
     await until(() => rt().recordTargetAudible === true && rt().recordTarget?.slot === 0, 'region c', 6000);
@@ -203,7 +203,7 @@ describe('Record Notes in the song: into the region under the playhead', () => {
     await until(() => s.transport!.getPosition().tick > 3 * 384 + 30, 'bar 4');
     await s.toggleRecordNotes();
     expect(rt().recording).toBe('off');
-    expect(rt().notice?.text).toBe('Nothing to record into: Chords has no loop at the playhead in the song. Put one on its row, or move the playhead to one.');
+    expect(rt().notice?.text).toBe('Nothing to record into: Keys & chords has no loop at the playhead in the song. Put one on its row, or move the playhead to one.');
     // No clip was made for it.
     expect(s.store.getState().tracks.find((t) => t.id === 't4')!.clips.filter((c) => !!c)).toHaveLength(2);
   });

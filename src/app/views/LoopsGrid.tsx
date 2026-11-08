@@ -73,13 +73,14 @@ import { Button, ClipSketch, DRUM_KEYS, Icon, Meter, NOTE_KEYS, OCTAVE_KEYS, Pad
 import { TAP_SLOP_PX, type PadAction } from '../../ui/components/Pad';
 import { MOTION, boxOf, flip, offsetBox, prefersReducedMotion, scaledBox, stopMotion, type Box } from '../../ui/motion';
 import { BEATS_PER_BAR, MAX_SCENES, PPQ, TICKS_PER_BAR, TICKS_PER_BEAT, TICKS_PER_STEP, type Clip, type ClipBars, type Id, type Project, type Scene } from '../../project/types';
+import { isSongSlot } from '../../project/clips';
 import { clipDropProblem, createClip, insertScene } from '../../state/commands';
-import { selectSlot, selectTrack, setPadMode, slotFor, uiStore } from '../../state/uiStore';
+import { selectSlot, selectTrack, setPadMode, slotFor, uiStore, type UiMode } from '../../state/uiStore';
 import type { ClipPhase } from '../../time/contracts';
 import { session, useProject, useUi } from '../instance';
 import { notify, runtimeStore, useRuntime, type RuntimeState, type TrackRuntime } from '../runtime';
 import { PAUSE_UNAVAILABLE_MESSAGE } from '../session';
-import { barsLabel, soundName } from '../labels';
+import { barsLabel, soundName, trackNameIn } from '../labels';
 import '../selection';
 import {
   ClipMenu,
@@ -114,8 +115,9 @@ interface ColumnSummary {
   clips: readonly (Clip | null)[];
 }
 
-function summarize(p: Project): ColumnSummary[] {
-  return p.tracks.map((t) => ({ id: t.id, name: t.name, sound: soundName(p, t.instrument), mute: t.mute, solo: t.solo, drums: t.instrument.kind === 'drums', clips: t.clips }));
+/** The columns; `mode` names the parts as the interface does (Simple: "Melody" for "Lead"). */
+function summarize(p: Project, mode: UiMode): ColumnSummary[] {
+  return p.tracks.map((t) => ({ id: t.id, name: trackNameIn(t, mode), sound: soundName(p, t.instrument), mute: t.mute, solo: t.solo, drums: t.instrument.kind === 'drums', clips: t.clips }));
 }
 
 function sameColumns(a: ColumnSummary[], b: ColumnSummary[]): boolean {
@@ -2111,11 +2113,12 @@ function PadActions(props: {
   const locked = useEditLocked();
   const trackId = useUi((s) => s.selectedTrackId);
   const slot = useUi((s) => slotFor(s, s.selectedTrackId));
+  const nameMode = useUi((s) => s.uiMode);
   const info = useProject(
     (p) => {
       const t = p.tracks.find((x) => x.id === trackId);
       const clip = t?.clips[slot] ?? null;
-      return t ? { part: t.name, scene: p.scenes[slot]?.name ?? `Row ${slot + 1}`, name: clip?.name ?? null, bars: clip?.bars ?? 0, full: t.clips.every((c) => !!c) } : null;
+      return t ? { part: trackNameIn(t, nameMode), scene: p.scenes[slot]?.name ?? `Row ${slot + 1}`, name: clip?.name ?? null, bars: clip?.bars ?? 0, full: t.clips.every((c) => !!c) } : null;
     },
     (a, b) => a === b || (!!a && !!b && a.part === b.part && a.scene === b.scene && a.name === b.name && a.bars === b.bars && a.full === b.full),
   );
@@ -2147,7 +2150,8 @@ function PadActions(props: {
       </div>
     );
   }
-  if (!info) return null;
+  // A loop of the song (opened in the song's editor) is no pad: nothing here is about it ("Row 101" was).
+  if (!info || isSongSlot(slot)) return null;
   const at = { trackId, slot };
   if (info.name === null) {
     return (
@@ -2275,7 +2279,8 @@ function subscribeShort(fn: () => void): () => void {
 const isShortWindow = () => (typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(SHORT_WINDOW).matches : false);
 
 export function LoopsGrid() {
-  const columns = useProject(summarize, sameColumns);
+  const nameMode = useUi((s) => s.uiMode);
+  const columns = useProject((p) => summarize(p, nameMode), sameColumns);
   const compact = useSyncExternalStore(subscribeShort, isShortWindow);
   const scenes = useProject((p) => p.scenes);
   const rows = scenes.length;

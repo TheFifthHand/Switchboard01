@@ -74,14 +74,24 @@ export function samplePath(meta: Pick<SampleMeta, 'id' | 'mime'>): string {
   return `${SAMPLE_DIR}${meta.id}.${extensionForMime(meta.mime)}`;
 }
 
-/** A safe download file name for a project. */
+/**
+ * A safe download file name for a project: its letters and digits in any
+ * script ("歌", "Песня", "Café" stay as they are), with spaces as hyphens.
+ * Everything else (punctuation, the characters file systems refuse, control
+ * characters, dots) is left out, so no name ends in a dot or a space.
+ */
 export function bundleFileName(project: Pick<Project, 'name'>): string {
-  const base = project.name
-    .normalize('NFKD')
-    .replace(/[^\w\- ]+/g, '')
-    .trim()
-    .replace(/\s+/g, '-')
-    .slice(0, 60);
+  const base = Array.from(
+    project.name
+      .normalize('NFC')
+      .replace(/\s+/g, ' ')
+      .replace(/[^\p{L}\p{M}\p{N}_\- ]+/gu, '')
+      .trim()
+      .replace(/\s+/g, '-'),
+  )
+    .slice(0, 60)
+    .join('')
+    .replace(/^-+|-+$/g, '');
   return `${base || 'omni-song-project'}${BUNDLE_EXTENSION}`;
 }
 

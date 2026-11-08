@@ -249,7 +249,7 @@ function Presets(props: { locked: boolean; simple?: boolean }) {
   return (
     <section className={styles.section} aria-labelledby={titleId} data-section="presets">
       <SectionTitle id={titleId} aside={props.simple ? undefined : <LevelMatchNote />}>
-        Presets
+        {props.simple ? 'Sound' : 'Presets'}
       </SectionTitle>
       <div className={styles.chips} role="group" aria-labelledby={titleId}>
         {MASTERING_PRESETS.map((p) => (

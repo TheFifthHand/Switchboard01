@@ -16,6 +16,7 @@ import { MONITOR_WARNING, OFFSET_RANGE_MS } from '../../audioInput';
 import { ACTIVITY_MS, LEARN_TARGETS, MAX_BEND_RANGE, learnTargetFromKey, learnTargetKey, learnTargetName, type LearnTarget, type MidiMapping } from '../../midi';
 import { audioInput, midi, useAudioInput, useMidi } from './instances';
 import styles from './DevicesDialog.module.css';
+import { useNameOf } from '../useInstrumentName';
 
 export interface DevicesDialogProps {
   open: boolean;
@@ -47,7 +48,8 @@ function mappingText(m: MidiMapping): string {
 
 function MidiSection(props: { headingId: string; headingRef: RefObject<HTMLHeadingElement | null>; actionRef: RefObject<HTMLButtonElement | null> }) {
   const st = useMidi((s) => ({ status: s.status, message: s.message, inputs: s.inputs, learning: s.learning, learned: s.learned, settings: s.settings }), shallowEqual);
-  const parts = useProject((p) => p.tracks.map((t, i) => ({ id: t.id, name: `${i + 1} · ${t.name}` })), (a, b) => a.length === b.length && a.every((x, i) => x.id === b[i].id && x.name === b[i].name));
+  const nameOf = useNameOf();
+  const parts = useProject((p) => p.tracks.map((t, i) => ({ id: t.id, name: `${i + 1} · ${nameOf(t)}` })), (a, b) => a.length === b.length && a.every((x, i) => x.id === b[i].id && x.name === b[i].name));
   const [targetKey, setTargetKey] = useState('macro:tone');
   const target = learnTargetFromKey(targetKey) ?? LEARN_TARGETS[0];
   const unavailable = midi.unavailableReason();

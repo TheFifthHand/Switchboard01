@@ -278,7 +278,7 @@ export interface PartRowProps {
 export const PartRow = memo(function PartRow({ row: given, anySolo, tab, onFocusKey }: PartRowProps) {
   // Simple calls an instrument by the picker's word when it still has 2.4's default name (Lead → Melody).
   const simple = useUi((s) => s.uiMode !== 'advanced');
-  const row = useMemo(() => (simple ? { ...given, name: instrumentName(given.name, given.role) } : given), [simple, given]);
+  const row = useMemo(() => (simple ? { ...given, name: instrumentName(given.name, given.role, given.renamed) } : given), [simple, given]);
   const regions = useRowRegions(row.id);
   const { clips, songClips } = useRowClips(row.id);
   const kind = useRowKind(row.id);

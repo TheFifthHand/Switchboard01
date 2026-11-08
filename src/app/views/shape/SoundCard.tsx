@@ -179,7 +179,7 @@ function DrumMix(props: { trackId: Id; kitId: string; size: KnobSize }) {
   );
 }
 
-/** "Snare and Clap", "Closed Hat, Open Hat and Pedal Hat". */
+/** "Snare and Clap", "Closed hi-hat, Open hi-hat and Pedal hi-hat". */
 function listNames(names: readonly string[]): string {
   return names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }

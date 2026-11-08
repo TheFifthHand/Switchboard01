@@ -66,8 +66,9 @@ function useInfo(trackId: Id): Info | null {
             : 'No recording yet: choose one, or record your own.'
           : (presetInfo(inst.presetId)?.description ?? '');
     return {
-      // The picker's word for 2.4's default names (Lead → Melody); the project keeps its names.
-      name: instrumentName(t.name, t.role),
+      // The picker's word for 2.4's default names (Lead → Melody) until renamed; the project keeps its names.
+      // Renaming marks the part renamed, so typing "Lead" for Melody stores the mark and shows "Lead".
+      name: instrumentName(t.name, t.role, t.renamed),
       kind: inst.kind,
       sound: soundName(p, inst),
       description,

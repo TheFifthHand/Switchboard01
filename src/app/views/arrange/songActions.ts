@@ -25,6 +25,7 @@ import { editorStore } from './editorStore';
 import { clearSelection, setSelection } from './laneStore';
 import { freshName, libraryLoop, libraryResults, loopRoleOf, loopTarget, partProblem, realizeFor } from './library/libraryModel';
 import { INSTRUMENT_KINDS, instrumentName, instrumentRange, lastsText, timeAt } from './songHome';
+import { nameNow } from '../useInstrumentName';
 import { quietly } from './sceneOffer';
 import { barsText, scenePlaces } from './songModel';
 
@@ -205,7 +206,10 @@ export function addScene(row: number, bar: number): SongEditResult | null {
 /* Loops of the song's own (library loops, new empty loops, copies)    */
 /* ------------------------------------------------------------------ */
 
-const partNameOf = (trackId: Id) => project().tracks.find((t) => t.id === trackId)?.name ?? 'the part';
+const partNameOf = (trackId: Id) => {
+  const t = project().tracks.find((x) => x.id === trackId);
+  return t ? nameNow(t) : 'the part';
+};
 
 /**
  * A library loop (or a beat) put on part `trackId` from `bar`: its notes in
@@ -234,7 +238,7 @@ export function addLibraryLoop(loopId: string, trackId: Id, bar: number, opts: {
   const placed = r.regionId ? regions().find((x) => x.id === r.regionId) : undefined;
   // A loop it covered up on the row is named (Undo brings it back).
   const replaced = replacedLoopsText(before, project(), trackId);
-  if (opts.say) said(`Added ${name} to ${t.name}${placed ? ` ${atBar(placed.start)}` : ''}${replaced ? `. ${replaced.replace(/\.$/, '')}` : ''}`, r);
+  if (opts.say) said(`Added ${name} to ${nameNow(t)}${placed ? ` ${atBar(placed.start)}` : ''}${replaced ? `. ${replaced.replace(/\.$/, '')}` : ''}`, r);
   return r;
 }
 
@@ -301,7 +305,7 @@ export function putLoopOnPad(trackId: Id, clipId: Id): (songCmd.CommandResult & 
   const r = quietly(() => songCmd.copyLoopToPad(session.store, trackId, slot));
   if (!session.accepted(r) || r.slot === undefined) return r;
   const scene = p.scenes[r.slot]?.name || `scene ${r.slot + 1}`;
-  said(`Put a copy of ${name} on the ${t.name} pad in ${scene}: play it live in Play`, r);
+  said(`Put a copy of ${name} on the ${nameNow(t)} pad in ${scene}: play it live in Play`, r);
   return r;
 }
 
@@ -538,7 +542,7 @@ export function addInstrumentNow(trackId: Id, bar: number): { regionId?: Id; sta
   }
   if (!regionId) return null;
   clearSelection();
-  notify(`Added ${uiStore.getState().uiMode === 'advanced' ? t.name : instrumentName(t.name, t.role)}: it plays “${name}”${range.name ? ` in ${range.name}` : ''}. Try other ${INSTRUMENT_KINDS[t.role].name.toLowerCase()} loops in Loops.`, 'info', 'undo');
+  notify(`Added ${uiStore.getState().uiMode === 'advanced' ? t.name : instrumentName(t.name, t.role, t.renamed)}: it plays “${name}”${range.name ? ` in ${range.name}` : ''}. Try other ${INSTRUMENT_KINDS[t.role].name.toLowerCase()} loops in Loops.`, 'info', 'undo');
   return { regionId, start, loop: loop.id };
 }
 

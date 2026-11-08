@@ -83,7 +83,7 @@ export const RegionView = memo(function RegionView({ region, clip, partName, kin
   // Simple names places by time (screen readers too), never bars.
   const plainBpm = useProject((p) => p.bpm);
   const simple = useUi((s) => s.uiMode === 'simple');
-  const badge = placesBadge(places);
+  const badge = placesBadge(places, simple);
   const clipBars = clip?.bars ?? 1;
   const name = clip?.name || 'Loop';
   const marks = useMemo(() => notches(region, clipBars), [region, clipBars]);

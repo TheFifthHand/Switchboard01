@@ -41,6 +41,8 @@ export interface RowView {
   solo: boolean;
   /** What kind of instrument it is (its picture in Simple's row header). */
   role: Track['role'];
+  /** The person renamed it: Simple shows its name as given (simpleTrackName). */
+  renamed?: true;
 }
 
 export function rowView(p: Project, t: Track, index: number): RowView {
@@ -51,7 +53,7 @@ export function rowView(p: Project, t: Track, index: number): RowView {
   } catch {
     sound = INSTRUMENT_LABEL[t.instrument.kind];
   }
-  return { id: t.id, index, number: index + 1, name, sound, hue: partHue(index), mute: t.mute, solo: t.solo, role: t.role };
+  return { id: t.id, index, number: index + 1, name, sound, hue: partHue(index), mute: t.mute, solo: t.solo, role: t.role, ...(t.renamed ? { renamed: true as const } : {}) };
 }
 
 export function rowViews(p: Project): RowView[] {
@@ -60,7 +62,7 @@ export function rowViews(p: Project): RowView[] {
 
 /** Two row lists that show the same (the same array is kept while nothing changed). */
 export function sameRows(a: readonly RowView[], b: readonly RowView[]): boolean {
-  return a.length === b.length && a.every((x, i) => x.id === b[i].id && x.name === b[i].name && x.sound === b[i].sound && x.mute === b[i].mute && x.solo === b[i].solo && x.index === b[i].index && x.role === b[i].role);
+  return a.length === b.length && a.every((x, i) => x.id === b[i].id && x.name === b[i].name && x.sound === b[i].sound && x.mute === b[i].mute && x.solo === b[i].solo && x.index === b[i].index && x.role === b[i].role && x.renamed === b[i].renamed);
 }
 
 /** Whether a part is heard, in words: Muted, Solo, Not soloed (another part is soloed), or null. */
@@ -282,10 +284,11 @@ export function loopPlaces(p: Pick<Project, 'arrangement'>, trackId: Id, clipId:
 
 /**
  * The badge on a region whose loop plays in several places: "Used 3×" (null: it plays only here).
- * Not a bare "×3", which reads as "repeats three times".
+ * Not a bare "×3", which reads as "repeats three times". `plain` (Simple): "Plays 3 places", the
+ * editor's own words for the same thing.
  */
-export function placesBadge(places: number): string | null {
-  return places > 1 ? `Used ${places}×` : null;
+export function placesBadge(places: number, plain = false): string | null {
+  return places > 1 ? (plain ? `Plays ${places} places` : `Used ${places}×`) : null;
 }
 
 /** The same in words: "this loop plays in 3 places". */

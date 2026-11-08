@@ -39,6 +39,7 @@ import { shallowEqual, useStore } from '../../state/store';
 import { session, useProject } from '../instance';
 import { notify, runtimeStore, useRuntime } from '../runtime';
 import { INSTRUMENT_LABEL, soundName } from '../labels';
+import { nameNow } from './useInstrumentName';
 import { ImportConfirm } from './sampler/ImportSampleButton';
 import { chooseFileForPart, clearImportStatus, importStatusOf, importStore, resolveImport } from './sampler/importState';
 import styles from './SoundBrowser.module.css';
@@ -366,9 +367,9 @@ function useBrowse(trackId: Id) {
       if (how === 'cancel') {
         const gone = missing ? ` (${missing === 1 ? 'one effect it had is' : `${missing} effects it had are`} no longer on the part, so ${missing === 1 ? 'it stays' : 'they stay'} removed)` : '';
         const step = !!restored && restored.changed && !restored.noStep && ownTop;
-        notify(`${t.name} is back to ${was} as you had it${gone}.`, 'info', step ? 'undo' : undefined);
+        notify(`${nameNow(t)} is back to ${was} as you had it${gone}.`, 'info', step ? 'undo' : undefined);
       } else if (!sameSound(st.snap, snapshotTrackSound(now, trackId))) {
-        notify(`${t.name} now plays ${nowName}.${ownTop ? ` Undo brings back ${was} as you had it.` : ''}`, 'info', ownTop ? 'undo' : undefined);
+        notify(`${nameNow(t)} now plays ${nowName}.${ownTop ? ` Undo brings back ${was} as you had it.` : ''}`, 'info', ownTop ? 'undo' : undefined);
       }
     },
     [own, trackId],
@@ -407,7 +408,7 @@ function SoundBrowserDialog({ trackId: openedFor, onClose }: { trackId: Id; onCl
       const t = p.tracks.find((x) => x.id === trackId);
       if (!t) return null;
       return {
-        name: t.name,
+        name: nameNow(t),
         kind: t.instrument.kind,
         soundId: soundIdOf(t.instrument),
         sound: soundName(p, t.instrument),

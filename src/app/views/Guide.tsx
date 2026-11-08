@@ -21,9 +21,10 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Button, isTypingTarget } from '../../ui/components';
 import { setGuideDone, setView, type PadMode } from '../../state/uiStore';
-import { useProject, useUi } from '../instance';
+import { useUi } from '../instance';
 import { useRuntime } from '../runtime';
 import styles from './Guide.module.css';
+import { useInstrumentName } from './useInstrumentName';
 
 export type GuideSide = 'top' | 'bottom' | 'left' | 'right' | 'over';
 export type GuideAlign = 'start' | 'center' | 'end';
@@ -372,7 +373,7 @@ function GuideCoach({ onClose, focusNext }: { onClose(): void; focusNext?: boole
   const padMode = useUi((s) => s.padMode);
   const view = useUi((s) => s.view);
   const trackId = useUi((s) => s.selectedTrackId);
-  const partName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const partName = useInstrumentName(trackId);
 
   const def = GUIDE_STEPS[step];
   const body = def.body({ playing, armed, padMode, partName });

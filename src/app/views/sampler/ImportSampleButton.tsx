@@ -20,10 +20,10 @@ import { Button, Icon } from '../../../ui/components';
 import { IMPORT_LIMITS } from '../../../persistence/audioImport';
 import type { Id } from '../../../project/types';
 import { useStore } from '../../../state/store';
-import { useProject } from '../../instance';
 import { useRuntime } from '../../runtime';
 import { chooseFileForPart, clearImportStatus, importStatusOf, importStore, resolveImport } from './importState';
 import styles from './ImportSampleButton.module.css';
+import { useInstrumentName } from '../useInstrumentName';
 
 export interface ImportSampleButtonProps {
   trackId: string;
@@ -70,7 +70,7 @@ function useNearMissGuard(active: boolean): void {
 export function ImportSampleButton({ trackId, variant = 'button' }: ImportSampleButtonProps) {
   const status = useStore(importStore, (s) => importStatusOf(s, trackId));
   const takeLocked = useRuntime((s) => s.recording === 'performance');
-  const partName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? 'this part');
+  const partName = useInstrumentName(trackId, 'this part');
   const fileRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const statusId = useId();
@@ -240,7 +240,7 @@ export function ImportSampleButton({ trackId, variant = 'button' }: ImportSample
 export function ImportConfirm(props: { trackId: Id; className?: string }) {
   const { trackId, className } = props;
   const status = useStore(importStore, (s) => importStatusOf(s, trackId));
-  const partName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? 'this part');
+  const partName = useInstrumentName(trackId, 'this part');
   const titleId = useId();
   const firstRef = useRef<HTMLButtonElement>(null);
   const waiting = status.phase === 'confirm';

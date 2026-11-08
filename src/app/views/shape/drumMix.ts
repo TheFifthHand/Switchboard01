@@ -13,6 +13,7 @@
  * Pure (no React, no audio): unit-tested in tests/unit/r4-shape-logic.test.ts.
  */
 import { getKitVoiceNames } from '../../../audio/instruments/kits';
+import { simpleDrumName } from '../../labels';
 import { kitInfo } from '../../../content/catalog';
 import { DRUM_VOICE_PARAM_SPECS, clampParam } from '../../../project/params';
 import { trackClips } from '../../../project/clips';
@@ -41,9 +42,9 @@ const isHat = (name: string | undefined) => /hat/i.test(name ?? '');
 const KIT_ROLES: readonly Role[] = [
   { key: 'kick', label: 'Kick', slots: () => [0, 1] },
   { key: 'snare', label: 'Snare & clap', slots: () => [2, 3] },
-  { key: 'hats', label: 'Hats', slots: (n) => (isHat(n[6]) ? [4, 5, 6] : [4, 5]) },
+  { key: 'hats', label: 'Hi-hats', slots: (n) => (isHat(n[6]) ? [4, 5, 6] : [4, 5]) },
   { key: 'perc', label: 'Percussion', slots: (n) => (isHat(n[6]) ? [7, 11, 14, 15] : [6, 7, 11, 14, 15]) },
-  { key: 'toms', label: 'Toms', slots: () => [8, 9, 10] },
+  { key: 'toms', label: 'Low & high drums', slots: () => [8, 9, 10] },
   { key: 'cymbals', label: 'Cymbals', slots: () => [12, 13] },
 ];
 
@@ -78,7 +79,8 @@ export function playedKey(played: ReadonlyMap<number, number>): string {
 export function drumMixGroups(kitId: string, played: ReadonlyMap<number, number>): MixGroup[] {
   const names = getKitVoiceNames(kitId);
   const roles = (kitInfo(kitId)?.family ?? 'kit') === 'kit' ? KIT_ROLES : PERCUSSION_ROLES;
-  const nameOf = (s: number) => names[s] ?? `Sound ${s + 1}`;
+  // Labels in Simple's words ("Closed hi-hat"); the kit's names still decide the groups (isHat).
+  const nameOf = (s: number) => (names[s] ? simpleDrumName(names[s]) : `Sound ${s + 1}`);
   const count = (s: number) => played.get(s) ?? 0;
   const any = played.size > 0;
   const total = (r: Role) => r.slots(names).reduce((n, s) => n + count(s), 0);
@@ -99,7 +101,8 @@ export function drumMixGroups(kitId: string, played: ReadonlyMap<number, number>
 /** The voice the tune knob tunes: the first group's lead ("Kick"), with its name. */
 export function drumTuneVoice(kitId: string, groups: readonly MixGroup[]): { slot: number; name: string } {
   const slot = groups[0]?.lead ?? 0;
-  return { slot, name: getKitVoiceNames(kitId)[slot] ?? `Sound ${slot + 1}` };
+  const name = getKitVoiceNames(kitId)[slot];
+  return { slot, name: name ? simpleDrumName(name) : `Sound ${slot + 1}` };
 }
 
 /** A group's balance: each voice's level as a share of the lead's, and the levels last written with it. */

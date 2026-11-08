@@ -62,6 +62,7 @@ import { cleanSongLoop, followSongLoop, inSongLoop, sameSongLoop } from '../time
 import { BRACE_AHEAD, BRACE_MS, RealtimeTransport, outputDelaySeconds } from '../time/transport';
 import { meterWake } from '../ui/components/meterScheduler';
 import { notify, patchRuntime, runtimeStore, setTrackRuntime, type PlayMode } from './runtime';
+import { trackNameIn } from './labels';
 
 /**
  * Where a live note comes from. 'preview' is an editor/browser audition: it
@@ -1083,8 +1084,10 @@ export class Session {
     notify(`${this.partName(rec.trackId)} has no loop here in the song, so there is nothing to record into until its next one.`, 'warn');
   }
 
+  /** The part's name as the interface shows it (Simple: the picker's word, "Melody" for "Lead"). */
   private partName(trackId: Id): string {
-    return this.store.getState().tracks.find((t) => t.id === trackId)?.name ?? 'The part';
+    const t = this.store.getState().tracks.find((x) => x.id === trackId);
+    return t ? trackNameIn(t, uiStore.getState().uiMode) : 'The part';
   }
 
   /**
@@ -2074,7 +2077,7 @@ export class Session {
       // The song decides what plays: the clip of the part's region under the playhead (heard now).
       const heard = seq.playingAt(trackId, transport.audibleTick());
       if (!heard) {
-        notify(`Nothing to record into: ${track.name} has no loop at the playhead in the song. Put one on its row, or move the playhead to one.`, 'warn');
+        notify(`Nothing to record into: ${trackNameIn(track, uiStore.getState().uiMode)} has no loop at the playhead in the song. Put one on its row, or move the playhead to one.`, 'warn');
         return;
       }
       this.store.beginGroup('Record notes');

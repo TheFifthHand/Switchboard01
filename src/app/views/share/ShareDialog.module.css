@@ -164,6 +164,10 @@ fieldset:disabled .radio {
   gap: 4px;
   min-width: 0;
 }
+.rename {
+  align-self: flex-start;
+  max-width: 100%;
+}
 .file {
   display: grid;
   grid-template-columns: auto 1fr auto;

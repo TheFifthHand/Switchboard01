@@ -137,6 +137,7 @@ export const SIMPLE_SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
     title: 'In your song',
     where: 'With a loop chosen (click it once).',
     items: [
+      { id: 'song-open', keys: ['E'], does: 'Open the loop in the editor under your song (Esc closes it).' },
       { id: 'song-delete', keys: ['Delete', 'Backspace'], does: 'Take the loop out of the song (Undo puts it back).' },
       { id: 'song-edit', keys: ['Ctrl+C', 'Ctrl+V'], does: 'Copy the loop, and paste it where the song is playing.' },
       { id: 'song-duplicate', keys: ['Ctrl+D'], does: 'Play the loop again right after itself.' },

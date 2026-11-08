@@ -44,6 +44,7 @@ import { notify } from '../runtime';
 import { barsLabel } from '../labels';
 import { BeatPicker } from './BeatPicker';
 import styles from './ClipMenu.module.css';
+import { nameNow } from './useInstrumentName';
 
 /* ------------------------------------------------------------------ */
 /* Popover primitives                                                  */
@@ -771,7 +772,7 @@ export const clipActions = {
     selectTrack(trackId);
     selectSlot(trackId, slot);
     const { track, clip } = trackAndClip(trackId, slot);
-    const text = `New ${bars}-bar loop "${clip?.name ?? ''}" on ${track?.name ?? 'this part'}. Add notes in Steps or with Record Notes.`;
+    const text = `New ${bars}-bar loop "${clip?.name ?? ''}" on ${track ? nameNow(track) : 'this part'}. Add notes in Steps or with Record Notes.`;
     if (toasts) toasts.show({ id: 'notice', tone: 'info', message: text, action: { label: 'Edit steps', onAction: () => clipActions.editSteps(trackId, slot) } });
     else notify(text, 'info', 'undo');
     return true;
@@ -818,7 +819,7 @@ export const clipActions = {
     if (!track || !clip) return false;
     const to = nextEmptySlot(track.clips, slot);
     if (to === null) {
-      notify(`${track.name} has no empty slot left. Delete or clear a loop first.`, 'warn');
+      notify(`${nameNow(track)} has no empty slot left. Delete or clear a loop first.`, 'warn');
       return false;
     }
     if (!session.accepted(cmd.duplicateClipToSlot(session.store, trackId, slot, to))) return false;
@@ -851,7 +852,7 @@ export const clipActions = {
     selectTrack(trackId);
     selectSlot(trackId, slot);
     const what = replaced ? `replacing "${replaced.name}"` : `into ${scene}`;
-    notify(`Pasted "${clipboard.name}" on ${track?.name ?? 'this part'}, ${what}.${r.message ? ` ${r.message}` : ''}`, 'info', 'undo');
+    notify(`Pasted "${clipboard.name}" on ${track ? nameNow(track) : 'this part'}, ${what}.${r.message ? ` ${r.message}` : ''}`, 'info', 'undo');
     return true;
   },
 
@@ -869,7 +870,7 @@ export const clipActions = {
     if (!clip) return false;
     if (lockedNow()) return false;
     if (!session.accepted(cmd.deleteClip(session.store, trackId, slot))) return false;
-    notify(`Deleted "${clip.name}" from ${track?.name ?? 'this part'}.`, 'info', 'undo');
+    notify(`Deleted "${clip.name}" from ${track ? nameNow(track) : 'this part'}.`, 'info', 'undo');
     return true;
   },
 

@@ -19,6 +19,7 @@ import { setArp } from '../../state/commands';
 import { session, useProject } from '../instance';
 import { Popover, anchorFromElement } from './ClipMenu';
 import styles from './ArpPanel.module.css';
+import { useInstrumentName } from './useInstrumentName';
 
 export const ARP_DIVISION_OPTIONS: readonly { value: ArpDivision; label: string; tip: string }[] = [
   { value: '1/4', label: '1/4', tip: 'One note per beat.' },
@@ -73,7 +74,7 @@ function assistLine(assist: boolean, sampler: boolean, keyName: string): string 
 /** Full settings, shown in a popover above the keyboard strip. */
 export function ArpSettings({ trackId }: { trackId: Id }) {
   const arp = useProject((p) => p.tracks.find((t) => t.id === trackId)?.arp ?? null);
-  const name = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const name = useInstrumentName(trackId);
   const sampler = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind === 'sampler');
   const assist = useProject((p) => p.assist);
   const keyName = useProject((p) => keyLabel(p.root, p.scale));
@@ -149,7 +150,7 @@ export function ArpStrip({ trackId, stripRef }: { trackId: Id; stripRef?: RefObj
   const arp = useProject((p) => p.tracks.find((t) => t.id === trackId)?.arp ?? null);
   const isDrums = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind === 'drums');
   const sampler = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind === 'sampler');
-  const name = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const name = useInstrumentName(trackId);
   const assist = useProject((p) => p.assist);
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);

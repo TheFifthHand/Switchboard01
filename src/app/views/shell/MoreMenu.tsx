@@ -17,6 +17,7 @@ import { setTipsEnabled, setUiMode, setView, type View } from '../../../state/ui
 import { session, useProject, useUi } from '../../instance';
 import { useOffline, useRuntime } from '../../runtime';
 import { MenuItem, MenuSeparator, MoreIcon, Popover, anchorFromElement } from '../ClipMenu';
+import { useInstrumentName } from '../useInstrumentName';
 import { OfflineMenuItems, OfflineMenuStatus } from '../OfflineStatus';
 import styles from './SimpleTopBar.module.css';
 
@@ -39,7 +40,7 @@ export function MoreMenu(props: MoreMenuProps) {
   const tipsEnabled = useUi((s) => s.tipsEnabled);
   const view = useUi((s) => s.view);
   const selected = useUi((s) => s.selectedTrackId);
-  const partName = useProject((p) => p.tracks.find((t) => t.id === selected)?.name ?? '');
+  const partName = useInstrumentName(selected);
   const takes = useProject((p) => p.performances.length);
   const muteAll = useRuntime((s) => s.muteAll);
   const updateReady = useOffline().state === 'update-ready';

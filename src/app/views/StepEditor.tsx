@@ -33,9 +33,10 @@ import { PitchLane } from './steps/PitchLane';
 import { StepHeader } from './steps/StepHeader';
 import { usePlayhead } from './steps/shared';
 import styles from './StepEditor.module.css';
+import { useInstrumentName, useNameOf } from './useInstrumentName';
 
 function EmptySlot({ trackId, slot, locked, onOpen }: { trackId: Id; slot: number; locked: boolean; onOpen(): void }) {
-  const trackName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? 'This part');
+  const trackName = useInstrumentName(trackId, 'This part');
   const sceneName = useProject((p) => (isSongSlot(slot) ? 'the song' : (p.scenes[slot]?.name ?? `Scene ${slot + 1}`)));
   // The part's other clips, so an empty slot is never a dead end.
   const others = useProject(
@@ -175,11 +176,12 @@ export function StepEditor() {
   const trackId = useUi((s) => s.selectedTrackId);
   const slot = useEditedSlot(trackId);
   const storedPage = useUi((s) => stepPageFor(s, trackId));
+  const nameOf = useNameOf();
   const track = useProject(
     (p) => {
       const t = p.tracks.find((x) => x.id === trackId);
       if (!t) return null;
-      return { name: t.name, kind: t.instrument.kind, kitId: t.instrument.kind === 'drums' ? t.instrument.kitId : '' };
+      return { name: nameOf(t), kind: t.instrument.kind, kitId: t.instrument.kind === 'drums' ? t.instrument.kitId : '' };
     },
     (a, b) => a === b || (!!a && !!b && shallowEqual(a, b)),
   );

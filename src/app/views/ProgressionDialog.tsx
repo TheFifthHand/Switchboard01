@@ -22,6 +22,7 @@ import { session, useProject, useUi } from '../instance';
 import { notify } from '../runtime';
 import { useEditLocked } from './ClipMenu';
 import styles from './ProgressionDialog.module.css';
+import { nameNow } from './useInstrumentName';
 
 const RHYTHM_OPTIONS: readonly { value: ProgressionRhythm; label: string; tip: string }[] = [
   { value: 'held', label: 'Held', tip: 'Each chord held until the next one.' },
@@ -99,7 +100,7 @@ export function ProgressionDialog(props: { trackId: Id; onClose(): void }) {
     const r = createProgressionClip(session.store, trackId, slot, { progressionId, rhythm, bars, size });
     if (!session.accepted(r)) return;
     onClose();
-    const where = `${track?.name ?? 'the part'} · ${clip ? clip.name : sceneName}`;
+    const where = `${track ? nameNow(track) : 'the part'} · ${clip ? clip.name : sceneName}`;
     notify(`Wrote the ${chosen.prog.name} progression (${r.chords.join(' ')}) into ${where}, ${bars} bar${bars === 1 ? '' : 's'}.${r.message ? ` ${r.message}` : ''}`, 'info', 'undo');
   };
   const hear = (pitches: readonly number[]) => {

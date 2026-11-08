@@ -127,9 +127,9 @@ describe('Drum mix: the voices the part plays, by role', () => {
     if (t.instrument.kind !== 'drums') throw new Error('not drums');
     return drumMixGroups(t.instrument.kitId, playedSlots(t));
   };
-  it('House drums (the Jump In groove): Kick, Snare & clap (the groove’s clap), Hats; the tune knob tunes the kick', () => {
+  it('House drums (the Jump In groove): Kick, Snare & clap (the groove’s clap), Hi-hats (round 7: plain words); the tune knob tunes the kick', () => {
     const g = groupsOf(STARTERS.find((s) => s.id === 'house')!, 't1');
-    expect(g.map((x) => x.label)).toEqual(['Kick', 'Snare & clap', 'Hats']);
+    expect(g.map((x) => x.label)).toEqual(['Kick', 'Snare & clap', 'Hi-hats']);
     expect(g[1].slots).toEqual([2, 3]);
     expect(drumTuneVoice('tight-circuit', g)).toEqual({ slot: 0, name: 'Kick' });
   });
@@ -151,7 +151,7 @@ describe('Drum mix: the voices the part plays, by role', () => {
   });
 
   it('a part with no notes yet shows the kit’s first three groups', () => {
-    expect(drumMixGroups('tight-circuit', new Map()).map((x) => x.label)).toEqual(['Kick', 'Snare & clap', 'Hats']);
+    expect(drumMixGroups('tight-circuit', new Map()).map((x) => x.label)).toEqual(['Kick', 'Snare & clap', 'Hi-hats']);
     expect(drumMixGroups('hand-percussion', new Map()).map((x) => x.label)).toEqual(['Low drums', 'High drums', 'Shakers']);
   });
 

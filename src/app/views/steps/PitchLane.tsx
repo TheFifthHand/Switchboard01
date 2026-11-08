@@ -150,7 +150,8 @@ type Drag =
 
 /**
  * A row's label. `plain` (Simple, on the Song screen's editor): no note names; the song's home note is marked
- * with the home icon and the word "home" (its row is also shaded), the rest are plain keyboard rows.
+ * with the home icon and "start & end" (tunes like to start and end there; its row is also shaded), the rest
+ * are plain keyboard rows.
  */
 const RowBack = memo(function RowBack({ row, index, plain }: { row: PitchRow; index: number; plain: boolean }) {
   return (
@@ -170,7 +171,7 @@ const RowBack = memo(function RowBack({ row, index, plain }: { row: PitchRow; in
           (plain ? (
             <span className={styles.homeTag}>
               <Icon name="home" size={11} />
-              home
+              start &amp; end
             </span>
           ) : (
             <span className={styles.rootTag}>root</span>
@@ -1313,22 +1314,25 @@ export function PitchLane({ trackId, slot, page, clip, kind, span = 1, lean = fa
           <div className={styles.octNav}>
             <IconButton icon="chevronUp" label={bare ? 'Show higher notes' : 'Show higher notes (an octave up)'} size="sm" variant="ghost" onClick={() => scrollOctave(1)} disabled={view.atTop} className={styles.octBtn} />
             <IconButton icon="chevronDown" label={bare ? 'Show lower notes' : 'Show lower notes (an octave down)'} size="sm" variant="ghost" onClick={() => scrollOctave(-1)} disabled={view.atBottom} className={styles.octBtn} />
-            <KeyChip
-              text={keyText}
-              short={keyShort}
-              tiny={keyTiny}
-              label={bare ? (inKeyOnly ? `Rows: only notes that fit the song (${MOOD_WORD[scale]})` : 'Rows: every note') : inKeyOnly ? `Rows in key: ${keyName}` : 'Rows: all 12 notes'}
-              tip={
-                bare
-                  ? inKeyOnly
-                    ? `Every row is a note that fits your song (${MOOD_WORD[scale]}). The home row is marked.`
-                    : 'Every note is shown; shaded rows are outside the song’s key.'
-                  : inKeyOnly
-                    ? `Rows show the notes of ${keyName}${advanced ? '' : ` (${SCALE_MOOD[scale]})`}: Musical Assist is on.`
-                    : 'Rows show all 12 notes (Musical Assist is off).'
-              }
-              detail={bare ? 'Change the mood of the song in the menu under its name, at the top.' : 'Switch Musical Assist or the key on the keyboard strip.'}
-            />
+            {/* Simple's editor: no key chip (its mood word meant nothing there); the start & end row is marked. */}
+            {!bare && (
+              <KeyChip
+                text={keyText}
+                short={keyShort}
+                tiny={keyTiny}
+                label={bare ? (inKeyOnly ? `Rows: only notes that fit the song (${MOOD_WORD[scale]})` : 'Rows: every note') : inKeyOnly ? `Rows in key: ${keyName}` : 'Rows: all 12 notes'}
+                tip={
+                  bare
+                    ? inKeyOnly
+                      ? `Every row is a note that fits your song (${MOOD_WORD[scale]}). The home row is marked.`
+                      : 'Every note is shown; shaded rows are outside the song’s key.'
+                    : inKeyOnly
+                      ? `Rows show the notes of ${keyName}${advanced ? '' : ` (${SCALE_MOOD[scale]})`}: Musical Assist is on.`
+                      : 'Rows show all 12 notes (Musical Assist is off).'
+                }
+                detail={bare ? 'Change the mood of the song in the menu under its name, at the top.' : 'Switch Musical Assist or the key on the keyboard strip.'}
+              />
+            )}
           </div>
         }
       />

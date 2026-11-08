@@ -22,6 +22,7 @@ import { MAX_SCENES, type Id, type Project } from '../../../project/types';
 import { session } from '../../instance';
 import { INSTRUMENT_LABEL, soundName } from '../../labels';
 import { notify } from '../../runtime';
+import { nameNow } from '../shownName';
 
 /** Another part the file could go on instead. */
 export interface ImportAlternative {
@@ -106,7 +107,7 @@ export function checkImport(p: Project, trackId: Id): ImportCheck {
   const low = t.instrument.kind === 'drums' ? ' (drum hits become very low notes)' : '';
   return {
     kind: 'converts',
-    message: `${t.name} plays ${what}. An import makes ${t.name} a sampler, and ${clips} your recording at their notes’ pitches${low}. Undo brings ${soundName(p, t.instrument)} back.`,
+    message: `${nameNow(t)} plays ${what}. An import makes ${nameNow(t)} a sampler, and ${clips} your recording at their notes’ pitches${low}. Undo brings ${soundName(p, t.instrument)} back.`,
     alternative: samplerWithRoom(p, trackId),
   };
 }

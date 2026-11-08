@@ -35,6 +35,7 @@ import { MACRO_CAPTION, MACRO_SPECS } from '../macros';
 import { LOCKED_TEXT, MenuHeader, MenuItem, MenuSeparator, Popover, anchorFromElement, useEditLocked, type MenuAnchor } from './ClipMenu';
 import { SoundBrowser } from './SoundBrowser';
 import styles from './PartPanel.module.css';
+import { nameNow, useNameOf } from './useInstrumentName';
 
 const LEVEL_SPEC = specById(CHANNEL_PARAMS, 'level')!;
 const PAN_SPEC = specById(CHANNEL_PARAMS, 'pan')!;
@@ -164,11 +165,11 @@ export function varyLoop(trackId: Id, slot: number, strength: Strength, opts: { 
   if (!track) return false;
   const clip = clipAtSlot(track, slot);
   if (!clip) {
-    notify(`Slot ${slot + 1} of ${track.name} is empty. Select a loop with notes: Variation changes a pattern.`, 'warn');
+    notify(`Slot ${slot + 1} of ${nameNow(track)} is empty. Select a loop with notes: Variation changes a pattern.`, 'warn');
     return false;
   }
   const original = originalFor(clip);
-  const what = `${track.name} · ${clip.name}`;
+  const what = `${nameNow(track)} · ${clip.name}`;
   // Try the next seeds on a copy of the project first: a press that would change nothing is not committed
   // (no do-nothing undo step), and a short clip gets a few chances to find a change.
   const before = notesSig(clip.notes);
@@ -224,7 +225,7 @@ function backToOriginal(trackId: Id): void {
   if (!track || !clip || !canRestore(clip)) return;
   const original = originals.get(clip.id)!;
   if (session.accepted(setClipNotes(session.store, trackId, slot, original.notes, 'Back to original', { variation: null }))) {
-    notify(`${track.name} · ${clip.name} is back to its original notes.`, 'info', 'undo');
+    notify(`${nameNow(track)} · ${clip.name} is back to its original notes.`, 'info', 'undo');
   }
 }
 
@@ -343,10 +344,11 @@ function SelectedClip({ trackId }: { trackId: Id }) {
 export function PartPanel() {
   const trackId = useUi((s) => s.selectedTrackId);
   const advanced = useUi((s) => s.uiMode === 'advanced');
+  const nameOf = useNameOf();
   const header = useProject(
     (p) => {
       const t = p.tracks.find((x) => x.id === trackId);
-      return t ? { name: t.name, sound: soundName(p, t.instrument), kind: t.instrument.kind, locked: t.locked, mute: t.mute, solo: t.solo, index: p.tracks.indexOf(t) } : null;
+      return t ? { name: nameOf(t), sound: soundName(p, t.instrument), kind: t.instrument.kind, locked: t.locked, mute: t.mute, solo: t.solo, index: p.tracks.indexOf(t) } : null;
     },
     (a, b) =>
       a === b ||

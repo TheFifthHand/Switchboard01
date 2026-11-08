@@ -18,6 +18,8 @@ import { soloPart, stemFileNames, stemParts, zipFiles } from '../../../render/st
 import { loudnessDriveAfter, masteringDiverges, presetSettings } from '../../../state/commands';
 import { MASTERING_PARAMS, neutralMasteringParams, readParam } from '../../../project/params';
 import type { Project } from '../../../project/types';
+import type { UiMode } from '../../../state/uiStore';
+import { trackNameIn } from '../../labels';
 
 export type FileFormat = 'wav' | 'opus' | 'stems' | 'midi';
 
@@ -35,14 +37,25 @@ export const LOUD_FLOOR_LUFS = -40;
 /** Characters a file name cannot hold on common systems. */
 const UNSAFE = /[\\/:*?"<>|]+/g;
 
-/** A file name without the characters file systems refuse, spaces collapsed ("My: song / test?" → "My song test"). */
+/** Control characters (tabs, line breaks and the invisible ones): never in a file name. */
+const CONTROL = /\p{Cc}+/gu;
+
+/**
+ * A file name without the characters file systems refuse, spaces collapsed ("My: song / test?" → "My song test").
+ * Letters of every script stay ("歌" → "歌"); control characters go, and so do dots and spaces at the end
+ * ("name." → "name", so the file is never "name..wav").
+ */
 export function safeName(s: string): string {
-  return s.replace(UNSAFE, ' ').replace(/\s+/g, ' ').trim().slice(0, 80).trim() || 'omni-song';
+  const out = Array.from(s.normalize('NFC').replace(UNSAFE, ' ').replace(CONTROL, ' ').replace(/\s+/g, ' ').trim())
+    .slice(0, 80)
+    .join('')
+    .replace(/[.\s]+$/, '');
+  return out || 'omni-song';
 }
 
-/** True when `safeName` would leave characters out of what was typed. */
+/** True when `safeName` would leave characters out of what was typed (other than spaces it tidies). */
 export function nameLosesCharacters(s: string): boolean {
-  return /[\\/:*?"<>|]/.test(s);
+  return /[\\/:*?"<>|\p{Cc}]/u.test(s) || /\.\s*$/.test(s);
 }
 
 /**
@@ -199,6 +212,16 @@ export async function renderLoud(opts: { base: Project; loud: boolean; targetLuf
     reading = next;
   }
   return { buffer, first, drive, reading, reached: Math.abs(reading - targetLufs) <= LOUD_TOLERANCE_DB, stop };
+}
+
+/**
+ * The project with every instrument named as `mode` shows it (Simple: "Melody", not "Lead"), for the
+ * names inside files: the per-instrument files ("04 Melody.wav") and the MIDI file's track names. A
+ * copy, used only to make the file: the project keeps its names. The same project when nothing differs.
+ */
+export function withShownNames(project: Project, mode: UiMode): Project {
+  if (project.tracks.every((t) => trackNameIn(t, mode) === t.name)) return project;
+  return { ...project, tracks: project.tracks.map((t) => ({ ...t, name: trackNameIn(t, mode) })) };
 }
 
 /** One WAV per instrument that plays notes in `source`, each alone with its effects, without the mastering, zipped. */

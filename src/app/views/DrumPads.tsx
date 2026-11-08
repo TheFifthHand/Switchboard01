@@ -25,11 +25,11 @@ import { getKitVoiceNames } from '../../audio/instruments/kits';
 import { kitInfo } from '../../content/catalog';
 import { DRUM_VOICES, type Id, type InstrumentKind, type Project } from '../../project/types';
 import { setSolo } from '../../state/commands';
-import { drumVoiceFor, selectDrumVoice, selectTrack, setPadMode } from '../../state/uiStore';
+import { drumVoiceFor, selectDrumVoice, selectTrack, setPadMode, type UiMode } from '../../state/uiStore';
 import { session, useProject, useUi } from '../instance';
 import { useRuntime } from '../runtime';
 import type { NoteSource } from '../session';
-import { INSTRUMENT_LABEL, soundName } from '../labels';
+import { INSTRUMENT_LABEL, drumNamesIn, soundName, trackNameIn } from '../labels';
 import styles from './DrumPads.module.css';
 
 /* ------------------------------------------------------------------ */
@@ -162,11 +162,12 @@ export interface PartInfo {
   kitId: string | null;
 }
 
-function partsOf(p: Project): PartInfo[] {
+/** The parts; `mode` names them as the interface does (Simple: "Melody" for "Lead"). */
+function partsOf(p: Project, mode: UiMode): PartInfo[] {
   return p.tracks.map((t, i) => ({
     id: t.id,
     number: i + 1,
-    name: t.name,
+    name: trackNameIn(t, mode),
     kind: t.instrument.kind,
     sound: soundName(p, t.instrument),
     kitId: t.instrument.kind === 'drums' ? t.instrument.kitId : null,
@@ -185,7 +186,8 @@ function sameParts(a: PartInfo[], b: PartInfo[]): boolean {
 
 /** The project's parts (re-renders only when a name, sound or instrument changes). */
 export function useParts(): PartInfo[] {
-  return useProject(partsOf, sameParts);
+  const mode = useUi((s) => s.uiMode);
+  return useProject((p) => partsOf(p, mode), sameParts);
 }
 
 const article = (word: string) => (/^[aeiou]/i.test(word) ? 'an' : 'a');
@@ -471,7 +473,8 @@ function DrumKit(props: { part: PartInfo; drumParts: readonly PartInfo[]; embedd
   const { part, drumParts, embedded = false } = props;
   const trackId = part.id;
   const kitId = part.kitId ?? '';
-  const names = useMemo(() => getKitVoiceNames(kitId), [kitId]);
+  const nameMode = useUi((s) => s.uiMode);
+  const names = useMemo(() => drumNamesIn(getKitVoiceNames(kitId), nameMode), [kitId, nameMode]);
   const kit = kitInfo(kitId);
   const kitName = kit?.name ?? part.sound;
   const padMode = useUi((s) => s.padMode);

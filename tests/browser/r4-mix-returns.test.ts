@@ -90,7 +90,7 @@ describe('Return strips on the real engine', () => {
     expect(order.slice(-3)).toEqual(['strip-return-reverb', 'strip-return-delay', 'strip-master']);
     for (const [kind, name, caption, knobs] of [
       ['reverb', 'Reverb', 'Shared room', ['Reverb size', 'Reverb tone']],
-      ['delay', 'Echo', 'Shared echo', ['Echo time', 'Echo feedback']],
+      ['delay', 'Echo', 'Shared echo', ['Echo time', 'Echo repeats']], // Simple: "Repeats" (Advanced: Feedback)
     ] as const) {
       const s = strip(kind);
       expect(s.getAttribute('aria-label')).toBe(`${name} return`);

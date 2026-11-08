@@ -35,6 +35,7 @@ import { MOVE_ICON, MOVE_WORDS } from './SectionStrip';
 import * as act from './songActions';
 import { barsText, loopPlaces, partLoops, rangeText, sectionLabel } from './songModel';
 import { lastsText } from './songHome';
+import { nameNow, useInstrumentName } from '../useInstrumentName';
 import styles from './SongView.module.css';
 
 /** Reasons longer than this wrap under the label (a hint on the right would be cut off). */
@@ -111,7 +112,7 @@ export function RegionMenu(props: {
   const [view, setView] = useState<'main' | 'swap'>('main');
   const locked = useEditLocked();
   const loops = useProject((p) => partLoops(p, region.trackId));
-  const partName = useProject((p) => p.tracks.find((t) => t.id === region.trackId)?.name ?? 'part');
+  const partName = useInstrumentName(region.trackId, 'part');
   const loop = loops.find((l) => l.clipId === region.clipId);
   const clipName = loop?.name ?? 'Loop';
   const places = useProject((p) => loopPlaces(p, region.trackId, region.clipId));
@@ -318,16 +319,17 @@ export function LoopPicker(props: { trackId: Id; bar: number; anchor: MenuAnchor
   const locked = useEditLocked();
   const loops = useProject((p) => partLoops(p, trackId));
   const track = useProject((p) => p.tracks.find((t) => t.id === trackId) ?? null);
+  const trackName = useInstrumentName(trackId);
   const kind = track?.instrument.kind === 'drums' ? 'drums' : 'notes';
   const section = useProject((p) => sectionAt(p.arrangement.sections, bar)?.name ?? null);
   const simple = useUi((s) => s.uiMode === 'simple');
   const bpm = useProject((p) => p.bpm);
   // Simple: lengths in seconds and places by name, never bars.
   const len = (n: number) => (simple ? lastsText(n, bpm) : barsText(n));
-  const eyebrow = simple ? `${track?.name ?? 'Instrument'}${section ? ` · ${section}` : ''}` : `${track?.name ?? 'Part'} · bar ${bar + 1}${section ? ` · ${section}` : ''}`;
+  const eyebrow = simple ? `${trackName || 'Instrument'}${section ? ` · ${section}` : ''}` : `${track?.name ?? 'Part'} · bar ${bar + 1}${section ? ` · ${section}` : ''}`;
   if (view === 'beats' && track) return <BeatPicker trackId={trackId} bar={bar} eyebrow={eyebrow} anchor={anchor} returnFocus={returnFocus} onBack={() => setView('main')} onClose={onClose} />;
   return (
-    <Popover anchor={anchor} label={simple ? `Add a loop to ${track?.name ?? 'this instrument'}${section ? ` in ${section}` : ''}` : `Add a loop to ${track?.name ?? 'this part'} at bar ${bar + 1}`} onClose={onClose} returnFocus={returnFocus} className={styles.picker}>
+    <Popover anchor={anchor} label={simple ? `Add a loop to ${trackName || 'this instrument'}${section ? ` in ${section}` : ''}` : `Add a loop to ${track?.name ?? 'this part'} at bar ${bar + 1}`} onClose={onClose} returnFocus={returnFocus} className={styles.picker}>
       <MenuHeader eyebrow={eyebrow} title="Add a loop here" />
       {loops.map((l) => (
         <button
@@ -394,7 +396,7 @@ function BeatPicker(props: { trackId: Id; bar: number; eyebrow: string; anchor: 
   const quiet = useProject((p) => {
     const t = p.tracks.find((x) => x.id === trackId);
     if (!t) return null;
-    return t.mute ? `${t.name} is muted` : p.tracks.some((x) => x.solo) && !t.solo ? `${t.name} is not soloed` : null;
+    return t.mute ? `${nameNow(t)} is muted` : p.tracks.some((x) => x.solo) && !t.solo ? `${nameNow(t)} is not soloed` : null;
   });
   // Stop hearing a beat when the menu closes.
   useEffect(() => () => stopPreview(), []);

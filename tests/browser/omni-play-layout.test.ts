@@ -195,7 +195,7 @@ describe('Sizes and visibility', () => {
 
   it('keyboard focus is visible on pads, part toggles and the transport keys', async () => {
     await openApp(1366, 768);
-    for (const el of [document.getElementById('pad-t4-1')!, named(pads(), 'Mute Chords')!, named(transport(), 'Play')!, named(panel(), /^Change instrument/)!]) {
+    for (const el of [document.getElementById('pad-t4-1')!, named(pads(), 'Mute Keys & chords')!, named(transport(), 'Play')!, named(panel(), /^Change instrument/)!]) {
       act(() => el.focus({ focusVisible: true } as FocusOptions));
       expect(document.activeElement).toBe(el);
       const style = getComputedStyle(el);

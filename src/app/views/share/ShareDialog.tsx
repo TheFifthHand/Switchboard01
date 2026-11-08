@@ -31,6 +31,8 @@ import type { RenderSource } from '../../../render/offline';
 import type { NoteSource } from '../../../render/midi';
 import { encodeOggOpus, opusSupported, opusSupportKnown, OPUS_RATE } from '../../../render/opus';
 import { encodeWav } from '../../../render/wav';
+import { renameProject } from '../../../state/commands';
+import { uiStore } from '../../../state/uiStore';
 import { session, useProject } from '../../instance';
 import { notify } from '../../runtime';
 import { downloadBlob } from '../../download';
@@ -50,6 +52,7 @@ import {
   AS_IT_IS,
   currentSound,
   shareProject,
+  withShownNames,
   type Busy,
   type FileFormat,
   type LoudFile,
@@ -91,6 +94,11 @@ function useToastsIfAny(): ToastApi | null {
   } catch {
     return null;
   }
+}
+
+/** A typed name as the song would keep it (spaces tidied, at most 80 characters, as renameProject keeps it). */
+function cleanSongName(s: string): string {
+  return s.replace(/\s+/g, ' ').trim().slice(0, 80);
 }
 
 interface Result {
@@ -179,6 +187,16 @@ export function ShareDialog(props: { onClose(): void; initialChoice?: ShareChoic
   const typedName = filename.trim();
   const fileName = `${safeName(typedName || defaultFile)}.${FILE_EXT[fmt]}`;
   const nameHint = typedName && nameLosesCharacters(filename) ? `Saved as “${fileName}”: a file name cannot hold \\ / : * ? " < > |.` : null;
+  // A name typed for the whole song can become the song's own name too (one press, one undo step): the
+  // starter's name ("House Starter") is only where a song begins.
+  const renameOffer = !chosenSection && !!typedName && cleanSongName(typedName) !== projectName ? cleanSongName(typedName) : null;
+  const renameSong = () => {
+    if (!renameOffer) return;
+    const was = projectName;
+    if (!session.accepted(renameProject(session.store, renameOffer))) return;
+    setFilename('');
+    notify(`Your song is called “${session.store.getState().name}” now (it was “${was}”).`, 'info', 'undo');
+  };
   const whatText = `${chosenSection ? chosenSection.name : 'The whole song'} · ${lengthOf(source)}`;
 
   const soundChips = [
@@ -227,7 +245,8 @@ export function ShareDialog(props: { onClose(): void; initialChoice?: ShareChoic
 
   const saveMusic = async (signal: AbortSignal): Promise<string> => {
     const name = fileName;
-    const project = session.store.getState();
+    // Files name the instruments as the song screen does ("04 Melody.wav"); the project keeps its names.
+    const project = withShownNames(session.store.getState(), uiStore.getState().uiMode);
     if (fmt === 'midi') {
       const { bytes, tracks } = makeMidi(project, source);
       downloadBlob(new Blob([bytes as BlobPart], { type: FILE_MIME.midi }), name);
@@ -428,6 +447,11 @@ export function ShareDialog(props: { onClose(): void; initialChoice?: ShareChoic
                 <p id={`${uid}-name-hint`} className={styles.hint}>
                   {nameHint}
                 </p>
+              )}
+              {renameOffer && (
+                <Button size="sm" variant="ghost" icon="pencil" onClick={renameSong} disabled={!!busy} data-testid="share-rename" tip="Your song gets this name too (in My projects and on the next file). Undo brings back the old name." className={styles.rename}>
+                  Call my song “{renameOffer}” too
+                </Button>
               )}
             </div>
 

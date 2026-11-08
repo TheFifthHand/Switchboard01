@@ -192,7 +192,7 @@ function Pane({ trackId, clipId, regionId, slot, focusAsk }: { trackId: Id; clip
   const clip = useProject((p) => resolveEditor(p, { trackId, clipId, regionId })?.clip ?? null);
   const track = useProject((p) => {
     const t = p.tracks.find((x) => x.id === trackId);
-    return t ? `${t.name}\u0001${t.instrument.kind}\u0001${t.instrument.kind === 'drums' ? t.instrument.kitId : ''}\u0001${t.role}` : '';
+    return t ? `${t.name}\u0001${t.instrument.kind}\u0001${t.instrument.kind === 'drums' ? t.instrument.kitId : ''}\u0001${t.role}\u0001${t.renamed ? '1' : ''}` : '';
   });
   const also = useProject((p) => alsoPlaysText(p, trackId, clipId, regionId));
   const uses = useProject((p) => cmd.loopUse(p, trackId, clipId));
@@ -201,10 +201,10 @@ function Pane({ trackId, clipId, regionId, slot, focusAsk }: { trackId: Id; clip
   const follow = useUi((s) => s.stepsFollow);
   const gridName = useUi((s) => s.stepGrid);
   const storedPage = useUi((s) => stepPageFor(s, trackId));
-  const [given, kind, kitId, role] = track.split('\u0001') as [string, string, string, TrackRole];
+  const [given, kind, kitId, role, renamed] = track.split('\u0001') as [string, string, string, TrackRole, string];
   const advanced = useUi((s) => s.uiMode === 'advanced');
   // Simple calls the instrument by the picker's word when it has 2.4's default name (Lead → Melody).
-  const name = advanced ? given : instrumentName(given, role);
+  const name = advanced ? given : instrumentName(given, role, renamed === '1');
   const mode = useStore(editorModeStore, (s) => s);
   const bpm = useProject((p) => p.bpm);
   const recHere = useRuntime((s) => recordingInto(s, trackId, slot));

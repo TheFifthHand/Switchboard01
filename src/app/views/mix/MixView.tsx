@@ -27,6 +27,7 @@ import { MasteringPanel } from './MasteringPanel';
 import { setSendsRow, useSendsRow } from './mixPrefs';
 import { ReturnStrip } from './ReturnStrip';
 import styles from './MixView.module.css';
+import { useNameOf } from '../useInstrumentName';
 
 /** Mount after the first frame, in a transition (the strips are on screen first). */
 function useAfterFirstFrame(): boolean {
@@ -43,18 +44,24 @@ export function MixView() {
   const selected = useUi((s) => s.selectedTrackId);
   const trackIds = useProject((p) => p.tracks.map((t) => t.id), shallowEqual);
   const soloCount = useProject((p) => p.tracks.filter((t) => t.solo).length);
-  const selectedName = useProject((p) => p.tracks.find((t) => t.id === selected)?.name ?? p.tracks[0]?.name ?? '');
+  const nameOf = useNameOf();
+  const selectedName = useProject((p) => {
+    const t = p.tracks.find((x) => x.id === selected) ?? p.tracks[0];
+    return t ? nameOf(t) : '';
+  });
   const sends = useSendsRow();
   const drawer = useChannelDrawer();
   const ready = useAfterFirstFrame();
   const subtitle =
     soloCount > 0 ? (
       <span className={styles.solo} data-hint-home="">
-        Solo on: only the {soloCount === 1 ? 'soloed part plays' : `${soloCount} soloed parts play`}
+        {advanced
+          ? `Solo on: only the ${soloCount === 1 ? 'soloed part plays' : `${soloCount} soloed parts play`}`
+          : `Solo on: only ${soloCount === 1 ? 'the soloed instrument is' : `the ${soloCount} soloed instruments are`} heard`}
       </span>
     ) : (
       <span className={styles.hint} data-hint-home="">
-        Drag a fader to set a part&rsquo;s level; double-click returns it to 0 dB.
+        {advanced ? 'Drag a fader to set a part’s level; double-click returns it to 0 dB.' : 'Drag a slider to set how loud each instrument is; double-click puts it back.'}
       </span>
     );
   const drawerTrack = trackIds.includes(selected ?? '') ? selected! : trackIds[0];

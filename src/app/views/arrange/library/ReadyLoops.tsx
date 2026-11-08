@@ -30,6 +30,7 @@ import { notify, useRuntime } from '../../../runtime';
 import { MenuHeader, Popover, isEditLocked, LOCKED_TEXT, type MenuAnchor } from '../../ClipMenu';
 import { freshName, partProblem, realizeFor, styleName } from './libraryModel';
 import { fitReadyLoop, readyLoopsFor } from './readyLoops';
+import { nameNow } from '../../useInstrumentName';
 import beat from '../../BeatPicker.module.css';
 import styles from './Library.module.css';
 import own from './ReadyLoops.module.css';
@@ -57,7 +58,7 @@ export function applyReadyLoop(trackId: Id, slot: number, loop: LibraryLoop): bo
   const problem = partProblem(loop, track);
   const realized = realizeFor(p, loop, track);
   if (problem || !realized) {
-    notify(problem ?? `${loop.name} cannot play on ${track.name}.`, 'warn');
+    notify(problem ?? `${loop.name} cannot play on ${nameNow(track)}.`, 'warn');
     return false;
   }
   const fit = fitReadyLoop(realized, existing.bars);
@@ -110,7 +111,7 @@ export interface ReadyLoopsProps {
 export function ReadyLoops({ trackId, slot, anchor, returnFocus, ignore, onClose }: ReadyLoopsProps) {
   const part = useProject((p) => {
     const t = p.tracks.find((x) => x.id === trackId);
-    return t ? { name: t.name, role: t.role, kind: t.instrument.kind } : null;
+    return t ? { name: nameNow(t), role: t.role, kind: t.instrument.kind } : null;
   }, shallowEqual);
   const loops = useMemo(() => (part ? readyLoopsFor(part.role, part.kind) : []), [part]);
   const [picked, setPicked] = useState<string | null>(null);

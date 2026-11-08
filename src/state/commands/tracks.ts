@@ -30,7 +30,10 @@ export function renameTrack(store: ProjectStore, trackId: Id, name: string): Com
   const n = cleanName(name, 60);
   if (!n) return refuse('invalid', 'A part needs a name.');
   return run(store, 'track:Rename part', (d) => {
-    draftTrack(d, trackId).name = n;
+    const t = draftTrack(d, trackId);
+    t.name = n;
+    // Simple shows a renamed part's name as given, even "Lead" (see instrumentName).
+    t.renamed = true;
   });
 }
 

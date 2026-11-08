@@ -14,6 +14,7 @@
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { session } from '../../src/app/instance';
+import { simpleTrackName } from '../../src/app/labels';
 import { runtimeStore } from '../../src/app/runtime';
 import { offlineStore } from '../../src/app/runtime';
 import { closeLoopEditor, editorStore } from '../../src/app/views/arrange/editorStore';
@@ -117,7 +118,8 @@ describe('Simple top bar', () => {
   it('while a take records, Record reads Stop recording and a line says what records', async () => {
     await home();
     vi.spyOn(session, 'toggleRecordNotes').mockResolvedValue();
-    const name = session.store.getState().tracks.find((t) => t.id === ui().selectedTrackId)!.name;
+    // The row's name (round 7 fix 2b: "Keys & chords" for a part stored as "Chords").
+    const name = simpleTrackName(session.store.getState().tracks.find((t) => t.id === ui().selectedTrackId)!);
     act(() => runtimeStore.setState({ ...runtimeStore.getState(), recording: 'notes', songRecording: { trackId: ui().selectedTrackId, startBar: 0 } as never, countingIn: false }));
     await settle(60);
     expect(button('Stop recording', transport())).not.toBeNull();
