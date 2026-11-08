@@ -43,3 +43,11 @@ Launcher smoke test, 2026-10-04, in the cloud container (Linux, PowerShell 7.4.6
 -- Jump In in Chromium against the package served by serve.ps1: {"audio":"running","project":"House Starter","masterRms":0.052,"masterPeak":0.1303,"pageErrors":0}
 -- Song view in the package: a loop dragged with the mouse from bar 49 -> bar 53 (4 bars); Undo -> back as before; page errors 0
 -- launcher stopped (closing the window or Ctrl+C does this on Windows)
+
+== 3.0.0 (round 7), Node launcher on Linux, both zips under paths with spaces ==
+- 2.4.0 launcher started: "Omni Song is running at http://127.0.0.1:4173/", loopback only; page says 2.4.0.
+- 3.0.0 launcher started while 2.4.0 ran: named "version 2.4.0" as running, said to close it, waited.
+- 2.4.0 stopped with Ctrl+C: 3.0.0 said "The other copy has stopped." and started at the same address.
+- Served omni-song-version 3.0.0; manifest.webmanifest 200, sw.js 200; ../../launcher/serve.mjs 404.
+- Headless Chromium at 1366 x 768: Jump In → the song screen, playing (Pause shown), "2 places" badges whole.
+- PowerShell was not available in this container: the .bat / PowerShell path was not re-run for 3.0.
