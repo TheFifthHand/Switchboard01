@@ -102,15 +102,23 @@ describe('the project', () => {
   });
 
   it('a starter’s name is whole at 1920 and at 1366', async () => {
-    for (const [w, h] of [
-      [1920, 1080],
-      [1366, 768],
+    // Round 7: Simple's top bar names the project on its Project ▾ key, at both sizes. Advanced keeps
+    // 2.4's strip, which has room for the whole name only when wide (at 1366 it shortens it, as 2.4 did).
+    for (const [w, h, mode] of [
+      [1920, 1080, 'simple'],
+      [1366, 768, 'simple'],
+      [1920, 1080, 'advanced'],
     ] as const) {
       await jumpIn(w, h);
-      const name = transport().querySelector<HTMLElement>('[role="group"][aria-label="Project"] [class*="titleText"]')!;
+      act(() => setUiMode(mode));
+      await settle(150);
+      const name =
+        mode === 'simple'
+          ? transport().querySelector<HTMLElement>('button[aria-haspopup="dialog"][aria-label^="Project:"] > span')!
+          : transport().querySelector<HTMLElement>('[role="group"][aria-label="Project"] [class*="titleText"]')!;
       expect(name.textContent).toBe('House Starter');
-      expect(name.scrollWidth, `at ${w}`).toBeLessThanOrEqual(name.clientWidth);
-      await page.screenshot({ path: `${SHOTS}/title-${w}.png`, clip: { x: 0, y: 0, width: w, height: 64 } });
+      expect(name.scrollWidth, `at ${w} in ${mode}`).toBeLessThanOrEqual(name.clientWidth);
+      await page.screenshot({ path: `${SHOTS}/title-${mode}-${w}.png`, clip: { x: 0, y: 0, width: w, height: 64 } });
       await closeShell();
     }
   });
@@ -282,6 +290,8 @@ describe('the keyboard strip', () => {
     act(() => setKeyboardCollapsed(true));
     await settle(100);
     act(() => {
+      // Round 7: Simple's Jam pads sheet (the Play view) keeps the keyboard strip.
+      setUiMode('simple');
       setView('play');
       setPadMode('steps');
       selectTrack('t4');

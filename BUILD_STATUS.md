@@ -218,6 +218,21 @@ that wrapped `window.scrollTo` in `act()`, which left React's act queue open (`3
 - A loud export renders twice when the song is not at the target yet.
 - MIDI files leave out arpeggiator output; parts files skip the mastering (the limiter stays).
 
+## Omni Song 3.0 "one song screen" (round 7, in progress)
+
+Asked for after 2.4: "make navigation simpler and make it so an idiot could use it." Design Option A:
+in Simple (the default) the Song screen is the one home; the other 2.4 views open from it as sheets
+("← Back to my song"); Advanced (⋯ › Show every control) keeps 2.4 exactly. Built in slices on `r7-int`.
+
+| Slice | Commit | What it delivered |
+|------|------|------|
+| scaffold | `2474834` | Side panel store, Sound panel and Share dialog placeholders |
+| share | `120b258` | Share dialog: a music file (Sound chips, "as loud as streaming songs" on the file only, WAV / .ogg / instruments / notes, one section) or the project `.omnisong.zip`; Advanced Export no longer changes the song's loudness |
+| editsound | `ba64e09`, `b792ce5` | Editor under the song: Draw \| Play, Record into this loop, Try a ready-made beat / loop…, Shorter / Longer, Make it different, "Plays 2 places · Just here"; the Sound panel (Change sound…, Volume, Mute, Hear it alone, six big knobs, Every setting ▸) |
+| songhome | `36d26ad`, `38837cd` | Song screen as the home: "Your song · 2:19", Repeat this part, Make it longer (plain unique part names), + Add instrument, rows only for instruments with music, single click opens a loop, the tip line |
+| shell | `f588039` | Simple top bar (Project ▾, Play/Pause, Stop, Record, Undo/Redo, Share, ⋯), sheets with Esc/Back, Project ▾ Speed / Mood / Rename, Jump In repeating the starter's main part, Make a beat opening its empty loop |
+| intfix | (this commit) | Merge fixes: the tip line asks for sounds in an empty loop before suggesting a bass; Simple's home shows only the tip line (no floating "Try this" chip as well); tests re-aimed where the slices' assumptions collided (Simple vs Advanced test helpers) |
+
 ## State at handoff
 
 - Release package: `npm run package` builds `release/omni-song-<version>.zip` (2.4.0: production

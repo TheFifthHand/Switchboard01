@@ -16,7 +16,7 @@ import { session } from '../../src/app/instance';
 import { patchRuntime } from '../../src/app/runtime';
 import { getStarter } from '../../src/content/starters';
 import { deleteDb } from '../../src/persistence/db';
-import { setGuideDone, setPadMode, setView } from '../../src/state/uiStore';
+import { setGuideDone, setPadMode, setUiMode, setView } from '../../src/state/uiStore';
 import { cleanup, fire, mount, nextFrame } from './ui-harness';
 
 /** Trusted input goes through the browser outside React's act(). */
@@ -54,7 +54,9 @@ beforeEach(async () => {
   await deleteDb();
   await page.viewport(1920, 1080);
   setGuideDone(true);
-  // The view is remembered in localStorage, which test files share: start on the Loops pads.
+  // The mode and view are remembered in localStorage, which test files share: start on the Loops pads, in
+  // Advanced (2.4's strip with its More menu; Simple's Space is covered by r7-shell-simple).
+  setUiMode('advanced');
   setView('play');
   setPadMode('loops');
   session.store.replace(getStarter('house')!.build());
@@ -72,6 +74,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   cleanup();
+  setUiMode('simple');
   for (const name of stubbed) delete (session as unknown as Record<string, unknown>)[name];
   await deleteDb();
 });

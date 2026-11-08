@@ -9,6 +9,7 @@
  * - the one next step the tip line offers, read from the real song.
  */
 import { songBars } from '../../../project/arrangement';
+import { clipById } from '../../../project/clips';
 import type { Id, Project, TrackRole } from '../../../project/types';
 import type { IconName } from '../../../ui/components';
 import { clockText } from './songModel';
@@ -108,21 +109,36 @@ export function secondsWords(seconds: number): string {
 /** A song shorter than this (seconds) is offered "Make it longer". */
 export const SHORT_SONG_S = 30;
 
-export type TipStep = 'loops' | 'bass' | 'longer' | 'share';
+export type TipStep = 'loops' | 'fill' | 'bass' | 'longer' | 'share';
 
 const BEAT_ROLES: readonly TrackRole[] = ['drums', 'percussion'];
 
+/** True when some loop in the song has notes or its own recording (an empty new loop plays nothing). */
+function songMakesSound(p: Pick<Project, 'tracks' | 'arrangement'>): boolean {
+  return p.arrangement.regions.some((r) => {
+    const t = p.tracks.find((x) => x.id === r.trackId);
+    const clip = t ? clipById(t, r.clipId) : null;
+    return !!clip && (clip.notes.length > 0 || !!clip.sample);
+  });
+}
+
 /**
  * The one next step the tip line offers, from the song as it is:
- * no music → pick a beat; only drums → add a bass; under SHORT_SONG_S →
- * make it longer; else share it.
+ * no music → pick a beat; only empty loops (Make a beat from scratch) → fill
+ * one in (the editor's grid when it is open); only drums → add a bass; under
+ * SHORT_SONG_S → make it longer; else share it.
  */
-export function songTip(p: Pick<Project, 'tracks' | 'arrangement' | 'bpm'>): {
+export function songTip(
+  p: Pick<Project, 'tracks' | 'arrangement' | 'bpm'>,
+  editorOpen = false,
+): {
   step: TipStep;
   text: string;
 } {
   const playing = playingIds(p);
   if (playing.size === 0) return { step: 'loops', text: 'Pick a beat from LOOPS on the right' };
+  if (!songMakesSound(p))
+    return { step: 'fill', text: editorOpen ? 'Click squares in the grid below to add sounds to your loop' : 'Click your loop to add sounds to it' };
   const roles = p.tracks.filter((t) => playing.has(t.id)).map((t) => t.role);
   if (roles.every((r) => BEAT_ROLES.includes(r))) return { step: 'bass', text: 'Add a bass: + Add instrument' };
   if (songSeconds(p) < SHORT_SONG_S) return { step: 'longer', text: 'Make it longer' };

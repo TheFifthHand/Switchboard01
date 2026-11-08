@@ -15,7 +15,7 @@ import { PAUSE_UNAVAILABLE_MESSAGE, Session } from '../../src/app/session';
 import { session as appSession } from '../../src/app/instance';
 import { TransportBar } from '../../src/app/views/TransportBar';
 import { App } from '../../src/app/App';
-import { setGuideDone, setPadMode, setView } from '../../src/state/uiStore';
+import { setGuideDone, setPadMode, setUiMode, setView } from '../../src/state/uiStore';
 import { getStarter } from '../../src/content/starters';
 import { deleteDb } from '../../src/persistence/db';
 import type { Project } from '../../src/project/types';
@@ -239,7 +239,12 @@ describe('Transport keys', () => {
 
 describe('Space and Shift+Space', () => {
   it('Space plays and pauses, Shift+Space stops; on a focused key Space presses that key instead', async () => {
-    act(() => setGuideDone(true));
+    // 2.4's strip with Mute All: Advanced since round 7 (Simple's Space is in r7-shell-simple). The mode is
+    // remembered in localStorage, which test files share: set it.
+    act(() => {
+      setGuideDone(true);
+      setUiMode('advanced');
+    });
     const real = { togglePlay: appSession.togglePlay, stop: appSession.stop };
     const calls: string[] = [];
     appSession.togglePlay = async () => void calls.push('play/pause');
@@ -257,6 +262,7 @@ describe('Space and Shift+Space', () => {
       key(mute, 'keydown', { key: ' ', code: 'Space' });
       expect(calls).toEqual(['play/pause', 'stop']);
     } finally {
+      act(() => setUiMode('simple'));
       appSession.togglePlay = real.togglePlay;
       appSession.stop = real.stop;
     }

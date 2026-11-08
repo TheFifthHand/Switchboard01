@@ -158,6 +158,13 @@ describe('where the hint chip sits', () => {
             setView(view);
             setPadMode(pad);
           });
+          if (mode === 'simple' && view === 'arrange') {
+            // Round 7: Simple's home (the Song screen) has its tip line at the bottom instead of the chip.
+            await showStep('song-play');
+            expect(document.querySelector('[data-hint]'), `${w}x${hh} simple home: no chip`).toBeNull();
+            expect(document.querySelector('[data-testid="song-tip"]'), `${w}x${hh} simple home: the tip line`).not.toBeNull();
+            continue;
+          }
           for (const id of STEPS_FOR[view]) {
             await showStep(id);
             const label = `${w}x${hh} ${mode} ${view}/${pad} "${chip().dataset.hint}"`;
@@ -172,6 +179,10 @@ describe('where the hint chip sits', () => {
 
   it('moves away when a control appears under it', async () => {
     await openApp(1366, 768);
+    // Simple opens on the Song screen, whose tip line replaces the chip: the chip shows on the Jam pads sheet.
+    act(() => setView('play'));
+    await settle();
+    await chipPlaced();
     const before = chip().getBoundingClientRect();
     // Something new shows up right where the chip is (a panel opening, say).
     const intruder = document.createElement('button');

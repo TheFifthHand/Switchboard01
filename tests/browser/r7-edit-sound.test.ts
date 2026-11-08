@@ -46,7 +46,7 @@ async function show(trackIndex = 3): Promise<void> {
 }
 
 beforeEach(async () => {
-  await resetSong();
+  await resetSong('simple');
   act(() => setView('arrange'));
 });
 afterEach(async () => {

@@ -24,8 +24,11 @@ import { mouse, send, toPage, type Pt } from './r4-uikit-input';
 
 export { mouse, send, toPage, type Pt };
 
-/** Reset what other test files may have left: the song view's settings and state, the runtime, the database. */
-export async function resetSong(): Promise<void> {
+/**
+ * Reset what other test files may have left: the song view's settings and state, the runtime, the database.
+ * Round 7: 2.4's Song view tests run in Advanced (the default here); the Simple home's tests pass 'simple'.
+ */
+export async function resetSong(mode: 'simple' | 'advanced' = 'advanced'): Promise<void> {
   localStorage.removeItem(LANE_SETTINGS_KEY);
   clearLoopClipboard();
   await deleteDb();
@@ -35,8 +38,7 @@ export async function resetSong(): Promise<void> {
     patchRuntime({ held: {}, notice: null, recording: 'off', recordTarget: null, playing: false, paused: false, mode: 'live', replayId: null });
     setGuideDone(true);
     setTipsEnabled(false);
-    // Round 7: these tests cover 2.4's Song view and transport, which Advanced keeps.
-    setUiMode('advanced');
+    setUiMode(mode);
     setKeyboardCollapsed(false);
   });
 }
@@ -61,7 +63,7 @@ export async function teardownSong(): Promise<void> {
     patchRuntime({ playing: false, paused: false, mode: 'live', replayId: null, recording: 'off', recordTarget: null });
     setUiMode('simple');
     // The view is remembered in localStorage, shared with the other test files: leave the default.
-    setView('play');
+    setView('arrange');
     resetLaneState();
   });
   localStorage.removeItem(LANE_SETTINGS_KEY);

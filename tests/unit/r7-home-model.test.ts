@@ -86,6 +86,14 @@ describe('length and the tip line', () => {
     expect(songTip(short).step).toBe('longer');
     expect(songTip(house())).toEqual({ step: 'share', text: 'Share your song' });
   });
+
+  it('asks for sounds in an empty loop (Make a beat from scratch) before suggesting a bass', () => {
+    const p = drumsOnly();
+    for (const t of p.tracks) for (const c of t.clips) if (c) c.notes = [];
+    expect(songTip(p, true)).toEqual({ step: 'fill', text: 'Click squares in the grid below to add sounds to your loop' });
+    expect(songTip(p).step).toBe('fill');
+    expect(songTip(p).text).toBe('Click your loop to add sounds to it');
+  });
 });
 
 describe('plain names for new parts', () => {

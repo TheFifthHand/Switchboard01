@@ -75,7 +75,7 @@ function drumsOnly(): void {
 }
 
 beforeEach(async () => {
-  await resetSong();
+  await resetSong('simple');
   act(() => closeSound());
 });
 afterEach(async () => {

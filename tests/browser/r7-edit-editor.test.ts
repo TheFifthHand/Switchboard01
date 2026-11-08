@@ -61,9 +61,10 @@ const regionClip = (id: Id) => {
   const slot = slotOfClip(t, r.clipId);
   return { slot, clip: clipAtSlot(t, slot)! };
 };
+// Every property a change can touch: a variation may only lengthen a note or play it softer.
 const notesSig = (id: Id) =>
   regionClip(id)
-    .clip.notes.map((n) => `${n.tick}:${n.pitch}`)
+    .clip.notes.map((n) => `${n.tick}:${n.pitch}:${n.duration}:${n.velocity}`)
     .sort()
     .join(',');
 
@@ -85,7 +86,7 @@ function visibleControls(root: HTMLElement): number {
 
 beforeEach(async () => {
   localStorage.removeItem('switchboard01.songEditorHeight');
-  await resetSong();
+  await resetSong('simple');
   act(() => editorModeStore.setState('draw'));
 });
 afterEach(async () => {
@@ -134,6 +135,8 @@ describe('the editor in Simple', () => {
   it('Advanced keeps 2.4: bar numbers, the velocity lane and Make this one different', async () => {
     await open();
     act(() => setUiMode('advanced'));
+    // Advanced shows every instrument's row, so the loop moves down: let the rows settle first.
+    await settle();
     await openRegion('C');
     expect(pane()!.querySelector('[data-testid="velocity-lane"]')).not.toBeNull();
     expect(pane()!.querySelector('[aria-label="Row height"]')).not.toBeNull();
