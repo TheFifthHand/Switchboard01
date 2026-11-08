@@ -284,11 +284,11 @@ export function loopPlaces(p: Pick<Project, 'arrangement'>, trackId: Id, clipId:
 
 /**
  * The badge on a region whose loop plays in several places: "Used 3×" (null: it plays only here).
- * Not a bare "×3", which reads as "repeats three times". `plain` (Simple): "Plays 3 places", the
- * editor's own words for the same thing.
+ * Not a bare "×3", which reads as "repeats three times". `plain` (Simple): "3 places", short enough to
+ * sit beside the loop's name on a region (the editor says it whole: "Plays 3 places").
  */
 export function placesBadge(places: number, plain = false): string | null {
-  return places > 1 ? (plain ? `Plays ${places} places` : `Used ${places}×`) : null;
+  return places > 1 ? (plain ? `${places} places` : `Used ${places}×`) : null;
 }
 
 /** The same in words: "this loop plays in 3 places". */

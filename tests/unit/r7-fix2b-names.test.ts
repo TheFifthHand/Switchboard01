@@ -117,8 +117,8 @@ describe('drum sounds in plain words (Simple)', () => {
 });
 
 describe('editor and song words', () => {
-  it('a loop used in several places says "Plays 3 places" in Simple, "Used 3×" in Advanced', () => {
-    expect(placesBadge(3, true)).toBe('Plays 3 places');
+  it('a loop used in several places says "3 places" on its region in Simple, "Used 3×" in Advanced', () => {
+    expect(placesBadge(3, true)).toBe('3 places');
     expect(placesBadge(3)).toBe('Used 3×');
     expect(placesBadge(1, true)).toBeNull();
   });
