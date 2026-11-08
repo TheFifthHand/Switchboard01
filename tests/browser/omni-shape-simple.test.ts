@@ -99,8 +99,10 @@ describe('Simple Shape: orientation', () => {
     expect(m.container.querySelector('h2')!.textContent).toBe(`Shaping: 3 Bass — ${soundName(project(), track('t3').instrument)}`);
   });
 
-  it('Back to Play goes to the Play view with the part still selected', () => {
+  it('Back to Play (Advanced: Simple shows this view as a sheet, with its own way back) goes to the Play view with the part still selected', () => {
     const m = setup('t5');
+    expect([...m.container.querySelectorAll('button')].some((b) => b.textContent === 'Back to Play')).toBe(false);
+    act(() => setUiMode('advanced'));
     click(button(m.container, 'Back to Play'));
     expect(uiStore.getState().view).toBe('play');
     expect(uiStore.getState().selectedTrackId).toBe('t5');
@@ -281,7 +283,8 @@ function checkLayout(root: HTMLElement, label: string) {
     const r = b.getBoundingClientRect();
     expect(Math.min(r.width, r.height), `${label}: ${b.getAttribute('aria-label') ?? b.textContent} size`).toBeGreaterThanOrEqual(32);
   }
-  const primary = [button(root, 'Back to Play'), button(root, /Show every setting \(Advanced\)|Show fewer settings \(Simple\)/), button(root, 'Change instrument')];
+  // (No "Back to Play" in Simple: the view is a sheet there, with "Back to my song" in its bar.)
+  const primary = [button(root, /Show every setting \(Advanced\)|Show fewer settings \(Simple\)/), button(root, 'Change instrument')];
   for (const b of primary) expect(b.getBoundingClientRect().height, `${label}: ${b.textContent} height`).toBeGreaterThanOrEqual(40);
   // Cards never overlap.
   const rects = [...root.querySelectorAll<HTMLElement>('article')].map((a) => a.getBoundingClientRect());

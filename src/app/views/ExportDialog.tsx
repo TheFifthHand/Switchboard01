@@ -694,7 +694,7 @@ export function ExportDialog(props: { open: boolean; onClose(): void; initialSou
                 {message.report}
               </p>
             )}
-            {message.offTarget && (
+            {message.offTarget && advanced && (
               <Button size="sm" variant="ghost" icon="sparkle" onClick={matchInMix} className={styles.link} tip="Open Mix, where Match target sets Loudness drive so the song lands on the target.">
                 Match target in Mix
               </Button>

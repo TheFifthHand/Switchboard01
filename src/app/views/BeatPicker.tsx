@@ -31,6 +31,7 @@ import { session, useProject, useUi } from '../instance';
 import { notify, runtimeStore, useRuntime } from '../runtime';
 import { startPreview, stopPreview } from '../preview';
 import { MenuHeader, Popover, isEditLocked, LOCKED_TEXT, type MenuAnchor } from './ClipMenu';
+import { followInSong } from './arrange/library/ReadyLoops';
 import styles from './BeatPicker.module.css';
 
 /** Styles that have beats, in the library's order, each with its beats (main style only). */
@@ -105,6 +106,7 @@ export function applyBeat(trackId: Id, slot: number, beat: BeatDef): boolean {
       const notes = realizeBeat(beat, { bars: bars as 1 | 2 | 4 | 8, kitId }).notes.map((n) => ({ ...n, id: uid('n') }));
       ok = session.accepted(cmd.setClipNotes(store, trackId, slot, notes, words));
     }
+    if (ok && existing) followInSong(trackId, slot, existing.id, beat.name);
   } finally {
     store.endGroup();
   }

@@ -47,7 +47,7 @@ describe('Simple string tables', () => {
   it('every tip-line step', () => {
     const p = house();
     const empty = { ...p, arrangement: { ...p.arrangement, regions: [] } };
-    const texts = [songTip(empty).text, songTip(p).text, songTip(p, false, false).text];
+    const texts = [songTip(empty).text, songTip(p).text, songTip(p, { fresh: true }).text];
     for (const t of texts) expect(avoidedWords(t), t).toEqual([]);
   });
 
@@ -87,13 +87,15 @@ describe('places and lengths in plain words', () => {
     expect(regionLabel('Four Floor', 'Drums', { start: 8, bars: 8, offset: 0 }, 2)).toBe('Four Floor, Drums, bars 9 to 16, plays 4 times');
   });
 
-  it('what a repeat is called: the section, the whole song, or the marked stretch', () => {
+  it('what a repeat is called: the section, a run of them, the whole song, or the marked stretch', () => {
     const sections = [
-      { name: 'Intro', start: 0, bars: 8 },
-      { name: 'Groove', start: 8, bars: 16 },
+      { id: 'i', name: 'Intro', start: 0, bars: 8 },
+      { id: 'g', name: 'Groove', start: 8, bars: 16 },
+      { id: 'e', name: 'Ending', start: 24, bars: 8 },
     ];
-    expect(repeatName(sections, { fromBar: 8, toBar: 24 }, 24)).toBe('Groove');
-    expect(repeatName(sections, { fromBar: 0, toBar: 24 }, 24)).toBe('the whole song');
-    expect(repeatName(sections, { fromBar: 2, toBar: 4 }, 24)).toBe('the marked stretch');
+    expect(repeatName(sections, { fromBar: 8, toBar: 24 }, 32)).toBe('Groove');
+    expect(repeatName(sections, { fromBar: 0, toBar: 32 }, 32)).toBe('the whole song');
+    expect(repeatName(sections, { fromBar: 8, toBar: 32 }, 32)).toBe('Groove to Ending');
+    expect(repeatName(sections, { fromBar: 2, toBar: 4 }, 32)).toBe('the marked stretch');
   });
 });

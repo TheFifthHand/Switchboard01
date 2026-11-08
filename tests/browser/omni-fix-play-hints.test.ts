@@ -257,6 +257,20 @@ describe('the chip never covers a heading or a status line', () => {
       it(`at ${w} x ${hh} in ${mode}: Shape with a long part name, Arrange while playing, and the other views`, async () => {
         await openAt(w, hh, 'tone');
         act(() => setUiMode(mode));
+        // Round 7 fix: Simple shows no chip anywhere, its sheets included (its tip line on the home is the one guide).
+        if (mode === 'simple') {
+          for (const view of ['shape', 'arrange', 'play', 'mix'] as const) {
+            act(() => setView(view));
+            showStep(view === 'mix' ? 'master' : 'pad');
+            await settle(300);
+            expect(chip(), `${w} simple ${view}: no chip`).toBeNull();
+          }
+          expect(document.querySelector('[data-testid="song-tip"]')).toBeNull();
+          act(() => setView('arrange'));
+          await settle();
+          expect(document.querySelector('[data-testid="song-tip"]'), `${w} simple arrange: the tip line`).not.toBeNull();
+          return;
+        }
         // Shape: the chip found its spot with Chords selected; Percussion's longer name then runs into the heading's row.
         act(() => {
           selectTrack('t4');
@@ -265,12 +279,6 @@ describe('the chip never covers a heading or a status line', () => {
         await settle();
         act(() => selectTrack('t2'));
         await settle(900);
-        if (mode === 'simple') {
-          // Round 7 words: the "Try this" chip is Advanced's (its steps point at 2.4's tabs and pads); Simple's guide
-          // is the Song screen's tip line, and no chip shows on a sheet either.
-          expect(chip(), `${w} simple shape sheet: no chip`).toBeNull();
-          return;
-        }
         await chipPlaced();
         const heading = [...document.querySelectorAll('h2')].find((el) => el.textContent?.includes('Hand Percussion'));
         expect(heading, 'the Shape heading').toBeTruthy();

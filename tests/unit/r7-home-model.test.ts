@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { getStarter } from '../../src/content/starters';
 import { hiddenInstruments, secondsWords, simpleRowIds, songClock, songSeconds, songTip } from '../../src/app/views/arrange/songHome';
-import { nextPartName, regionEnd, sectionToGrow, songBars, uniqueSectionName } from '../../src/project/arrangement';
+import { mainSection, nextPartName, partPlace, regionEnd, songBars, uniqueSectionName } from '../../src/project/arrangement';
 import { validateProject } from '../../src/project/validate';
 import type { Project, SongRegion, SongSection } from '../../src/project/types';
 import { addEnding, addIntro, growSong } from '../../src/state/commands';
@@ -19,6 +19,7 @@ function house(): Project {
 }
 
 const tid = (p: Project, name: string) => p.tracks.find((t) => t.name === name)!.id;
+const sortedNames = (p: Project) => [...p.arrangement.sections].sort((a, b) => a.start - b.start).map((s) => s.name);
 
 /** House with only these loops and sections. */
 function withSong(regions: (p: Project) => SongRegion[], sections: SongSection[] = []): Project {
@@ -78,7 +79,7 @@ describe('length and the tip line', () => {
   it('offers one next step from the real song', () => {
     expect(songTip(withSong(() => []))).toEqual({ step: 'loops', text: 'Pick a beat from Loops on the right' });
     expect(songTip(drumsOnly())).toEqual({ step: 'bass', text: 'Add a bass: press + Add instrument, then Bass' });
-    // Round 7 words: beat → bass → chords → a look inside a loop → longer → share.
+    // Beat → bass → chords → longer → share (a ready-made song first offers a look inside a loop).
     const beatAndBass = withSong((p) => [
       { id: 'd', trackId: tid(p, 'Drums'), clipId: p.tracks[0].clips[1]!.id, start: 0, bars: 4, offset: 0 },
       { id: 'b', trackId: tid(p, 'Bass'), clipId: p.tracks[2].clips[1]!.id, start: 0, bars: 4, offset: 0 },
@@ -89,11 +90,11 @@ describe('length and the tip line', () => {
       { id: 'b', trackId: tid(p, 'Bass'), clipId: p.tracks[2].clips[1]!.id, start: 0, bars: 4, offset: 0 },
       { id: 'c', trackId: tid(p, 'Chords'), clipId: p.tracks[3].clips[1]!.id, start: 0, bars: 4, offset: 0 },
     ]);
-    // A loop not opened yet in this visit: click one first.
-    expect(songTip(short, false, false)).toEqual({ step: 'change', text: 'Click any loop in your song to change its notes' });
+    // A ready-made song nobody changed yet: click a loop first (until the editor opens).
+    expect(songTip(short, { fresh: true })).toEqual({ step: 'try', text: 'Click any loop in your song to change its notes' });
+    expect(songTip(short, { fresh: true, editorOpen: true }).step).toBe('longer');
     // 4 bars at 124 BPM: under 8 s.
-    expect(songTip(short).step).toBe('longer');
-    expect(songTip(short, true, false).step).toBe('longer');
+    expect(songTip(short)).toEqual({ step: 'longer', text: 'Make your song longer: press Make it longer' });
     expect(songTip(house())).toEqual({ step: 'share', text: 'Share your song: press Share at the top right' });
   });
 
@@ -118,22 +119,19 @@ describe('plain names for new parts', () => {
     expect(uniqueSectionName(named('Groove'), 'Intro')).toBe('Intro');
   });
 
-  it('grows the part at the playhead, else the last one before it', () => {
-    const s: SongSection[] = [
-      { id: 'a', name: 'A', start: 0, bars: 8 },
-      { id: 'b', name: 'B', start: 12, bars: 4 },
-    ];
-    expect(sectionToGrow(s, 3)?.id).toBe('a');
-    expect(sectionToGrow(s, 9)?.id).toBe('a');
-    expect(sectionToGrow(s, 40)?.id).toBe('b');
-    expect(sectionToGrow([], 0)).toBeNull();
+  it('grows the main part (the most music per bar), wherever the playhead is', () => {
+    // Intro: drums only; Groove: drums and percussion.
+    const p = drumsOnly();
+    expect(mainSection(p)?.id).toBe('sGroove');
+    expect(partPlace(p, mainSection(p)!).id).toBe('sGroove');
+    expect(mainSection(withSong(() => []))).toBeNull();
   });
 });
 
 describe('Make it longer (commands)', () => {
-  it('adds a part after the one at the playhead: the next plain name, its music copied, one undo step', () => {
+  it('adds a part after the main part: the next plain name, its music copied, one undo step', () => {
     const store = new ProjectStore(drumsOnly());
-    const r = growSong(store, 9, 'after');
+    const r = growSong(store, 'after');
     expect(r.changed).toBe(true);
     expect(r.name).toBe('Verse');
     expect(r.from).toBe('Groove');
@@ -148,8 +146,10 @@ describe('Make it longer (commands)', () => {
     expect(v.ok && v.warnings).toEqual([]);
     // Again and again: never the same new name twice.
     const names = [r.name];
-    for (let i = 0; i < 4; i++) names.push(growSong(store, 9, 'after').name!);
+    for (let i = 0; i < 4; i++) names.push(growSong(store, 'after').name!);
     expect(names).toEqual(['Verse', 'Chorus', 'Bridge', 'Verse 2', 'Chorus 2']);
+    // …and they play in that order, after the main part.
+    expect(sortedNames(store.getState())).toEqual(['Intro', 'Groove', 'Verse', 'Chorus', 'Bridge', 'Verse 2', 'Chorus 2']);
     expect(store.historySize().undo).toBe(5);
     store.undo();
     expect(store.getState().arrangement.sections.some((x) => x.name === 'Chorus 2')).toBe(false);
@@ -159,7 +159,7 @@ describe('Make it longer (commands)', () => {
     const p = drumsOnly();
     p.arrangement.sections[1] = { ...p.arrangement.sections[1], moves: [{ id: 'mv1', kind: 'fadeIn' }] };
     const store = new ProjectStore(p);
-    const r = growSong(store, 10, 'again');
+    const r = growSong(store, 'again');
     const copy = store.getState().arrangement.sections.find((x) => x.id === r.sectionId)!;
     expect([copy.name, copy.start, copy.bars]).toEqual(['Groove', 16, 8]);
     expect(copy.moves?.map((m) => m.kind)).toEqual(['fadeIn']);
@@ -170,7 +170,7 @@ describe('Make it longer (commands)', () => {
     const p = drumsOnly();
     p.arrangement.sections = [];
     const store = new ProjectStore(p);
-    growSong(store, 0, 'after');
+    growSong(store, 'after');
     const names = store.getState().arrangement.sections.map((x) => `${x.name} ${x.start}+${x.bars}`);
     expect(names).toEqual(['Verse 0+16', 'Chorus 16+16']);
     expect(store.historySize().undo).toBe(1);
@@ -180,7 +180,7 @@ describe('Make it longer (commands)', () => {
 
   it('is refused with nothing changed while the song has no music', () => {
     const store = new ProjectStore(withSong(() => []));
-    const r = growSong(store, 0, 'again');
+    const r = growSong(store, 'again');
     expect(r.changed).toBe(false);
     expect(r.reason).toBe('empty');
     expect(r.message).toMatch(/no music/);

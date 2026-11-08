@@ -58,7 +58,7 @@ import { recordedNoteAt } from '../time/recordWindow';
 import { makeSnapshot, projectFromSnapshot } from '../time/snapshot';
 import { Sequencer, nextBarTick, songPlayChanged, type NoteEvent } from '../time/sequencer';
 import { MIN_TAKE_NOTE_TICKS, songTakeFrom, type TakeEvent } from '../time/songTake';
-import { cleanSongLoop, inSongLoop, sameSongLoop } from '../time/songLoop';
+import { cleanSongLoop, followSongLoop, inSongLoop, sameSongLoop } from '../time/songLoop';
 import { BRACE_AHEAD, BRACE_MS, RealtimeTransport, outputDelaySeconds } from '../time/transport';
 import { meterWake } from '../ui/components/meterScheduler';
 import { notify, patchRuntime, runtimeStore, setTrackRuntime, type PlayMode } from './runtime';
@@ -803,6 +803,7 @@ export class Session {
     // The edit and selected clips follow scene rows inserted, copied, deleted or moved (undo and redo too).
     if (p.scenes !== prev.scenes || p.id !== prev.id) this.followScenes(p, prev);
     if (p.tracks !== prev.tracks && p.id === prev.id) this.followSongClips(p, prev);
+    if (p.arrangement !== prev.arrangement && p.id === prev.id) this.followSongLoopEdit(p, prev);
     if (this.engine && !this.replayingId) {
       this.engine.setProject(p);
       if (p.masterVolumeDb !== prev.masterVolumeDb) this.engine.setMasterVolume(p.masterVolumeDb);
@@ -971,6 +972,30 @@ export class Session {
       rec.slot = at;
       patchRuntime({ recordTarget: { trackId: rec.trackId, slot: at } });
     }
+  }
+
+  /**
+   * Simple: "Repeat this part" keeps repeating the music it repeated when an
+   * edit moves the song (an intro pushes everything later, a new part goes
+   * in, bars come out; Undo and Redo too; see followSongLoop). When nothing
+   * of it is left, repeat goes off and says so: the person never ends up
+   * looping music they did not choose. Advanced keeps 2.4's absolute range.
+   */
+  private followSongLoopEdit(p: Project, prev: Project): void {
+    const loop = runtimeStore.getState().songLoop;
+    if (!loop || uiStore.getState().uiMode !== 'simple') return;
+    const next = followSongLoop(prev, p, loop, this.store.lastChange().time);
+    if (next === loop) return;
+    this.setSongLoop(next);
+    if (next) return;
+    // Said after the edit's own words (they come right after this change), added to them so its Undo stays.
+    const before = runtimeStore.getState().notice?.id;
+    const words = 'What you were repeating is gone, so repeat is off: the song plays on to its end.';
+    queueMicrotask(() => {
+      const n = runtimeStore.getState().notice;
+      if (n && n.id !== before) patchRuntime({ notice: { ...n, text: `${n.text.replace(/[.:]?$/, '.')} ${words}` } });
+      else notify(words);
+    });
   }
 
   /**
@@ -1318,8 +1343,9 @@ export class Session {
   /**
    * Loop bars [fromBar, toBar) of the song (whole bars), or play it through
    * again (null). The session is the only owner of the loop (runtime
-   * `songLoop`, never saved); views read it there. Time is absolute, so edits
-   * never move it. While the song plays or is paused: with the playhead
+   * `songLoop`, never saved); views read it there. In Advanced time is
+   * absolute, so edits never move it (Simple moves it with the music:
+   * followSongLoopEdit). While the song plays or is paused: with the playhead
    * inside the new loop playback goes on and loops at the loop's end;
    * outside it, playback continues at the loop's start at the next bar line
    * (after Resume when paused); cleared, the song plays on to its end (see

@@ -8,7 +8,7 @@
  *   again (the section there, else the whole song) until it is pressed again
  *   (2.4's Loop, named by its section).
  * - Make it longer ▾: Add an intro · Add an ending · Repeat <part> again ·
- *   Add a part after <part> (a new part gets the next plain name: Verse,
+ *   Add a section after <part> (a new section gets the next plain name: Verse,
  *   Chorus, Bridge, Verse 2…). Each is one undo step, said with Undo.
  * - + Add instrument: the instruments that have no row yet (Simple shows only
  *   those with music), by picture and name. Choosing one puts the first loop
@@ -21,7 +21,7 @@
  */
 import { useCallback, useState } from 'react';
 import { Button, IconButton, useRafLoop } from '../../../ui/components';
-import { regionEnd, sectionAt, sectionToGrow, songBars, sortSections } from '../../../project/arrangement';
+import { mainSection, partPlace, regionEnd, sectionAt, songBars, sortSections } from '../../../project/arrangement';
 import type { Id, Project, SongSection } from '../../../project/types';
 import { useStore } from '../../../state/store';
 import { selectTrack } from '../../../state/uiStore';
@@ -29,6 +29,7 @@ import { session, useProject } from '../../instance';
 import { notify, runtimeStore, useRuntime } from '../../runtime';
 import { songPlayheadBar, useSongPlaying } from '../../songPlayback';
 import { MenuHeader, MenuItem, Popover, LOCKED_REASON, anchorFromElement, useEditLocked, type MenuAnchor } from '../ClipMenu';
+import { editorStore, openLoopEditor } from './editorStore';
 import { browserTabStore } from './LoopBrowser';
 import { LaneIcon } from './laneIcons';
 import { LaneMenuItem } from './SongMenus';
@@ -46,6 +47,11 @@ const selectHasRegions = (p: Project) => p.arrangement.regions.length > 0;
 const selectSections = (p: Project) => p.arrangement.sections;
 const selectSeconds = (p: Project) => Math.round(songSeconds(p));
 const selectClock = (p: Project) => songClock(p);
+/** What Make it longer names: the main part it repeats, and the part a new one goes after. */
+const selectGrowNames = (p: Project) => {
+  const main = mainSection(p);
+  return { main: main?.name ?? null, after: main ? partPlace(p, main).name : null };
+};
 
 /** The whole bar the playhead is in (live while the song plays, else where Play starts). */
 function usePlayheadBar(): number {
@@ -167,7 +173,7 @@ export function SongHomeHeader({ handle, browserOpen, onBrowser, folded, onUnfol
           Show the song
         </Button>
       )}
-      {longer && <LongerMenu anchor={longer} bar={bar} onClose={() => setLonger(null)} />}
+      {longer && <LongerMenu anchor={longer} onClose={() => setLonger(null)} onDone={() => handle?.fit()} />}
       <span className={styles.srOnly} role="status" aria-live="polite" data-testid="lane-status">
         {status}
       </span>
@@ -176,30 +182,31 @@ export function SongHomeHeader({ handle, browserOpen, onBrowser, folded, onUnfol
 }
 
 /** Make it longer ▾ (each item unavailable, with the reason, while there is no music to make it from). */
-function LongerMenu({ anchor, bar, onClose }: { anchor: MenuAnchor; bar: number; onClose(): void }) {
+function LongerMenu({ anchor, onClose, onDone }: { anchor: MenuAnchor; onClose(): void; onDone(): void }) {
   const locked = useEditLocked();
   const hasRegions = useProject(selectHasRegions);
-  const sections = useProject(selectSections);
   const reason = locked ? LOCKED_REASON : !hasRegions ? 'Put some music in first' : undefined;
-  const part = sectionToGrow(sections, bar)?.name ?? null;
-  const run = (fn: () => void) => () => {
+  // The song's main part (the most music), whatever the playhead is on; null while no section names it.
+  const names = useProject(selectGrowNames, (a, b) => a.main === b.main && a.after === b.after);
+  const part = names.main;
+  const run = (fn: () => unknown) => () => {
     onClose();
-    fn();
+    if (fn()) onDone();
   };
   return (
     <Popover anchor={anchor} label="Make it longer" onClose={onClose} align="end" ignore={document.querySelector('[data-testid="make-longer"]')}>
       <MenuHeader eyebrow="Your song" title="Make it longer" />
-      <LaneMenuItem icon="intro" disabled={!!reason} disabledReason={reason} onSelect={run(() => addIntroNow({ plain: true }))}>
+      <LaneMenuItem icon="intro" disabled={!!reason} disabledReason={reason} onSelect={run(() => addIntroNow({ plain: true })?.changed)}>
         Add an intro
       </LaneMenuItem>
-      <LaneMenuItem icon="ending" disabled={!!reason} disabledReason={reason} onSelect={run(() => addEndingNow({ plain: true }))}>
+      <LaneMenuItem icon="ending" disabled={!!reason} disabledReason={reason} onSelect={run(() => addEndingNow({ plain: true })?.changed)}>
         Add an ending
       </LaneMenuItem>
-      <LaneMenuItem icon="loop" disabled={!!reason} disabledReason={reason} onSelect={run(() => growSongNow('again', bar))}>
+      <LaneMenuItem icon="loop" disabled={!!reason} disabledReason={reason} onSelect={run(() => growSongNow('again')?.changed)}>
         {part ? `Repeat ${part} again` : 'Repeat it all again'}
       </LaneMenuItem>
-      <LaneMenuItem icon="layers" disabled={!!reason} disabledReason={reason} onSelect={run(() => growSongNow('after', bar))}>
-        {part ? `Add a section after ${part}` : 'Add a section after it'}
+      <LaneMenuItem icon="layers" disabled={!!reason} disabledReason={reason} onSelect={run(() => growSongNow('after')?.changed)}>
+        {names.after ? `Add a section after ${names.after}` : 'Add a section after it'}
       </LaneMenuItem>
     </Popover>
   );
@@ -241,6 +248,8 @@ function AddInstrumentButton({
       notify(`Added ${instrumentName(t.name, t.role)}: its row is ready. Choose its sound on the right, then press Record to play into it.`);
       return;
     }
+    // The editor, when it is open, follows the instrument just added (its loop, ready to change).
+    if (editorStore.getState() && r.regionId) openLoopEditor(session.store.getState(), r.regionId);
     // LOOPS shows this kind of instrument's loops, to try others.
     closeSound();
     browserTabStore.setState({ projectId, tab: 'library' });

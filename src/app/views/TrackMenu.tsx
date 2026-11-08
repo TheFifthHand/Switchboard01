@@ -10,7 +10,7 @@ import type { Id } from '../../project/types';
 import { setLocked, renameTrack } from '../../state/commands';
 import { selectTrack, setView } from '../../state/uiStore';
 import { shallowEqual } from '../../state/store';
-import { session, useProject } from '../instance';
+import { session, useProject, useUi } from '../instance';
 import { notify } from '../runtime';
 import { INSTRUMENT_LABEL, soundName } from '../labels';
 import { LOCKED_REASON, MenuHeader, MenuItem, MenuSeparator, Popover, RenameForm, useEditLocked, type MenuAnchor } from './ClipMenu';
@@ -38,6 +38,8 @@ export function TrackMenu({ trackId, anchor, returnFocus, ignore, startInRename,
     shallowEqual,
   );
   const locked = useEditLocked();
+  // Simple: from the song (the home) this opens the Every setting sheet; inside a sheet it would lead to another one.
+  const inSheet = useUi((s) => s.uiMode === 'simple' && s.view !== 'arrange');
   const [renaming, setRenaming] = useState(!!startInRename && !locked);
   if (!info) return null;
   const eyebrow = `Part ${info.index + 1} · ${info.kind}`;
@@ -81,17 +83,19 @@ export function TrackMenu({ trackId, anchor, returnFocus, ignore, startInRename,
       >
         Change instrument…
       </MenuItem>
-      <MenuItem
-        icon="settings"
-        hint="Shape view"
-        onSelect={() => {
-          selectTrack(trackId);
-          setView('shape');
-          onClose();
-        }}
-      >
-        Edit sound settings
-      </MenuItem>
+      {!inSheet && (
+        <MenuItem
+          icon="settings"
+          hint="Shape view"
+          onSelect={() => {
+            selectTrack(trackId);
+            setView('shape');
+            onClose();
+          }}
+        >
+          Edit sound settings
+        </MenuItem>
+      )}
       <MenuSeparator />
       <MenuItem
         icon={info.locked ? 'lock' : 'unlock'}

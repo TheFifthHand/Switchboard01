@@ -286,6 +286,46 @@ export function swapRegionClip(regions: readonly SongRegion[], id: Id, clipId: I
 /* Time: insert and remove bars                                        */
 /* ------------------------------------------------------------------ */
 
+/**
+ * One change to the song's time line, as an edit reports it (so what keeps
+ * a place in the song, such as the repeat range, can follow the music):
+ * `bars` > 0: that many bars inserted at bar `at` (everything from `at` on
+ * plays later); `bars` < 0: bars [at, at − bars) taken out (everything
+ * after plays earlier). An edit's shifts apply in order.
+ */
+export interface TimeShift {
+  at: number;
+  bars: number;
+}
+
+/** The shifts that take an edit's shifts back (Undo): each one reversed, in reverse order. */
+export function invertShifts(shifts: readonly TimeShift[]): TimeShift[] {
+  return [...shifts].reverse().map((s) => ({ at: s.at, bars: -s.bars }));
+}
+
+/**
+ * Bars [from, to) after `shifts`: bars inserted before the range move it
+ * later, inside it make it longer; bars taken out before it move it earlier,
+ * inside it make it shorter. Null when nothing of it is left.
+ */
+export function shiftRange(shifts: readonly TimeShift[], from: number, to: number): [number, number] | null {
+  let a = from;
+  let b = to;
+  for (const s of shifts) {
+    if (s.bars > 0) {
+      if (a >= s.at) a += s.bars;
+      if (b > s.at) b += s.bars;
+    } else if (s.bars < 0) {
+      const end = s.at - s.bars;
+      const map = (x: number) => (x <= s.at ? x : x >= end ? x + s.bars : s.at);
+      a = map(a);
+      b = map(b);
+    }
+    if (b <= a) return null;
+  }
+  return [a, b];
+}
+
 /** The song's regions and sections after an edit of its time line. */
 export interface TimeEdit {
   regions: SongRegion[];
@@ -661,16 +701,67 @@ export function nextPartName(sections: readonly Pick<SongSection, 'name'>[]): st
   }
 }
 
+/** How much music section `s` holds: the parts playing in it, on average over its bars. */
+export function musicPerBar(regions: readonly Pick<SongRegion, 'start' | 'bars'>[], s: Pick<SongSection, 'start' | 'bars'>): number {
+  const end = regionEnd(s);
+  let bars = 0;
+  for (const r of regions) bars += Math.max(0, Math.min(regionEnd(r), end) - Math.max(r.start, s.start));
+  return s.bars > 0 ? bars / s.bars : 0;
+}
+
+/** A section that fades out (an added ending): never the main part, and new parts go before it. */
+function fadesOut(s: SongSection): boolean {
+  return !!s.moves?.some((m) => m.kind === 'fadeOut');
+}
+
 /**
- * The section "Make it longer" repeats or adds after, for the playhead at
- * `bar`: the section there, else the last one that starts before it, else
- * the first. Null when the song has no sections.
+ * The song's main part, the one "Make it longer" repeats: the section with
+ * the most music (the most parts playing per bar, so an intro or ending,
+ * where parts come in or drop out, is never it), then the longest, then the
+ * earliest. A section that fades out is it only when nothing else has music.
+ * Null when no section has music.
  */
-export function sectionToGrow(sections: readonly SongSection[], bar: number): SongSection | null {
-  const sorted = sortSections(sections);
-  if (!sorted.length) return null;
-  const at = sectionAt(sorted, bar);
-  if (at) return at;
-  const before = sorted.filter((s) => s.start <= bar);
-  return before[before.length - 1] ?? sorted[0];
+export function mainSection(p: Pick<Project, 'arrangement'>): SongSection | null {
+  const regions = p.arrangement.regions;
+  let best: { s: SongSection; m: number; fade: boolean } | null = null;
+  for (const s of sortSections(p.arrangement.sections)) {
+    const m = musicPerBar(regions, s);
+    if (m <= 0) continue;
+    const fade = fadesOut(s);
+    const better = !best || (best.fade && !fade) || (best.fade === fade && (m > best.m + 1e-9 || (Math.abs(m - best.m) <= 1e-9 && s.bars > best.s.bars)));
+    if (better) best = { s, m, fade };
+  }
+  return best?.s ?? null;
+}
+
+/**
+ * The section a new part of the song goes after: the last one that plays
+ * as much music as `main` (so the new part lands after the other main parts,
+ * before an ending, which has less music or fades out).
+ */
+export function partPlace(p: Pick<Project, 'arrangement'>, main: SongSection): SongSection {
+  const full = musicPerBar(p.arrangement.regions, main);
+  const sorted = sortSections(p.arrangement.sections);
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const s = sorted[i];
+    if (s.start < main.start) break;
+    if (!fadesOut(s) && musicPerBar(p.arrangement.regions, s) >= full - 1e-9) return s;
+  }
+  return main;
+}
+
+/** Bars [from, to) of the song with music but no section over them, in time order. */
+export function unlabelledMusic(p: Pick<Project, 'arrangement'>): [number, number][] {
+  const sections = sortSections(p.arrangement.sections);
+  const covered = (bar: number) => sections.some((s) => s.start <= bar && bar < regionEnd(s));
+  const music = new Set<number>();
+  for (const r of p.arrangement.regions) for (let b = r.start; b < regionEnd(r); b++) music.add(b);
+  const out: [number, number][] = [];
+  for (const b of [...music].sort((x, y) => x - y)) {
+    if (covered(b)) continue;
+    const last = out[out.length - 1];
+    if (last && last[1] === b) last[1] = b + 1;
+    else out.push([b, b + 1]);
+  }
+  return out;
 }

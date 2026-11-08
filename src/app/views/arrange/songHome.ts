@@ -8,7 +8,7 @@
  * - the song's length in minutes and seconds ("Your song · 1:04"),
  * - the one next step the tip line offers, read from the real song.
  */
-import { songBars } from '../../../project/arrangement';
+import { mainSection, musicPerBar, regionEnd, songBars, sortSections, spanOf } from '../../../project/arrangement';
 import { clipById } from '../../../project/clips';
 import type { Id, Project, TrackRole } from '../../../project/types';
 import type { IconName } from '../../../ui/components';
@@ -90,6 +90,27 @@ export function hiddenInstruments(
   return out.sort((a, b) => INSTRUMENT_ORDER.indexOf(a.role) - INSTRUMENT_ORDER.indexOf(b.role));
 }
 
+/**
+ * Where "+ Add instrument" puts a new instrument's loop (pure): over the
+ * song's main parts (from the first to the last section that plays as much
+ * music as the main one, mainSection; an intro and an ending, which have
+ * less, are left as they are), else over all of the music, else from `bar`.
+ */
+export function instrumentRange(p: Pick<Project, 'arrangement'>, bar: number): { start: number; bars: number | null; name: string | null } {
+  const main = mainSection(p);
+  if (main) {
+    const full = musicPerBar(p.arrangement.regions, main);
+    const body = sortSections(p.arrangement.sections).filter((s) => !s.moves?.some((m) => m.kind === 'fadeOut') && musicPerBar(p.arrangement.regions, s) >= full - 1e-9);
+    const from = Math.min(main.start, ...body.map((s) => s.start));
+    const to = Math.max(regionEnd(main), ...body.map((s) => regionEnd(s)));
+    const one = body.length <= 1 || (from === main.start && to === regionEnd(main));
+    return { start: from, bars: to - from, name: one ? main.name : null };
+  }
+  const span = spanOf(p.arrangement.regions);
+  if (span) return { start: span[0], bars: span[1] - span[0], name: null };
+  return { start: Math.max(0, Math.floor(bar)), bars: null, name: null };
+}
+
 /* ------------------------------------------------------------------ */
 /* Length                                                              */
 /* ------------------------------------------------------------------ */
@@ -118,54 +139,69 @@ export function secondsWords(seconds: number): string {
 /* The tip line                                                        */
 /* ------------------------------------------------------------------ */
 
-/** A song shorter than this (seconds) is offered "Make it longer". */
-export const SHORT_SONG_S = 30;
+/** A song shorter than this (seconds) is offered "Make it longer"; Share waits for it. */
+export const SHARE_SONG_S = 45;
+
+/** Share waits for this many instruments that make sound. */
+export const SHARE_INSTRUMENTS = 3;
 
 /**
  * The first session the tip line walks through, in order: a beat (from LOOPS,
- * or squares in an empty loop), a bass, chords, a look inside a loop, a song
- * long enough to be a song, then Share.
+ * or squares in an empty loop), a look inside a ready-made song's loop, drums,
+ * a bass, chords, a song long enough to be a song, then Share.
  */
-export type TipStep = 'loops' | 'fill' | 'bass' | 'chords' | 'change' | 'longer' | 'share';
+export type TipStep = 'loops' | 'fill' | 'try' | 'beat' | 'bass' | 'chords' | 'longer' | 'share';
 
 const BEAT_ROLES: readonly TrackRole[] = ['drums', 'percussion'];
-/** Instruments that give a song its harmony (any of them answers "add chords"). */
-const HARMONY_ROLES: readonly TrackRole[] = ['chords', 'pad'];
+/** Instruments that carry the harmony or a tune (the "chords" step: Keys & chords, a Melody or a Pad). */
+const HARMONY_ROLES: readonly TrackRole[] = ['chords', 'lead', 'pad'];
 
-/** True when some loop in the song has notes or its own recording (an empty new loop plays nothing). */
-function songMakesSound(p: Pick<Project, 'tracks' | 'arrangement'>): boolean {
-  return p.arrangement.regions.some((r) => {
+/** The instruments with a loop in the song that has notes or its own recording (an empty new loop plays nothing). */
+function soundingTracks(p: Pick<Project, 'tracks' | 'arrangement'>): Pick<Project['tracks'][number], 'id' | 'role'>[] {
+  const ids = new Set<Id>();
+  for (const r of p.arrangement.regions) {
     const t = p.tracks.find((x) => x.id === r.trackId);
     const clip = t ? clipById(t, r.clipId) : null;
-    return !!clip && (clip.notes.length > 0 || !!clip.sample);
-  });
+    if (clip && (clip.notes.length > 0 || !!clip.sample)) ids.add(r.trackId);
+  }
+  return p.tracks.filter((t) => ids.has(t.id));
+}
+
+/** A ready-made song nobody has changed yet: built from a starter (not the blank one) and never edited since. */
+export function isUntouchedStarter(p: Pick<Project, 'starterId' | 'createdAt' | 'updatedAt'>): boolean {
+  return !!p.starterId && p.starterId !== 'blank' && p.updatedAt === p.createdAt;
+}
+
+export interface TipState {
+  /** The loop editor is open (the "fill" step points at its grid). */
+  editorOpen?: boolean;
+  /** A ready-made song nobody has changed or opened a loop of yet (Jump In): suggest something to try in it. */
+  fresh?: boolean;
 }
 
 /**
- * The one next step the tip line offers, from the song as it is:
- * no music → pick a beat; only empty loops (Make a beat from scratch) → fill
- * one in (the editor's grid when it is open); only drums → add a bass; no
- * chords or pad yet → add chords; no loop opened yet
- * (`opened`: the editor was opened in this visit) → click one; under
- * SHORT_SONG_S → make it longer; else share it.
+ * The one next step the tip line offers, from the song as it is, in the
+ * order a song is built: no music → pick a beat; only empty loops (Make a
+ * beat from scratch) → fill one in (the editor's grid when it is open); a
+ * ready-made song untouched (Jump In) → click a loop to change it; then a
+ * beat, a bass, chords (or a melody or pad), each while the song has none;
+ * then make it longer until it lasts SHARE_SONG_S; and only then, with
+ * SHARE_INSTRUMENTS instruments or more playing, share it.
  */
-export function songTip(
-  p: Pick<Project, 'tracks' | 'arrangement' | 'bpm'>,
-  editorOpen = false,
-  opened = true,
-): {
-  step: TipStep;
-  text: string;
-} {
-  const playing = playingIds(p);
-  if (playing.size === 0) return { step: 'loops', text: 'Pick a beat from Loops on the right' };
-  if (!songMakesSound(p))
+export function songTip(p: Pick<Project, 'tracks' | 'arrangement' | 'bpm'>, state: TipState | boolean = {}): { step: TipStep; text: string } {
+  const { editorOpen = false, fresh = false } = typeof state === 'boolean' ? { editorOpen: state } : state;
+  if (playingIds(p).size === 0) return { step: 'loops', text: 'Pick a beat from Loops on the right' };
+  const sounding = soundingTracks(p);
+  if (!sounding.length)
     return { step: 'fill', text: editorOpen ? 'Click squares in the grid below to add sounds to your loop' : 'Click your loop to add sounds to it' };
-  const roles = p.tracks.filter((t) => playing.has(t.id)).map((t) => t.role);
-  if (roles.every((r) => BEAT_ROLES.includes(r))) return { step: 'bass', text: 'Add a bass: press + Add instrument, then Bass' };
-  if (!roles.some((r) => HARMONY_ROLES.includes(r))) return { step: 'chords', text: 'Add chords: press + Add instrument, then Keys & chords' };
-  if (!opened && !editorOpen) return { step: 'change', text: 'Click any loop in your song to change its notes' };
-  if (songSeconds(p) < SHORT_SONG_S) return { step: 'longer', text: 'Make your song longer: press Make it longer' };
+  if (fresh && !editorOpen) return { step: 'try', text: 'Click any loop in your song to change its notes' };
+  const roles = new Set(sounding.map((t) => t.role));
+  const has = (list: readonly TrackRole[]) => list.some((r) => roles.has(r));
+  if (!has(BEAT_ROLES)) return { step: 'beat', text: 'Add drums: press + Add instrument, then Drums' };
+  if (!roles.has('bass')) return { step: 'bass', text: 'Add a bass: press + Add instrument, then Bass' };
+  if (!has(HARMONY_ROLES)) return { step: 'chords', text: 'Add chords: press + Add instrument, then Keys & chords' };
+  if (songSeconds(p) < SHARE_SONG_S) return { step: 'longer', text: 'Make your song longer: press Make it longer' };
+  if (sounding.length < SHARE_INSTRUMENTS) return { step: 'chords', text: 'Add another instrument: press + Add instrument' };
   return { step: 'share', text: 'Share your song: press Share at the top right' };
 }
 
@@ -194,11 +230,15 @@ export function shortOrLong(bars: number): 'Short' | 'Long' {
 }
 
 /**
- * What a repeat range is called in Simple: the section it covers exactly
- * ("Groove"), the whole song, or "the marked stretch" (a range marked on the ruler).
+ * What a repeat range is called in Simple: the whole song, the section it covers
+ * exactly ("Groove"), a run of whole sections ("Verse to Chorus": the repeat
+ * follows edits section by section, followSongLoop), else "the marked stretch"
+ * (a range marked on the ruler).
  */
-export function repeatName(sections: readonly { name: string; start: number; bars: number }[], range: { fromBar: number; toBar: number }, length: number): string {
-  const s = sections.find((x) => x.start === range.fromBar && x.start + x.bars === range.toBar);
-  if (s) return s.name;
-  return range.fromBar === 0 && range.toBar >= length ? 'the whole song' : 'the marked stretch';
+export function repeatName(sections: readonly { id: Id; name: string; start: number; bars: number }[], range: { fromBar: number; toBar: number }, length: number): string {
+  if (range.fromBar === 0 && range.toBar >= length) return 'the whole song';
+  const first = sections.find((x) => x.start === range.fromBar);
+  const last = sections.find((x) => x.start + x.bars === range.toBar);
+  if (first && last && first.start <= last.start) return first.id === last.id ? first.name : `${first.name} to ${last.name}`;
+  return 'the marked stretch';
 }

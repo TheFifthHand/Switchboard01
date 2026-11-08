@@ -159,38 +159,45 @@ describe('Project library', () => {
     await until(() => dialog().textContent?.includes('No saved projects yet'), 'empty project list');
   });
 
-  it('starting a starter saves the open project, loads the starter and keeps the old one in My projects', async () => {
-    const old = project('Old Song', Date.now() - 60_000);
-    await saveProject(old);
-    session.store.replace(old, { resetHistory: true });
+  // How to hear it is said in the mode's words: Advanced on Play taps a pad; Simple always plays the song (round 7).
+  for (const [mode, hear] of [
+    ['advanced', 'Tap a pad or a scene to hear it.'],
+    ['simple', 'Press Play to hear the song.'],
+  ] as const) {
+    it(`starting a starter saves the open project, loads the starter and keeps the old one in My projects (${mode})`, async () => {
+      act(() => setUiMode(mode));
+      const old = project('Old Song', Date.now() - 60_000);
+      await saveProject(old);
+      session.store.replace(old, { resetHistory: true });
 
-    const m = open('starters');
-    await until(() => dialog().textContent?.includes('Your current project “Old Song” stays in My projects'), 'intro naming the current project');
-    await click(buttonNamed(/^Start Techno/), 'Techno card');
-    await until(() => loaded.length > 0, 'onLoaded');
-    expect(loaded).toEqual(['starter']);
+      const m = open('starters');
+      await until(() => dialog().textContent?.includes('Your current project “Old Song” stays in My projects'), 'intro naming the current project');
+      await click(buttonNamed(/^Start Techno/), 'Techno card');
+      await until(() => loaded.length > 0, 'onLoaded');
+      expect(loaded).toEqual(['starter']);
 
-    const now = session.store.getState();
-    expect(now.starterId).toBe('techno');
-    expect(runtimeStore.getState().notice?.text).toBe(`Started “${now.name}”. “Old Song” is still in My projects. Tap a pad or a scene to hear it.`);
-    expect(now.id).not.toBe(old.id);
-    const stored = await library.listProjects();
-    expect(stored.map((p) => p.id).sort()).toEqual([old.id, now.id].sort());
+      const now = session.store.getState();
+      expect(now.starterId).toBe('techno');
+      expect(runtimeStore.getState().notice?.text).toBe(`Started “${now.name}”. “Old Song” is still in My projects. ${hear}`);
+      expect(now.id).not.toBe(old.id);
+      const stored = await library.listProjects();
+      expect(stored.map((p) => p.id).sort()).toEqual([old.id, now.id].sort());
 
-    m.unmount();
-    open('projects');
-    expect(document.activeElement?.textContent).toContain('My projects');
-    await until(() => rowNames('Saved projects').length === 2, 'two saved projects');
-    const names = rowNames('Saved projects');
-    expect(names[0]).toBe(now.name); // the open project comes first
-    expect(names).toContain('Old Song');
-    const openRow = dialog().querySelector('li[aria-current="true"]')!;
-    expect(openRow.textContent).toContain('Open now');
-    expect(openRow.textContent).toContain(now.name);
-    // Only projects that are not open offer Open.
-    expect(buttonNamed(`Open ${now.name}`)).toBeNull();
-    expect(buttonNamed('Open Old Song')).not.toBeNull();
-  });
+      m.unmount();
+      open('projects');
+      expect(document.activeElement?.textContent).toContain('My projects');
+      await until(() => rowNames('Saved projects').length === 2, 'two saved projects');
+      const names = rowNames('Saved projects');
+      expect(names[0]).toBe(now.name); // the open project comes first
+      expect(names).toContain('Old Song');
+      const openRow = dialog().querySelector('li[aria-current="true"]')!;
+      expect(openRow.textContent).toContain('Open now');
+      expect(openRow.textContent).toContain(now.name);
+      // Only projects that are not open offer Open.
+      expect(buttonNamed(`Open ${now.name}`)).toBeNull();
+      expect(buttonNamed('Open Old Song')).not.toBeNull();
+    });
+  }
 
   it('opens a stored project from the list', async () => {
     const a = project('Alpha', Date.now() - 1000);

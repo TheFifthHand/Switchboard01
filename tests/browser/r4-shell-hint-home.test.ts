@@ -56,8 +56,8 @@ function showStep(step: HintId) {
 const home = () => [...document.querySelectorAll<HTMLElement>('main [data-hint-home]')].find((el) => el.getBoundingClientRect().width > 1);
 
 describe('the hint home', () => {
+  // Round 7 fix: the chip is Advanced's only (Simple's Mixer sheet shows none: the next test, and tests/browser/r7-fix1.test.ts).
   for (const [w, hh, mode] of [
-    // Round 7 words: the chip is Advanced's; Simple's Mixer sheet shows none (the next test).
     [1366, 768, 'advanced'],
     [1920, 1080, 'advanced'],
   ] as const) {

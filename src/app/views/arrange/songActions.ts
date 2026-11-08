@@ -12,7 +12,7 @@
  * loops (part, clip, length, where in the clip and where from each other),
  * Ctrl+V puts copies at the playhead on the same parts.
  */
-import { regionEnd, sectionAt, sortSections } from '../../../project/arrangement';
+import { regionEnd } from '../../../project/arrangement';
 import { clipById, isSongSlot, slotOfClip } from '../../../project/clips';
 import type { ClipBars, Id, SongMoveKind } from '../../../project/types';
 import { uiStore } from '../../../state/uiStore';
@@ -24,7 +24,7 @@ import type { Edge, RegionClipboard, ShapeKind, SongEditResult } from '../../../
 import { editorStore } from './editorStore';
 import { clearSelection, setSelection } from './laneStore';
 import { freshName, libraryLoop, libraryResults, loopRoleOf, loopTarget, partProblem, realizeFor } from './library/libraryModel';
-import { INSTRUMENT_KINDS, instrumentName, lastsText, timeAt } from './songHome';
+import { INSTRUMENT_KINDS, instrumentName, instrumentRange, lastsText, timeAt } from './songHome';
 import { quietly } from './sceneOffer';
 import { barsText, scenePlaces } from './songModel';
 
@@ -464,13 +464,13 @@ export function shapeSectionNow(id: Id, kind: ShapeKind): SongEditResult | null 
 /** "Add an intro" / "Add an ending" (Shape the song…): the new bars are selected. */
 export function addIntroNow(opts: { plain?: boolean } = {}): SongEditResult | null {
   if (lockedNow()) return null;
-  const r = songCmd.addIntro(session.store);
+  const r = songCmd.addIntro(session.store, { plain: opts.plain });
   return run(r, { text: opts.plain ? `Added ${madeName(r) ?? 'an intro'} at the start: your instruments come in one at a time` : 'Added an intro' });
 }
 
 export function addEndingNow(opts: { plain?: boolean } = {}): SongEditResult | null {
   if (lockedNow()) return null;
-  const r = songCmd.addEnding(session.store);
+  const r = songCmd.addEnding(session.store, { plain: opts.plain });
   return run(r, { text: opts.plain ? `Added ${madeName(r) ?? 'an ending'} at the end: your instruments drop out one at a time` : 'Added an ending' });
 }
 
@@ -480,26 +480,33 @@ function madeName(r: SongEditResult & { sectionId?: Id }): string | null {
 }
 
 /**
- * "Make it longer" › Repeat <part> again / Add a part after <part>: the part
- * of the song at `bar` plays again after itself (a new part gets the next
- * plain name: Verse, Chorus, Bridge, Verse 2…), said with Undo. The new loops
- * are left unselected: a click on one opens it.
+ * "Make it longer" › Repeat <main part> again / Add a part after <part>: the
+ * song's main part (the one with the most music) plays again after itself,
+ * or a new part with its music (the next plain name: Verse, Chorus, Bridge,
+ * Verse 2…) goes after the main parts, before an ending; said with Undo. The
+ * new loops are left unselected: a click on one opens it.
  */
-export function growSongNow(kind: songCmd.GrowKind, bar: number): (SongEditResult & { sectionId?: Id }) | null {
+export function growSongNow(kind: songCmd.GrowKind): (SongEditResult & { sectionId?: Id }) | null {
   if (lockedNow()) return null;
-  const r = songCmd.growSong(session.store, bar, kind);
+  const r = songCmd.growSong(session.store, kind);
   if (!session.accepted(r)) return r;
   clearSelection();
-  said(kind === 'again' ? `${r.from} now plays twice in a row` : `Added ${r.name} after ${r.from}: it plays the same music, ready to change`, r);
+  said(
+    kind === 'again'
+      ? `${r.from} now plays twice in a row`
+      : `Added ${r.name} after ${r.after}: it plays the music of ${r.from}, ready to change`,
+    r,
+  );
   return r;
 }
 
 /**
  * "+ Add instrument" (Simple): instrument `trackId` gets the first library
- * loop of its kind (in the song's key), placed over the part of the song at
- * `bar` (repeated to fill it), as one undo step "Add <instrument>", said with
- * Undo. `loop` is null when no library loop suits it (a Recording); the row
- * then just shows, ready to record into.
+ * loop of its kind (in the song's key), repeated over the song's main parts
+ * (instrumentRange; a short song without sections plays on as long as the
+ * new loop, the other instruments' loops repeating with it), as one undo
+ * step "Add <instrument>", said with Undo. `loop` is null when no library
+ * loop suits it (a Recording); the row then just shows, ready to record into.
  */
 export function addInstrumentNow(trackId: Id, bar: number): { regionId?: Id; start: number; loop: string | null } | null {
   if (lockedNow()) return null;
@@ -509,8 +516,8 @@ export function addInstrumentNow(trackId: Id, bar: number): { regionId?: Id; sta
   const role = loopRoleOf(t);
   const loop = role ? libraryResults({ text: '', role, genre: null }).find((l) => !partProblem(l, t)) : undefined;
   const notes = loop ? realizeFor(p, loop, t) : null;
-  const section = sectionAt(sortSections(p.arrangement.sections), bar);
-  const start = section ? section.start : Math.max(0, Math.floor(bar));
+  const range = instrumentRange(p, bar);
+  const start = range.start;
   if (!loop || !notes) return { start, loop: null };
   const name = freshName(t, notes.name);
   // One undo step for the loop and its length (a Record Notes pass already groups every edit it makes).
@@ -522,15 +529,27 @@ export function addInstrumentNow(trackId: Id, bar: number): { regionId?: Id; sta
     if (session.accepted(r) && r.regionId) {
       regionId = r.regionId;
       const placed = regions().find((x) => x.id === regionId);
-      if (section && placed && placed.bars !== section.bars) session.accepted(songCmd.resizeRegions(session.store, [regionId], 'end', section.bars - placed.bars));
+      if (placed && range.bars !== null && range.bars > placed.bars) session.accepted(songCmd.resizeRegions(session.store, [regionId], 'end', range.bars - placed.bars));
+      // A song of short loops and no sections yet: the others play on with the new, longer loop.
+      else if (placed && r.clipId && range.bars !== null && range.bars < placed.bars && !project().arrangement.sections.length) carryOn(trackId, start, regionEnd(placed));
     }
   } finally {
     if (group) session.store.endGroup();
   }
   if (!regionId) return null;
   clearSelection();
-  notify(`Added ${uiStore.getState().uiMode === 'advanced' ? t.name : instrumentName(t.name, t.role)}: it plays “${name}”${section ? ` in ${section.name}` : ''}. Try other ${INSTRUMENT_KINDS[t.role].name.toLowerCase()} loops in Loops.`, 'info', 'undo');
+  notify(`Added ${uiStore.getState().uiMode === 'advanced' ? t.name : instrumentName(t.name, t.role)}: it plays “${name}”${range.name ? ` in ${range.name}` : ''}. Try other ${INSTRUMENT_KINDS[t.role].name.toLowerCase()} loops in Loops.`, 'info', 'undo');
   return { regionId, start, loop: loop.id };
+}
+
+/** The last loop on every other row that plays from `start` grows to end at `end` (its loop repeats). */
+function carryOn(trackId: Id, start: number, end: number): void {
+  const all = regions();
+  for (const q of all) {
+    if (q.trackId === trackId || regionEnd(q) >= end || regionEnd(q) <= start) continue;
+    if (all.some((o) => o.trackId === q.trackId && o.start >= regionEnd(q))) continue;
+    session.accepted(songCmd.resizeRegions(session.store, [q.id], 'end', end - regionEnd(q)));
+  }
 }
 
 /** A performance take's launches put in the song after its end (each loop on its part's row, as long as it played). */
