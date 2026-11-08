@@ -3,10 +3,14 @@
  *
  * - Type a value and press Enter (or leave the field); units may be typed
  *   ("124 bpm"). Invalid text reverts. Escape reverts.
+ * - `blurOnCommit` (fields in the instrument's own bar, e.g. Tempo): Enter
+ *   commits and gives the keys back (the field loses focus, so Space plays
+ *   and letters play notes again); a single Escape reverts and leaves too.
  * - Drag vertically on the field to change it (Shift = fine); a click
  *   without movement starts typing.
  * - Arrow Up/Down step (Shift = fine), PageUp/PageDown step x10.
- * - Values are clamped to [min, max] and rounded to the fine step.
+ * - Values are clamped to [min, max] and rounded to the fine step; a drag
+ *   moves in whole `dragStep`s when one is given (Shift: the fine step).
  * Gestures follow the Knob contract: one id per drag / key burst, the last
  * call has final: true.
  */
@@ -40,6 +44,10 @@ export interface NumberFieldProps {
   format?(value: number): string;
   /** Drag distance for one step (default 4 px). */
   dragPixelsPerStep?: number;
+  /** A drag lands on whole multiples of this (e.g. 1 for whole BPM); Shift drags in the fine step. */
+  dragStep?: number;
+  /** Enter commits and leaves the field; one Escape reverts and leaves (fields in the transport). */
+  blurOnCommit?: boolean;
   size?: 'sm' | 'md' | 'lg';
   /** Width of the number in characters (default 5). */
   chars?: number;
@@ -75,6 +83,8 @@ export function NumberField({
   unit,
   format,
   dragPixelsPerStep = 4,
+  dragStep,
+  blurOnCommit = false,
   size = 'md',
   chars = 5,
   disabled = false,
@@ -213,7 +223,7 @@ export function NumberField({
     const dy = d.lastY - e.clientY;
     d.lastY = e.clientY;
     d.acc = Math.min(max, Math.max(min, d.acc + (dy / dragPixelsPerStep) * (e.shiftKey ? fine : step)));
-    const v = quantize(d.acc);
+    const v = dragStep && !e.shiftKey ? quantize(Math.round(d.acc / dragStep) * dragStep) : quantize(d.acc);
     if (v === (d.pending ?? d.emitted ?? latest.current)) return;
     d.pending = v;
     if (!d.raf)
@@ -258,20 +268,30 @@ export function NumberField({
         break;
       case 'Enter':
         finishBurst();
-        if (commitDraft()) e.currentTarget.select();
+        if (commitDraft()) {
+          if (blurOnCommit) {
+            // Committed: hand the keys back to the instrument.
+            escaping.current = true;
+            e.currentTarget.blur();
+            escaping.current = false;
+          } else e.currentTarget.select();
+        }
         break;
-      case 'Escape':
+      case 'Escape': {
         finishBurst();
-        if (draft !== null && draft !== fmt(latest.current)) {
+        const changed = draft !== null && draft !== fmt(latest.current);
+        if (changed) {
           setDraft(fmt(latest.current));
           setInvalid(false);
-          e.stopPropagation(); // first Escape reverts; a second one may close a dialog
-        } else {
+          e.stopPropagation(); // the Escape that reverts is used up (a second one may close a dialog)
+        }
+        if (!changed || blurOnCommit) {
           escaping.current = true;
           e.currentTarget.blur();
           escaping.current = false;
         }
         break;
+      }
       default:
         return;
     }

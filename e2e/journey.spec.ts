@@ -1,124 +1,182 @@
 /**
- * The first-minute journey from PRODUCT_BRIEF.md §1, in a fresh browser
- * profile against the production build.
+ * The beginner's first song (EASY_SPEC, Simple: the one song screen), in a
+ * fresh browser profile against the production build: Make a beat from
+ * scratch → click squares and hear them → + Add instrument (Bass) → Make it
+ * longer (Repeat, then a new section) → Share a music file, then check the WAV itself. Share never changes
+ * the project; Stop goes back to the start of the song.
+ * (2.4's pads journey — Jump In → pads → Tone/Space → keys → a take → Export —
+ * is Advanced now: advanced.spec.ts.)
  */
 import { readFileSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
-import { jumpIn, masterPeakOver, openFresh, pageErrors, parseWavHeader, wavStats16 } from './helpers';
+import { expect, test, type Page } from '@playwright/test';
+import { masterPeakOver, openFresh, pageErrors, parseWavHeader, wavStats16 } from './helpers';
 
 const CEILING = 0.8912509381337456; // -1 dBFS
 
-test('Jump In → groove → switch clips → Tone/Space → keyboard → record performance → export WAV', async ({ page }) => {
+const rt = (page: Page) => page.evaluate(() => (window as any).__switchboard.runtime.getState());
+/** The bar under the song's playhead while it plays (0-based), or -1. */
+const liveBar = (page: Page) =>
+  page.evaluate(() => {
+    const sb = (window as any).__switchboard.session;
+    return (sb.sequencer?.songBarAt(sb.transport.getPosition().tick) ?? -1) as number;
+  });
+/** The hits in the Drums loop the editor is open on. */
+const drumHits = (page: Page) =>
+  page.evaluate(() => {
+    const p = (window as any).__switchboard.project();
+    const drums = p.tracks.find((t: any) => t.instrument.kind === 'drums');
+    const region = p.arrangement.regions.find((r: any) => r.trackId === drums.id);
+    // A song-only loop lives in songClips (Simple's Make a beat), a pad loop in clips.
+    const clip = [...drums.clips, ...(drums.songClips ?? [])].find((c: any) => c && c.id === region.clipId);
+    return clip.notes.length as number;
+  });
+/** What the song is made of (Share must leave all of it as it was). */
+const songState = (page: Page) =>
+  page.evaluate(() => {
+    const p = (window as any).__switchboard.project();
+    return JSON.stringify({ name: p.name, bpm: p.bpm, tracks: p.tracks, arrangement: p.arrangement, mastering: p.mastering, master: p.master });
+  });
+
+test('Make a beat → add an instrument → make it longer → Share a WAV', async ({ page }) => {
   await openFresh(page);
   await expect(page.getByText('Start with a beat. Make it yours.')).toBeVisible();
 
-  // 1-2. Jump In enables audio and plays a starter groove at a comfortable level.
-  await jumpIn(page);
+  // 1. Make a beat from scratch: the song screen, a Drums loop playing on repeat, the editor open on Draw.
+  await page.getByRole('button', { name: 'Make a beat from scratch' }).click();
+  await expect.poll(async () => (await rt(page)).playing, { timeout: 10_000 }).toBe(true);
   expect(await page.evaluate(() => (window as any).__switchboard.audioState())).toBe('running');
-  const level = await masterPeakOver(page, 2500);
-  expect(level.rms).toBeGreaterThan(0.01);
-  expect(level.peak).toBeLessThanOrEqual(CEILING + 1e-3);
+  // One home: no view tabs in Simple.
+  await expect(page.locator('header[aria-label="Transport"] [role="tab"]')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Your song', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Repeating: the whole song' })).toHaveAttribute('aria-pressed', 'true');
+  const editor = page.getByRole('region', { name: /^Editor: / });
+  await expect(editor).toBeVisible();
+  await expect(editor.getByRole('radio', { name: 'Draw' })).toBeChecked();
+  const tip = page.locator('[role="status"]', { hasText: 'Next:' });
+  await expect(tip).toContainText('Click squares in the grid below');
+  // The loop is empty: nothing is heard yet (the level is real, not a show).
+  expect((await masterPeakOver(page, 800)).peak).toBeLessThan(1e-3);
 
-  // 3. Several pads are lit and say so in text.
-  const playingPads = page.getByRole('button', { name: /Playing\.( Selected\.)?$/ });
-  await expect(playingPads).toHaveCount(4);
-  await expect(page.getByRole('button', { name: /^Bass, Groove: .*Playing\./ })).toBeVisible();
+  // 2. Click squares: a kick on every beat and a snare on 2 and 4, heard at once (the loop repeats).
+  for (const step of [1, 5, 9, 13]) await editor.getByRole('button', { name: `Kick, step ${step}`, exact: true }).click();
+  for (const step of [5, 13]) await editor.getByRole('button', { name: `Snare, step ${step}`, exact: true }).click();
+  await expect.poll(() => drumHits(page)).toBe(6);
+  const beat = await masterPeakOver(page, 2500);
+  expect(beat.rms).toBeGreaterThan(0.005);
+  expect(beat.peak).toBeLessThanOrEqual(CEILING + 1e-3);
+  await expect(tip).toContainText('Add a bass');
 
-  // 4. Tap another Bass variation: it queues immediately and joins on the next bar.
-  await page.evaluate(() => {
-    const sb = (window as any).__switchboard;
-    (window as any).__launches = [];
-    sb.session.transport.on('launch', (ev: any) => (window as any).__launches.push({ trackId: ev.trackId, slot: ev.slot, tick: ev.tick, heardAt: sb.position().tick }));
-  });
-  const lift = page.getByRole('button', { name: /^Bass, Lift: / });
-  await lift.click();
-  await expect(page.getByRole('button', { name: /^Bass, Lift: .*Starts next bar\./ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /^Bass, Lift: .*Playing\./ })).toBeVisible({ timeout: 5000 });
-  await expect(page.getByRole('button', { name: /^Bass, Groove: .*Ready\./ })).toBeVisible();
-  const launches = await page.evaluate(() => (window as any).__launches as { trackId: string; slot: number; tick: number; heardAt: number }[]);
-  const bassSwitch = launches.find((l) => l.trackId === 't3' && l.slot === 2)!;
-  expect(bassSwitch).toBeTruthy();
-  // The switch happens exactly on a bar line, and the UI is told when that audio time arrives (not early, < 1/8 note late).
-  expect(bassSwitch.tick % 384).toBe(0);
-  expect(bassSwitch.heardAt).toBeGreaterThanOrEqual(bassSwitch.tick);
-  expect(bassSwitch.heardAt - bassSwitch.tick).toBeLessThan(48);
+  // 3. + Add instrument → Bass: its row shows with a loop, and it is heard with the beat.
+  await page.getByTestId('add-instrument').click();
+  await page.getByRole('menu', { name: 'Add an instrument' }).getByRole('menuitem', { name: 'Bass', exact: true }).click();
+  await expect(page.getByText(/^Added Bass: it plays “/)).toBeVisible();
+  const bassRow = page.getByRole('group', { name: /^Bass: 1 loop/ });
+  await expect(bassRow).toBeVisible();
+  const bassId = await page.evaluate(() => (window as any).__switchboard.project().tracks.find((t: any) => t.role === 'bass' || t.name === 'Bass').id);
+  expect(await page.evaluate((id) => (window as any).__switchboard.project().arrangement.regions.some((r: any) => r.trackId === id), bassId)).toBe(true);
+  // Hear it alone: the bass sounds on its own (Solo off again afterwards).
+  await page.getByRole('button', { name: 'Solo Bass', exact: true }).click();
+  expect((await masterPeakOver(page, 2500)).rms).toBeGreaterThan(0.003);
+  await page.getByRole('button', { name: 'Solo Bass', exact: true }).click();
 
-  // 5. Tone and Space change the selected part (tapping the Bass pad selected Bass).
-  await expect(page.getByRole('heading', { name: 'Bass' })).toBeVisible();
-  const tone = page.getByRole('slider', { name: 'Tone' });
-  await tone.focus();
-  await page.keyboard.press('End');
-  await expect(tone).toHaveAttribute('aria-valuenow', '1');
-  const space = page.getByRole('slider', { name: 'Space' });
-  await space.focus();
-  await page.keyboard.press('End');
-  const macros = await page.evaluate(() => (window as any).__switchboard.project().tracks.find((t: any) => t.id === 't3').macros);
-  expect(macros.tone).toBe(1);
-  expect(macros.space).toBe(1);
-
-  // 6. Keyboard with Musical Assist: an out-of-key key plays the nearest in-key note.
-  const key = await page.evaluate(() => {
+  // 4. Make it longer. A one-bar beat is first made into a Verse (its loops filled out to a whole section)
+  //    and played twice; then a new, differently named section follows, made from the song's own music.
+  //    Each is one Undo step.
+  const length = page.getByTestId('song-length');
+  await expect(length).toHaveText('· 0:02');
+  await page.getByTestId('make-longer').click();
+  await page.getByRole('menuitem', { name: /^Repeat .* again$/ }).click();
+  await expect(page.getByText(/^Verse now plays twice in a row\./)).toBeVisible();
+  await expect(length).toHaveText('· 0:32');
+  await page.getByTestId('make-longer').click();
+  await page.getByRole('menuitem', { name: 'Add a section after Verse' }).click();
+  await expect(length).toHaveText('· 0:48');
+  const sections = await page.evaluate(() => (window as any).__switchboard.project().arrangement.sections.map((s: any) => s.name as string));
+  expect(sections.slice(0, 2)).toEqual(['Verse', 'Verse']);
+  expect(sections).toHaveLength(3);
+  expect(sections[2]).not.toBe('Verse');
+  // Every instrument plays in the new section (it repeats the song's music).
+  const inLast = await page.evaluate(() => {
     const p = (window as any).__switchboard.project();
-    return { root: p.root, scale: p.scale, assist: p.assist };
+    const last = [...p.arrangement.sections].sort((a: any, b: any) => a.start - b.start).pop();
+    return new Set(p.arrangement.regions.filter((r: any) => r.start >= last.start && r.start < last.start + last.bars).map((r: any) => r.trackId)).size;
   });
-  expect(key.assist).toBe(true);
-  await page.locator('body').click({ position: { x: 5, y: 5 } }).catch(() => undefined);
-  await page.keyboard.down('KeyA');
-  await expect.poll(() => page.evaluate(() => ((window as any).__switchboard.runtime.getState().held.t3 ?? []).length)).toBe(1);
-  await page.keyboard.up('KeyA');
-  await expect.poll(() => page.evaluate(() => ((window as any).__switchboard.runtime.getState().held.t3 ?? []).length)).toBe(0);
+  expect(inLast).toBe(2);
+  await page.getByRole('button', { name: 'Undo', exact: true }).first().click();
+  await expect(length).toHaveText('· 0:32');
+  await page.getByRole('button', { name: 'Redo', exact: true }).first().click();
+  await expect(length).toHaveText('· 0:48');
 
-  // 7. Record Performance, play for a while, stop, export something to listen to.
-  await page.getByRole('button', { name: 'Record Performance' }).click();
-  await expect(page.getByRole('button', { name: 'Stop recording' })).toBeVisible();
-  await page.keyboard.down('KeyD');
-  await page.waitForTimeout(400);
-  await page.keyboard.up('KeyD');
-  await page.getByRole('button', { name: /^Launch scene Lift/ }).click();
-  await page.waitForTimeout(3500);
-  await page.getByRole('button', { name: 'Stop recording' }).click();
-  const perf = await page.evaluate(() => (window as any).__switchboard.project().performances[0]);
-  expect(perf).toBeTruthy();
-  const types = new Set(perf.events.map((e: any) => e.type));
-  expect(types.has('noteOn')).toBe(true);
-  expect(types.has('scene')).toBe(true);
+  // 5. Share → a music file (the default): a WAV that works everywhere, as loud as streaming songs.
+  const before = await songState(page);
+  await page.getByRole('button', { name: 'Share', exact: true }).click();
+  const share = page.getByRole('dialog', { name: 'Share your song' });
+  await expect(share).toBeVisible();
+  await expect(share.getByRole('radio', { name: /^A music file to send/ })).toBeChecked();
+  await expect(share.getByText('The whole song · 0:48')).toBeVisible();
+  await expect(share.getByRole('switch', { name: 'As loud as streaming songs' })).toBeChecked();
+  const [download] = await Promise.all([page.waitForEvent('download', { timeout: 60_000 }), share.getByRole('button', { name: 'Save to my computer' }).click()]);
+  expect(download.suggestedFilename()).toBe('My beat.wav');
+  await expect(share.getByText('Saved “My beat.wav” — as loud as streaming songs. Find it in your Downloads.')).toBeVisible({ timeout: 30_000 });
 
-  // Export is also in the More menu at every width (the strip shows it from 1280 px in Simple).
-  await page.getByRole('button', { name: /^More:/ }).click();
-  await page.getByRole('menuitem', { name: /Export WAV/ }).click();
-  const dialog = page.getByRole('dialog', { name: 'Export audio' });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel('What to export')).toHaveValue(`perf:${perf.id}`);
-  const [download] = await Promise.all([page.waitForEvent('download', { timeout: 60_000 }), dialog.getByRole('button', { name: 'Export WAV' }).click()]);
-  expect(download.suggestedFilename()).toMatch(/\.wav$/);
+  // The file: 16-bit stereo WAV at 44.1 kHz, the song plus its tail, with the beat in it, under the ceiling.
   const wav = readFileSync(await download.path());
   const h = parseWavHeader(wav);
-  expect(h.channels).toBe(2);
-  expect(h.sampleRate).toBe(48000);
-  expect(h.bitDepth).toBe(16);
-  const seconds = h.frames / h.sampleRate;
-  const expected = await page.evaluate(
-    ({ id, tail }) => (window as any).__switchboard.session.renderPlan({ kind: 'performance', performanceId: id }, tail).totalSeconds,
-    { id: perf.id, tail: await page.evaluate(() => (window as any).__switchboard.project().arrangement.tailSeconds) },
-  );
-  expect(Math.abs(seconds - expected)).toBeLessThan(0.01);
+  expect(h).toMatchObject({ channels: 2, sampleRate: 44100, bitDepth: 16 });
+  const expected = await page.evaluate(() => {
+    const sb = (window as any).__switchboard;
+    return sb.session.renderPlan({ kind: 'song' }, sb.project().arrangement.tailSeconds).totalSeconds as number;
+  });
+  expect(Math.abs(h.frames / h.sampleRate - expected)).toBeLessThan(0.01);
   const stats = wavStats16(wav, h.dataOffset, h.frames, h.channels);
   expect(stats.finite).toBe(true);
-  expect(stats.rms).toBeGreaterThan(0.005);
+  expect(stats.rms).toBeGreaterThan(0.01);
   expect(stats.peak).toBeLessThanOrEqual(CEILING + 1 / 32768);
+
+  // Share changed only the file: the song, its sound and its undo history are as they were.
+  expect(await songState(page)).toBe(before);
+  await share.getByRole('button', { name: 'Close' }).click();
+  await expect(share).toBeHidden();
+  await expect(page.getByText(/^Saved “My beat\.wav”/)).toBeVisible();
+
+  // 6. Play plays the song (on from where it is); Stop goes back to its start.
+  // (The song may have played to its end while the file was made.)
+  if (!(await rt(page)).playing) await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect.poll(async () => (await rt(page)).playing).toBe(true);
+  expect((await rt(page)).mode).toBe('song');
+  await expect.poll(() => liveBar(page), { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
+  // Pause keeps the place; Stop goes back to the start, so the next Play starts the song again.
+  await page.getByRole('button', { name: 'Pause', exact: true }).click();
+  await expect.poll(async () => (await rt(page)).paused).toBe(true);
+  expect(await liveBar(page)).toBeGreaterThanOrEqual(2);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect.poll(async () => (await rt(page)).paused).toBe(false);
+  expect((await rt(page)).songCursor).toBe(0);
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect.poll(async () => (await rt(page)).playing).toBe(true);
+  expect(await liveBar(page)).toBeLessThan(2);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect.poll(async () => (await rt(page)).playing).toBe(false);
 
   expect(pageErrors(page)).toEqual([]);
 });
 
-test('Jump In always lands on the lit Loops pads, even when another view was left open last time', async ({ page }) => {
-  // A returning user who last left the app in Arrange with the Steps pad mode.
-  await page.addInitScript(() => localStorage.setItem('switchboard01.ui', JSON.stringify({ view: 'arrange', padMode: 'steps', guideDone: true })));
+test('Jump In lands on the song screen, playing, even when a sheet was left open last time', async ({ page }) => {
+  // A returning user who last left the app on the Mixer sheet.
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('switchboard01.ui')) localStorage.setItem('switchboard01.ui', JSON.stringify({ view: 'mix', padMode: 'steps' }));
+  });
   await openFresh(page);
-  // Behind the Welcome card (inert), the remembered view is showing.
-  await expect(page.locator('header[aria-label="Transport"] [role="tab"][aria-selected="true"]')).toContainText('Arrange');
-  await jumpIn(page);
-  await expect(page.getByRole('tab', { name: 'Play', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('tab', { name: 'Loops', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('button', { name: /Playing\.( Selected\.)?$/ })).toHaveCount(4);
+  await page.getByRole('button', { name: 'Jump In' }).click();
+  await expect.poll(async () => (await rt(page)).playing, { timeout: 10_000 }).toBe(true);
+  // The song screen, playing the starter's main part on repeat, at a comfortable level.
+  await expect(page.getByRole('heading', { name: 'Your song', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Back to my song' })).toHaveCount(0);
+  await expect(page.locator('header[aria-label="Transport"] [role="tab"]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Repeating: / })).toHaveAttribute('aria-pressed', 'true');
+  expect((await rt(page)).mode).toBe('song');
+  const level = await masterPeakOver(page, 2000);
+  expect(level.rms).toBeGreaterThan(0.01);
+  expect(level.peak).toBeLessThanOrEqual(CEILING + 1e-3);
   expect(pageErrors(page)).toEqual([]);
 });

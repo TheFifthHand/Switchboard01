@@ -27,7 +27,9 @@
   border-radius: var(--r-md);
   outline: none;
   cursor: ns-resize;
-  touch-action: none;
+  /* A finger swipe scrolls the page; the fader takes the finger on its cap or after a short rest
+     (Fader.tsx), and then stops the panning itself. */
+  touch-action: pan-x pan-y;
 }
 
 .slider:focus-visible {
@@ -57,7 +59,7 @@
   bottom: calc(var(--at) * (100% - var(--cap-h)) + var(--cap-h) / 2);
   transform: translateY(50%);
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: var(--fs-2xs);
   line-height: 1;
   text-align: right;
   color: var(--ink-3);
@@ -66,7 +68,7 @@
 
 .mark[data-unity] {
   color: var(--ink);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 /* ---------- lane, slot and cap ---------- */
@@ -154,18 +156,50 @@
 
 /* ---------- value readout and entry ---------- */
 
+/* The value row: never wider than the fader (the full text is in the title and aria); under a
+   fader that can be moved it is a key that opens typed entry. It takes 18 px of the layout (and
+   the 4 px gap), but its box is a full 32 px tall target that starts right under the slider (the
+   two never overlap) and moves nothing. */
 .value {
+  position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   gap: 3px;
-  min-height: 18px;
-  font-size: var(--fs-sm);
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  margin: -4px 0 -10px;
+  padding: 4px 0 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
   color: var(--ink);
+  font-size: var(--fs-sm);
+  line-height: 18px;
+  letter-spacing: -0.02em;
   white-space: nowrap;
 }
 
+button.value {
+  cursor: text;
+}
+
+button.value:hover .valueText {
+  background: rgba(20, 24, 28, 0.06);
+}
+
+.valueText {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  text-overflow: ellipsis;
+}
+
 .modMark {
+  flex: none;
+  margin-top: 4px;
   color: var(--teal);
 }
 
@@ -174,6 +208,7 @@
   align-items: center;
   gap: 2px;
   max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   padding: 0 5px 0 3px;
   border-radius: 8px;
@@ -181,8 +216,11 @@
   color: var(--teal-ink);
   font-family: var(--font-ui);
   font-size: var(--fs-xs);
-  font-weight: 600;
-  text-overflow: ellipsis;
+  font-weight: var(--fw-semibold);
+}
+
+.badge svg {
+  flex: none;
 }
 
 .entry {

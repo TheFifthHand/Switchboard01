@@ -252,7 +252,9 @@ class MonoVoice extends BaseVoice {
     this.f2 = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: s.cutoff, Q: q2 });
     const k = driveK(s.drive);
     this.pre = new GainNode(ctx, { gain: k / DRIVE_RANGE });
-    const shaper = new WaveShaperNode(ctx, { curve: driveCurve(), oversample: '2x' });
+    // Curve assigned after construction: passing it in the options copies it element by element (~1 ms per note).
+    const shaper = new WaveShaperNode(ctx, { oversample: '2x' });
+    shaper.curve = driveCurve();
     this.post = new GainNode(ctx, { gain: driveCompensation(k) });
 
     osc.connect(oscGain).connect(this.f1);

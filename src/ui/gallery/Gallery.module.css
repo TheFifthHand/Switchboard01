@@ -44,7 +44,7 @@
 .wordmark {
   color: var(--ink);
   font-size: var(--fs-md);
-  font-weight: 750;
+  font-weight: var(--fw-bold);
   letter-spacing: 0.22em;
 }
 
@@ -58,7 +58,7 @@
   margin-left: 6px;
   color: var(--ink-3);
   font-size: var(--fs-sm);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
 }
 
 .note {
@@ -73,7 +73,7 @@
 }
 
 .note strong {
-  font-weight: 620;
+  font-weight: var(--fw-semibold);
 }
 
 /* Align the icon with the first line of text when the note wraps. */
@@ -165,7 +165,7 @@
 .mono {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
 }
 
 /* ---------- pad matrix ---------- */
@@ -186,7 +186,7 @@
   padding: 0 2px;
   color: var(--ink-2);
   font-size: var(--fs-sm);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -209,7 +209,7 @@
 .sceneHead {
   color: var(--ink-3);
   font-size: var(--fs-xs);
-  font-weight: 650;
+  font-weight: var(--fw-semibold);
   letter-spacing: 0.1em;
   text-align: center;
   text-transform: uppercase;
@@ -254,7 +254,7 @@
   margin: 2px 0 8px;
   color: var(--ink-3);
   font-size: var(--fs-xs);
-  font-weight: 650;
+  font-weight: var(--fw-semibold);
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -313,6 +313,49 @@
   gap: 6px;
 }
 
+/* ---------- big screens, levels ---------- */
+.bigRow {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.bigKnobs {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.bigPads {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 140px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.levelRow {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  height: 280px;
+}
+
+.faderCol {
+  display: flex;
+  gap: 4px;
+  width: 96px;
+}
+
+/* The meter beside a fader spans the fader's travel (cap centre at the ends), so its fader-taper
+   scale lines up with the marks; the peak number sits under it. */
+.meterWell {
+  display: flex;
+  padding: 16px 0 21px;
+}
+
 /* ---------- controls ---------- */
 .stack {
   display: flex;
@@ -330,7 +373,7 @@
 .demoTag {
   color: var(--teal-ink);
   font-size: var(--fs-sm);
-  font-weight: 560;
+  font-weight: var(--fw-medium);
 }
 
 .meterBody {

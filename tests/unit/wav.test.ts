@@ -39,7 +39,7 @@ describe('encodeWav', () => {
     }
   });
 
-  it('round-trips 16-bit and 24-bit audio within one quantization step', () => {
+  it('round-trips 16-bit (undithered) and 24-bit audio within one quantization step', () => {
     const sr = 44100;
     const L = sine(4410, 1000, sr, 0.9);
     const R = sine(4410, 250, sr, 0.3, 1);
@@ -47,7 +47,7 @@ describe('encodeWav', () => {
       [16, 1 / 32767],
       [24, 1 / 8388607],
     ] as const) {
-      const parsed = parseWav(encodeWav([L, R], sr, bits));
+      const parsed = parseWav(encodeWav([L, R], sr, bits, { dither: false }));
       expect(parsed.sampleRate).toBe(sr);
       expect(parsed.bitDepth).toBe(bits);
       expect(parsed.format).toBe('pcm');
@@ -65,7 +65,7 @@ describe('encodeWav', () => {
   });
 
   it('interleaves channels in frame order', () => {
-    const buf = encodeWav([new Float32Array([1, 0]), new Float32Array([-1, 0.5])], 8000, 16);
+    const buf = encodeWav([new Float32Array([1, 0]), new Float32Array([-1, 0.5])], 8000, 16, { dither: false });
     const v = new DataView(buf);
     expect([v.getInt16(44, true), v.getInt16(46, true), v.getInt16(48, true), v.getInt16(50, true)]).toEqual([32767, -32768, 0, 16384]);
   });

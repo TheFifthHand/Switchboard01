@@ -1,46 +1,83 @@
-/** Clip slot edits: create, delete, rename, length, duplicate, paste, clear, copy, move between pads. */
+/**
+ * Clip slot edits: create, delete, rename, length, double, repeat, paste,
+ * clear, copy, move between pads, replace notes, and a sampler clip's own
+ * recording.
+ *
+ * The song follows in the same undo step (common.ts keepSongWithClips): a
+ * deleted clip's regions leave the song (a clip pasted or recorded over it
+ * takes them over), a clip moved to another part takes its regions to that
+ * part's row, and a new length keeps the regions' bars. A copy never adds
+ * loops to the song.
+ *
+ * Edits of what is in a clip (rename, length, double, repeat, replace notes,
+ * clear, its recording) work on pad clips and song clips alike (a song slot,
+ * see project/clips.ts). The pad-grid edits (create on a pad, delete, move,
+ * copy to another pad, paste onto a pad, clear all pads) take pad rows only
+ * and refuse a song slot with nothing changed.
+ */
+import { builtinSampleInfo } from '../../content/catalog';
 import { cloneClip, cloneClipWithNewIds, reIdNotes } from '../../project/clone';
 import { createClip as makeClip } from '../../project/factory';
-import { TICKS_PER_BAR, type Clip, type ClipBars, type Id, type Project, type Track } from '../../project/types';
+import { SAMPLER_PARAMS, clampParam, specById } from '../../project/params';
+import { isSongSlot, trackClips } from '../../project/clips';
+import { MAX_CLIP_BARS, TICKS_PER_BAR, type Clip, type ClipBars, type ClipSample, type Id, type Note, type Project, type Track, type VariationInfo } from '../../project/types';
 import { VALIDATION_LIMITS, sanitizeClip } from '../../project/validate';
 import type { ProjectStore } from '../projectStore';
-import { NOT_FOUND, clipAt, cleanName, draftClip, draftTrack, findTrack, isSlot, refuse, run, type CommandResult } from './common';
+import { NOT_FOUND, SONG_SLOT_REFUSAL, clipAt, cleanName, deepEqual, draftClip, draftTrack, findTrack, isFiniteNumber, isSlot, refuse, run, type CommandResult } from './common';
 
+/** Clips are 1 to MAX_CLIP_BARS (8) bars. */
 export function isClipBars(bars: number): bars is ClipBars {
-  return bars === 1 || bars === 2 || bars === 3 || bars === 4;
+  return Number.isInteger(bars) && bars >= 1 && bars <= MAX_CLIP_BARS;
 }
 
-/** Default clip name: the scene (row) name. */
-export function defaultClipName(p: Project, slot: number): string {
-  return p.scenes[slot]?.name ?? `Clip ${slot + 1}`;
+const LENGTH_MESSAGE = `Loops are 1 to ${MAX_CLIP_BARS} bars.`;
+
+/**
+ * Default name of a new loop: the part's name and the first number no loop
+ * of the part uses ("Drums 1", "Bass 2"), so two parts never get the same
+ * name. Without a part (or one not found) the scene (row) name, as before.
+ */
+export function defaultClipName(p: Project, slot: number, trackId?: Id): string {
+  const t = trackId === undefined ? undefined : p.tracks.find((x) => x.id === trackId);
+  if (!t) return p.scenes[slot]?.name ?? `Loop ${slot + 1}`;
+  const used = new Set(trackClips(t).map((c) => c.clip.name));
+  const stem = t.name.slice(0, 55) || 'Loop';
+  let n = 1;
+  while (used.has(`${stem} ${n}`)) n++;
+  return `${stem} ${n}`;
 }
+
+const DELETE_SONG_LOOP = 'That loop lives in the song: delete it in the Song view.';
 
 /** Create an empty clip in an empty slot. */
 export function createClip(store: ProjectStore, trackId: Id, slot: number, bars: ClipBars = 1, name?: string): CommandResult & { clipId?: Id } {
   const p = store.getState();
   const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
-  if (!isSlot(slot) || !isClipBars(bars)) return refuse('invalid', 'Clips are 1 to 4 bars in one of four slots.');
-  if (t.clips[slot]) return refuse('occupied', 'That slot already has a clip.');
-  const clip = makeClip((name !== undefined && cleanName(name)) || defaultClipName(p, slot), bars);
-  const r = run(store, 'clip:Create clip', (d) => {
+  if (isSongSlot(slot)) return SONG_SLOT_REFUSAL('New loops go on a pad. To add a loop to the song, use the Song view.');
+  if (!isSlot(slot, t)) return refuse('invalid', 'There is no pad there.');
+  if (!isClipBars(bars)) return refuse('invalid', LENGTH_MESSAGE);
+  if (t.clips[slot]) return refuse('occupied', 'That pad already has a loop.');
+  const clip = makeClip((name !== undefined && cleanName(name)) || defaultClipName(p, slot, trackId), bars);
+  const r = run(store, 'clip:Create loop', (d) => {
     draftTrack(d, trackId).clips[slot] = clip;
   });
   return { ...r, clipId: clip.id };
 }
 
 export function deleteClip(store: ProjectStore, trackId: Id, slot: number): CommandResult {
-  if (!clipAt(store.getState(), trackId, slot)) return NOT_FOUND('clip');
-  return run(store, 'clip:Delete clip', (d) => {
+  if (isSongSlot(slot)) return SONG_SLOT_REFUSAL(DELETE_SONG_LOOP);
+  if (!clipAt(store.getState(), trackId, slot)) return NOT_FOUND('loop');
+  return run(store, 'clip:Delete loop', (d) => {
     draftTrack(d, trackId).clips[slot] = null;
   });
 }
 
 export function renameClip(store: ProjectStore, trackId: Id, slot: number, name: string): CommandResult {
-  if (!clipAt(store.getState(), trackId, slot)) return NOT_FOUND('clip');
+  if (!clipAt(store.getState(), trackId, slot)) return NOT_FOUND('loop');
   const n = cleanName(name, 60);
-  if (!n) return refuse('invalid', 'A clip needs a name.');
-  return run(store, 'clip:Rename clip', (d) => {
+  if (!n) return refuse('invalid', 'A loop needs a name.');
+  return run(store, 'clip:Rename loop', (d) => {
     draftClip(d, trackId, slot).name = n;
   });
 }
@@ -48,10 +85,10 @@ export function renameClip(store: ProjectStore, trackId: Id, slot: number, name:
 /** Change clip length; notes starting beyond the new end are removed. */
 export function setClipBars(store: ProjectStore, trackId: Id, slot: number, bars: ClipBars): CommandResult {
   const clip = clipAt(store.getState(), trackId, slot);
-  if (!clip) return NOT_FOUND('clip');
-  if (!isClipBars(bars)) return refuse('invalid', 'Clips are 1 to 4 bars.');
+  if (!clip) return NOT_FOUND('loop');
+  if (!isClipBars(bars)) return refuse('invalid', LENGTH_MESSAGE);
   const len = bars * TICKS_PER_BAR;
-  return run(store, 'clip:Change clip length', (d) => {
+  return run(store, 'clip:Change loop length', (d) => {
     const c = draftClip(d, trackId, slot);
     c.bars = bars;
     if (c.notes.some((n) => n.tick >= len)) c.notes = c.notes.filter((n) => n.tick < len);
@@ -59,32 +96,148 @@ export function setClipBars(store: ProjectStore, trackId: Id, slot: number, bars
 }
 
 /**
- * Double the clip (up to 4 bars) by repeating its content: 1 -> 2, 2 -> 4,
- * 3 -> 4 (the first bar is repeated into bar 4).
+ * Double the clip (up to MAX_CLIP_BARS bars) by repeating its content: 1 -> 2,
+ * 2 -> 4, 4 -> 8; a clip whose double would be longer is filled up to 8 bars
+ * from its start (5 -> 8 repeats bars 1-3 into bars 6-8).
  */
 export function duplicateClipContent(store: ProjectStore, trackId: Id, slot: number): CommandResult {
   const clip = clipAt(store.getState(), trackId, slot);
-  if (!clip) return NOT_FOUND('clip');
-  if (clip.bars >= 4) return refuse('limit', 'Clips can be at most 4 bars long.');
+  if (!clip) return NOT_FOUND('loop');
+  if (clip.bars >= MAX_CLIP_BARS) return refuse('limit', `Loops can be at most ${MAX_CLIP_BARS} bars long.`);
   const oldLen = clip.bars * TICKS_PER_BAR;
-  const newBars = Math.min(4, clip.bars * 2) as ClipBars;
+  const newBars = Math.min(MAX_CLIP_BARS, clip.bars * 2) as ClipBars;
   const copyLen = (newBars - clip.bars) * TICKS_PER_BAR;
   const copies = reIdNotes(clip.notes.filter((n) => n.tick < copyLen)).map((n) => ({ ...n, tick: n.tick + oldLen }));
-  if (clip.notes.length + copies.length > VALIDATION_LIMITS.maxNotesPerClip) return refuse('limit', 'The clip would have too many notes.');
-  return run(store, 'clip:Duplicate clip content', (d) => {
+  if (clip.notes.length + copies.length > VALIDATION_LIMITS.maxNotesPerClip) return refuse('limit', 'The loop would have too many notes.');
+  return run(store, 'clip:Double loop', (d) => {
     const c = draftClip(d, trackId, slot);
     c.bars = newBars;
     c.notes.push(...copies);
   });
 }
 
-/** Copy a clip into another slot of the same part (replacing what is there). */
+/**
+ * Make a clip `bars` long by repeating its bars in turn (a 3-bar clip made 8
+ * bars plays bars 1 2 3 1 2 3 1 2), so a longer loop keeps playing instead of
+ * falling silent. Notes keep their lengths. Shortening is Length's job
+ * (setClipBars); the same length changes nothing. One undo step.
+ */
+export function repeatClipToBars(store: ProjectStore, trackId: Id, slot: number, bars: ClipBars): CommandResult {
+  const clip = clipAt(store.getState(), trackId, slot);
+  if (!clip) return NOT_FOUND('loop');
+  if (!isClipBars(bars)) return refuse('invalid', LENGTH_MESSAGE);
+  if (bars === clip.bars) return { changed: false };
+  if (bars < clip.bars) return refuse('invalid', `The loop is already ${clip.bars} bars: choose a longer length to repeat it, or use Length to shorten it.`);
+  const period = clip.bars * TICKS_PER_BAR;
+  const copies: Note[] = [];
+  for (let start = period; start < bars * TICKS_PER_BAR; start += period) {
+    const room = bars * TICKS_PER_BAR - start;
+    for (const n of reIdNotes(clip.notes.filter((x) => x.tick < room))) copies.push({ ...n, tick: n.tick + start });
+  }
+  if (clip.notes.length + copies.length > VALIDATION_LIMITS.maxNotesPerClip) return refuse('limit', 'The loop would have too many notes.');
+  return run(store, 'clip:Repeat loop', (d) => {
+    const c = draftClip(d, trackId, slot);
+    c.bars = bars;
+    c.notes.push(...copies);
+  }, undefined, { display: `Repeat loop to ${bars} bars` });
+}
+
+/**
+ * Replace a clip's notes in one undo step that Undo calls `label` (for
+ * example Variation's "Back to original"). The notes are checked like a
+ * pasted clip (inside the clip, playable by the part; ids kept when unique),
+ * and the clip keeps its length. `opts.variation` sets the clip's Variation
+ * information (null removes it); left out, it is kept. Notes and Variation
+ * information that are already the clip's change nothing and leave no step.
+ */
+export function setClipNotes(
+  store: ProjectStore,
+  trackId: Id,
+  slot: number,
+  notes: readonly Note[],
+  label: string,
+  opts: { variation?: VariationInfo | null } = {},
+): CommandResult {
+  const p = store.getState();
+  const t = findTrack(p, trackId);
+  const clip = clipAt(p, trackId, slot);
+  if (!t || !clip) return NOT_FOUND('loop');
+  const words = cleanName(label, 60);
+  if (!words) return refuse('invalid', 'The change needs a name.');
+  if (!Array.isArray(notes)) return refuse('invalid', 'The notes could not be read.');
+  const { clip: clean } = sanitizeClip({ id: clip.id, name: clip.name, bars: clip.bars, notes }, t.instrument.kind);
+  if (!clean) return refuse('invalid', `The notes could not be used: a loop holds at most ${VALIDATION_LIMITS.maxNotesPerClip} notes.`);
+  const variation = opts.variation;
+  if (variation && !(isFiniteNumber(variation.seed) && Number.isInteger(variation.generation) && variation.generation >= 0)) {
+    return refuse('invalid', 'The Variation information is not valid.');
+  }
+  const nextVariation = variation === undefined ? clip.variation : (variation ?? undefined);
+  if (deepEqual(clean.notes, clip.notes) && deepEqual(nextVariation, clip.variation)) return { changed: false };
+  return run(store, 'clip:Replace notes', (d) => {
+    const c = draftClip(d, trackId, slot);
+    c.notes = clean.notes;
+    if (variation === null) delete c.variation;
+    else if (variation) c.variation = { seed: variation.seed, generation: variation.generation };
+  }, undefined, { display: words });
+}
+
+/* ------------------------------------------------------------------ */
+/* A sampler clip's own recording                                      */
+/* ------------------------------------------------------------------ */
+
+const ROOT_NOTE_SPEC = specById(SAMPLER_PARAMS, 'rootNote')!;
+
+/** A recording the project can play: an imported one, or a built-in one. */
+function knownRecording(p: Project, id: unknown): id is Id {
+  return typeof id === 'string' && (id.startsWith('builtin:') ? !!builtinSampleInfo(id) : p.samples.some((s) => s.id === id));
+}
+
+/**
+ * Change the recording a clip plays itself (Clip.sample): which recording
+ * (`id`), the region (`start`, `end`: fractions of the file, 0 <= start < end
+ * <= 1) and the key that plays it at its own pitch (`rootNote`, a whole MIDI
+ * note 24-96). A clip without one starts from the part's recording and its
+ * whole length at root 60. `null` removes it: the clip plays the part's
+ * recording again. Invalid values are refused with nothing changed. A shared
+ * gesture id (a handle drag) makes one undo step.
+ */
+export function setClipSampleRegion(store: ProjectStore, trackId: Id, slot: number, partial: Partial<ClipSample> | null, gesture?: string): CommandResult {
+  const p = store.getState();
+  const t = findTrack(p, trackId);
+  const clip = clipAt(p, trackId, slot);
+  if (!t || !clip) return NOT_FOUND('loop');
+  if (partial === null) {
+    if (!clip.sample) return { changed: false };
+    return run(store, 'clip:Play the part’s recording', (d) => {
+      delete draftClip(d, trackId, slot).sample;
+    });
+  }
+  if (typeof partial !== 'object') return refuse('invalid', 'The recording settings could not be read.');
+  const base: ClipSample | null = clip.sample ?? (t.instrument.kind === 'sampler' && t.instrument.sampleId ? { id: t.instrument.sampleId, start: 0, end: 1, rootNote: ROOT_NOTE_SPEC.default } : null);
+  const id = partial.id ?? base?.id;
+  if (!knownRecording(p, id)) return refuse('invalid', partial.id === undefined ? 'Choose a recording for this loop first.' : 'That recording is not in this project.');
+  const start = partial.start ?? base?.start ?? 0;
+  const end = partial.end ?? base?.end ?? 1;
+  if (!isFiniteNumber(start) || !isFiniteNumber(end) || start < 0 || end > 1 || start >= end) return refuse('invalid', 'The start must come before the end, both inside the recording.');
+  const rootIn = partial.rootNote ?? base?.rootNote ?? ROOT_NOTE_SPEC.default;
+  if (!isFiniteNumber(rootIn) || rootIn < ROOT_NOTE_SPEC.min || rootIn > ROOT_NOTE_SPEC.max) return refuse('invalid', `The root note must be between ${ROOT_NOTE_SPEC.min} and ${ROOT_NOTE_SPEC.max}.`);
+  const next: ClipSample = { id, start, end, rootNote: clampParam(ROOT_NOTE_SPEC, rootIn) };
+  const cur = clip.sample;
+  if (cur && cur.id === next.id && cur.start === next.start && cur.end === next.end && cur.rootNote === next.rootNote) return { changed: false };
+  const label = cur && cur.id !== next.id ? 'clip:Change loop recording' : !cur ? 'clip:Give the loop its own recording' : cur.rootNote !== next.rootNote && cur.start === next.start && cur.end === next.end ? 'clip:Change loop root note' : 'clip:Trim loop recording';
+  return run(store, label, (d) => {
+    draftClip(d, trackId, slot).sample = next;
+  }, gesture);
+}
+
+/** Copy a pad clip onto another pad of the same part (replacing what is there). Song loops use copyLoopToPad. */
 export function duplicateClipToSlot(store: ProjectStore, trackId: Id, fromSlot: number, toSlot: number): CommandResult & { clipId?: Id } {
+  if (isSongSlot(fromSlot) || isSongSlot(toSlot)) return SONG_SLOT_REFUSAL();
   const clip = clipAt(store.getState(), trackId, fromSlot);
-  if (!clip) return NOT_FOUND('clip');
-  if (!isSlot(toSlot) || toSlot === fromSlot) return refuse('invalid', 'Choose a different slot.');
+  if (!clip) return NOT_FOUND('loop');
+  if (!isSlot(toSlot, findTrack(store.getState(), trackId)) || toSlot === fromSlot) return refuse('invalid', 'Choose a different pad.');
   const copy = cloneClipWithNewIds(clip);
-  const r = run(store, 'clip:Duplicate clip', (d) => {
+  const r = run(store, 'clip:Duplicate loop', (d) => {
     draftTrack(d, trackId).clips[toSlot] = copy;
   });
   return { ...r, clipId: copy.id };
@@ -96,14 +249,16 @@ export function duplicateClipToSlot(store: ProjectStore, trackId: Id, fromSlot: 
  * pitches pasted onto a drum kit) are left out.
  */
 export function pasteClip(store: ProjectStore, trackId: Id, slot: number, clip: Clip): CommandResult & { clipId?: Id } {
-  const t = findTrack(store.getState(), trackId);
+  const p = store.getState();
+  const t = findTrack(p, trackId);
   if (!t) return NOT_FOUND('part');
-  if (!isSlot(slot)) return refuse('invalid', 'Unknown clip slot.');
-  const { clip: clean } = sanitizeClip(clip, t.instrument.kind);
-  if (!clean) return refuse('invalid', 'The copied clip could not be pasted.');
+  if (isSongSlot(slot)) return SONG_SLOT_REFUSAL('A copied loop is pasted onto a pad, not over a loop in the song.');
+  if (!isSlot(slot, t)) return refuse('invalid', 'That pad does not exist.');
+  const { clip: clean } = sanitizeClip(clip, t.instrument.kind, new Set(p.samples.map((s) => s.id)));
+  if (!clean) return refuse('invalid', 'The copied loop could not be pasted.');
   const copy = cloneClipWithNewIds(clean);
   const dropped = clip.notes.length - copy.notes.length;
-  const r = run(store, 'clip:Paste clip', (d) => {
+  const r = run(store, 'clip:Paste loop', (d) => {
     draftTrack(d, trackId).clips[slot] = copy;
   });
   return { ...r, clipId: copy.id, message: dropped > 0 ? `${dropped} note${dropped === 1 ? '' : 's'} could not be played by this part and were left out.` : undefined };
@@ -112,9 +267,9 @@ export function pasteClip(store: ProjectStore, trackId: Id, slot: number, clip: 
 /** Remove all notes, keeping the clip. */
 export function clearClip(store: ProjectStore, trackId: Id, slot: number): CommandResult {
   const clip = clipAt(store.getState(), trackId, slot);
-  if (!clip) return NOT_FOUND('clip');
+  if (!clip) return NOT_FOUND('loop');
   if (clip.notes.length === 0) return { changed: false };
-  return run(store, 'clip:Clear clip', (d) => {
+  return run(store, 'clip:Clear loop', (d) => {
     draftClip(d, trackId, slot).notes = [];
   });
 }
@@ -125,12 +280,12 @@ export function copyClip(project: Project, trackId: Id, slot: number): Clip | nu
   return clip ? cloneClip(clip) : null;
 }
 
-/** Remove every clip of a part in one undo step. */
+/** Remove every pad clip of a part in one undo step (its song loops stay: they belong to the song). */
 export function clearTrackClips(store: ProjectStore, trackId: Id): CommandResult {
   const t = findTrack(store.getState(), trackId);
   if (!t) return NOT_FOUND('part');
-  if (t.clips.every((c) => c === null)) return refuse('empty', 'This part has no clips.');
-  return run(store, 'clip:Clear all clips', (d) => {
+  if (t.clips.every((c) => c === null)) return refuse('empty', 'This part has no loops on its pads.');
+  return run(store, 'clip:Clear all loops', (d) => {
     const dt = draftTrack(d, trackId);
     dt.clips = dt.clips.map(() => null);
   });
@@ -161,7 +316,7 @@ export function clipDropProblem(p: Project, fromTrackId: Id, toTrackId: Id): str
   const a = clipContentOf(from);
   const b = clipContentOf(to);
   if (a === b) return null;
-  return `${from.name} plays ${CONTENT_WORDS[a]} and ${to.name} plays ${CONTENT_WORDS[b]}: a clip only moves between parts of the same kind (drum parts, or melodic parts).`;
+  return `${from.name} plays ${CONTENT_WORDS[a]} and ${to.name} plays ${CONTENT_WORDS[b]}: a loop only moves between parts of the same kind (drum parts, or melodic parts).`;
 }
 
 export interface ClipMoveResult extends CommandResult {
@@ -174,17 +329,21 @@ export interface ClipMoveResult extends CommandResult {
  * moves (keeping its id); onto an occupied pad the two clips swap. Between
  * parts both must hold the same kind of clip (see clipDropProblem). The
  * launcher follows a moved clip within its part; see Session for playback.
+ * The song's regions follow the clip, to the other part's row when it moves
+ * there.
  */
 export function moveClip(store: ProjectStore, fromTrackId: Id, fromSlot: number, toTrackId: Id, toSlot: number): ClipMoveResult {
+  if (isSongSlot(fromSlot) || isSongSlot(toSlot)) return SONG_SLOT_REFUSAL();
   const p = store.getState();
   const clip = clipAt(p, fromTrackId, fromSlot);
-  if (!clip) return NOT_FOUND('clip');
-  if (!findTrack(p, toTrackId) || !isSlot(toSlot)) return refuse('invalid', 'Unknown clip slot.');
-  if (fromTrackId === toTrackId && fromSlot === toSlot) return refuse('invalid', 'The clip is already there.');
+  if (!clip) return NOT_FOUND('loop');
+  const to = findTrack(p, toTrackId);
+  if (!to || !isSlot(toSlot, to)) return refuse('invalid', 'That pad does not exist.');
+  if (fromTrackId === toTrackId && fromSlot === toSlot) return refuse('invalid', 'The loop is already there.');
   const problem = fromTrackId === toTrackId ? null : clipDropProblem(p, fromTrackId, toTrackId);
   if (problem) return refuse('invalid', problem);
   const other = clipAt(p, toTrackId, toSlot);
-  const r = run(store, other ? 'clip:Swap clips' : 'clip:Move clip', (d) => {
+  const r = run(store, other ? 'clip:Swap loops' : 'clip:Move loop', (d) => {
     const a = draftTrack(d, fromTrackId);
     const b = draftTrack(d, toTrackId);
     const moving = a.clips[fromSlot];
@@ -206,17 +365,18 @@ export interface ClipCopyResult extends CommandResult {
  * kind of clip.
  */
 export function copyClipTo(store: ProjectStore, fromTrackId: Id, fromSlot: number, toTrackId: Id, toSlot: number): ClipCopyResult {
+  if (isSongSlot(fromSlot) || isSongSlot(toSlot)) return SONG_SLOT_REFUSAL();
   const p = store.getState();
   const clip = clipAt(p, fromTrackId, fromSlot);
-  if (!clip) return NOT_FOUND('clip');
+  if (!clip) return NOT_FOUND('loop');
   const target = findTrack(p, toTrackId);
-  if (!target || !isSlot(toSlot)) return refuse('invalid', 'Unknown clip slot.');
+  if (!target || !isSlot(toSlot, target)) return refuse('invalid', 'That pad does not exist.');
   if (fromTrackId === toTrackId && fromSlot === toSlot) return refuse('invalid', 'Choose a different pad to copy to.');
   const problem = fromTrackId === toTrackId ? null : clipDropProblem(p, fromTrackId, toTrackId);
   if (problem) return refuse('invalid', problem);
   const replaced = !!target.clips[toSlot];
   const copy = cloneClipWithNewIds(clip);
-  const r = run(store, 'clip:Copy clip', (d) => {
+  const r = run(store, 'clip:Copy loop', (d) => {
     draftTrack(d, toTrackId).clips[toSlot] = copy;
   });
   return { ...r, clipId: copy.id, replaced };

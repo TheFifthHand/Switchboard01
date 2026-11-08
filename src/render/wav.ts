@@ -2,11 +2,26 @@
  * WAV (RIFF/WAVE) encoding and parsing.
  *
  * Encoding writes interleaved integer PCM (16 or 24 bit). Samples are
- * clamped to [-1, 1] and rounded without dither, so the same audio always
- * produces the same bytes.
+ * clamped to [-1, 1]. 16-bit files get TPDF dither (the sum of two uniform
+ * random values, ±1 LSB peak) before rounding, so quiet fades and reverb
+ * tails turn into a faint, steady noise floor (about −96 dBFS RMS) instead
+ * of quantisation distortion. The dither is seeded, so the same audio always
+ * produces the same bytes; exact digital silence stays exactly silent.
+ * 24-bit samples are rounded without dither (its error is ~−146 dBFS).
  */
+import { mulberry32 } from '../project/rng';
 
 export type WavBitDepth = 16 | 24;
+
+/** Seed of the 16-bit dither noise (any fixed value: the same audio gives the same bytes). */
+export const WAV_DITHER_SEED = 0x5eed01;
+
+export interface WavEncodeOptions {
+  /** TPDF dither on 16-bit encodes (default true; ignored for 24-bit). */
+  dither?: boolean;
+  /** Dither seed (default WAV_DITHER_SEED). */
+  seed?: number;
+}
 
 export interface ParsedWav {
   sampleRate: number;
@@ -31,7 +46,15 @@ function quantize(x: number, positiveMax: number): number {
   return v < 0 ? Math.round(v * (positiveMax + 1)) : Math.round(v * positiveMax);
 }
 
-export function encodeWav(channels: readonly Float32Array[], sampleRate: number, bitDepth: WavBitDepth = 16): ArrayBuffer {
+/** As quantize, with `d` LSB of dither added before rounding (the result is clamped to the integer range). */
+function quantizeDithered(x: number, positiveMax: number, d: number): number {
+  const v = Number.isFinite(x) ? (x > 1 ? 1 : x < -1 ? -1 : x) : 0;
+  if (v === 0) return 0;
+  const q = Math.round((v < 0 ? v * (positiveMax + 1) : v * positiveMax) + d);
+  return q > positiveMax ? positiveMax : q < -positiveMax - 1 ? -positiveMax - 1 : q;
+}
+
+export function encodeWav(channels: readonly Float32Array[], sampleRate: number, bitDepth: WavBitDepth = 16, opts: WavEncodeOptions = {}): ArrayBuffer {
   if (!channels.length) throw new RangeError('encodeWav needs at least one channel');
   if (channels.length > 32) throw new RangeError('encodeWav supports at most 32 channels');
   if (!Number.isInteger(sampleRate) || sampleRate <= 0) throw new RangeError(`Invalid sample rate ${sampleRate}`);
@@ -64,10 +87,14 @@ export function encodeWav(channels: readonly Float32Array[], sampleRate: number,
   const bytes = new Uint8Array(buffer, HEADER_BYTES, dataBytes);
   let o = 0;
   if (bitDepth === 16) {
+    const dither = opts.dither !== false;
+    const rnd = mulberry32(opts.seed ?? WAV_DITHER_SEED);
     for (let i = 0; i < frames; i++) {
       for (let c = 0; c < nCh; c++) {
         const ch = channels[c];
-        const v = quantize(i < ch.length ? ch[i] : 0, 32767);
+        const x = i < ch.length ? ch[i] : 0;
+        // TPDF: two uniform values in [0, 1) give a triangular distribution on (−1, 1) LSB.
+        const v = dither ? quantizeDithered(x, 32767, rnd() + rnd() - 1) : quantize(x, 32767);
         bytes[o] = v & 0xff;
         bytes[o + 1] = (v >> 8) & 0xff;
         o += 2;
@@ -164,8 +191,8 @@ export function parseWav(data: ArrayBuffer): ParsedWav {
   return { sampleRate, bitDepth: bits, format: isFloat ? 'float' : 'pcm', channels };
 }
 
-export function wavBlob(channels: readonly Float32Array[], sampleRate: number, bitDepth: WavBitDepth = 16): Blob {
-  return new Blob([encodeWav(channels, sampleRate, bitDepth)], { type: 'audio/wav' });
+export function wavBlob(channels: readonly Float32Array[], sampleRate: number, bitDepth: WavBitDepth = 16, opts: WavEncodeOptions = {}): Blob {
+  return new Blob([encodeWav(channels, sampleRate, bitDepth, opts)], { type: 'audio/wav' });
 }
 
 /** Channel data of a rendered buffer, ready for `encodeWav`. */

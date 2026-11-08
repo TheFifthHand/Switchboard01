@@ -26,7 +26,7 @@ function loggingEngine(log: string[]) {
 }
 
 describe('Loudness measurement and playback starts', () => {
-  it('restarts on every start (a replay from bar 5, the song from block 2, the pads) but not on resume', () => {
+  it('restarts on every start (a replay from bar 5, the song from bar 2, the pads) but not on resume', () => {
     let p = makeProject(120);
     p = setClip(p, 't1', 0, makeClip(1, [[0, 36]]));
     // A take that started at bar 5, as one started while the pads were already playing does.
@@ -34,7 +34,7 @@ describe('Loudness measurement and playback starts', () => {
     p = {
       ...p,
       performances: [{ id: 'perf1', name: 'Take 1', createdAt: 1, startTick, endTick: startTick + 8 * 384, snapshot: makeSnapshot(p, [{ trackId: 't1', playing: { slot: 0, startTick: 0 } }], startTick), events: [] }],
-      arrangement: { ...p.arrangement, blocks: [{ id: 'b1', sceneId: p.scenes[0].id, repeats: 1 }, { id: 'b2', sceneId: p.scenes[0].id, repeats: 1 }] },
+      arrangement: { ...p.arrangement, regions: [{ id: 'r1', trackId: 't1', clipId: p.tracks[0].clips[0]!.id, start: 0, bars: 2, offset: 0 }], sections: [] },
     };
     const log: string[] = [];
     const ctx = { currentTime: 1, state: 'running', addEventListener() {}, removeEventListener() {} };
@@ -47,13 +47,13 @@ describe('Loudness measurement and playback starts', () => {
         starts.push([...log]);
       };
       step(() => t.start({ mode: { kind: 'replay', performanceId: 'perf1' } }));
-      step(() => t.start({ mode: { kind: 'song', fromBlock: 1 } }));
+      step(() => t.start({ mode: { kind: 'song', fromBar: 1 } }));
       step(() => t.start({ mode: { kind: 'live' } }));
       ctx.currentTime = 3;
       step(() => t.pause());
       ctx.currentTime = 4;
       step(() => t.resume());
-      // The replay and the later block start after bar 1, and still restart the measurement.
+      // The replay and the song from bar 2 start after bar 1, and still restart the measurement.
       expect(starts[0]).toEqual([`started@${startTick}`, 'reset']);
       expect(starts[1][0]).toMatch(/^started@[1-9]/);
       expect(starts[1]).toContain('reset');

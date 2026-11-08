@@ -1,0 +1,355 @@
+/* The loop browser's tabs, the loop library, the region badge and the empty song (Song view). */
+
+/* ------------------------------------------------------------------ */
+/* Tabs                                                                */
+/* ------------------------------------------------------------------ */
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin: 6px 10px 0;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+.tab {
+  flex: 1;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-2);
+  font: var(--fw-semibold) var(--fs-sm) / 1 var(--font-ui);
+  cursor: pointer;
+}
+.tab:hover {
+  color: var(--ink);
+}
+.tab[aria-selected='true'] {
+  background: var(--surface-hi);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ------------------------------------------------------------------ */
+/* Library                                                             */
+/* ------------------------------------------------------------------ */
+
+.library {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+.search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: #fff;
+  color: var(--ink-3);
+}
+.search:focus-within {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 1px var(--teal);
+}
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: var(--fs-sm) var(--font-ui);
+  outline: none;
+}
+.chipGroup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+}
+.chipLabel {
+  width: 100%;
+  font: var(--type-eyebrow);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-hi);
+  color: var(--ink-2);
+  font: var(--fw-medium) var(--fs-xs) / 1 var(--font-ui);
+  cursor: pointer;
+}
+.filter:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+/* Chosen: teal (selection), with a tick (colour is never alone). */
+.filter[aria-pressed='true'] {
+  border-color: var(--teal);
+  background: var(--teal-wash);
+  color: var(--teal-ink);
+}
+.moreStyles {
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--ink-2);
+  font: var(--fw-medium) var(--fs-xs) / 1 var(--font-ui);
+  cursor: pointer;
+}
+.moreStyles:hover {
+  color: var(--ink);
+}
+.moreStyles:focus-visible,
+.filter:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.count {
+  margin: 2px 0 0;
+  font-size: var(--fs-2xs);
+  line-height: 1.35;
+  color: var(--ink-3);
+}
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 2px 6px 2px 2px;
+  border: 1px solid hsl(var(--h) 26% 74%);
+  border-radius: var(--r-sm);
+  background: hsl(var(--h) 40% 94%);
+  cursor: grab;
+  touch-action: pan-x pan-y;
+  user-select: none;
+  outline: none;
+}
+.row:hover {
+  border-color: hsl(var(--h) 36% 48%);
+}
+.row:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.play {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--shell-hi);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+/* Playing: amber, with the stop icon and "Playing on Drums". */
+.play[data-hearing] {
+  background: var(--amber-hi);
+  border-color: var(--amber);
+  color: var(--amber-ink);
+}
+.play[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+.play:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.sketch {
+  display: block;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  color: hsl(var(--h) 45% 30%);
+}
+.text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  line-height: 14px;
+}
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: hsl(var(--h) 45% 20%);
+}
+.meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-2xs);
+  color: var(--ink-3);
+}
+.more {
+  align-self: flex-start;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--shell-hi);
+  color: var(--ink);
+  font: var(--fw-semibold) var(--fs-xs) / 1 var(--font-ui);
+  cursor: pointer;
+}
+.more:hover {
+  border-color: var(--line-strong);
+}
+.more:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ------------------------------------------------------------------ */
+/* A region whose loop plays in several places: "×3"                   */
+/* ------------------------------------------------------------------ */
+
+.places {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  z-index: 3;
+  /* Gone (whole, never a sliver) on a region too narrow to hold it beside the name ("Used 12×" fits in 56 px). */
+  max-width: clamp(0px, calc((var(--b) * var(--ppb) * 1px - 120px) * 100), 56px);
+  overflow: hidden;
+  /* The padding goes with it (no 6 px sliver of the first letter on a short region). */
+  padding: 0 clamp(0px, calc((var(--b) * var(--ppb) * 1px - 120px) * 100), 3px);
+  border-radius: 3px;
+  background: hsl(var(--h) 30% 98% / 0.85);
+  color: hsl(var(--h) 45% 24%);
+  font: var(--fw-semibold) var(--fs-2xs) / 13px var(--font-mono);
+  white-space: nowrap;
+  /* Takes the pointer for its tooltip; a press on it is a press on the region (it is inside it). */
+  cursor: help;
+}
+
+/* ------------------------------------------------------------------ */
+/* The loop picker's extra choices                                     */
+/* ------------------------------------------------------------------ */
+
+.newLoop {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px 6px;
+}
+.newLoopLabel {
+  flex: 1;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.barsKey {
+  min-width: 28px;
+  min-height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--shell-hi);
+  color: var(--ink);
+  font: var(--fw-semibold) var(--fs-xs) / 1 var(--font-mono);
+  cursor: pointer;
+}
+.barsKey:hover {
+  border-color: var(--line-strong);
+}
+.barsKey:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.barsKey[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+.beatList {
+  max-height: min(360px, 52vh);
+  overflow: auto;
+}
+.beatStyle {
+  margin: 8px 12px 2px;
+  font: var(--type-eyebrow);
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.beatRow {
+  display: flex;
+  align-items: center;
+}
+.beatRow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.beatHear {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 28px;
+  margin-right: 6px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--shell-hi);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.beatHear[data-hearing] {
+  background: var(--amber-hi);
+  border-color: var(--amber);
+  color: var(--amber-ink);
+}
+.beatHear[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+.beatHear:focus,
+.beatHear:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ------------------------------------------------------------------ */
+/* The empty song                                                      */
+/* ------------------------------------------------------------------ */
+
+.emptyActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}

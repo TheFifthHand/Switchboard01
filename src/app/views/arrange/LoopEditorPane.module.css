@@ -1,0 +1,182 @@
+/*
+ * The Song view's editor pane, docked under the rows: a grip, a one-line
+ * header (the loop, Draw | Play, Try a ready-made…, Shorter / Longer and
+ * Make it different or Record into this loop, where else it plays, Just here,
+ * Close), the bar keys for loops too long to show whole, and the step grid or
+ * piano roll (Draw) or the instrument's pads (Play) filling the rest.
+ */
+.pane {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: var(--pane-h, 300px);
+  min-height: 0;
+  padding: 0 10px 8px;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 -2px 8px rgba(20, 24, 28, 0.06);
+}
+
+/* ---------- grip ---------- */
+.grip {
+  flex: none;
+  display: grid;
+  place-items: center;
+  height: 12px;
+  margin: 0 -10px;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  cursor: ns-resize;
+  touch-action: none;
+  outline: none;
+}
+.gripMark {
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.grip:hover .gripMark {
+  background: var(--ink-3);
+}
+.grip:focus-visible .gripMark {
+  background: var(--teal);
+  box-shadow: 0 0 0 2px var(--teal-glow);
+}
+
+/* ---------- header ---------- */
+.head {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-height: 32px;
+  min-width: 0;
+}
+.title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  color: var(--ink);
+}
+.loopName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.partName {
+  flex: none;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.where {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The loop plays elsewhere too: an edit here changes those places (said in words; the colour is a hint). */
+.where[data-shared] {
+  color: var(--ink-2);
+}
+.modes {
+  flex: none;
+}
+.tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.length {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.lengthText {
+  min-width: 5.5em;
+  padding-left: 4px;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+/* Recording into this loop: coral (recording), with the words. */
+.recording {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 7px;
+  background: var(--coral-wash);
+  color: var(--coral-ink);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 7px;
+  background: var(--coral-wash);
+  color: var(--coral-ink);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.lockDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--coral);
+}
+
+.bars {
+  flex: none;
+}
+
+/* ---------- the editor ---------- */
+.body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.body > * {
+  flex: 1 1 0;
+  min-height: 0;
+}
+/* The pane is short: the velocity lane keeps to a slim strip, the grid gets the rest (its hint on one line). */
+.body [data-testid='velocity-lane'] {
+  flex: none;
+  height: 42px;
+  min-height: 42px;
+}
+.body [data-testid='velocity-lane'] span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pane[data-locked] .body {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Play: the instrument's pads fill the pane, never taller than it. */
+.body[data-play] {
+  padding-top: 2px;
+}

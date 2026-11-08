@@ -1292,7 +1292,7 @@ export function diffNotes(before: readonly Note[], after: readonly Note[]): Note
 
 /** Short feedback for the UI: "5 notes changed", "3 notes changed, 2 added, 1 removed", "No change". */
 export function describeVariation(before: readonly Note[], after: readonly Note[]): string {
-  if (before.length === 0 && after.length === 0) return 'Nothing to vary: the clip is empty';
+  if (before.length === 0 && after.length === 0) return 'Nothing to vary: the loop is empty';
   const d = diffNotes(before, after);
   if (d.total === 0) return 'No change';
   const parts: [number, string][] = (

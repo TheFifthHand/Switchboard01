@@ -4,8 +4,10 @@
  * - `OfflineStatus` sits at the end of the transport strip: a compact icon
  *   (words in its tooltip and accessible text), or an Update button when a
  *   new version is waiting.
- * - `OfflineMenuItems` repeats both in the transport's More menu, which is
- *   where they live when the strip has no room for them.
+ * - In the transport's More menu, `OfflineMenuItems` puts a waiting Update
+ *   first (the action to take), and `OfflineMenuStatus` closes the menu with
+ *   the state as plain text: a status line, not a menu row, so it never
+ *   takes the menu's first focus and its words are never cut off.
  *
  * Updates are applied only when the user presses Update, never during
  * playback or a recording: pending edits are written first, and the page
@@ -88,33 +90,49 @@ export function OfflineStatus(props: { statusClassName?: string; updateClassName
   );
 }
 
-/** The offline state (and the Update action) as More-menu rows; nothing when offline caching is unsupported. */
+/** A waiting Update as the More menu's first row (then a separator); nothing otherwise. */
 export function OfflineMenuItems({ onDone }: { onDone(): void }) {
   const { state, apply } = useOffline();
   const blocked = useUpdateBlocked();
+  if (state !== 'update-ready' || !apply) return null;
+  return (
+    <>
+      <MenuItem
+        icon="download"
+        disabled={blocked}
+        disabledReason={UPDATE_BUSY}
+        hint="Reloads the page"
+        onSelect={() => {
+          onDone();
+          void applyUpdate(apply);
+        }}
+      >
+        Update to the new version
+      </MenuItem>
+      <MenuSeparator />
+    </>
+  );
+}
+
+/**
+ * The offline state as the More menu's last line: plain text (a status, not
+ * a menu item), never focusable, its explanation wrapping rather than cut
+ * off. Nothing when offline caching is unsupported.
+ */
+export function OfflineMenuStatus() {
+  const { state } = useOffline();
   if (state === 'unsupported') return null;
   const passive = PASSIVE[state === 'update-ready' ? 'ready' : state];
   return (
     <>
-      {state === 'update-ready' && apply ? (
-        <MenuItem
-          icon="download"
-          disabled={blocked}
-          disabledReason={UPDATE_BUSY}
-          hint="Reloads the page"
-          onSelect={() => {
-            onDone();
-            void applyUpdate(apply);
-          }}
-        >
-          Update to the new version
-        </MenuItem>
-      ) : (
-        <MenuItem icon={passive.icon} disabled disabledReason={passive.short} onSelect={onDone}>
-          {passive.text}
-        </MenuItem>
-      )}
       <MenuSeparator />
+      <div className={styles.menuStatus} role="status" data-offline={state}>
+        {state === 'ready' || state === 'update-ready' ? <OfflineReadyGlyph /> : <Icon name={passive.icon} size={14} className={styles.icon} />}
+        <span className={styles.menuWords}>
+          <span className={styles.menuText}>{passive.text}</span>
+          <span className={styles.menuHint}>{passive.short}</span>
+        </span>
+      </div>
     </>
   );
 }

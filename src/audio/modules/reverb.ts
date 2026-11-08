@@ -1,14 +1,20 @@
 /**
  * Reverb module: convolution with a generated, seeded stereo impulse response.
  *
- *   in ─┬─ dryGate (1 − mix) ───────────────────────────────────────────┐
+ *   in ─┬─ dryGate (1 − mix; 0 as a send return) ──────────────────────┐
  *       └─ pre-delay (mono) ─┬─ slot.in ─ convolver ─ slot.out ─┐        │
  *                            └─ (older slots ringing out) ──────┴─ tone LP ─ wetGate ─┴─> out
+ *
+ * As a send return (fed only by channel sends: setSendReturn) there is no
+ * dry path and Mix is the return level: the output is the room × Mix. As an
+ * insert the dry sound passes at 1 − Mix.
  *
  * The room is fed a mono sum and answers in decorrelated stereo, so every
  * part gets the same wide room whatever its pan.
  *
- * Size (decay) changes regenerate the IR. Live, regeneration is debounced
+ * Rooms are cached by (size, seed, sample rate) for the whole page
+ * (createImpulseBuffer), so a project or export that asks for a room built
+ * before reuses it. Size (decay) changes regenerate the IR. Live, regeneration is debounced
  * (120 ms after the last change). Offline, the IR is built immediately and
  * the same debounce is applied on the timeline: the switch lands 120 ms after
  * the change, and a further change before that replaces the pending switch.
@@ -33,8 +39,6 @@ const MAX_RINGING = 2;
 const FADE_TAU = 0.01;
 const FLUSH_TAU = 0.003;
 const FLUSH_CLEANUP_MS = 60;
-/** IRs kept for reuse (current and previous size; each 10 s stereo IR is ~3.8 MB at 48 kHz). */
-const BUFFER_CACHE = 2;
 
 interface Slot {
   decay: number;
@@ -65,9 +69,11 @@ export class ReverbModule extends EffectModule {
   /** Older slots ringing out (or fading out), oldest first. */
   private retired: Slot[] = [];
   private readonly seed: number;
-  private readonly buffers = new Map<number, AudioBuffer>();
   /** Latest requested decay (may still be waiting for the debounce). */
   private requestedDecay: number;
+  private mix: number;
+  /** Fed only by channel sends (no dry path); null until the engine says. */
+  private sendReturn: boolean | null = null;
   private debounce: number | null = null;
 
   constructor(env: ModuleEnv, id: Id, params: ParamValues) {
@@ -76,6 +82,7 @@ export class ReverbModule extends EffectModule {
     this.seed = subSeed(env.seed, 'reverb-ir');
     const decay = readParam(REVERB_PARAMS, params, 'decay');
     const mix = readParam(REVERB_PARAMS, params, 'mix');
+    this.mix = mix;
     this.predelay = readParam(REVERB_PARAMS, params, 'predelay') / 1000;
     this.requestedDecay = decay;
 
@@ -111,21 +118,9 @@ export class ReverbModule extends EffectModule {
     return pre;
   }
 
+  /** The room for `decay`: built once per (size, seed, sample rate) and shared (see createImpulseBuffer). */
   private bufferFor(decay: number): AudioBuffer {
-    const hit = this.buffers.get(decay);
-    if (hit) {
-      // Refresh LRU position.
-      this.buffers.delete(decay);
-      this.buffers.set(decay, hit);
-      return hit;
-    }
-    const buf = createImpulseBuffer(this.ctx, decay, this.seed);
-    this.buffers.set(decay, buf);
-    while (this.buffers.size > BUFFER_CACHE) {
-      const oldest = this.buffers.keys().next().value as number;
-      this.buffers.delete(oldest);
-    }
-    return buf;
+    return createImpulseBuffer(this.ctx, decay, this.seed);
   }
 
   private makeSlot(decay: number, gain: number, switchAt: number, requestAt: number): Slot {
@@ -230,8 +225,9 @@ export class ReverbModule extends EffectModule {
     if (this.disposed) return;
     const t = this.at(time);
     const mix = readParam(REVERB_PARAMS, params, 'mix');
+    this.mix = mix;
     this.predelay = readParam(REVERB_PARAMS, params, 'predelay') / 1000;
-    this.smooth(this.dryGate.gain, 1 - mix, t);
+    this.smooth(this.dryGate.gain, this.dryLevel(), t);
     this.smooth(this.ctl.base.offset, mix, t);
     this.smooth(this.tone.frequency, readParam(REVERB_PARAMS, params, 'tone'), t);
     this.smooth(this.pre.delayTime, this.predelay, t);
@@ -252,6 +248,19 @@ export class ReverbModule extends EffectModule {
       const now = this.ctx.currentTime;
       this.switchTo(this.requestedDecay, now, now);
     }, REVERB_REGEN_DEBOUNCE_MS);
+  }
+
+  /** Dry share: none as a send return, 1 − Mix as an insert. */
+  private dryLevel(): number {
+    return this.sendReturn ? 0 : 1 - this.mix;
+  }
+
+  setSendReturn(isReturn: boolean, time: number): void {
+    if (this.disposed || isReturn === this.sendReturn) return;
+    const first = this.sendReturn === null;
+    this.sendReturn = isReturn;
+    if (first) this.setNow(this.dryGate.gain, this.dryLevel());
+    else this.smooth(this.dryGate.gain, this.dryLevel(), this.at(time));
   }
 
   protected afterCancel(time: number): void {
@@ -289,7 +298,6 @@ export class ReverbModule extends EffectModule {
   }
 
   dispose(): void {
-    this.buffers.clear();
     this.retired = [];
     this.debounce = null;
     super.dispose();

@@ -1,9 +1,13 @@
 /**
- * Pure helpers for the Steps editor: the shared 16-step column layout, what
- * a page (one bar) of a clip contains, and the rows of the pitch lane.
+ * Pure helpers for the Steps editor: the shared step-column layout (16 steps
+ * a bar for drums, the chosen grid for the piano roll), what a page (one bar)
+ * of a clip contains, the rows of the pitch lane, and the arithmetic behind
+ * selections, moves, quantize previews and touch gestures. No DOM, no audio.
  */
-import { STEPS_PER_BAR, TICKS_PER_BAR, TICKS_PER_STEP, type Note, type ScaleId } from '../../../project/types';
-import { isInScale, noteName, pitchClass } from '../../../music/scales';
+import { MAX_CLIP_BARS, STEPS_PER_BAR, TICKS_PER_BAR, TICKS_PER_BEAT, TICKS_PER_STEP, type Id, type Note, type ScaleId } from '../../../project/types';
+import { isInScale, noteName, pitchClass, scaleDegreeOf, snapToScale, stepsPerOctave, transposeInScale, type MusicalKey } from '../../../music/scales';
+import { GRID_TICKS } from '../../../state/commands/notes';
+import type { StepGrid } from '../../../state/uiStore';
 
 export const STEPS = STEPS_PER_BAR;
 export const STEP_INDICES: readonly number[] = Array.from({ length: STEPS }, (_, i) => i);
@@ -11,21 +15,151 @@ export const STEP_INDICES: readonly number[] = Array.from({ length: STEPS }, (_,
 /** Lowest velocity the editor sets (0 would be a silent note). */
 export const MIN_VELOCITY = 0.05;
 
+/* ------------------------------------------------------------------ */
+/* Columns and grids                                                   */
+/* ------------------------------------------------------------------ */
+
 /**
- * CSS grid column of a step. Every step row uses the same template: a label
- * column, then four beats of four steps with a spacer track between beats.
+ * The editing grid of the piano roll: ticks per cell, cells per beat and per
+ * bar. 1/16 = 24 ticks (16 a bar), 1/32 = 12 (32), 1/8T = 32 (12), 1/16T = 16 (24).
  */
+export interface GridSpec {
+  grid: StepGrid;
+  ticks: number;
+  perBeat: number;
+  /** Cells shown: one bar's, or `bars` bars' side by side (spanSpec). */
+  cells: number;
+  /** Bars shown side by side (absent: 1). */
+  bars?: number;
+}
+
+export function gridSpec(grid: StepGrid = '1/16'): GridSpec {
+  const ticks = GRID_TICKS[grid] ?? TICKS_PER_STEP;
+  return { grid, ticks, perBeat: TICKS_PER_BEAT / ticks, cells: TICKS_PER_BAR / ticks };
+}
+
+/** The drum grid (and the roll's default): 16 steps a bar. */
+export const STEP_GRID: GridSpec = gridSpec('1/16');
+
+/** `spec` over `bars` bars side by side (cells run on across the bars; a bar's columns follow the last one's). */
+export function spanSpec(spec: GridSpec, bars: number): GridSpec {
+  const n = Math.max(1, Math.floor(bars));
+  const per = barCells(spec);
+  if (n === (spec.bars ?? 1)) return spec;
+  return n === 1 ? { grid: spec.grid, ticks: spec.ticks, perBeat: spec.perBeat, cells: per } : { ...spec, cells: per * n, bars: n };
+}
+
+/** Cells in one bar of `spec`. */
+export function barCells(spec: GridSpec): number {
+  return Math.round(spec.cells / (spec.bars ?? 1));
+}
+
+/** Spacers of a span of bars (px): between beats, and the wider one between bars. */
+export const SPAN_BEAT_GAP = 5;
+export const SPAN_BAR_GAP = 14;
+
+/**
+ * The cell columns for a span of bars (null for one bar, which the
+ * stylesheet's template covers): every beat's cells with a spacer between
+ * beats, a wider one between bars. The label column comes first (the
+ * stylesheet's), so cellColumn() holds across the bars.
+ */
+export function spanColumns(spec: GridSpec): string | null {
+  const bars = spec.bars ?? 1;
+  if (bars <= 1) return null;
+  const beat = `repeat(${spec.perBeat}, minmax(0, 1fr))`;
+  const parts: string[] = [];
+  const beats = bars * 4;
+  for (let b = 0; b < beats; b++) {
+    parts.push(beat);
+    if (b < beats - 1) parts.push(`${(b + 1) % 4 === 0 ? SPAN_BAR_GAP : SPAN_BEAT_GAP}px`);
+  }
+  return parts.join(' ');
+}
+
+/** Narrowest a bar is drawn side by side with others (px of cells, label column excluded). */
+export const MIN_BAR_PX = 400;
+
+/**
+ * How many bars the editor shows side by side for a clip of `bars` bars in
+ * `width` px of cells: the whole clip when its bars fit (at most 4), else one
+ * bar at a time (the bar keys turn the page).
+ */
+export function barsShown(bars: number, width: number, minBarPx = MIN_BAR_PX): number {
+  if (bars <= 1 || !(width > 0)) return 1;
+  const fit = Math.min(4, Math.floor(width / minBarPx));
+  return bars <= fit ? bars : 1;
+}
+
+/** "bar 2" or "bars 1–2" for the bars a view shows from `page`. */
+export function barsWords(page: number, bars = 1): string {
+  return bars > 1 ? `bars ${page + 1}–${page + bars}` : `bar ${page + 1}`;
+}
+
+const INDICES = new Map<number, readonly number[]>();
+/** 0..cells-1 (cached per length, so lists keep their identity across renders). */
+export function cellIndices(cells: number): readonly number[] {
+  let list = INDICES.get(cells);
+  if (!list) {
+    list = Array.from({ length: cells }, (_, i) => i);
+    INDICES.set(cells, list);
+  }
+  return list;
+}
+
+/**
+ * CSS grid column of a cell. Every step row uses the same template: a label
+ * column, then four beats of `perBeat` cells with a spacer track between beats.
+ */
+export function cellColumn(cell: number, perBeat = 4): number {
+  return 2 + cell + Math.floor(cell / perBeat);
+}
+
+/** grid-column value spanning cells first..last (inclusive). */
+export function cellSpan(first: number, last: number, perBeat = 4): string {
+  return `${cellColumn(first, perBeat)} / ${cellColumn(last, perBeat) + 1}`;
+}
+
+/** CSS grid column of a 1/16 step (the drum lanes). */
 export function stepColumn(step: number): number {
-  return 2 + step + Math.floor(step / 4);
+  return cellColumn(step, 4);
 }
 
 /** grid-column value spanning steps first..last (inclusive). */
 export function stepSpan(first: number, last: number): string {
-  return `${stepColumn(first)} / ${stepColumn(last) + 1}`;
+  return cellSpan(first, last, 4);
+}
+
+/**
+ * The number over a cell of the step ruler. 1/16 and the triplet grids count
+ * their cells (1..16, 1..12, 1..24); 1/32 counts 16ths (1 · 2 · 3 …), so its
+ * numbers line up with the 1/16 view. `beat` marks the first cell of a beat.
+ */
+export function cellLabel(cell: number, spec: GridSpec): { text: string; beat: boolean } {
+  // Bars side by side: each bar counts from 1 again (StepNumbers names the bars above).
+  const inBar = cell % barCells(spec);
+  const beat = inBar % spec.perBeat === 0;
+  if (spec.grid === '1/32') return { text: inBar % 2 === 0 ? String(inBar / 2 + 1) : '·', beat };
+  return { text: String(inBar + 1), beat };
+}
+
+/** A cell for words: "step 5" on the 1/16 grid, "32nd 9 of 32" on finer ones. */
+export function cellWords(cell: number, spec: GridSpec): string {
+  const per = barCells(spec);
+  const bar = (spec.bars ?? 1) > 1 ? `bar ${Math.floor(cell / per) + 1}, ` : '';
+  const inBar = cell % per;
+  if (spec.grid === '1/16') return `${bar}step ${inBar + 1}`;
+  const unit = spec.grid === '1/32' ? '32nd' : spec.grid === '1/8T' ? 'triplet 8th' : 'triplet 16th';
+  return `${bar}${unit} ${inBar + 1} of ${per}`;
 }
 
 export function pageStartTick(page: number): number {
   return page * TICKS_PER_BAR;
+}
+
+/** The page (bar) a clip tick sits on. */
+export function pageOfTick(tick: number): number {
+  return Math.max(0, Math.min(MAX_CLIP_BARS - 1, Math.floor(tick / TICKS_PER_BAR)));
 }
 
 export function percent(v: number): string {
@@ -43,6 +177,10 @@ export function stepsLabel(ticks: number): string {
   return `${r} step${r === 1 ? '' : 's'}`;
 }
 
+export function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
 /* ------------------------------------------------------------------ */
 /* Drums                                                               */
 /* ------------------------------------------------------------------ */
@@ -51,10 +189,10 @@ export function stepsLabel(ticks: number): string {
  * hits[voice][step] = the loudest velocity of that voice on that step of the
  * page, or -1 when the step is off. A note is on the step it starts in.
  */
-export function drumPageGrid(notes: readonly Note[], page: number, voices = 16): number[][] {
-  const grid = Array.from({ length: voices }, () => Array.from({ length: STEPS }, () => -1));
+export function drumPageGrid(notes: readonly Note[], page: number, voices = 16, bars = 1): number[][] {
+  const grid = Array.from({ length: voices }, () => Array.from({ length: STEPS * bars }, () => -1));
   const a = pageStartTick(page);
-  const b = a + TICKS_PER_BAR;
+  const b = a + TICKS_PER_BAR * bars;
   for (const n of notes) {
     if (n.tick < a || n.tick >= b) continue;
     const v = Math.round(n.pitch);
@@ -93,31 +231,36 @@ export interface NoteView {
   velocity: number;
   tick: number;
   duration: number;
-  /** Steps of this page the note covers (inclusive). */
+  /** Cells of this page the note covers (inclusive). */
   first: number;
   last: number;
   /** Starts on an earlier page / continues onto a later page. */
   fromPrev: boolean;
   toNext: boolean;
-  /** The note's sounding part inside its step span, as fractions 0..1. */
+  /** The note's sounding part inside its cell span, as fractions 0..1. */
   fillFrom: number;
   fillTo: number;
 }
 
-/** Notes that sound during `page` (a note longer than a page continues onto the next ones). */
-export function pageNoteViews(notes: readonly Note[], page: number, clipTicks: number): NoteView[] {
+/**
+ * Notes that sound during `page` (a note longer than a page continues onto
+ * the next ones), placed on cells of `cellTicks` ticks (default 1/16). With
+ * `bars`, the view is that many bars from `page`, side by side.
+ */
+export function pageNoteViews(notes: readonly Note[], page: number, clipTicks: number, cellTicks = TICKS_PER_STEP, bars = 1): NoteView[] {
+  const cells = Math.round((TICKS_PER_BAR * bars) / cellTicks);
   const a = pageStartTick(page);
-  const b = Math.min(a + TICKS_PER_BAR, clipTicks);
+  const b = Math.min(a + TICKS_PER_BAR * bars, clipTicks);
   const out: NoteView[] = [];
   for (const n of notes) {
     const end = Math.min(n.tick + n.duration, clipTicks);
     if (n.tick >= b || end <= a) continue;
     const visFrom = Math.max(n.tick, a);
     const visTo = Math.min(end, b);
-    const first = Math.min(STEPS - 1, Math.max(0, Math.floor((visFrom - a) / TICKS_PER_STEP)));
-    const last = Math.min(STEPS - 1, Math.max(first, Math.ceil((visTo - a) / TICKS_PER_STEP) - 1));
-    const spanFrom = a + first * TICKS_PER_STEP;
-    const spanTicks = (last - first + 1) * TICKS_PER_STEP;
+    const first = Math.min(cells - 1, Math.max(0, Math.floor((visFrom - a) / cellTicks)));
+    const last = Math.min(cells - 1, Math.max(first, Math.ceil((visTo - a) / cellTicks) - 1));
+    const spanFrom = a + first * cellTicks;
+    const spanTicks = (last - first + 1) * cellTicks;
     out.push({
       id: n.id,
       pitch: n.pitch,
@@ -133,6 +276,27 @@ export function pageNoteViews(notes: readonly Note[], page: number, clipTicks: n
     });
   }
   return out;
+}
+
+/** One note starting in a cell, for the velocity lane (lowest pitch first). */
+export interface VelocityVoice {
+  id: Id;
+  pitch: number;
+  velocity: number;
+  selected: boolean;
+}
+
+/** Per cell of `page`: the notes starting in it, lowest pitch first, marked when selected. */
+export function velocityVoices(notes: readonly Note[], page: number, spec: GridSpec, selected: ReadonlySet<Id>): VelocityVoice[][] {
+  const cols: VelocityVoice[][] = Array.from({ length: spec.cells }, () => []);
+  const a = pageStartTick(page);
+  for (const n of notes) {
+    if (n.tick < a || n.tick >= a + TICKS_PER_BAR * (spec.bars ?? 1)) continue;
+    const c = Math.min(spec.cells - 1, Math.floor((n.tick - a) / spec.ticks));
+    cols[c].push({ id: n.id, pitch: n.pitch, velocity: n.velocity, selected: selected.has(n.id) });
+  }
+  for (const c of cols) c.sort((x, y) => x.pitch - y.pitch);
+  return cols;
 }
 
 export interface PitchRow {
@@ -152,10 +316,12 @@ export const PITCH_RANGE = { lo: 24, hi: 96 } as const;
  * Rows of the pitch lane, highest first. With Musical Assist on, only in-key
  * pitches get rows (plus any pitch a note already uses); otherwise every
  * semitone. The range covers C1..C7 and stretches to include every note.
+ * Names are spelled by the key (B♭ in G Dorian).
  */
 export function pitchRows(opts: { assist: boolean; root: number; scale: ScaleId; used: readonly number[] }): PitchRow[] {
   const { assist, root, scale, used } = opts;
   const inKeyOnly = assist && scale !== 'chromatic';
+  const key: MusicalKey = { root, scale };
   const usedSet = new Set(used);
   let lo: number = PITCH_RANGE.lo;
   let hi: number = PITCH_RANGE.hi;
@@ -169,7 +335,7 @@ export function pitchRows(opts: { assist: boolean; root: number; scale: ScaleId;
   for (let p = hi; p >= lo; p--) {
     const inKey = isInScale(p, root, scale);
     if (inKeyOnly && !inKey && !usedSet.has(p)) continue;
-    rows.push({ pitch: p, name: noteName(p), root: pitchClass(p) === pitchClass(root), black: !inKeyOnly && BLACK[pitchClass(p)], outOfKey: inKeyOnly && !inKey });
+    rows.push({ pitch: p, name: noteName(p, key), root: pitchClass(p) === pitchClass(root), black: !inKeyOnly && BLACK[pitchClass(p)], outOfKey: inKeyOnly && !inKey });
   }
   return rows;
 }
@@ -200,4 +366,185 @@ export function focusPitch(notes: readonly Note[], kind: 'bass' | 'poly' | 'samp
     return Math.round((lo + hi) / 2);
   }
   return kind === 'bass' ? 40 : 62;
+}
+
+/* ------------------------------------------------------------------ */
+/* Selections and moves                                                */
+/* ------------------------------------------------------------------ */
+
+/** Ids of the notes that sound inside [t0, t1) on one of `pitches` (a selection box). */
+export function notesInBox(notes: readonly Note[], t0: number, t1: number, pitches: ReadonlySet<number>): Id[] {
+  const a = Math.min(t0, t1);
+  const b = Math.max(t0, t1);
+  return notes.filter((n) => pitches.has(n.pitch) && n.tick < b && n.tick + n.duration > a).map((n) => n.id);
+}
+
+/** The selected notes that still exist, in clip order. */
+export function selectedNotes(notes: readonly Note[], ids: ReadonlySet<Id>): Note[] {
+  return notes.filter((n) => ids.has(n.id));
+}
+
+/** The note a selection is anchored on (where the cursor goes after a move): the earliest, then the lowest. */
+export function anchorNote(notes: readonly Note[]): Note | undefined {
+  let best: Note | undefined;
+  for (const n of notes) if (!best || n.tick < best.tick || (n.tick === best.tick && n.pitch < best.pitch)) best = n;
+  return best;
+}
+
+function foldPitch(p: number, lo = 0, hi = 127): number {
+  let v = p;
+  while (v > hi) v -= 12;
+  while (v < lo) v += 12;
+  return Math.min(hi, Math.max(lo, v));
+}
+
+/**
+ * Where a note goes when its key moves `steps` scale steps: as transposeNotes
+ * with `inScale` does it (a note outside the key moves as far as the scale
+ * note it sits nearest; a note leaving 0..127 folds back an octave).
+ */
+export function scaleShiftPitch(pitch: number, steps: number, key: MusicalKey): number {
+  const base = snapToScale(pitch, key.root, key.scale);
+  return foldPitch(pitch + (transposeInScale(base, steps, key.root, key.scale) - base));
+}
+
+/** Scale steps from one pitch to another (each snapped into the key first). */
+export function scaleStepsBetween(from: number, to: number, key: MusicalKey): number {
+  const per = stepsPerOctave(key.scale);
+  const index = (p: number) => {
+    const s = snapToScale(p, key.root, key.scale);
+    const rel = s - pitchClass(key.root);
+    const octave = Math.floor(rel / 12);
+    return octave * per + Math.max(0, scaleDegreeOf(s, key.root, key.scale));
+  };
+  return index(to) - index(from);
+}
+
+/**
+ * How far a move of the selected notes can go: the whole selection stays
+ * inside the clip (0..clipTicks-1) as one shape, as moveNotes clamps it. With
+ * `step` (the grid, or the nudge), the move is held to whole steps, so a
+ * selection on the grid never stops one tick before the clip's end, off the
+ * grid; 0 means it cannot move that way at all.
+ */
+export function clampMoveTicks(sel: readonly Note[], dTick: number, clipTicks: number, step = 1): number {
+  if (sel.length === 0) return 0;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const n of sel) {
+    min = Math.min(min, n.tick);
+    max = Math.max(max, n.tick);
+  }
+  const s = step > 0 ? step : 1;
+  const hi = Math.max(0, Math.floor((clipTicks - 1 - max) / s) * s);
+  const lo = -Math.max(0, Math.floor(min / s) * s);
+  return Math.min(hi, Math.max(lo, dTick)) || 0;
+}
+
+/** Semitones a selection can move and stay inside 0..127 (as moveNotes clamps it). */
+export function clampMovePitch(sel: readonly Note[], dPitch: number): number {
+  if (sel.length === 0) return 0;
+  let min = Infinity;
+  let max = -Infinity;
+  for (const n of sel) {
+    min = Math.min(min, n.pitch);
+    max = Math.max(max, n.pitch);
+  }
+  return Math.min(127 - max, Math.max(-min, dPitch)) || 0;
+}
+
+/** A drag of selected notes: ticks, and either semitones or scale steps of `key`. */
+export interface MovePlan {
+  dTick: number;
+  /** Semitones (Musical Assist off, or a chromatic key). */
+  dPitch: number;
+  /** Scale steps of the key (Musical Assist on): each note follows the key. */
+  steps: number;
+  key: MusicalKey | null;
+}
+
+/** Where each selected note lands under `plan` (pitch per note id). */
+export function plannedPitches(sel: readonly Note[], plan: MovePlan): Map<Id, number> {
+  const out = new Map<Id, number>();
+  for (const n of sel) out.set(n.id, plan.key && plan.steps ? scaleShiftPitch(n.pitch, plan.steps, plan.key) : n.pitch + plan.dPitch);
+  return out;
+}
+
+/**
+ * The clip's notes as they look with the selection moved by `plan` (for the
+ * drag preview); notes landed on stay in the picture until the drop replaces them.
+ */
+export function previewMovedNotes(notes: readonly Note[], ids: ReadonlySet<Id>, plan: MovePlan): Note[] {
+  if (plan.dTick === 0 && plan.dPitch === 0 && plan.steps === 0) return notes as Note[];
+  const pitches = plannedPitches(
+    notes.filter((n) => ids.has(n.id)),
+    plan,
+  );
+  return notes.map((n) => (ids.has(n.id) ? { ...n, tick: n.tick + plan.dTick, pitch: pitches.get(n.id) ?? n.pitch } : n));
+}
+
+/** True when no two notes share a tick and pitch after placing `moved` among the unmoved notes. */
+export function landsFree(notes: readonly Note[], moved: ReadonlyMap<Id, { tick: number; pitch: number }>): boolean {
+  const taken = new Set<string>();
+  for (const n of notes) if (!moved.has(n.id)) taken.add(`${n.tick}:${n.pitch}`);
+  for (const m of moved.values()) if (taken.has(`${m.tick}:${m.pitch}`)) return false;
+  return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Quantize preview                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What "Tighten timing" would do with this grid and strength (0..1): how many
+ * notes move, and how many merge into another note (two of one pitch pulled
+ * onto the same tick become one, the louder). The same arithmetic as
+ * quantizeClip, so the preview sentence and the toast agree.
+ */
+export function quantizeMoves(notes: readonly Note[], gridTicks: number, strength: number, clipTicks: number): { moved: number; merged: number } {
+  if (!(gridTicks > 0)) return { moved: 0, merged: 0 };
+  const round = (v: number) => Math.round(v * 1000) / 1000;
+  let moved = 0;
+  const at = new Set<string>();
+  for (const n of notes) {
+    const snapped = Math.round(n.tick / gridTicks) * gridTicks;
+    const start = round(n.tick + (snapped - n.tick) * strength);
+    const tick = start >= clipTicks ? start - clipTicks : start;
+    if (tick !== n.tick) moved++;
+    at.add(`${tick}:${n.pitch}`);
+  }
+  return { moved, merged: notes.length - at.size };
+}
+
+/** "1 pair of notes merged", "3 pairs of notes merged" (notes that met another of the same pitch on the same tick). */
+export function mergedWords(merged: number): string {
+  return merged === 1 ? '1 pair of notes merged' : `${merged} pairs of notes merged`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Touch                                                               */
+/* ------------------------------------------------------------------ */
+
+/** A finger resting this long (ms) starts a draw, move or resize (the song lane's hold). */
+export const TOUCH_HOLD = 300;
+/** A finger that lifts before the hold starts (and moved less than TOUCH_SLOP) is a tap: no gap between the two. */
+export const TAP_MS = TOUCH_HOLD;
+/** Movement (px) that ends a tap or a pending hold. */
+export const TOUCH_SLOP = 8;
+/** A start counts as sideways only when it is clearly more sideways than up or down. */
+export const SIDEWAYS_RATIO = 1.5;
+
+/**
+ * What a finger on the roll is doing so far: still deciding ('pending'), a
+ * swipe that scrolls the roll ('scroll': it moved up or down, or slanted),
+ * or a clearly sideways press that draws or moves at once ('drag').
+ */
+export function touchIntent(dx: number, dy: number): 'pending' | 'scroll' | 'drag' {
+  if (Math.hypot(dx, dy) < TOUCH_SLOP) return 'pending';
+  return Math.abs(dx) > SIDEWAYS_RATIO * Math.abs(dy) ? 'drag' : 'scroll';
+}
+
+/** True when a finger that went up after `ms`, `dx`/`dy` from where it landed, was a tap. */
+export function isTap(dx: number, dy: number, ms: number): boolean {
+  return ms < TAP_MS && Math.hypot(dx, dy) < TOUCH_SLOP;
 }

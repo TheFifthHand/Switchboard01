@@ -32,10 +32,12 @@ Cloud container: Chromium 141 lives in /opt/pw-browsers and matches the pinned `
 - Every visible control must change the actual sound or routing. No fake meters or activity.
 - Colour is information: amber = playing/signal, teal = selection/focus/modulation,
   coral = recording/mute/attention. Always pair colour with text or an icon.
-- Knobs: vertical drag with pointer capture, Shift = fine, double-click = default, arrow keys,
-  accessible name/range/unit, numeric entry where precision helps, no wheel changes by accident.
+- Knobs: vertical drag with pointer capture, Shift = fine, double-click = default (in Shape the
+  sound's own value; Alt+double-click the plain default), arrow keys, accessible name/range/unit,
+  numeric entry where precision helps, no wheel changes by accident.
 - Audio parameter changes are smoothed; rewiring uses short ramps. Output passes a real look-ahead
-  limiter with a −1 dBFS ceiling. Mute All silences voices and effect tails.
+  limiter with a −1 dBTP true-peak ceiling (sample peaks stay under −1 dBFS). Mute All silences
+  voices and effect tails.
 - Patch validation rejects incompatible, duplicate and cyclic connections without touching the
   working graph. Patch editing is locked while a performance is being recorded.
 - Project data is JSON with stable ids and a schema version; validate and migrate on import.

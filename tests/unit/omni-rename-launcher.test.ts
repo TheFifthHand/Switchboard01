@@ -1,8 +1,9 @@
 // The Node launcher (launcher/serve.mjs) after the rename: it says Omni Song,
 // it recognises a running Omni Song, and it also recognises a running copy of
-// the same app from before 2.0 (SWITCHBOARD / 01): that copy is opened (same
-// address, same projects) instead of moving Omni Song to another address, and
-// the window says how to switch to the new version.
+// the same app from before 2.0 (SWITCHBOARD / 01): instead of moving Omni Song
+// to another address, it says so and waits until that copy is closed, then
+// starts Omni Song at the same address (same projects). Since 2.3 it does
+// this for any other version (r5-update-launcher.test.ts).
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
@@ -75,10 +76,11 @@ async function waitFor(run: ReturnType<typeof launch>, re: RegExp, ms = 8000) {
   }
 }
 
-async function pageOn(port: number, body: string): Promise<void> {
+async function pageOn(port: number, body: string): Promise<Server> {
   const s = createServer((_req, res) => res.end(body));
   servers.push(s);
   await new Promise<void>((done) => s.listen(port, '127.0.0.1', done));
+  return s;
 }
 
 describe('Node launcher, renamed', () => {
@@ -94,17 +96,25 @@ describe('Node launcher, renamed', () => {
     expect(await isFree(port + 1)).toBe(true);
   });
 
-  it('recognises SWITCHBOARD / 01 running at the usual address: opens it and says how to switch, instead of moving to another address', async () => {
+  it('recognises SWITCHBOARD / 01 running at the usual address: says so and waits, then starts Omni Song there once it is closed, instead of moving to another address', async () => {
     const port = await freePorts(2);
-    await pageOn(port, `<!doctype html><html><head>${OLD_TITLE}</head></html>`);
+    const old = await pageOn(port, `<!doctype html><html><head>${OLD_TITLE}</head></html>`);
     const run = launch(['--port', String(port), '--no-open']);
-    expect(await run.exited).toBe(0);
+    await waitFor(run, /Waiting for the other copy to stop/);
     const out = run.out();
-    expect(out).toContain(`An older version of this app (SWITCHBOARD / 01) is already running at http://127.0.0.1:${port}/`);
-    expect(out).toContain('close the window that runs the older version, then start Omni Song again');
+    expect(out).toContain('An older version of this app (SWITCHBOARD / 01) is running in another window,');
+    expect(out).toContain(`at http://127.0.0.1:${port}/`);
+    expect(out).toContain('Close the other small black SWITCHBOARD / 01 window');
     expect(out).not.toContain('used by another program');
+    expect(run.child.exitCode).toBeNull();
     expect(await isFree(port + 1)).toBe(true);
-  });
+    // The old window is closed: Omni Song starts at the same address.
+    servers.splice(servers.indexOf(old), 1);
+    old.closeAllConnections();
+    await new Promise((done) => old.close(done));
+    await waitFor(run, new RegExp(`Omni Song is running at http://127\\.0\\.0\\.1:${port}/\\n`), 5000);
+    expect(await isFree(port + 1)).toBe(true);
+  }, 20_000);
 
   it('another program on the port is still explained, and --strict-port names Omni Song', async () => {
     const port = await freePorts(2);

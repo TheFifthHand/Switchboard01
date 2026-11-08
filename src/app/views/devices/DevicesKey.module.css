@@ -55,3 +55,10 @@
     opacity: 0.35;
   }
 }
+
+/* Reduced motion: the recording dot holds steady (solid coral). */
+@media (prefers-reduced-motion: reduce) {
+  .rec {
+    animation: none;
+  }
+}

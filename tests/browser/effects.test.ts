@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { ChorusModule } from '../../src/audio/modules/chorus';
 import { DelayModule } from '../../src/audio/modules/delay';
 import { DriveModule } from '../../src/audio/modules/drive';
+import { loadEngineWorklets } from '../../src/audio/engine';
 import { FilterModule } from '../../src/audio/modules/filter';
 import { PhaserModule } from '../../src/audio/modules/phaser';
 import { ReverbModule } from '../../src/audio/modules/reverb';
@@ -145,8 +146,9 @@ describe('FilterModule', () => {
   });
 });
 
+/** The Drive as the engine builds it: with its level-match worklet loaded. */
 async function driveRender(input: Float32Array, params: ParamValues, mods?: Record<string, number>, seconds = 1) {
-  return render({ seconds, input, create: (env) => new DriveModule(env, 'd', params), mods });
+  return render({ seconds, input, create: (env) => new DriveModule(env, 'd', params), mods, prepare: (ctx) => loadEngineWorklets(ctx) });
 }
 
 describe('DriveModule', () => {
@@ -170,12 +172,27 @@ describe('DriveModule', () => {
     expect(diffDb(L, x, frames(0.1), frames(0.9), lag)).toBeLessThan(-60);
   });
 
-  it('is loudness-compensated: full drive stays within a few dB of clean', async () => {
-    const x = sine(440, 1, 0.3);
+  it('is level-compensated: every drive amount and character keeps the RMS level within 1.5 dB', async () => {
+    // Louder (−13.5 dBFS RMS sine) and quieter (−26 dBFS RMS noise) than the −20 dBFS the fixed trims are tuned for.
+    for (const x of [sine(440, 1, 0.3), noise(1, 0.087)]) {
+      const clean = rms(x, A, B);
+      for (const character of [0, 1, 2]) {
+        for (const amount of [0.3, 1]) {
+          const { L } = await driveRender(x, { amount, character, tone: 1, mix: 1 });
+          expect(Math.abs(db(rms(L, A, B) / clean)), `character ${character}, amount ${amount}`).toBeLessThan(1.5);
+        }
+      }
+    }
+  });
+
+  it('without its level-match worklet, the fixed trims alone keep the reference level (−20 dBFS RMS)', async () => {
+    // Warm and Hard: Fold at full drive puts much of its energy above the audio band, where the
+    // shaper's oversampling filter removes it, so it relies on the level match.
+    const x = noise(1, 0.1 * Math.sqrt(3));
     const clean = rms(x, A, B);
-    for (const character of [0, 1, 2]) {
-      const { L } = await driveRender(x, { amount: 1, character, tone: 0.7, mix: 1 });
-      expect(Math.abs(db(rms(L, A, B) / clean)), `character ${character}`).toBeLessThan(4);
+    for (const character of [0, 1]) {
+      const { L } = await render({ seconds: 1, input: x, create: (env) => new DriveModule(env, 'd', { amount: 1, character, tone: 1, mix: 1 }) });
+      expect(Math.abs(db(rms(L, A, B) / clean)), `character ${character}`).toBeLessThan(2);
     }
   });
 

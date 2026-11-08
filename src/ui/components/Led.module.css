@@ -6,7 +6,7 @@
   gap: 6px;
   color: var(--ink-3);
   font-size: var(--fs-sm);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
   line-height: 16px;
   white-space: nowrap;
 }
@@ -63,6 +63,13 @@
 
 .led[data-blink] .lamp {
   animation: blink 1.2s steps(1, end) infinite;
+}
+
+/* Reduced motion: a blinking lamp stays steadily on (its legend still says what it means). */
+@media (prefers-reduced-motion: reduce) {
+  .led[data-blink] .lamp {
+    animation: none;
+  }
 }
 
 @keyframes blink {

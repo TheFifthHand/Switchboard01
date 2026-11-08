@@ -2,7 +2,7 @@
  * EQ module: low cut, low shelf, peaking mid with width, high shelf, high cut.
  *
  *   in ─ [low cut] ─ low shelf ─ mid (peaking) ─ high shelf ─ [high cut] ─> out
- *   mid mod ─ clamp(±1) ─ one-pole 50 Hz ─ ×2400 ct ─> mid band detune
+ *   mid mod ─ clamp(±1) ─ smoother (50 Hz, critically damped) ─ ×2400 ct ─> mid band detune
  *
  * Low and high cut are 12 dB/oct Butterworth filters. All the way down
  * (Low Cut 20 Hz) or up (High Cut 20 kHz) they are off: each cut stage
@@ -15,7 +15,7 @@
  */
 import { EQ_PARAMS, readParam } from '../../project/params';
 import type { Id, ParamValues } from '../../project/types';
-import { BUTTERWORTH_Q_DB, EffectModule, SWITCH_TAU, identityCurve } from './fxutil';
+import { BUTTERWORTH_Q_DB, EffectModule, SWITCH_TAU, controlSmoother, identityCurve, shaperNode } from './fxutil';
 import type { ModuleEnv } from './types';
 
 /** Mid-band modulation per full-scale signal (matches the port's modRange). */
@@ -65,9 +65,8 @@ export class EqModule extends EffectModule {
     // Mid-band modulation: clamp to ±1, slew-limit, scale to cents.
     const mono = { channelCount: 1, channelCountMode: 'explicit' } as const;
     const modIn = this.own(new GainNode(ctx, { gain: 1, ...mono }));
-    const clampNode = this.own(new WaveShaperNode(ctx, { curve: identityCurve(), ...mono }));
-    const a = Math.exp((-2 * Math.PI * MOD_SMOOTH_HZ) / ctx.sampleRate);
-    const smoothNode = this.own(new IIRFilterNode(ctx, { feedforward: [1 - a], feedback: [1, -a], ...mono }));
+    const clampNode = this.own(shaperNode(ctx, identityCurve(), mono));
+    const smoothNode = this.own(controlSmoother(ctx, MOD_SMOOTH_HZ));
     const scale = this.own(new GainNode(ctx, { gain: EQ_MID_MOD_CENTS, ...mono }));
     modIn.connect(clampNode);
     clampNode.connect(smoothNode);

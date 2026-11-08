@@ -14,7 +14,7 @@ import { patchRuntime } from '../../src/app/runtime';
 import { Guide, placeCallout } from '../../src/app/views/Guide';
 import { HINTS_STORAGE_KEY, INITIAL_HINTS, hintsStore } from '../../src/app/views/hints/hintsState';
 import { createProject } from '../../src/project/factory';
-import { UI_STORAGE_KEY, selectTrack, setGuideDone, setView, uiStore } from '../../src/state/uiStore';
+import { UI_STORAGE_KEY, selectTrack, setGuideDone, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { cleanup, key, mount, wait } from './ui-harness';
 
 let closes = 0;
@@ -84,10 +84,14 @@ function overlaps(a: DOMRect, b: DOMRect): boolean {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
-/** Let placement run and the callout finish gliding to its spot. */
+/** Let placement run and the callout finish gliding to its spot (on a busy machine its glide can start late: wait for it to end). */
 async function settle() {
   await act(async () => {
     await wait(260);
+    for (let i = 0; i < 2; i++) await new Promise((resolve) => requestAnimationFrame(resolve));
+    const c = document.querySelector<HTMLElement>('[data-guide-step]');
+    const gliding = c ? c.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity) : [];
+    await Promise.all(gliding.map((a) => a.finished.catch(() => undefined)));
   });
 }
 
@@ -333,6 +337,8 @@ describe('Quick guide', () => {
       }
       await settle();
     };
+    // Round 7: the quick guide is about 2.4's Play view, so it is offered in Advanced (Simple's Song screen has its tip line).
+    act(() => setUiMode('advanced'));
     try {
       const first = mount(h(App, { boot }));
       await pressJumpIn();
@@ -356,6 +362,7 @@ describe('Quick guide', () => {
       expect(document.querySelector('[data-guide-step]')).toBeNull();
     } finally {
       session.jumpIn = realJumpIn;
+      act(() => setUiMode('simple'));
     }
   });
 

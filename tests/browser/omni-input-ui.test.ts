@@ -237,11 +237,12 @@ describe('Record audio (sampler editor)', () => {
     await until(() => !!m.container.querySelector('[data-phase]'), 'the progress line');
     await until(() => /Recording: bar 1 of 1/.test(m.container.textContent ?? ''), 'the bar counter');
     expect(button(m.container, 'Stop recording')).toBeTruthy();
-    await until(() => statusText(m.container).includes('Recorded “Recording 1”'), 'the result', 10000);
+    await until(() => /Recorded \d+\.\d s \(1 bar\)\. Recording 1 plays in its own loop on /.test(statusText(m.container)), 'the result', 10000);
     const meta = session.store.getState().samples.find((s) => s.name === 'Recording 1')!;
     created.push(meta.id);
     expect(meta.duration).toBeCloseTo(1.2, 1);
-    expect((t8().instrument as SamplerInstrument).sampleId).toBe(meta.id);
+    // The take is its own clip's recording (the part's other clips keep theirs).
+    expect(t8().clips.some((c) => c?.sample?.id === meta.id)).toBe(true);
     expect(m.container.textContent).toContain('Input: Desk microphone'.replace('Desk microphone', audioInput.state.getState().deviceLabel ?? ''));
     expect(session.store.info.getState().undoLabel).toBe('Record audio');
     act(() => session.undo());
@@ -265,7 +266,8 @@ describe('Record audio (sampler editor)', () => {
     await press(button(m.container, 'Input settings…'));
     const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]')!;
     expect(dialog).toBeTruthy();
-    expect(document.activeElement?.textContent).toBe('Audio input (microphone or instrument)');
+    // Focus starts on the audio section's first action (its heading is read out with the dialog).
+    expect(document.activeElement?.textContent).toBe('Use input');
     expect(dialog.contains(document.activeElement)).toBe(true);
     await press(button(dialog, 'Done'));
     expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -292,7 +294,7 @@ async function openApp(w: number, hh: number) {
   act(() => {
     setGuideDone(true);
     setTipsEnabled(true);
-    setUiMode('simple');
+    setUiMode('advanced'); // Round 7: 2.4's Play view, tabs and strip are Advanced's (Simple: r7-shell-*).
     setView('play');
     setPadMode('loops');
     setKeyboardCollapsed(false);
@@ -392,7 +394,7 @@ describe('MIDI & audio dialog', () => {
       await midi.connect();
       await audioInput.open();
     });
-    for (const w of [1024, 1100, 1180, 1250, 1320, 1366, 1440, 1600, 1700, 1920]) {
+    for (const w of [1024, 1100, 1180, 1250, 1320, 1366, 1440, 1520, 1599, 1600, 1700, 1799, 1800, 1920]) {
       await page.viewport(w, 800);
       for (const mode of ['simple', 'advanced'] as const) {
         act(() => setUiMode(mode));
@@ -401,7 +403,7 @@ describe('MIDI & audio dialog', () => {
         expect(document.scrollingElement!.scrollWidth, `${w} ${mode}`).toBeLessThanOrEqual(window.innerWidth);
         // Where the key has room it shows; MIDI & audio is always in the More menu.
         const key = transport().querySelector<HTMLElement>('button[aria-label^="MIDI & audio"]');
-        if (w >= 1280 || (mode === 'simple' && w >= 1180)) expect(shown(key), `${w} ${mode}: the key`).toBe(true);
+        if (w >= 1280 || mode === 'simple') expect(shown(key), `${w} ${mode}: the key`).toBe(true);
       }
     }
     act(() => setUiMode('simple'));

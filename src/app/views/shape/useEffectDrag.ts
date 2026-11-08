@@ -64,7 +64,7 @@ function scrollParent(el: HTMLElement | null): HTMLElement | null {
  * `effects` are the chain's effects in order; `cellOf(id)` finds a card's grid cell and `cardOf(id)`
  * the card that follows the pointer.
  */
-export function useEffectDrag(opts: { effects: readonly Id[]; lock: string | null; nameOf(id: Id): string; cellOf(id: Id): HTMLElement | null; cardOf(id: Id): HTMLElement | null }) {
+export function useEffectDrag(opts: { effects: readonly Id[]; lock: string | null; nameOf(id: Id): string; cellOf(id: Id): HTMLElement | null; cardOf(id: Id): HTMLElement | null; partId?: Id }) {
   const [view, setView] = useState<EffectDragView | null>(null);
   const g = useRef<Gesture | null>(null);
   const latest = useRef(opts);
@@ -97,6 +97,7 @@ export function useEffectDrag(opts: { effects: readonly Id[]; lock: string | nul
   useEffect(() => {
     if (opts.lock) end(false);
   }, [opts.lock, end]);
+  useEffect(() => () => end(false), [opts.partId, end]);
   useEffect(() => () => end(false), [end]);
 
   const onGripDown = useCallback(

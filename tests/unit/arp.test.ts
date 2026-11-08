@@ -4,6 +4,7 @@ import type { SeqEvent } from '../../src/time/contracts';
 import { EMPTY_LATCH, arpDivisionTicks, arpGateTicks, arpInput, arpNoteAt, arpPattern, arpSteps, updateLatch } from '../../src/time/arp';
 import { Sequencer } from '../../src/time/sequencer';
 import { makeProject, notesOf, runTo, sec } from './sequencer-fixtures';
+import { DEFAULT_LOOKAHEAD as LOOKAHEAD } from '../../src/time/transport';
 
 const base: ArpSettings = { enabled: true, division: '1/16', mode: 'up', octaves: 1, latch: false, gate: 0.5 };
 
@@ -186,8 +187,8 @@ describe('Sequencer arpeggiator', () => {
     seq.start(0);
     seq.setArpHeld('t5', [60], 0);
     const kept: SeqEvent[] = [];
-    let generated = seq.process(0.12);
-    // Each key change lands 10 ms ahead of "now", inside the 120 ms already generated (as the transport does it).
+    let generated = seq.process(LOOKAHEAD);
+    // Each key change lands 10 ms ahead of "now", inside the look-ahead already generated (as the transport does it).
     const changes: [number, number[]][] = [
       [0.31, [60, 67]],
       [0.64, [60, 64, 67]],
@@ -195,13 +196,13 @@ describe('Sequencer arpeggiator', () => {
     ];
     let now = 0;
     for (const [at, held] of changes) {
-      for (; now + 0.025 < at - 0.01; now += 0.025) generated.push(...seq.process(now + 0.025 + 0.12));
+      for (; now + 0.025 < at - 0.01; now += 0.025) generated.push(...seq.process(now + 0.025 + LOOKAHEAD));
       seq.setArpHeld('t5', held, at);
       seq.invalidate(at);
       kept.push(...generated.filter((e) => e.time < at));
       generated = [];
     }
-    for (; now < 1.5; now += 0.025) generated.push(...seq.process(now + 0.025 + 0.12));
+    for (; now < 1.5; now += 0.025) generated.push(...seq.process(now + 0.025 + LOOKAHEAD));
     kept.push(...generated);
     const notes = notesOf(kept, 't5').filter((n) => n.time < 1.5);
     // One note per 16th, no gaps or doubles across the rewinds.

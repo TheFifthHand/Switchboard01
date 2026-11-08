@@ -72,8 +72,9 @@ function outPath(size) {
   return `${out.slice(0, out.length - extname(out).length)}-${size.width}${ext}`;
 }
 
-const cloudChromium = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-const executablePath = process.env.SB_CHROMIUM ?? (existsSync(cloudChromium) ? cloudChromium : undefined);
+// (the pinned Playwright's own build, else whatever the container links as /opt/pw-browsers/chromium).
+const cloudChromium = ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome', '/opt/pw-browsers/chromium'].find((p) => existsSync(p));
+const executablePath = process.env.SB_CHROMIUM ?? cloudChromium;
 
 const browser = await chromium.launch({ executablePath });
 let failed = false;

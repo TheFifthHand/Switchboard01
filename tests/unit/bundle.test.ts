@@ -17,13 +17,19 @@ function fullProject(): Project {
   connect(store, { module: 't1:lfo', port: 'out' }, { module: 't1:inst', port: 'pitch' }, -0.4);
   setMacroTarget(store, 't4', 'motion', 1, { module: 't4:chorus', param: 'depth', min: 0.1, max: 0.9, curve: 'lin', macroFrom: 0.2 });
   store.apply('test:content', (d) => {
-    d.tracks[0].clips[0] = createClip('Beat', 2, [
+    const beat = createClip('Beat', 2, [
       { tick: 0, pitch: 0, velocity: 1, duration: 24 },
       { tick: 390.5, pitch: 4, velocity: 0.55, duration: 12 },
     ]);
-    d.tracks[4].clips[3] = { ...createClip('Hook', 1, [{ tick: 48, pitch: 72, velocity: 0.8, duration: 96 }]), variation: { seed: 99, generation: 3 } };
-    d.arrangement.blocks.reverse();
-    d.arrangement.blocks[0].repeats = 5;
+    const hook = { ...createClip('Hook', 1, [{ tick: 48, pitch: 72, velocity: 0.8, duration: 96 }]), variation: { seed: 99, generation: 3 } };
+    d.tracks[0].clips[0] = beat;
+    d.tracks[4].clips[3] = hook;
+    // The song: loops (one trimmed at its start, so it begins a bar into its clip) under a section with a move.
+    d.arrangement.regions = [
+      { id: 'rg_beat', trackId: 't1', clipId: beat.id, start: 0, bars: 7, offset: 1 },
+      { id: 'rg_hook', trackId: 't5', clipId: hook.id, start: 2, bars: 5, offset: 0 },
+    ];
+    d.arrangement.sections = [{ id: 'sec_drive', name: 'Drive', start: 0, bars: 4, moves: [{ id: 'mv_in', kind: 'fadeIn' }] }];
     d.arrangement.tailSeconds = 4.5;
     d.samples.push({ id: 'smp_loop', name: 'Loop', mime: 'audio/wav', byteLength: SAMPLE_BYTES.byteLength, duration: 2, sampleRate: 48000, channels: 2, peaks: [-0.1, 0.2] });
     const s = d.tracks[7].instrument;

@@ -27,14 +27,14 @@ export interface SoundCategoryInfo {
 
 /** The sound browser's categories, in display order. */
 export const SOUND_CATEGORIES: readonly SoundCategoryInfo[] = [
-  { id: 'drums', name: 'Drums & Percussion', blurb: 'Drum kits and percussion sets: sixteen sounds on the pads.' },
+  { id: 'drums', name: 'Drums & Percussion', blurb: 'Drum kits and percussion sets, sixteen sounds each.' },
   { id: 'bass', name: 'Bass', blurb: 'Low lines: subs, 808s, plucks, acid, reese and FM basses.' },
   { id: 'keys', name: 'Keys', blurb: 'Electric pianos, organs, clavinet and harpsichord.' },
-  { id: 'pads', name: 'Pads & Strings', blurb: 'Long, soft chords: pads, string ensembles and choirs.' },
+  { id: 'pads', name: 'Pads & Strings', blurb: 'Long, soft chords: warm synth beds, string ensembles and choirs.' },
   { id: 'leads', name: 'Leads', blurb: 'Melodies that sing on top: synth leads, brass and winds.' },
   { id: 'plucks', name: 'Plucks & Bells', blurb: 'Short, struck and plucked notes: bells, mallets, kalimba, harp.' },
   { id: 'textures', name: 'Textures & FX', blurb: 'Atmospheres, drones, risers, zaps and noise sweeps.' },
-  { id: 'recordings', name: 'Recordings', blurb: 'Built-in recordings and your own WAV or MP3 files, played by the sampler.' },
+  { id: 'recordings', name: 'Recordings', blurb: 'Built-in recordings and your own WAV or MP3 files.' },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -66,7 +66,7 @@ export const KITS: readonly KitInfo[] = [
   { id: 'dust-tape', name: 'Dust Tape', description: 'Soft, saturated, slightly lo-fi kit for downtempo and breaks.', level: -11, family: 'kit', tags: ['lofi', 'tape', 'downtempo', 'hip hop'] },
   { id: 'bright-steel', name: 'Bright Steel', description: 'Crisp, snappy kit with bright metals for garage and drum & bass.', level: -11, family: 'kit', tags: ['garage', 'dnb', 'jungle', 'crisp', 'bright'] },
   // Sparser, quieter hits: less trim for the same loudness.
-  { id: 'hand-percussion', name: 'Hand Percussion', description: 'Congas, bongos, shakers, woodblocks and bells for the percussion part.', level: -4.5, family: 'percussion', tags: ['congas', 'bongos', 'shaker', 'latin', 'world'] },
+  { id: 'hand-percussion', name: 'Hand Percussion', description: 'Congas, bongos, shakers, woodblocks and bells for the Percussion instrument.', level: -4.5, family: 'percussion', tags: ['congas', 'bongos', 'shaker', 'latin', 'world'] },
   { id: 'boom-808', name: '808 Machine', description: 'Classic drum-machine kit: long booming kick, snappy snare, sizzling hats and cowbell.', level: -12, family: 'kit', tags: ['808', 'hip hop', 'electro', 'classic', 'machine'] },
   { id: 'punch-909', name: '909 Punch', description: 'Hard-hitting machine kit: clicky punchy kick, noisy snare and bright cymbals.', level: -11, family: 'kit', tags: ['909', 'house', 'techno', 'classic', 'machine'] },
   { id: 'trap-night', name: 'Trap Night', description: 'Trap kit: hard kick, long distorted 808 on Kick 2, crisp snare and tight hats for rolls.', level: -9.6, family: 'kit', tags: ['trap', '808', 'hip hop', 'drill', 'rolls'] },
@@ -148,6 +148,7 @@ export const SYNTH_PRESETS: readonly PresetInfo[] = [
   preset('bass-growl', 'Growl', 'bass', 'bass', ['bass'], 'Aggressive, gritty FM-and-saw bass with a vocal filter edge.', ['growl', 'fm', 'dubstep', 'aggressive', 'distorted']),
   preset('bass-zap', 'Zap Bass', 'bass', 'bass', ['bass'], 'Electro bass with a laser zap at the start of every note.', ['electro', 'zap', 'laser', 'square', 'retro']),
   preset('bass-deep-pulse', 'Deep Pulse', 'bass', 'bass', ['bass'], 'Soft, rounded minimal-techno bass with a gentle filter bloom and slide.', ['minimal', 'techno', 'deep', 'round', 'slide']),
+  preset('bass-log-drum', 'Log Drum', 'bass', 'bass', ['bass'], 'Woody, pitched log-drum bass: a knock that drops into a short, round tone.', ['log drum', 'afrobeats', 'amapiano', 'woody', 'percussive']),
 
   /* ---------------- Keys ---------------- */
   preset('poly-glass-keys', 'Glass Keys', 'poly', 'keys', ['chords', 'lead'], 'Bell-like electric-piano keys.', ['electric piano', 'bell', 'glassy', 'chords']),
@@ -160,6 +161,8 @@ export const SYNTH_PRESETS: readonly PresetInfo[] = [
   preset('poly-reed-piano', 'Reed Piano', 'poly', 'keys', ['chords'], 'Buzzy, warm reed-style electric piano that growls when played hard.', ['electric piano', 'wurlitzer', 'soul', 'warm']),
   preset('poly-harpsichord', 'Harpsichord', 'poly', 'keys', ['chords', 'lead'], 'Bright, plucked baroque keys with a crisp jangle.', ['harpsichord', 'baroque', 'plucked', 'classical']),
   preset('poly-felt-piano', 'Felt Piano', 'poly', 'keys', ['chords'], 'Soft, muted, intimate piano tone for lo-fi and ambient chords.', ['piano', 'felt', 'soft', 'lofi', 'ambient']),
+  preset('poly-bright-piano', 'Bright Piano', 'poly', 'keys', ['chords', 'lead'], 'Clear, bright piano with a little hammer knock, for pop chords and ballads.', ['piano', 'bright', 'pop', 'ballad', 'acoustic']),
+  preset('poly-dusty-keys', 'Dusty Keys', 'poly', 'keys', ['chords'], 'Worn electric piano that wobbles and hisses like an old tape.', ['electric piano', 'lofi', 'tape', 'dusty', 'hip hop']),
 
   /* ---------------- Pads & strings ---------------- */
   preset('poly-lumen-chords', 'Lumen Chords', 'poly', 'pads', ['chords', 'pad'], 'Luminous detuned saw chords.', ['chords', 'saw', 'detuned', 'bright']),
@@ -199,6 +202,7 @@ export const SYNTH_PRESETS: readonly PresetInfo[] = [
   preset('poly-harp', 'Harp', 'poly', 'plucks', ['chords', 'lead'], 'Gentle plucked harp strings that ring out softly.', ['harp', 'plucked', 'strings', 'gentle', 'arpeggio']),
   preset('poly-steel-drum', 'Steel Drum', 'poly', 'plucks', ['lead'], 'Bright Caribbean steel-pan tone with a quick metallic attack.', ['steel drum', 'steelpan', 'caribbean', 'tropical', 'calypso']),
   preset('poly-koto-pluck', 'Koto Pluck', 'poly', 'plucks', ['lead'], 'Twangy plucked string with a tiny pitch snap, inspired by the koto.', ['koto', 'plucked', 'string', 'twang', 'world']),
+  preset('poly-soft-pluck', 'Soft Pluck', 'poly', 'plucks', ['chords', 'lead'], 'Round, gentle pluck with a short glow: friendly chords and arpeggios.', ['pluck', 'soft', 'round', 'pop', 'afrobeats']),
 
   /* ---------------- Textures & FX ---------------- */
   preset('poly-air-grain', 'Air Grain', 'poly', 'textures', ['texture'], 'Filtered noise and tone — wind and air.', ['wind', 'air', 'noise', 'atmosphere']),

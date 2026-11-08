@@ -12,7 +12,8 @@
  * - applyMasteringPreset: every control at once, as one undo step; it also
  *   switches mastering on, so the choice is heard.
  * - matchLoudnessTarget: moves Loudness by the difference between a target
- *   and a measured loudness, within 0–15 dB, and says what it did.
+ *   and a measured loudness, within 0–15 dB, and says what it did. The
+ *   passes of an iterating match pass one gesture id: one undo step.
  */
 import { masteringPreset } from '../../content/mastering';
 import { MASTERING_PARAMS, clampParam, readParam, specById } from '../../project/params';
@@ -94,12 +95,27 @@ export interface LoudnessMatch extends CommandResult {
 }
 
 /**
+ * Where a loudness match moves the Loudness control (pure): `before` plus
+ * `requested` dB, kept in its range and to 0.1 dB, and which end of the range
+ * stopped it (as matchLoudnessTarget sets it; the export's loudness match
+ * renders with it before anything is changed).
+ */
+export function loudnessDriveAfter(before: number, requested: number): { after: number; limit: 'max' | 'min' | null } {
+  const wanted = before + requested;
+  return {
+    after: Math.round(clampParam(LOUDNESS, wanted) * 10) / 10,
+    limit: wanted > LOUDNESS.max + SAME ? 'max' : wanted < LOUDNESS.min - SAME ? 'min' : null,
+  };
+}
+
+/**
  * Match a loudness target (LUFS) from a measured loudness (LUFS): move the
  * Loudness control by the difference, within its 0–15 dB range. Approximate,
  * because the output limiter holds peaks at −1 dBFS: pushing into it adds
- * less loudness than the dB figure. One undo step.
+ * less loudness than the dB figure. One undo step; passes of one iterating
+ * match that share a `gesture` id stay one undo step together.
  */
-export function matchLoudnessTarget(store: ProjectStore, targetLufs: number, measuredLufs: number): LoudnessMatch {
+export function matchLoudnessTarget(store: ProjectStore, targetLufs: number, measuredLufs: number, gesture?: string): LoudnessMatch {
   const m = store.getState().mastering;
   const before = readParam(MASTERING_PARAMS, m.params, 'loudness');
   const none = (r: CommandResult, requested = 0): LoudnessMatch => ({ ...r, before, after: before, requested, limit: null });
@@ -107,14 +123,17 @@ export function matchLoudnessTarget(store: ProjectStore, targetLufs: number, mea
   if (!isFiniteNumber(measuredLufs)) return none(refuse('unavailable', 'Nothing measured yet. Play your song for a few seconds, then match.'));
   if (!m.enabled) return none(refuse('unavailable', 'Mastering is off. Turn it on to match a loudness target.'));
   const requested = targetLufs - measuredLufs;
-  const wanted = before + requested;
-  const after = Math.round(clampParam(LOUDNESS, wanted) * 10) / 10;
-  const limit = wanted > LOUDNESS.max + SAME ? 'max' : wanted < LOUDNESS.min - SAME ? 'min' : null;
+  const { after, limit } = loudnessDriveAfter(before, requested);
   if (Math.abs(after - before) < 0.05) return { changed: false, before, after: before, requested, limit };
-  const r = run(store, 'mastering:Match loudness target', (d) => {
-    d.mastering.params.loudness = after;
-    if (d.mastering.presetId !== undefined && masteringDiverges(d.mastering.params, d.mastering.presetId)) delete d.mastering.presetId;
-  });
+  const r = run(
+    store,
+    'mastering:Match loudness target',
+    (d) => {
+      d.mastering.params.loudness = after;
+      if (d.mastering.presetId !== undefined && masteringDiverges(d.mastering.params, d.mastering.presetId)) delete d.mastering.presetId;
+    },
+    gesture,
+  );
   return r.changed ? { ...r, before, after, requested, limit } : { ...r, before, after: before, requested, limit };
 }
 

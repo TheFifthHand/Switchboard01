@@ -5,6 +5,7 @@
  * directions deep-clone, so a replay never aliases the stored performance and
  * later edits never leak into a recorded take.
  */
+import { clipAtSlot, isSongSlot } from '../project/clips';
 import { TICKS_PER_BAR, type LauncherSnapshotEntry, type PerformanceSnapshot, type Project } from '../project/types';
 
 /** The project a performance replays with: the snapshot's musical state on top of `base`. */
@@ -37,8 +38,8 @@ export function makeSnapshot(project: Project, launcher: readonly LauncherSnapsh
   const entries: LauncherSnapshotEntry[] = project.tracks.map((track) => {
     const entry = launcher.find((e) => e.trackId === track.id);
     const playing = entry?.playing;
-    if (!playing) return { trackId: track.id, playing: null };
-    const clip = track.clips[playing.slot];
+    if (!playing || isSongSlot(playing.slot)) return { trackId: track.id, playing: null };
+    const clip = clipAtSlot(track, playing.slot);
     if (!clip) return { trackId: track.id, playing: null };
     let s = playing.startTick;
     if (startTick !== undefined && Number.isFinite(startTick) && s <= startTick) {
@@ -54,7 +55,8 @@ export function makeSnapshot(project: Project, launcher: readonly LauncherSnapsh
     scale: project.scale,
     assist: project.assist,
     masterVolumeDb: project.masterVolumeDb,
-    tracks: project.tracks,
+    // Performances replay the pads only: the song's own clips stay out of a take's starting state.
+    tracks: project.tracks.map(({ songClips: _song, ...t }) => t),
     scenes: project.scenes,
     patch: project.patch,
     launcher: entries,

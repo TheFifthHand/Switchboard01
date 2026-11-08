@@ -9,6 +9,7 @@
  */
 import { createStore, useStore, shallowEqual } from '../state/store';
 import type { Id } from '../project/types';
+import type { SongLoop } from '../time/contracts';
 
 export type AudioStatus = 'off' | 'starting' | 'running' | 'suspended' | 'error';
 
@@ -33,7 +34,18 @@ export interface RuntimeState {
   paused: boolean;
   mode: PlayMode;
   replayId: Id | null;
-  songBlock: number | null;
+  /**
+   * The song's cursor: the bar (0-based) where Play starts in the Song view,
+   * GarageBand's playhead while stopped. Clicking the ruler sets it; Stop
+   * after song playback puts it back where that playback started. Where the
+   * song plays (or is paused) now is read from the transport per frame
+   * (songPlayheadBar in songPlayback.ts), never from here.
+   */
+  songCursor: number;
+  /** The looped bars of the song (Song view), or null: the song plays through. */
+  songLoop: SongLoop | null;
+  /** The song is playing (or paused) inside the loop and will repeat it; false while it plays towards it or on to the end. */
+  songLooping: boolean;
   tracks: Record<Id, TrackRuntime>;
   recording: RecordingState;
   /** Clip that Record Notes writes into. */
@@ -49,6 +61,34 @@ export interface RuntimeState {
   held: Record<Id, readonly number[]>;
   /** One-line status message shown as a toast (e.g. "Variation: 5 notes changed" [Undo]). */
   notice: Notice | null;
+  /**
+   * A suggestion with a button of its own ("Add Bass 2 to the song where
+   * Groove plays?" [Add]), shown as a toast beside the notices (it does not
+   * replace them). Null (or absent): none.
+   */
+  offer?: Offer | null;
+  /**
+   * Record Notes is waiting for its clip to start (the next bar, or the end
+   * of the count-in): the transport tick recording starts at, so the
+   * transport can count the beats down; null (or absent) when not waiting.
+   */
+  recordStartsAtTick?: number | null;
+  /**
+   * Record Notes in the song: false while the part being recorded has no
+   * region under the playhead (nothing records there). True (or absent)
+   * otherwise.
+   */
+  recordTargetAudible?: boolean;
+  /**
+   * Recording into the song (the Song view's Record): the part, the song bar
+   * the take starts at and the bars it has reached so far (it grows bar by bar
+   * on the audio clock; the Song view draws it as a live "Recording…"
+   * region). Null (or absent) otherwise. The project is written when the take
+   * ends.
+   */
+  songRecording?: { trackId: Id; startBar: number; bars: number } | null;
+  /** The project the last starter (Jump In, a new project) replaced on screen; it stays in My projects. Null (or absent): none. */
+  starterReplaced?: { id: Id; name: string } | null;
 }
 
 /** What a notice's button does: Undo (or Redo) the history step the message is about. */
@@ -67,6 +107,14 @@ export interface Notice {
   entry?: number;
 }
 
+/** See RuntimeState.offer: the words, the button's label and what it does. */
+export interface Offer {
+  id: number;
+  text: string;
+  label: string;
+  run(): void;
+}
+
 export const EMPTY_TRACK_RUNTIME: TrackRuntime = { playingSlot: null, queued: null };
 
 export const runtimeStore = createStore<RuntimeState>({
@@ -76,7 +124,9 @@ export const runtimeStore = createStore<RuntimeState>({
   paused: false,
   mode: 'live',
   replayId: null,
-  songBlock: null,
+  songCursor: 0,
+  songLoop: null,
+  songLooping: false,
   tracks: {},
   recording: 'off',
   recordTarget: null,
@@ -86,6 +136,11 @@ export const runtimeStore = createStore<RuntimeState>({
   preview: false,
   held: {},
   notice: null,
+  offer: null,
+  recordStartsAtTick: null,
+  recordTargetAudible: true,
+  starterReplaced: null,
+  songRecording: null,
 });
 
 export function patchRuntime(partial: Partial<RuntimeState>): void {
@@ -125,6 +180,19 @@ export function notify(text: string, tone: 'info' | 'warn' | 'error' = 'info', a
   // Nothing to undo (or redo): no button.
   const tied = action && step !== null ? { action, ...(step !== undefined ? { entry: step } : {}) } : {};
   patchRuntime({ notice: { id: noticeCounter, text, tone, ...tied } });
+}
+
+let offerCounter = 0;
+
+/** Show a suggestion with its own button (see RuntimeState.offer); a newer one replaces it. */
+export function offer(text: string, label: string, run: () => void): void {
+  offerCounter += 1;
+  patchRuntime({ offer: { id: offerCounter, text, label, run } });
+}
+
+/** Take the suggestion showing now away (its subject is gone). */
+export function withdrawOffer(): void {
+  if (runtimeStore.getState().offer) patchRuntime({ offer: null });
 }
 
 /** The transport's state in one word, as the transport shows it. */

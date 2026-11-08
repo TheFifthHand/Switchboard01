@@ -5,6 +5,7 @@
  */
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import '../../src/ui/theme.css';
 import { session } from '../../src/app/instance';
 import { patchRuntime } from '../../src/app/runtime';
 import { NotesPads } from '../../src/app/views/NotesPads';
@@ -12,7 +13,7 @@ import { noteName, pitchClass, scaleDegreesInRange } from '../../src/music/scale
 import { createProject } from '../../src/project/factory';
 import type { Id } from '../../src/project/types';
 import { setAssist, setKey } from '../../src/state/commands';
-import { selectTrack, setNotesOctave, setPadMode, uiStore } from '../../src/state/uiStore';
+import { selectTrack, setNotesOctave, setPadMode, setUiMode, uiStore } from '../../src/state/uiStore';
 import { PAD_KEY_VELOCITY } from '../../src/ui/components';
 import { actFrame, cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
 
@@ -41,6 +42,9 @@ beforeEach(() => {
   session.accepted(setAssist(session.store, true));
   act(() => {
     patchRuntime({ held: {} });
+    // Simple (everyone's start: the Jam pads sheet): parts go by the instrument picker's words, so Chords is
+    // "Keys & chords" and Lead is "Melody" (Advanced keeps the stored names).
+    setUiMode('simple');
     selectTrack('t3'); // Bass
     setNotesOctave(3);
     setPadMode('notes');
@@ -85,6 +89,14 @@ describe('Notes pad mode', () => {
       expect(pad(i)!.getAttribute('aria-label')).toContain('root note');
     }
     expect(pad(0)!.parentElement!.hasAttribute('data-root')).toBe(false);
+    // design-17: a root is marked by a bold "Root" label and a dotted ink outline, never the teal of selection.
+    const rootCell = pad(roots[0][1])!.parentElement!;
+    const ring = getComputedStyle(rootCell, '::after');
+    expect(ring.borderTopStyle).toBe('dotted');
+    expect(ring.boxShadow).toBe('none');
+    const mark = [...rootCell.querySelectorAll('span')].find((el) => el.textContent === 'Root')!;
+    expect(Number(getComputedStyle(mark).fontWeight)).toBeGreaterThanOrEqual(700);
+    expect(getComputedStyle(mark).backgroundColor).toBe('rgba(0, 0, 0, 0)');
     expect(m.container.textContent).toContain('Musical Assist: pads play only notes in A minor.');
     expect(m.container.textContent).toContain(`${noteName(expected[0])}–${noteName(expected[15])}`);
   });
@@ -185,7 +197,7 @@ describe('Notes pad mode', () => {
 
   it('the part switch changes which part the pads play', () => {
     const { m, pad, click } = setup();
-    const chords = m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label^="Chords"]')!;
+    const chords = m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label^="Keys & chords"]')!;
     click(chords);
     expect(uiStore.getState().selectedTrackId).toBe('t4');
     const p0 = pad(0)!;
@@ -202,7 +214,7 @@ describe('Notes pad mode', () => {
     expect(m.container.textContent).toContain('Drums is a drum kit.');
     const options = [...m.container.querySelectorAll<HTMLButtonElement>('[aria-label="Melodic parts"] button')];
     expect(options).toHaveLength(6);
-    click(options.find((b) => b.getAttribute('aria-label')!.startsWith('Play Lead'))!);
+    click(options.find((b) => b.getAttribute('aria-label')!.startsWith('Play Melody'))!);
     expect(uiStore.getState().selectedTrackId).toBe('t5');
     expect(pad(0)).not.toBeNull();
     expect(calls).toEqual([]);
@@ -248,7 +260,7 @@ describe('Notes pad mode', () => {
   it('choosing a part in the chooser puts keyboard focus on the note pads', async () => {
     act(() => selectTrack('t1'));
     const { m, pad, click } = setup();
-    const lead = m.container.querySelector<HTMLButtonElement>('button[aria-label^="Play Lead"]')!;
+    const lead = m.container.querySelector<HTMLButtonElement>('button[aria-label^="Play Melody"]')!;
     act(() => lead.focus());
     click(lead);
     await actFrame();
@@ -260,6 +272,6 @@ describe('Notes pad mode', () => {
     act(() => bass.focus());
     key(bass, 'keydown', { key: 'ArrowRight', code: 'ArrowRight' });
     expect(uiStore.getState().selectedTrackId).toBe('t4');
-    expect(document.activeElement).toBe(m.container.querySelector('[role="radio"][aria-label^="Chords"]'));
+    expect(document.activeElement).toBe(m.container.querySelector('[role="radio"][aria-label^="Keys & chords"]'));
   });
 });

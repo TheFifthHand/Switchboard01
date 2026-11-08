@@ -16,22 +16,48 @@ The rules that hold today keep holding: Omni Song runs on your own device, needs
 nothing anywhere and ships its sounds with the app. Any later feature that needs more (a local AI
 model, a camera, a headset) is optional, stays on your machine and is off until you turn it on.
 
-## What exists now (2.0)
+## What exists now (3.0)
 
-- **Make music without theory:** Jump In plays a starter groove; eight parts by four rows of loops,
-  Play / Pause / Stop, labelled Mute and Solo, drag-and-drop clips, Musical Assist keeps notes in key,
-  Variation makes new takes on a pattern.
+- **New in 3.0:** one song screen. In Simple (the default) the song is the only home: a row per
+  instrument, a loop library on the side, click a loop to change it underneath, click an
+  instrument's name for its sound, Play always plays the song, Make it longer / shorter, + Add
+  instrument, Share (a music file or the project), and a tip line that says what to try next. Every
+  other view opens from it as a sheet with "← Back to my song"; Advanced (⋯ › Show every control) is
+  2.4 as it was.
+- **New in 2.4:** loops of the song's own (record straight into the song, drag in a library of 164
+  original loops in your key, Make this one different), Make a beat from scratch with 52 ready beats,
+  five more starters (Trap, Lo-fi Hip Hop, Pop, Afrobeats, Boom Bap), a loop editor under the song,
+  volume and pan on each song row, insert and remove bars, sections that reorder by drag, and export as
+  a smaller file, separate parts or MIDI, as loud as streaming songs.
+- **Make music without theory:** Jump In plays a starter groove; eight parts by one to eight scenes of
+  loops (clips up to 8 bars), Play / Pause / Stop (Pause also beside the pads), pads that say what a
+  click does (▶ Play / ■ Stop) and never restart by accident, part keys and scene buttons in words,
+  labelled Mute and Solo, drag-and-drop clips, Musical Assist with an in-key keyboard (only the key's
+  notes, every key its own note), Variation (Subtle, Bold, Back to original), chord pads named in the
+  key and Write a progression, and changing key can move the whole song.
+- **Edit notes and drums:** a piano roll with selection, moves across bars, finer grids, Tighten timing
+  and Loosen; a clickable, paintable drum grid with Fill and Shift; one computer key per kit sound.
 - **Sounds:** 15 drum kits and more than 60 synth sounds, all original synthesis, in a sound browser
-  with categories and Preview; six big knobs per part (Tone, Space, Echo, Motion, Drive, Pump).
+  with Cancel back to what you had; recordings and imports become their own clips; six big knobs per
+  part (Tone, Space, Echo, Motion, Drive, Pump), any knob can be given to a big knob.
 - **Simple and Advanced:** the essentials by default; every control (effects, cables, arpeggiator,
   key and scale) one switch away.
-- **Mix and master:** a channel strip per part, mastering presets, loudness targets with live
-  readings and Match target, a spectrum display and A/B.
-- **Record and keep:** performance recording and replay, note recording, an arrangement view, WAV
-  export rendered by the same engine, project files you can move between browsers, offline use.
-- **Help:** a three-step quick guide and "Try this" hints that follow what you do.
-- **New in 2.0:** MIDI keyboards and controllers (with MIDI learn), and recording your voice or an
-  instrument in time with the music, with simple edits of the take.
+- **Songs, like GarageBand:** a row per part; loops dragged in from a loop browser (scenes or one
+  part's loops), moved, copied, stretched and trimmed, everything snapping to bars with the result
+  shown while dragging; a ruler with the playhead and a loop range; named sections that move with
+  their music and carry fades, filter rises and echo throws; Build up, Strip down and Breakdown;
+  takes put in the song; old songs open as they were.
+- **Mix and master:** channel strips with aligned meters, Reverb and Echo returns, a channel drawer for
+  effects, mastering presets, loudness targets with a Match that keeps correcting, level-matched A/B,
+  a −1 dBTP true-peak ceiling.
+- **Record and keep:** performance and note recording, audio takes up to 8 bars, WAV export (24-bit by
+  default, with or without mastering, with a loudness report) that starts exactly on the beat,
+  project files you can move between browsers, version history and a rescue copy, a two-tab guard,
+  offline use, and a new version that opens by itself unless you are using the page.
+- **Help:** a three-step quick guide, "Try this" hints for loops and songs, and a Help sheet (?) with
+  every shortcut.
+- **MIDI and audio input:** MIDI keyboards and controllers (with MIDI learn), and recording your voice
+  or an instrument in time with the music.
 
 ## Plans
 
@@ -78,6 +104,36 @@ project files, so a song made on a laptop opens in the headset and back.
 *Plan, and the long-term direction.* Bring the pieces together: generated material from your own
 model, shaped by your movement, in a space you can stand in — music as something you move through.
 What this becomes will be decided by trying the earlier steps first.
+
+### 5. Smaller things deferred from rounds 4 and 5
+
+*Plan.* Round 4 (the whole-app upgrade after 2.1) left these out on purpose, to be picked up later:
+
+- **Drum rolls** in the step grid.
+- **Preview on each sound card** in the sound browser (today Preview plays the part's current
+  sound).
+- **Sampler:** slicing a recording, an ADSR envelope and more filter types.
+- **Shape:** a per-voice drum strip, a voice-source picker, and saving your own sound presets.
+- **Links to views** (hash routing), so a view can be bookmarked or reopened by address.
+
+Round 5 (2.3, the Song view) left these for later:
+
+- **Your own keyboard layout's letters** on the in-key keyboard's I, [ and ] keys (they show the US
+  letters).
+
+Round 6 (2.4) left these for later:
+
+- **Undo after reopening** a project (the history is not saved).
+- **Hear a starter before opening it.**
+- **One transport** for the pads and the song in Advanced (in Simple, Play is always the song).
+- **A click only while recording**, more than 8 parts, automation lanes, and guitar, piano and vocal
+  sounds.
+
+Round 7 (3.0) left these for later:
+
+- In Simple, a toast can cover the tip line for a few seconds, and its button says "Export project
+  file" rather than "Save a copy to my computer".
+- Simple words for Solo ("solo" / "not soloed") and for the last refusals that say "pad".
 
 ## How plans become features
 

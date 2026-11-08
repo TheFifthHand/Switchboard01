@@ -28,4 +28,4 @@ export { DrumKitEngine } from './drumKit';
 export { MonoSynthEngine } from './monoSynth';
 export { PolySynthEngine } from './polySynth';
 export { SamplerEngine } from './sampler';
-export { SampleBank, audioBufferFromChannels } from './sampleBank';
+export { SampleBank, audioBufferFromChannels, type SampleLoader } from './sampleBank';

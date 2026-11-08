@@ -21,9 +21,10 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Button, isTypingTarget } from '../../ui/components';
 import { setGuideDone, setView, type PadMode } from '../../state/uiStore';
-import { useProject, useUi } from '../instance';
+import { useUi } from '../instance';
 import { useRuntime } from '../runtime';
 import styles from './Guide.module.css';
+import { useInstrumentName } from './useInstrumentName';
 
 export type GuideSide = 'top' | 'bottom' | 'left' | 'right' | 'over';
 export type GuideAlign = 'start' | 'center' | 'end';
@@ -77,6 +78,10 @@ const MARGIN = 12;
 const RING_PAD = 5;
 /** Controls the callout should rather not cover. */
 const INTERACTIVE = 'button, [role="slider"], [role="tab"], [role="radio"], [role="switch"], input, select, textarea, a[href]';
+/** Headings and what a view asks to keep clear (data-hint-avoid: readings, a mode's caption): covered as reluctantly as controls. */
+const KEY_TEXT = 'h2, h3, h4, [role="heading"], [data-hint-avoid]';
+/** Passing layers above the callout (toasts, tooltips): never a reason to move. */
+const PASSING = '[inert], body > [aria-live], [role="tooltip"]';
 /**
  * Regions the callout should stay off, weighted per covered pixel: the
  * transport must stay reachable at all times, and the keyboard strip is played.
@@ -84,13 +89,15 @@ const INTERACTIVE = 'button, [role="slider"], [role="tab"], [role="radio"], [rol
 const ZONES: readonly { selector: string; weight: number }[] = [
   { selector: 'header[aria-label="Transport"]', weight: 40 },
   { selector: 'main ~ footer', weight: 3 },
+  // A banner under the transport (a stall, a project open in another tab) says something that must be read.
+  { selector: '[data-banners]', weight: 10 },
 ];
 
 const PAD_TEXT: Record<PadMode, string> = {
   loops: 'Each column is a part. Tap a pad to switch that part to another loop; it joins on the next bar. Mute at the top of a column silences that part, Solo plays it on its own.',
   drums: 'Tap a pad to play that drum sound. The tabs above switch between Loops, Drums, Notes and Steps; Loops has Mute and Solo for every part.',
   notes: "Tap a pad to play a note of the selected part, in the project's key. The tabs above switch modes; Loops has Mute and Solo for every part.",
-  steps: 'Click a numbered step to add or remove a note in the selected clip. The tabs above switch modes; Loops has Mute and Solo for every part.',
+  steps: 'Click a numbered step to add or remove a note in the selected loop. The tabs above switch modes; Loops has Mute and Solo for every part.',
 };
 
 /** The selected part's Change instrument button in the Play view's part panel. */
@@ -254,14 +261,19 @@ function unionRect(a: DOMRect, b: DOMRect | null): DOMRect {
   return new DOMRect(left, top, Math.max(a.right, b.right) - left, Math.max(a.bottom, b.bottom) - top);
 }
 
-/** Area of on-screen controls (outside the guide and the anchors) a rect would cover, plus weighted no-go zones. */
+/** Area of on-screen controls and headings (outside the guide and the anchors) a rect would cover, plus weighted no-go zones. */
 function coverCost(anchors: readonly HTMLElement[], guide: HTMLElement | null): (r: { left: number; top: number; right: number; bottom: number }) => number {
   const rects: { r: DOMRect; weight: number }[] = [];
-  for (const el of document.querySelectorAll<HTMLElement>(INTERACTIVE)) {
-    if (anchors.some((a) => a.contains(el)) || guide?.contains(el) || el.closest('[inert]')) continue;
-    const r = el.getBoundingClientRect();
+  const range = document.createRange();
+  for (const el of document.querySelectorAll<HTMLElement>(`${INTERACTIVE}, ${KEY_TEXT}`)) {
+    if (anchors.some((a) => a.contains(el)) || guide?.contains(el) || el.closest(PASSING) || el.closest('[data-hint-home]') || el.querySelector('[data-hint-home]')) continue;
+    // A heading by its words (a wide heading box with a short title leaves the rest of its row free); a control whole.
+    const words = !el.matches(INTERACTIVE) && el.matches(KEY_TEXT);
+    if (words) range.selectNodeContents(el);
+    const r = words ? range.getBoundingClientRect() : el.getBoundingClientRect();
     if (r.width > 0 && r.height > 0) rects.push({ r, weight: 1 });
   }
+  range.detach();
   for (const z of ZONES) {
     const el = document.querySelector<HTMLElement>(z.selector);
     const r = el?.getBoundingClientRect();
@@ -276,6 +288,44 @@ function coverCost(anchors: readonly HTMLElement[], guide: HTMLElement | null): 
     }
     return area;
   };
+}
+
+/**
+ * Where the callout waits while its control is not on screen: on the view's
+ * hint home ([data-hint-home], e.g. Mix's header line) when that covers
+ * nothing, else the spot below the top chrome (transport, banners) that
+ * covers the fewest controls and headings, the first of equals nearest the
+ * top (a 16 px grid).
+ */
+function placeAside(size: { w: number; h: number }, vw: number, vh: number, cost: (r: { left: number; top: number; right: number; bottom: number }) => number): GuidePlacement {
+  let top = MARGIN;
+  for (const sel of ['header[aria-label="Transport"]', '[data-banners]']) {
+    const r = document.querySelector(sel)?.getBoundingClientRect();
+    if (r && r.height > 0 && r.bottom > 0) top = Math.max(top, r.bottom + GAP);
+  }
+  const maxX = Math.max(MARGIN, vw - MARGIN - size.w);
+  const maxY = Math.max(top, vh - MARGIN - size.h);
+  const at = (x: number, y: number): GuidePlacement => ({ x: Math.round(x), y: Math.round(y), side: 'over', arrow: null });
+  const costAt = (x: number, y: number) => cost({ left: x, top: y, right: x + size.w, bottom: y + size.h });
+  const home = [...document.querySelectorAll<HTMLElement>('main [data-hint-home]')].map((el) => el.getBoundingClientRect()).find((r) => r.width > 1 && r.bottom > top && r.top < vh);
+  if (home) {
+    const x = clamp(home.left, MARGIN, maxX);
+    const y = clamp((home.top + home.bottom - size.h) / 2, top, maxY);
+    if (costAt(x, y) < 1) return at(x, y);
+  }
+  let best: { x: number; y: number; c: number } | null = null;
+  for (let y = top; ; y += 16) {
+    const yy = Math.min(y, maxY);
+    for (let x = MARGIN; ; x += 16) {
+      const xx = Math.min(x, maxX);
+      const c = costAt(xx, yy);
+      if (c < 1) return at(xx, yy);
+      if (!best || c < best.c) best = { x: xx, y: yy, c };
+      if (xx >= maxX) break;
+    }
+    if (yy >= maxY) break;
+  }
+  return at(best!.x, best!.y);
 }
 
 interface Layout extends GuidePlacement {
@@ -293,14 +343,18 @@ export interface GuideProps {
   open: boolean;
   /** The guide ended (finished or skipped); completion is already remembered. */
   onClose(): void;
+  /** Give keyboard focus to Next once the callout is on screen (after Jump In). */
+  focusNext?: boolean;
 }
 
 export function Guide(props: GuideProps) {
   if (!props.open) return null;
-  return <GuideCoach onClose={props.onClose} />;
+  return <GuideCoach onClose={props.onClose} focusNext={props.focusNext} />;
 }
 
-function GuideCoach({ onClose }: { onClose(): void }) {
+function GuideCoach({ onClose, focusNext }: { onClose(): void; focusNext?: boolean }) {
+  const nextRef = useRef<HTMLButtonElement>(null);
+  const focused = useRef(false);
   const [step, setStep] = useState(0);
   const [layout, setLayout] = useState<Layout | null>(null);
   const [missing, setMissing] = useState(false);
@@ -319,7 +373,7 @@ function GuideCoach({ onClose }: { onClose(): void }) {
   const padMode = useUi((s) => s.padMode);
   const view = useUi((s) => s.view);
   const trackId = useUi((s) => s.selectedTrackId);
-  const partName = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const partName = useInstrumentName(trackId);
 
   const def = GUIDE_STEPS[step];
   const body = def.body({ playing, armed, padMode, partName });
@@ -348,11 +402,18 @@ function GuideCoach({ onClose }: { onClose(): void }) {
       const { w: vw, h: vh } = viewportSize();
       const size = { w: el.offsetWidth, h: el.offsetHeight };
       const s = GUIDE_STEPS[step];
-      const anchor = s.find();
+      // The guide is the Play view's tour: in another view its control counts as not on screen (Play / Pause too), and
+      // the callout waits out of the way there, offering to show the Play view.
+      const anchor = view === 'play' ? s.find() : null;
       const extra = anchor ? (s.extend?.() ?? null) : null;
       const own = visibleRect(anchor, vw, vh);
       const r = own ? unionRect(own, visibleRect(extra, vw, vh)) : null;
-      const inputs = [step, vw, vh, size.w, size.h, r ? [r.left, r.top, r.width, r.height].map(Math.round).join(',') : '-'].join('|');
+      // A banner appearing under the transport (a stall, a project open in another tab) brings keys the callout must not cover.
+      const banners = Math.round(document.querySelector('[data-banners]')?.getBoundingClientRect().height ?? 0);
+      // The view on screen (the shell's heading names it; a new view mounts a moment after its tab is chosen): where the
+      // callout waits in another view depends on that view's layout.
+      const shown = r ? '' : (document.querySelector('main h1')?.textContent ?? '');
+      const inputs = [step, vw, vh, size.w, size.h, banners, shown, r ? [r.left, r.top, r.width, r.height].map(Math.round).join(',') : '-'].join('|');
       if (!force && inputs === lastInputs.current) return;
       lastInputs.current = inputs;
       let next: Layout;
@@ -363,12 +424,12 @@ function GuideCoach({ onClose }: { onClose(): void }) {
         const ring = { left, top, width: Math.min(vw - 2, r.right + RING_PAD) - left, height: Math.min(vh - 2, r.bottom + RING_PAD) - top };
         next = { ...p, ring };
       } else {
-        next = { x: clamp((vw - size.w) / 2, MARGIN, vw - MARGIN - size.w), y: clamp(vh - size.h - 124, MARGIN, vh - MARGIN - size.h), side: 'over', arrow: null, ring: null };
+        next = { ...placeAside(size, vw, vh, coverCost([], el)), ring: null };
       }
       setMissing(!r);
       setLayout((prev) => (sameLayout(prev, next) ? prev : next));
     },
-    [step],
+    [step, view],
   );
 
   // Bring the control on screen when its step starts (the page scrolls at 200 % zoom or in small windows).
@@ -382,6 +443,14 @@ function GuideCoach({ onClose }: { onClose(): void }) {
   useLayoutEffect(() => {
     measure();
   }, [measure, body, view, padMode, missing]);
+
+  // Keyboard focus to Next once the callout is placed (it is hidden until then, and hidden keys take no focus).
+  useEffect(() => {
+    if (!focusNext || !layout || focused.current) return;
+    focused.current = true;
+    const raf = requestAnimationFrame(() => nextRef.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(raf);
+  }, [focusNext, layout]);
 
   useEffect(() => {
     if (!layout || settled) return;
@@ -445,7 +514,9 @@ function GuideCoach({ onClose }: { onClose(): void }) {
         aria-label={`Quick guide, step ${step + 1} of ${GUIDE_STEPS.length}: ${def.title}`}
         aria-describedby={bodyId}
         data-guide-step={def.id}
-        data-layout={missing ? 'card' : def.layout}
+        // Toasts go below the card, never over its words (Toast.tsx).
+        data-toast-below=""
+        data-layout={missing ? (view === 'play' ? 'card' : 'waiting') : def.layout}
         data-side={layout?.side ?? 'over'}
         data-ready={layout ? true : undefined}
         data-settled={settled || undefined}
@@ -488,7 +559,8 @@ function GuideCoach({ onClose }: { onClose(): void }) {
               Skip guide
             </Button>
           )}
-          <Button size="sm" variant="primary" iconRight={last ? 'check' : 'chevronRight'} onClick={next}>
+          {/* On the Play step ("Pause it here or with the Space bar") Space plays and pauses even with Next focused; Enter presses Next. */}
+          <Button ref={nextRef} size="sm" variant="primary" iconRight={last ? 'check' : 'chevronRight'} onClick={next} data-guide-next="" data-space-plays={def.id === 'play' ? '' : undefined}>
             {last ? 'Done' : 'Next'}
           </Button>
         </div>

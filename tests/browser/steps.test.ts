@@ -8,12 +8,12 @@ import '../../src/ui/theme.css';
 import { StepEditor } from '../../src/app/views/StepEditor';
 import { barClipboard } from '../../src/app/views/steps/shared';
 import { session } from '../../src/app/instance';
-import { patchRuntime } from '../../src/app/runtime';
+import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { getKitVoiceNames } from '../../src/audio/instruments/kits';
 import { createProject } from '../../src/project/factory';
 import type { Clip, Note } from '../../src/project/types';
 import * as cmd from '../../src/state/commands';
-import { defaultUiState, selectSlot, selectTrack, uiStore } from '../../src/state/uiStore';
+import { defaultUiState, selectSlot, selectTrack, setUiMode, uiStore } from '../../src/state/uiStore';
 import { actFrame, cleanup, fire, frames, key, mount, pointer, pointIn, wait } from './ui-harness';
 
 const KICK = getKitVoiceNames('round-machine')[0];
@@ -37,10 +37,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mountEditor() {
-  const m = mount(h('div', { style: { width: '960px', height: '470px', display: 'flex', flexDirection: 'column' } }, h(StepEditor)), { width: 1000 });
+/**
+ * The editor in a box `width` px wide. At 960 px a 2-bar clip shows both bars side by side; the tests of
+ * one bar per page (what a longer clip, or a narrower window, gets) use NARROW.
+ */
+function mountEditor(width = 960) {
+  const m = mount(h('div', { style: { width: `${width}px`, height: '470px', display: 'flex', flexDirection: 'column' } }, h(StepEditor)), { width: width + 40 });
   return m;
 }
+/** Too narrow for two bars side by side: one bar per page. */
+const NARROW = 700;
 
 function clip(trackId: string, slot = 0): Clip | null {
   return session.store.getState().tracks.find((t) => t.id === trackId)?.clips[slot] ?? null;
@@ -81,9 +87,9 @@ describe('empty slot', () => {
   it('offers to create a 1, 2 or 4 bar clip right here', () => {
     selectTrack('t1');
     selectSlot('t1', 1);
-    const m = mountEditor();
-    expect(m.container.textContent).toContain('has no clip in');
-    const create = buttonByText(m.container, '2-bar clip');
+    const m = mountEditor(NARROW);
+    expect(m.container.textContent).toContain('has no loop in');
+    const create = buttonByText(m.container, '2-bar loop');
     create.focus();
     fire(create, new MouseEvent('click', { bubbles: true, detail: 0 }));
     const c = clip('t1', 1);
@@ -101,7 +107,7 @@ describe('empty slot', () => {
     selectTrack('t3');
     selectSlot('t3', 0);
     const m = mountEditor();
-    fire(buttonByText(m.container, 'Create a 1-bar clip'), new MouseEvent('click', { bubbles: true, detail: 0 }));
+    fire(buttonByText(m.container, 'Create a 1-bar loop'), new MouseEvent('click', { bubbles: true, detail: 0 }));
     expect(clip('t3')?.bars).toBe(1);
     expect(document.activeElement?.getAttribute('aria-label')).toMatch(/^Note grid, bar 1\./);
   });
@@ -115,7 +121,7 @@ describe('empty slot', () => {
     try {
       const m = mountEditor();
       await actFrame();
-      expect(m.container.textContent).not.toContain('has no clip in');
+      expect(m.container.textContent).not.toContain('has no loop in');
       // It becomes the part's selected slot, so Loops and Record Notes agree.
       expect(uiStore.getState().selectedSlot.t1).toBe(2);
       expect(m.container.querySelector('[role="radio"][aria-checked="true"]')?.getAttribute('aria-label')).toMatch(new RegExp(`^${scenes[2].name}: `));
@@ -136,7 +142,7 @@ describe('empty slot', () => {
     const m = mountEditor();
     fire(byLabel(m.container, 'Edit '), new MouseEvent('click', { bubbles: true }));
     expect(uiStore.getState().selectedSlot.t1).toBe(2);
-    expect(m.container.textContent).not.toContain('has no clip in');
+    expect(m.container.textContent).not.toContain('has no loop in');
     expect(document.activeElement?.getAttribute('aria-label')).toBe(`Step 1, ${KICK}, off`);
   });
 });
@@ -163,7 +169,7 @@ describe('drum steps', () => {
     expect(step5.getAttribute('aria-label')).toBe(`Step 5, ${KICK}, off`);
   });
 
-  it('Space/Enter (a keyboard click) toggles the focused step; arrows move focus', () => {
+  it('Enter (a keyboard click) toggles the focused step; arrows move focus', () => {
     makeClip('t1', 1);
     const m = mountEditor();
     const step1 = byLabel(m.container, `Step 1, ${KICK}`);
@@ -182,7 +188,7 @@ describe('drum steps', () => {
     const m = mountEditor();
     const snareRow = m.container.querySelector<HTMLButtonElement>(`[data-voice="${SNARE_VOICE}"]`)!;
     fire(snareRow, new MouseEvent('click', { bubbles: true, detail: 1 }));
-    expect(snareRow.getAttribute('aria-checked')).toBe('true');
+    expect(snareRow.closest('[role="row"]')?.getAttribute('aria-selected') ?? snareRow.getAttribute('aria-selected')).toBe('true');
     expect(noteOn).toHaveBeenLastCalledWith('t1', SNARE_VOICE, 0.8, 'preview');
 
     pointer(byLabel(m.container, `Step 3, ${SNARE}`), 'pointerdown', pointIn(byLabel(m.container, `Step 3, ${SNARE}`)));
@@ -191,11 +197,11 @@ describe('drum steps', () => {
     expect(snareRow.querySelectorAll('[data-v="2"]')).toHaveLength(1);
     expect(snareRow.getAttribute('aria-label')).toContain('1 hit in bar 1');
 
-    // Arrow keys in the sound list move the selection.
+    // Arrow keys in the sound list move the selection, through the rows shown (Simple: Kick 2 is not one of them).
     snareRow.focus();
     key(snareRow, 'keydown', { key: 'ArrowUp' });
-    expect(uiStore.getState().selectedDrumVoice.t1).toBe(1);
-    expect(document.activeElement?.getAttribute('data-voice')).toBe('1');
+    expect(uiStore.getState().selectedDrumVoice.t1).toBe(0);
+    expect(document.activeElement?.getAttribute('data-voice')).toBe('0');
   });
 
   it('Up/Down on a focused step and dragging the velocity lane change velocity (one undo step per drag)', () => {
@@ -227,9 +233,10 @@ describe('drum steps', () => {
   it('pages show the right bar; copy/paste, copy to next bar and clear work on the shown bar', async () => {
     makeClip('t1', 2);
     cmd.toggleStep(session.store, 't1', 0, 16, 0); // bar 2, step 1
-    const m = mountEditor();
+    const m = mountEditor(NARROW);
     const tabs = () => [...m.container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
-    expect(tabs().map((t) => t.textContent?.trim())).toEqual(['Bar 1', 'Bar 2']);
+    expect(tabs().map((t) => t.getAttribute('aria-label'))).toEqual(['Page 1 of 2', 'Page 2 of 2']); // Round 7: Simple calls them pages;
+    expect(tabs().map((t) => t.textContent?.trim())).toEqual(['1', '2']);
     expect(byLabel(m.container, `Step 1, ${KICK}`).getAttribute('aria-pressed')).toBe('false');
 
     fire(tabs()[1], new MouseEvent('click', { bubbles: true }));
@@ -237,9 +244,9 @@ describe('drum steps', () => {
     expect(byLabel(m.container, `Step 1, ${KICK}`).getAttribute('aria-pressed')).toBe('true');
 
     // Copy bar 2, paste onto bar 1.
-    fire(buttonByText(m.container, 'Copy'), new MouseEvent('click', { bubbles: true }));
+    fire(byLabel(m.container, 'Copy bar'), new MouseEvent('click', { bubbles: true }));
     fire(tabs()[0], new MouseEvent('click', { bubbles: true }));
-    fire(buttonByText(m.container, 'Paste'), new MouseEvent('click', { bubbles: true }));
+    fire(byLabel(m.container, 'Paste onto bar'), new MouseEvent('click', { bubbles: true }));
     expect(notes('t1').map((n) => n.tick).sort((a, b) => a - b)).toEqual([0, 384]);
 
     // Copy bar 1 to bar 2 → shows bar 2; then to bar 3 lengthens the clip.
@@ -253,7 +260,7 @@ describe('drum steps', () => {
     expect(tabs()[2].getAttribute('aria-selected')).toBe('true');
 
     // Clear bar 3 (from the keyboard), then undo brings it back.
-    const clearBtn = buttonByText(m.container, 'Clear');
+    const clearBtn = byLabel(m.container, 'Clear bar');
     clearBtn.focus();
     fire(clearBtn, new MouseEvent('click', { bubbles: true, detail: 0 }));
     expect(notes('t1').filter((n) => n.tick >= 768)).toHaveLength(0);
@@ -276,7 +283,7 @@ describe('drum steps', () => {
     fire(m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label="4 bars"]')!, new MouseEvent('click', { bubbles: true }));
     expect(clip('t1')?.bars).toBe(4);
 
-    const input = m.container.querySelector<HTMLInputElement>('input[aria-label="Clip name"]')!;
+    const input = m.container.querySelector<HTMLInputElement>('input[aria-label="Loop name"]')!;
     input.focus();
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
     setter.call(input, 'Floor Tom Fill');
@@ -291,9 +298,9 @@ describe('drum steps', () => {
 /* ------------------------------------------------------------------ */
 
 describe('melodic pitch lane', () => {
-  function setup() {
+  function setup(width = NARROW) {
     makeClip('t3', 2); // bass
-    const m = mountEditor();
+    const m = mountEditor(width);
     const roll = m.container.querySelector<HTMLElement>('[data-testid="pitch-roll"]')!;
     const cell = (step: number, pitch: number) => {
       const col = roll.querySelector<HTMLElement>(`[data-col="${step}"]`)!.getBoundingClientRect();
@@ -332,17 +339,32 @@ describe('melodic pitch lane', () => {
     expect(noteOn).toHaveBeenCalledTimes(1);
   });
 
-  it('click adds a one-step note (and plays it), click on the note removes it', () => {
+  it('click adds a one-step note (and plays it) and selects it; a click on a note selects it; a double-click removes it with Undo', () => {
     const { roll, cell } = setup();
     pointer(roll, 'pointerdown', cell(4, 48));
     pointer(roll, 'pointerup', cell(4, 48));
     expect(notes('t3')).toEqual([expect.objectContaining({ tick: 96, pitch: 48, duration: 24, velocity: 0.8 })]);
     expect(noteOn).toHaveBeenCalledWith('t3', 48, 0.8, 'preview');
+    const noteEl = () => roll.querySelector<HTMLElement>('[data-note-id]')!;
+    expect(noteEl().hasAttribute('data-selected')).toBe(true);
 
-    const noteEl = roll.querySelector<HTMLElement>('[data-note-id]')!;
-    pointer(noteEl, 'pointerdown', pointIn(noteEl, 0.5, 0.3));
-    pointer(roll, 'pointerup', pointIn(noteEl, 0.5, 0.3));
-    expect(notes('t3')).toHaveLength(0);
+    // A second note: the selection moves to it. A click on the first selects it again and keeps it.
+    press(roll, cell(8, 51));
+    expect(notes('t3')).toHaveLength(2);
+    const first = roll.querySelector<HTMLElement>(`[data-note-id="${notes('t3')[0].id}"]`)!;
+    expect(first.hasAttribute('data-selected')).toBe(false);
+    press(first, pointIn(first, 0.5, 0.3));
+    expect(notes('t3')).toHaveLength(2);
+    expect(roll.querySelector<HTMLElement>(`[data-note-id="${notes('t3')[0].id}"]`)!.hasAttribute('data-selected')).toBe(true);
+
+    // Double-click: removed, with a message that offers Undo.
+    const again = roll.querySelector<HTMLElement>(`[data-note-id="${notes('t3')[0].id}"]`)!;
+    press(again, pointIn(again, 0.5, 0.3));
+    expect(notes('t3')).toHaveLength(1);
+    expect(runtimeStore.getState().notice?.text).toBe('Deleted 1 note.');
+    expect(runtimeStore.getState().notice?.action).toBe('undo');
+    session.undo();
+    expect(notes('t3')).toHaveLength(2);
   });
 
   it('dragging on after adding draws a longer note; the right edge resizes; the body moves', () => {
@@ -397,12 +419,24 @@ describe('melodic pitch lane', () => {
     expect(el.style.gridColumn).toBe('2 / 4'); // steps 1-2 of bar 2
   });
 
-  it('velocity lane sets every note starting on a step', () => {
+  it('velocity lane: with nothing selected it sets every note starting on a step; with a selection only the selected notes', () => {
     const { m, roll, cell } = setup();
     press(roll, cell(3, 48));
     press(roll, cell(3, 51));
     const lane = m.container.querySelector<HTMLElement>('[data-testid="velocity-lane"]')!;
     const col = lane.querySelector<HTMLElement>('[data-step="3"]')!;
+    // The note just added is selected: one bar per voice, the selected one marked.
+    expect(col.querySelectorAll('[data-voice-id]')).toHaveLength(2);
+    expect(col.querySelectorAll('[data-voice-id][data-selected]')).toHaveLength(1);
+    expect(col.textContent).toContain('1/2');
+    pointer(lane, 'pointerdown', pointIn(col, 0.9));
+    pointer(lane, 'pointerup', pointIn(col, 0.9));
+    const byPitch = (p: number) => notes('t3').find((n) => n.pitch === p)!.velocity;
+    expect(byPitch(51)).toBeLessThan(0.3);
+    expect(byPitch(48)).toBe(0.8);
+    // Escape clears the selection: the lane sets both.
+    const cursor = m.container.querySelector<HTMLButtonElement>('button[aria-label^="Note grid"]')!;
+    key(cursor, 'keydown', { key: 'Escape' });
     expect(col.textContent).toContain('×2');
     pointer(lane, 'pointerdown', pointIn(col, 0.75));
     pointer(lane, 'pointerup', pointIn(col, 0.75));
@@ -411,7 +445,7 @@ describe('melodic pitch lane', () => {
     expect(vs[0]).toBe(vs[1]);
   });
 
-  it('keyboard: Enter adds/removes at the cursor, Shift+Right lengthens, + raises velocity', () => {
+  it('keyboard: Enter adds at the cursor (or selects the note there), Shift+Right lengthens, + raises velocity, Delete removes', () => {
     const { m } = setup();
     const cursor = m.container.querySelector<HTMLButtonElement>('button[aria-label^="Note grid"]')!;
     cursor.focus();
@@ -428,8 +462,13 @@ describe('melodic pitch lane', () => {
     key(cursor, 'keydown', { key: 'Enter' });
     expect(notes('t3')).toHaveLength(2);
     expect(notes('t3')[1].pitch).toBeGreaterThan(pitch);
+    // Enter on a note selects it; Delete removes the selection.
     key(cursor, 'keydown', { key: 'Enter' });
+    expect(notes('t3')).toHaveLength(2);
+    expect(cursor.getAttribute('aria-label')).toContain('1 note selected');
+    key(cursor, 'keydown', { key: 'Delete' });
     expect(notes('t3')).toHaveLength(1);
+    expect(notes('t3')[0].pitch).toBe(pitch);
   });
 
   it('keyboard: moving past step 16 opens the next bar and announces its cell', async () => {
@@ -461,13 +500,32 @@ describe('melodic pitch lane', () => {
     expect(noteOff).toHaveBeenCalledWith('t3', 48, 'preview');
   });
 
-  it('transpose moves the clip a semitone (Shift: an octave)', () => {
-    const { m, roll, cell } = setup();
+  it('transpose: a scale step under Musical Assist (Shift: an octave), with a toast; Advanced adds semitone keys', async () => {
+    // Wide enough for every tool on the bar line (both bars side by side).
+    const { m, roll, cell } = setup(960);
     press(roll, cell(0, 48));
-    fire(byLabel(m.container, 'Transpose up'), new MouseEvent('click', { bubbles: true }));
-    expect(notes('t3')[0].pitch).toBe(49);
-    fire(byLabel(m.container, 'Transpose down'), new MouseEvent('click', { bubbles: true, shiftKey: true }));
-    expect(notes('t3')[0].pitch).toBe(37);
+    // C minor: C3 up one step is D3.
+    fire(byLabel(m.container, 'Transpose up a scale step'), new MouseEvent('click', { bubbles: true }));
+    expect(notes('t3')[0].pitch).toBe(50);
+    expect(runtimeStore.getState().notice?.text).toMatch(/ moved up one step\.$/);
+    expect(runtimeStore.getState().notice?.action).toBe('undo');
+    fire(byLabel(m.container, 'Transpose down a scale step'), new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    expect(notes('t3')[0].pitch).toBe(38);
+    expect(runtimeStore.getState().notice?.text).toMatch(/ moved down an octave\.$/);
+    // Simple mode has no semitone keys; Advanced keeps them, labelled as semitones.
+    expect(() => byLabel(m.container, 'Transpose up a semitone')).toThrow();
+    setUiMode('advanced');
+    await actFrame();
+    fire(byLabel(m.container, 'Transpose up a semitone'), new MouseEvent('click', { bubbles: true }));
+    expect(notes('t3')[0].pitch).toBe(39);
+    expect(runtimeStore.getState().notice?.text).toMatch(/ moved up one semitone\.$/);
+    // Musical Assist off: semitones only.
+    setUiMode('simple');
+    cmd.setAssist(session.store, false);
+    await actFrame();
+    expect(() => byLabel(m.container, 'Transpose up a scale step')).toThrow();
+    fire(byLabel(m.container, 'Transpose up a semitone'), new MouseEvent('click', { bubbles: true }));
+    expect(notes('t3')[0].pitch).toBe(40);
   });
 });
 
@@ -507,39 +565,45 @@ describe('undo and playhead', () => {
       expect(notes('t1')).toHaveLength(0);
       // The notice takes the editing tools' place; name and length cannot change.
       expect(() => buttonByText(m.container, 'To bar 2')).toThrow();
-      expect(m.container.querySelector<HTMLInputElement>('input[aria-label="Clip name"]')!.readOnly).toBe(true);
+      expect(m.container.querySelector<HTMLInputElement>('input[aria-label="Loop name"]')!.readOnly).toBe(true);
       fire(m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label="2 bars"]')!, new MouseEvent('click', { bubbles: true }));
       expect(clip('t1')?.bars).toBe(1);
       // An empty slot of the part says so too, and its create buttons are off.
       fire(m.container.querySelector<HTMLButtonElement>('[role="radio"][aria-label$=": empty"]')!, new MouseEvent('click', { bubbles: true }));
-      expect(m.container.querySelector('[role="status"]')?.textContent).toContain('Stop the take to create a clip');
-      expect(buttonByText(m.container, 'Create a 1-bar clip').disabled).toBe(true);
+      expect(m.container.querySelector('[role="status"]')?.textContent).toContain('Stop the take to create a loop');
+      expect(buttonByText(m.container, 'Create a 1-bar loop').disabled).toBe(true);
     } finally {
       session.store.setLock(null);
     }
   });
 
-  it('lights the sounding step from the transport position (DOM only, no re-render)', async () => {
+  it('lights the heard step from the transport position (DOM only, no re-render)', async () => {
     makeClip('t1', 2);
     const s = session as unknown as { transport: unknown; sequencer: unknown };
     const saved = { transport: s.transport, sequencer: s.sequencer };
     let tick = 384 + 5 * 24 + 3; // bar 2, step 6
-    s.transport = { getPosition: () => ({ tick, bar: 0, beat: 0, step: 0, playing: true }) };
+    s.transport = {
+      // What is scheduled runs ahead; the light follows what is heard.
+      getPosition: () => ({ tick: tick + 96, bar: 0, beat: 0, step: 0, playing: true }),
+      audibleTick: () => tick,
+      clipPhase: (_id: string, out: { slot: number; startTick: number; lengthTicks: number }) => Object.assign(out, { slot: 0, startTick: 0, lengthTicks: 768 }),
+    };
     s.sequencer = { getTrackState: () => ({ playing: { slot: 0, clipId: 'x', startTick: 0 }, queued: null }) };
     try {
       patchRuntime({ playing: true, tracks: { t1: { playingSlot: 0, queued: null } } });
-      const m = mountEditor();
-      await frames(3);
+      const m = mountEditor(NARROW);
+      const tabs = () => [...m.container.querySelectorAll<HTMLElement>('[role="tab"]')];
+      // The frame loop marks it within a few frames (more on a busy machine).
+      for (let i = 0; i < 60 && !tabs()[1].hasAttribute('data-live'); i++) await frames(1);
       // Bar 2 is sounding: its page lamp is lit; bar 1 is shown, so no step is.
-      const tabs = [...m.container.querySelectorAll<HTMLElement>('[role="tab"]')];
-      expect(tabs[1].hasAttribute('data-live')).toBe(true);
+      expect(tabs()[1].hasAttribute('data-live')).toBe(true);
       expect(m.container.querySelectorAll('[data-playhead]')).toHaveLength(0);
       tick = 5 * 24 + 3 + 768; // loops: bar 1, step 6
-      await frames(3);
+      for (let i = 0; i < 60 && !tabs()[0].hasAttribute('data-live'); i++) await frames(1);
       const lit = [...m.container.querySelectorAll<HTMLElement>('[data-playhead]')];
       expect(lit.length).toBeGreaterThanOrEqual(2);
       expect(lit.every((el) => el.getAttribute('data-ph-step') === '5')).toBe(true);
-      expect(tabs[0].hasAttribute('data-live')).toBe(true);
+      expect(tabs()[0].hasAttribute('data-live')).toBe(true);
     } finally {
       s.transport = saved.transport;
       s.sequencer = saved.sequencer;

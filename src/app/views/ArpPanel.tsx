@@ -6,8 +6,9 @@
  * (rate, pattern, octave range, latch, gate). The arp itself runs in the
  * sequencer on the audio clock, so it follows the transport and tempo; the
  * notes it receives are already snapped by Musical Assist (a sampler part's
- * are the keys as pressed: recordings are never re-pitched by Assist).
- * Record Notes records the notes it plays.
+ * are the keys as pressed: recordings are never re-pitched by Assist; a chord
+ * pad's are its chord, already in the key). Record Notes records the notes it
+ * plays.
  */
 import { useRef, useState, type RefObject } from 'react';
 import { Icon, Knob, SegmentedControl, Switch } from '../../ui/components';
@@ -18,6 +19,7 @@ import { setArp } from '../../state/commands';
 import { session, useProject } from '../instance';
 import { Popover, anchorFromElement } from './ClipMenu';
 import styles from './ArpPanel.module.css';
+import { useInstrumentName } from './useInstrumentName';
 
 export const ARP_DIVISION_OPTIONS: readonly { value: ArpDivision; label: string; tip: string }[] = [
   { value: '1/4', label: '1/4', tip: 'One note per beat.' },
@@ -72,7 +74,7 @@ function assistLine(assist: boolean, sampler: boolean, keyName: string): string 
 /** Full settings, shown in a popover above the keyboard strip. */
 export function ArpSettings({ trackId }: { trackId: Id }) {
   const arp = useProject((p) => p.tracks.find((t) => t.id === trackId)?.arp ?? null);
-  const name = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const name = useInstrumentName(trackId);
   const sampler = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind === 'sampler');
   const assist = useProject((p) => p.assist);
   const keyName = useProject((p) => keyLabel(p.root, p.scale));
@@ -136,8 +138,8 @@ export function ArpSettings({ trackId }: { trackId: Id }) {
         detail="Stopping playback or switching the arpeggiator off also ends a latched pattern."
       />
       <p className={styles.tip}>
-        Hold keys and the arpeggiator plays them one at a time, in time with the beat — it keeps time even while playback is stopped. {assistLine(assist, sampler, keyName)} Record Notes records the
-        notes it plays, exactly on its grid.
+        Hold keys (or a chord pad in Notes) and the arpeggiator plays them one at a time, in time with the beat — it keeps time even while playback is stopped. {assistLine(assist, sampler, keyName)}{' '}
+        Record Notes records the notes it plays, exactly on its grid.
       </p>
     </div>
   );
@@ -148,7 +150,7 @@ export function ArpStrip({ trackId, stripRef }: { trackId: Id; stripRef?: RefObj
   const arp = useProject((p) => p.tracks.find((t) => t.id === trackId)?.arp ?? null);
   const isDrums = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind === 'drums');
   const sampler = useProject((p) => p.tracks.find((t) => t.id === trackId)?.instrument.kind === 'sampler');
-  const name = useProject((p) => p.tracks.find((t) => t.id === trackId)?.name ?? '');
+  const name = useInstrumentName(trackId);
   const assist = useProject((p) => p.assist);
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -158,9 +160,11 @@ export function ArpStrip({ trackId, stripRef }: { trackId: Id; stripRef?: RefObj
 
   if (isDrums) {
     return (
-      <div className={styles.strip} role="group" aria-label="Arpeggiator">
+      <div className={styles.strip} role="group" aria-label="Arpeggiator" data-drums="">
         <span className={styles.stripTitle}>Arpeggiator</span>
-        <p className={styles.stripNote}>For melodic parts. {name} plays a drum kit: select a synth or sampler part to use it.</p>
+        <p className={styles.stripNote} title={`${name} plays a drum kit: select a synth or sampler part to use the arpeggiator.`}>
+          For melodic parts: select a synth or sampler part.
+        </p>
       </div>
     );
   }

@@ -20,8 +20,9 @@
  * `truePeakKernels`) and passed in processorOptions, so the offline
  * analysis in src/render/loudness.ts uses exactly the same filters.
  * Readings are posted every sub-block (10 per second) as
- * { m, s, i, tp } (LUFS / dBTP, −Infinity for silence); posting 'reset'
- * restarts the integrated and true-peak measurement.
+ * { m, s, i, tp, pk } (LUFS / dBTP, −Infinity for silence; pk = the highest
+ * sample |x| of the last 3 s, linear); posting 'reset' restarts the
+ * integrated and true-peak measurement.
  */
 
 export const LOUDNESS_PROCESSOR_NAME = 'sb-loudness';
@@ -154,6 +155,9 @@ class SbLoudnessProcessor extends AudioWorkletProcessor {
     this.histCount = new Float64Array(this.bins);
     this.histSum = new Float64Array(this.bins);
     this.ring = new Float64Array(30);
+    // Highest |sample| per sub-block over the short-term window.
+    this.pkRing = new Float64Array(30);
+    this.subMax = 0;
     // Filter states: [x1, x2, y1, y2] per stage per channel.
     this.st = [new Float64Array(8), new Float64Array(8)];
     // True-peak history per channel (ring of tpLen, doubled for contiguous reads).
@@ -169,6 +173,8 @@ class SbLoudnessProcessor extends AudioWorkletProcessor {
 
   resetAll() {
     this.ring.fill(0);
+    this.pkRing.fill(0);
+    this.subMax = 0;
     this.ringCount = 0;
     this.ringPos = 0;
     this.acc = 0;
@@ -210,6 +216,8 @@ class SbLoudnessProcessor extends AudioWorkletProcessor {
     this.acc = 0;
     this.accN = 0;
     this.ring[this.ringPos] = power;
+    this.pkRing[this.ringPos] = this.subMax;
+    this.subMax = 0;
     this.ringPos = (this.ringPos + 1) % 30;
     if (this.ringCount < 30) this.ringCount++;
     this.sinceReset++;
@@ -231,7 +239,9 @@ class SbLoudnessProcessor extends AudioWorkletProcessor {
     }
     if (this.report) {
       const tp = this.truePeak > 0 ? 20 * Math.log10(this.truePeak) : -Infinity;
-      this.port.postMessage({ m: sbLufs(m), s: sbLufs(mean(this.ringCount)), i: this.integrated(), tp });
+      let pk = 0;
+      for (let k = 0; k < this.ringCount; k++) if (this.pkRing[k] > pk) pk = this.pkRing[k];
+      this.port.postMessage({ m: sbLufs(m), s: sbLufs(mean(this.ringCount)), i: this.integrated(), tp, pk });
     }
   }
 
@@ -272,6 +282,7 @@ class SbLoudnessProcessor extends AudioWorkletProcessor {
         // True peak.
         const ax = x < 0 ? -x : x;
         if (ax > tPeak) tPeak = ax;
+        if (ax > this.subMax) this.subMax = ax;
         if (len > 0) {
           const h = this.hist[c];
           h[hpos] = x;

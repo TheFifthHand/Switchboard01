@@ -6,11 +6,16 @@
  *   continues outside it. The cap follows the pointer one to one (a press
  *   alone never jumps the value); Shift is 10x finer. While dragging,
  *   onChange is coalesced to at most once per animation frame.
+ * - Touch (see touchDrag.ts): a finger drags at once only from the cap (at
+ *   least 44 px around it), or anywhere on the fader after resting still for
+ *   250 ms; a finger that moves first scrolls the page and changes nothing.
  * - Double-click (or Delete/Backspace) returns to the registry default.
  * - Arrow keys: 0.5 dB on a dB fader (Shift: 0.1 dB), otherwise 1% of travel
  *   (Shift 0.1%); PageUp/PageDown 10% of travel; Home/End the ends.
  * - Enter, or typing a digit or sign, opens numeric entry ("-6", "+1.5 dB").
- *   Enter commits, Escape cancels.
+ *   Enter commits, Escape cancels. A click on the value under the fader opens
+ *   the same entry. The value row never spills: `formatShort` gives a shorter
+ *   visible text ("Silent") while the full one stays in aria and the title.
  * - The mouse wheel only acts once the fader has keyboard focus (reached with
  *   Tab, or used with its own keys), so scrolling never moves a level by
  *   accident.
@@ -26,6 +31,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { clampParam, formatParam, fromNormalized, toNormalized, type ParamSpec } from '../../project/params';
 import { Icon } from './Icon';
 import { Tooltip } from './Tooltip';
+import { TOUCH_HOLD_MS, TOUCH_SLOP_PX, onTouchGrip, type PendingTouch } from './touchDrag';
 import { newGestureId, paramEditText, parseParamInput } from './valueInput';
 import styles from './Fader.module.css';
 
@@ -61,6 +67,8 @@ export interface FaderProps {
   label?: string;
   /** Text for the value (display and aria-valuetext); defaults to the registry format. */
   format?(value: number): string;
+  /** Shorter visible text for the value row (e.g. "Silent"); aria-valuetext and the title keep `format`. */
+  formatShort?(value: number): string;
   /** Name of the macro controlling this level; the fader becomes read-only and says so. */
   controlledBy?: string;
   /** A modulation cable moves this level: teal mark, and the value text says so. */
@@ -117,7 +125,7 @@ function markText(spec: ParamSpec, v: number): string {
 function gestureHint(spec: ParamSpec, format: (v: number) => string): string {
   const home = format(clampParam(spec, spec.default));
   const fine = isDb(spec) ? 'arrow keys move 0.5 dB (Shift: 0.1 dB)' : 'arrow keys move it in small steps (Shift: finer)';
-  return `Drag up or down (hold Shift for fine moves); ${fine}. Double-click returns it to ${home}. For an exact value, click the fader and type a number.`;
+  return `Drag up or down (hold Shift for fine moves); ${fine}. Double-click returns it to ${home}. For an exact value, click the value under it, or click the fader and type a number.`;
 }
 
 interface DragState {
@@ -144,7 +152,7 @@ interface Entry {
 }
 
 export function Fader(props: FaderProps) {
-  const { spec, value, onChange, label, format, controlledBy, modulated = false, disabled = false, tip, detail, marks, showValue = true, id, className } = props;
+  const { spec, value, onChange, label, format, formatShort, controlledBy, modulated = false, disabled = false, tip, detail, marks, showValue = true, id, className } = props;
   const readOnly = Boolean(controlledBy);
   const interactive = !disabled && !readOnly;
   const name = label ?? spec.label;
@@ -159,6 +167,7 @@ export function Fader(props: FaderProps) {
   const laneRef = useRef<HTMLDivElement>(null);
   const capRef = useRef<HTMLSpanElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pendingTouch = useRef<PendingTouch | null>(null);
   const latest = useRef(shown);
   const specRef = useRef(spec);
   const interactiveRef = useRef(interactive);
@@ -219,6 +228,13 @@ export function Fader(props: FaderProps) {
     emit(v, { gesture: d.gesture, final: false });
   }, [emit]);
 
+  const cancelPending = useCallback(() => {
+    const p = pendingTouch.current;
+    if (!p) return;
+    pendingTouch.current = null;
+    window.clearTimeout(p.timer);
+  }, []);
+
   const endDrag = useCallback(
     (pointerId?: number) => {
       const d = drag.current;
@@ -245,21 +261,35 @@ export function Fader(props: FaderProps) {
   // Close any open gesture on unmount so the app never keeps a dangling undo step.
   useEffect(
     () => () => {
+      cancelPending();
       endDrag();
       finishBurst();
     },
-    [endDrag, finishBurst],
+    [cancelPending, endDrag, finishBurst],
   );
 
   // Losing interactivity (disabled, taken over by a macro) mid-gesture closes it.
   useEffect(() => {
     if (!interactive) {
+      cancelPending();
       endDrag();
       finishBurst();
       entryOpen.current = false;
       setEntry(null);
     }
-  }, [interactive, endDrag, finishBurst]);
+  }, [interactive, cancelPending, endDrag, finishBurst]);
+
+  // Touch: once a drag has begun, the finger's moves must not scroll the page (only a non-passive
+  // touchmove listener can stop that after the touch started; the lane allows panning).
+  useEffect(() => {
+    const el = sliderRef.current;
+    if (!el) return;
+    const onTouchMove = (e: TouchEvent) => {
+      if (drag.current && e.cancelable) e.preventDefault();
+    };
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => el.removeEventListener('touchmove', onTouchMove);
+  }, []);
 
   // Wheel: a native non-passive listener, active only with keyboard focus.
   useEffect(() => {
@@ -283,29 +313,22 @@ export function Fader(props: FaderProps) {
 
   /* ---------------- pointer ---------------- */
 
-  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
-    wheelArmed.current = false;
-    pointerFocusing.current = true;
-    window.setTimeout(() => {
-      pointerFocusing.current = false;
-    }, 0);
-    if (e.button !== 0 || !interactive) return;
-    const el = e.currentTarget;
-    e.preventDefault();
+  /** Start a drag with `pointerId` from `clientY` (the press, or where a resting finger is). */
+  const beginDrag = (el: HTMLDivElement, pointerId: number, clientY: number) => {
     el.focus({ preventScroll: true });
     finishBurst();
     endDrag();
     try {
-      el.setPointerCapture(e.pointerId);
+      el.setPointerCapture(pointerId);
     } catch {
       /* synthetic or already-released pointer */
     }
     const laneH = laneRef.current?.getBoundingClientRect().height ?? 0;
     const capH = capRef.current?.getBoundingClientRect().height ?? 0;
     drag.current = {
-      pointerId: e.pointerId,
-      lastY: e.clientY,
-      pos: faderPosition(spec, latest.current),
+      pointerId,
+      lastY: clientY,
+      pos: faderPosition(specRef.current, latest.current),
       travel: Math.max(40, laneH - capH),
       gesture: newGestureId('fader-drag'),
       pending: null,
@@ -315,7 +338,40 @@ export function Fader(props: FaderProps) {
     setDragging(true);
   };
 
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    wheelArmed.current = false;
+    pointerFocusing.current = true;
+    window.setTimeout(() => {
+      pointerFocusing.current = false;
+    }, 0);
+    if (e.button !== 0 || !interactive) return;
+    const el = e.currentTarget;
+    if (e.pointerType === 'touch') {
+      if (drag.current || pendingTouch.current) return; // a second finger
+      if (!onTouchGrip(capRef.current, e.clientX, e.clientY)) {
+        // Off the cap: a swipe scrolls the page; a finger that rests still takes the fader.
+        const pointerId = e.pointerId;
+        const pending: PendingTouch = { pointerId, x: e.clientX, y: e.clientY, lastY: e.clientY, timer: 0 };
+        pending.timer = window.setTimeout(() => {
+          if (pendingTouch.current !== pending) return;
+          pendingTouch.current = null;
+          if (interactiveRef.current && sliderRef.current) beginDrag(sliderRef.current, pointerId, pending.lastY);
+        }, TOUCH_HOLD_MS);
+        pendingTouch.current = pending;
+        return;
+      }
+    }
+    e.preventDefault();
+    beginDrag(el, e.pointerId, e.clientY);
+  };
+
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    const p = pendingTouch.current;
+    if (p && e.pointerId === p.pointerId) {
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) >= TOUCH_SLOP_PX) cancelPending();
+      else p.lastY = e.clientY;
+      return;
+    }
     const d = drag.current;
     if (!d || e.pointerId !== d.pointerId) return;
     const dy = d.lastY - e.clientY;
@@ -328,7 +384,10 @@ export function Fader(props: FaderProps) {
     if (!d.raf) d.raf = requestAnimationFrame(flushDrag);
   };
 
-  const onPointerEnd = (e: PointerEvent<HTMLDivElement>) => endDrag(e.pointerId);
+  const onPointerEnd = (e: PointerEvent<HTMLDivElement>) => {
+    if (pendingTouch.current?.pointerId === e.pointerId) cancelPending();
+    endDrag(e.pointerId);
+  };
 
   const onDoubleClick = () => {
     if (!interactive) return;
@@ -436,6 +495,7 @@ export function Fader(props: FaderProps) {
 
   const pos = faderPosition(spec, shown);
   const formatted = fmt(shown);
+  const shortText = formatShort ? formatShort(shown) : formatted;
   const valueText = formatted + (controlledBy ? `, set by ${controlledBy}` : '') + (modulated ? ', moved by a cable' : '');
   const scale = (marks ?? (isDb(spec) ? FADER_DB_MARKS : [])).filter((m) => m >= spec.min && m <= spec.max);
   const tipDetail =
@@ -497,19 +557,33 @@ export function Fader(props: FaderProps) {
           </div>
         </div>
       </Tooltip>
-      {showValue && (
-        <div className={`${styles.value} mono`} aria-hidden="true" style={entry ? { visibility: 'hidden' } : undefined}>
-          {modulated && <Icon name="wave" size={10} className={styles.modMark} />}
-          {controlledBy ? (
-            <span className={styles.badge}>
-              <Icon name="link" size={10} />
-              {controlledBy}
-            </span>
-          ) : (
-            formatted
-          )}
-        </div>
-      )}
+      {showValue &&
+        (interactive ? (
+          <button
+            type="button"
+            className={`${styles.value} mono`}
+            tabIndex={-1}
+            title={valueText}
+            aria-label={`${name}: ${valueText}, type a value`}
+            style={entry ? { visibility: 'hidden' } : undefined}
+            onClick={() => openEntry(paramEditText(spec, latest.current), true)}
+          >
+            {modulated && <Icon name="wave" size={10} className={styles.modMark} />}
+            <span className={styles.valueText}>{shortText}</span>
+          </button>
+        ) : (
+          <div className={`${styles.value} mono`} title={valueText} aria-hidden="true" style={entry ? { visibility: 'hidden' } : undefined}>
+            {modulated && <Icon name="wave" size={10} className={styles.modMark} />}
+            {controlledBy ? (
+              <span className={styles.badge}>
+                <Icon name="link" size={10} />
+                <span className={styles.valueText}>{controlledBy}</span>
+              </span>
+            ) : (
+              <span className={styles.valueText}>{shortText}</span>
+            )}
+          </div>
+        ))}
       {entry && (
         <input
           ref={inputRef}

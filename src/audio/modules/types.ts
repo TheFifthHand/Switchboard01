@@ -54,10 +54,47 @@ export interface ModuleNode {
   transportStopped?(time: number): void;
   /** Clear internal state/tails immediately (Mute All / panic). */
   flush?(): void;
-  /** Cancel automation scheduled after `time`. */
-  cancelAfter?(time: number): void;
+  /**
+   * Cancel automation scheduled after `time`. With `hold`, a ramp under way
+   * at `time` stops at the value it has reached there (cancelAndHoldAtTime)
+   * instead of falling back to its last step.
+   */
+  cancelAfter?(time: number, hold?: boolean): void;
+  /**
+   * Song automation (AudioEngine.scheduleMacroRamp): apply `params` at
+   * `time` without the usual smoothing. 'anchor' sets every value the
+   * module drives at `time` (a ramp starts exactly there), 'step' sets the
+   * values that change at `time`, 'ramp' moves them linearly from the
+   * previous point to reach these values at `time`. Optional: modules
+   * without it get smoothed points.
+   */
+  automate?(params: ParamValues, time: number, mode: AutomationMode): void;
+  /**
+   * Transport stopped: the song automation of the take is over. Forget all
+   * of it (points before `time` included) and make the next setParams write
+   * every value again, so the project's values come back even where the
+   * automation ended on them. Called after cancelAfter, before setParams.
+   */
+  endAutomation?(time: number): void;
+  /**
+   * The module's mod inputs that have a working cable (a bypassed LFO's
+   * silenced cables do not count), reported after every rewiring. Lets a
+   * module keep processing that only a modulation can make audible.
+   */
+  setModulated?(ports: ReadonlySet<string>, time: number): void;
+  /**
+   * Whether the module is a send return: everything reaching its audio input
+   * comes from channel sends (Reverb, Echo). A return has no dry path: its
+   * output is the wet sound × Mix, so Mix is the return level. Reported after
+   * every rewiring; the first report (right after the module was built,
+   * before anything plays through it) applies at once, later ones glide.
+   */
+  setSendReturn?(isReturn: boolean, time: number): void;
   dispose(): void;
 }
+
+/** How ModuleNode.automate applies a point. */
+export type AutomationMode = 'anchor' | 'step' | 'ramp';
 
 export type ModuleConstructor = new (env: ModuleEnv, id: Id, params: ParamValues) => ModuleNode;
 

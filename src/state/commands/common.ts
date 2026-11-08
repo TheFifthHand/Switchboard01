@@ -6,11 +6,27 @@
  * creates an undo step), then run one named recipe through the store.
  *
  * Labels are "<area>:<Human text>". The area prefix groups edits; "patch:" is
- * special because the edit lock refuses it during a performance take.
+ * special because the edit lock refuses it during a performance take. A label
+ * names the kind of edit (a take's allow-list matches it), so words that name
+ * a part ("Mute Lead", "Bass level") go in `display` instead (see run()).
+ *
+ * The song follows the clips in the same step: whatever a recipe does to the
+ * clips, run() keeps the song's regions playable and removes song clips no
+ * region plays any more (see keepSongWithClips).
+ *
+ * Clip slots: 0..MAX_SCENES-1 are a part's pad rows, SONG_SLOT_BASE and up
+ * its song clips (project/clips.ts). Commands that edit what is in a clip
+ * accept both (isClipSlotOf, clipAt, draftClip); commands about the pad grid
+ * (create on a pad, delete, move, copy to a pad, paste, scenes) take pad rows
+ * only (isSlot) and refuse a song slot with SONG_SLOT_REFUSAL.
  */
-import type { Clip, Id, Project, Track } from '../../project/types';
-import { SCENE_ROWS, TICKS_PER_BAR } from '../../project/types';
-import type { ApplyResult, ProjectStore } from '../projectStore';
+import { current, isDraft, original } from 'immer';
+import { placeRegions, tidyRegions } from '../../project/arrangement';
+import { uid } from '../../project/factory';
+import { clipAtSlot, isSongSlot } from '../../project/clips';
+import type { Clip, Id, Project, SongRegion, Track } from '../../project/types';
+import { MAX_SCENES, SONG_SLOT_BASE, TICKS_PER_BAR } from '../../project/types';
+import type { ApplyOptions, ApplyResult, ProjectStore } from '../projectStore';
 
 export type RefuseReason =
   | 'not-found'
@@ -41,13 +57,25 @@ export function findTrack(p: Project, trackId: Id): Track | undefined {
   return p.tracks.find((t) => t.id === trackId);
 }
 
-export function isSlot(slot: number): boolean {
-  return Number.isInteger(slot) && slot >= 0 && slot < SCENE_ROWS;
+/** A pad row: below MAX_SCENES and, given a part, one of its pads (one per scene). Song slots are not pads. */
+export function isSlot(slot: number, track?: Pick<Track, 'clips'>): boolean {
+  return Number.isInteger(slot) && slot >= 0 && slot < MAX_SCENES && (!track || slot < track.clips.length);
 }
 
+/** A slot a clip edit can address on this part: one of its pads (empty or not) or one of its song clips. */
+export function isClipSlotOf(slot: number, track: Pick<Track, 'clips' | 'songClips'>): boolean {
+  return isSongSlot(slot) ? clipAtSlot(track, slot) !== null : isSlot(slot, track);
+}
+
+/** Why a pad-grid command does nothing with a song slot (plain words for the UI; no undo step). */
+export const SONG_SLOT_REFUSAL = (message = 'That loop lives in the song, not on a pad. Copy it to a pad to play it from the pads.'): CommandResult =>
+  refuse('invalid', message);
+
+/** The clip at a pad row or song slot of a part, or null (empty pad, unknown part or slot). */
 export function clipAt(p: Project, trackId: Id, slot: number): Clip | null {
-  if (!isSlot(slot)) return null;
-  return findTrack(p, trackId)?.clips[slot] ?? null;
+  const t = findTrack(p, trackId);
+  if (!t || !isClipSlotOf(slot, t)) return null;
+  return clipAtSlot(t, slot);
 }
 
 /** Draft-side lookup inside recipes (inputs are validated before apply). */
@@ -58,7 +86,7 @@ export function draftTrack(d: Project, trackId: Id): Track {
 }
 
 export function draftClip(d: Project, trackId: Id, slot: number): Clip {
-  const c = draftTrack(d, trackId).clips[slot];
+  const c = clipAtSlot(draftTrack(d, trackId), slot);
   if (!c) throw new Error(`No clip in ${trackId} slot ${slot}`);
   return c;
 }
@@ -97,6 +125,145 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   return ka.length === kb.length && ka.every((k) => deepEqual(ra[k], rb[k]));
 }
 
-export function run(store: ProjectStore, label: string, recipe: (d: Project) => void, gesture?: string): CommandResult {
-  return store.apply(label, recipe, gesture !== undefined ? { gesture } : {});
+/**
+ * Run one named edit. `display` gives the words Undo and Redo show when they
+ * should say more than the label ("Mute Lead" for "track:Mute part"). The
+ * song is kept consistent with the clips in the same undo step (see
+ * keepSongWithClips).
+ */
+export function run(store: ProjectStore, label: string, recipe: (d: Project) => void, gesture?: string, opts: { display?: string; time?: ApplyOptions['time'] } = {}): CommandResult {
+  const o: ApplyOptions = {};
+  if (gesture !== undefined) o.gesture = gesture;
+  if (opts.display !== undefined) o.display = opts.display;
+  if (opts.time?.length) o.time = opts.time;
+  return store.apply(
+    label,
+    (d) => {
+      recipe(d);
+      keepSongWithClips(d);
+    },
+    o,
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* The song follows the clips                                          */
+/* ------------------------------------------------------------------ */
+
+interface ClipPlace {
+  trackId: Id;
+  /** The pad row, or SONG_SLOT_BASE for any song clip (a song clip's index is not a place: it shifts when one before it goes). */
+  slot: number;
+  bars: number;
+}
+
+type ClipView = Pick<Track, 'id' | 'clips' | 'songClips'>;
+
+/** Where every clip is (part, and pad or song) and how long it is: all the song's regions depend on. */
+function clipPlaces(tracks: readonly ClipView[]): Map<Id, ClipPlace> {
+  const out = new Map<Id, ClipPlace>();
+  for (const t of tracks) {
+    t.clips.forEach((c, slot) => {
+      if (c && !out.has(c.id)) out.set(c.id, { trackId: t.id, slot, bars: c.bars });
+    });
+    for (const c of t.songClips ?? []) if (!out.has(c.id)) out.set(c.id, { trackId: t.id, slot: SONG_SLOT_BASE, bars: c.bars });
+  }
+  return out;
+}
+
+function samePlaces(a: ReadonlyMap<Id, ClipPlace>, b: ReadonlyMap<Id, ClipPlace>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [id, x] of a) {
+    const y = b.get(id);
+    if (!y || y.trackId !== x.trackId || y.slot !== x.slot || y.bars !== x.bars) return false;
+  }
+  return true;
+}
+
+/**
+ * The song's regions after an edit to the clips (pure). `before` and `after`
+ * are where the clips were and are; `tracks` the parts as they are now.
+ * - A clip that moved to another part takes its regions to that part's row,
+ *   placed like moved regions: they win where they land (see placeRegions).
+ * - A clip that is gone takes its regions with it, except when a new clip
+ *   took its place on the same pad in the same edit (a clip pasted or
+ *   recorded over it): its regions then play the new clip. A song clip has
+ *   no pad, so nothing takes its place.
+ * - A clip whose length changed keeps its regions' bars; their offsets wrap
+ *   into the new length.
+ * Returns the regions unchanged (the same array) when nothing applies.
+ */
+function songAfterClipEdit(
+  tracks: readonly ClipView[],
+  before: ReadonlyMap<Id, ClipPlace>,
+  after: ReadonlyMap<Id, ClipPlace>,
+  regions: readonly SongRegion[],
+): SongRegion[] {
+  const view = { tracks: tracks as Track[] };
+  const kept: SongRegion[] = [];
+  const moved: SongRegion[] = [];
+  for (const r of regions) {
+    const now = after.get(r.clipId);
+    if (now) {
+      if (now.trackId === r.trackId) kept.push(r);
+      else moved.push({ ...r, trackId: now.trackId });
+      continue;
+    }
+    const was = before.get(r.clipId);
+    const there = was && !isSongSlot(was.slot) ? tracks.find((t) => t.id === was.trackId)?.clips[was.slot] : null;
+    if (there && !before.has(there.id)) kept.push({ ...r, clipId: there.id });
+  }
+  const placed = moved.length ? placeRegions(view, kept, moved, { newId: () => uid('rg') }).regions : kept;
+  const next = tidyRegions(view, placed).regions;
+  return deepEqual(next, regions) ? (regions as SongRegion[]) : next;
+}
+
+/**
+ * Keep the song playable after a recipe changed clips (run() calls it on
+ * every edit, inside the edit's own undo step, so Undo brings both back):
+ * deleting a clip, clearing a part or deleting a scene row takes their
+ * regions out of the song; moving a clip to another part moves its regions
+ * there; a new length wraps the regions' offsets (see songAfterClipEdit).
+ * A copy never adds loops to the song (one copied or pasted over a clip the
+ * song plays takes over that clip's loops). Then a song clip that no region
+ * plays any more leaves the part (deleting the last loop of a library loop
+ * deletes the loop, as in GarageBand). Edits that leave every clip where it
+ * was and as long as it was cost a quick look at the clips.
+ */
+export function keepSongWithClips(d: Project): void {
+  if (!isDraft(d)) return;
+  followClips(d);
+  dropOrphanSongClips(d);
+}
+
+function followClips(d: Project): void {
+  const regions = d.arrangement.regions;
+  if (!regions.length) return;
+  const base = original(d) as Project;
+  const before = clipPlaces(base.tracks);
+  const after = clipPlaces(d.tracks);
+  if (samePlaces(before, after)) return;
+  const slim = (c: Clip): Clip => ({ id: c.id, bars: c.bars } as Clip);
+  const tracks: ClipView[] = d.tracks.map((t) => ({ id: t.id, clips: t.clips.map((c) => (c ? slim(c) : null)), songClips: (t.songClips ?? []).map(slim) }));
+  const plain = isDraft(regions) ? (current(regions) as SongRegion[]) : regions;
+  const next = songAfterClipEdit(tracks, before, after, plain);
+  if (next !== plain) d.arrangement.regions = next;
+}
+
+/** Remove the song clips no region plays (an empty list is left out). */
+function dropOrphanSongClips(d: Project): void {
+  if (!d.tracks.some((t) => t.songClips !== undefined)) return;
+  const played = new Set(d.arrangement.regions.map((r) => `${r.trackId}|${r.clipId}`));
+  for (const t of d.tracks) {
+    if (!t.songClips) continue;
+    const keep = t.songClips.filter((c) => played.has(`${t.id}|${c.id}`));
+    if (!keep.length) delete t.songClips;
+    else if (keep.length !== t.songClips.length) t.songClips = keep;
+  }
+}
+
+/** A plain-text name of one part for messages and undo steps (its name, else "Part N"). */
+export function partName(p: Project, trackId: Id): string {
+  const i = p.tracks.findIndex((t) => t.id === trackId);
+  return i < 0 ? 'part' : p.tracks[i].name || `Part ${i + 1}`;
 }

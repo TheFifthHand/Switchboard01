@@ -22,8 +22,58 @@
   opacity: 0.55;
 }
 
+/* fit: fill the container, keys widening up to their largest (max-width set inline). */
+.keyboard[data-fit] {
+  margin-inline: auto;
+}
+
+/* The keys' bed: the whole keyboard, or below the note-name rail. */
+.bed {
+  position: absolute;
+  inset: 0;
+}
+
+.keyboard[data-rail] .bed {
+  top: 14px;
+}
+
+/* Note names on the frame above their keys (C keys with the octave, the root by name). */
+.rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 14px;
+  pointer-events: none;
+}
+
+.railName {
+  position: absolute;
+  top: 1px;
+  color: #c9ced3;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  line-height: 13px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.railName[data-root] {
+  color: var(--teal-hi);
+}
+
+/* With the rail the keys are shorter: the dot moves up and the letter down, so they never touch. */
+.keyboard[data-rail] .white .dot {
+  top: calc(55% + 3px);
+}
+
+.keyboard[data-rail] .white .legend {
+  bottom: 4px;
+}
+
 .white,
-.black {
+.black,
+.step {
   position: absolute;
   top: 0;
   overflow: hidden;
@@ -33,8 +83,9 @@
     background 120ms var(--ease);
 }
 
-/* White keys: a lit face with a hairline gap and a visible front edge. */
-.white {
+/* White keys (and a scale keyboard's keys): a lit face with a hairline gap and a visible front edge. */
+.white,
+.step {
   bottom: 0;
   z-index: 1;
   border-radius: 0 0 5px 5px;
@@ -47,7 +98,9 @@
 }
 
 .white[data-pressed],
-.white[data-lit] {
+.white[data-lit],
+.step[data-pressed],
+.step[data-lit] {
   background: linear-gradient(180deg, #e2e5e7 0%, #f3f3f2 12%, #f4f3f0 100%);
   box-shadow:
     inset -1px 0 0 rgba(20, 24, 28, 0.22),
@@ -61,10 +114,10 @@
   background: linear-gradient(180deg, #d5d9dc 0%, #e1e4e6 9%, #dee1e3 100%);
 }
 
-/* Black keys: graphite caps with a darker front face. */
+/* Black keys: graphite caps with a darker front face (BLACK_KEY_HEIGHT tall, centred on the line between two white keys). */
 .black {
   z-index: 2;
-  height: 62%;
+  height: 55%;
   border-radius: 0 0 3.5px 3.5px;
   background: linear-gradient(180deg, #25282c 0%, #3b3f45 14%, #34383d 80%, #2c2f34 100%);
   box-shadow:
@@ -91,7 +144,8 @@
 }
 
 .white[data-pressed],
-.black[data-pressed] {
+.black[data-pressed],
+.step[data-pressed] {
   transform: translateY(1px);
 }
 
@@ -104,7 +158,8 @@
   transition: opacity 120ms var(--ease);
 }
 
-.white .glow {
+.white .glow,
+.step .glow {
   background: radial-gradient(ellipse 70% 26% at 50% 86%, rgba(242, 166, 52, 0.55) 0%, rgba(242, 166, 52, 0) 100%);
 }
 
@@ -113,7 +168,8 @@
 }
 
 .white[data-lit] .glow,
-.black[data-lit] .glow {
+.black[data-lit] .glow,
+.step[data-lit] .glow {
   opacity: 1;
   transition-duration: 30ms;
 }
@@ -130,7 +186,7 @@
 }
 
 .white .dot {
-  top: calc(62% + 7px);
+  top: calc(55% + 7px);
 }
 
 .black .dot {
@@ -184,7 +240,7 @@
 .name {
   color: var(--ink-3);
   font-size: var(--fs-xs);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   line-height: 13px;
 }
 
@@ -195,4 +251,211 @@
 .white[data-scale='out'] .keycap,
 .white[data-scale='out'] .name {
   color: #8c9299;
+}
+
+/* ---------- scale keyboard: one equal key per in-key note ---------- */
+
+/* The note's name near the top, spelled by the key; a root shows its octave over a teal underline. */
+.stepName {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 7px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  color: var(--ink-2);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.step[data-root] .stepName {
+  color: var(--teal-ink);
+}
+
+.step[data-root] .stepName::after {
+  content: '';
+  width: 18px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--teal);
+}
+
+/* A thin divider before each root: the octaves read at a glance. */
+.step[data-octave]::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: #5b6066;
+}
+
+/* ---------- kit: 16 named sound keys in 4 rows ---------- */
+
+.keyboard[data-variant='kit'] {
+  min-width: 240px;
+}
+
+.keyboard[data-variant='kit'] .bed {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(4, 1fr);
+  gap: 3px;
+  padding: 4px;
+}
+
+.pad {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 4px 0 7px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #f7f7f6 0%, #eceeef 100%);
+  box-shadow:
+    inset 0 -2px 0 #d6d9dc,
+    inset 0 0 0 1px rgba(20, 24, 28, 0.18);
+  color: var(--ink);
+  transition: background 120ms var(--ease);
+}
+
+.pad[data-lit] {
+  background: linear-gradient(180deg, #fbe7c4 0%, #f6d7a2 100%);
+}
+
+.pad[data-pressed] {
+  box-shadow:
+    inset 0 1px 2px rgba(20, 24, 28, 0.2),
+    inset 0 0 0 1px rgba(20, 24, 28, 0.2);
+}
+
+/* A sound's name: two short lines rather than a cut word ("Closed / Hat"). */
+.padName {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  line-height: 13px;
+  overflow-wrap: anywhere;
+}
+
+.padKey {
+  flex: none;
+  align-self: flex-start;
+  min-width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  padding: 0 2px;
+  border: 1px solid rgba(20, 24, 28, 0.16);
+  border-radius: 3px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  line-height: 12px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+/* ---------- kit 'row': 16 sound keys in one row, four groups of four ---------- */
+
+.keyboard[data-layout='row'] {
+  container: kitrow / inline-size;
+}
+
+.keyboard[data-variant='kit'][data-layout='row'] .bed {
+  grid-template-rows: minmax(0, 1fr);
+  column-gap: 3px;
+}
+
+/* A tall, narrow key: the name from the top (up to three short lines), the letter at the bottom. */
+.keyboard[data-layout='row'] .pad {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 2px;
+  padding: 6px 4px 5px;
+  border-radius: 4px 4px 6px 6px;
+  box-shadow:
+    inset 0 -4px 0 #d6d9dc,
+    inset 0 0 0 1px rgba(20, 24, 28, 0.18);
+}
+
+.keyboard[data-layout='row'] .pad[data-pressed] {
+  box-shadow:
+    inset 0 -2px 0 #d6d9dc,
+    inset 0 1px 2px rgba(20, 24, 28, 0.2),
+    inset 0 0 0 1px rgba(20, 24, 28, 0.2);
+}
+
+.keyboard[data-layout='row'] .padName {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: auto;
+  text-align: center;
+}
+
+.keyboard[data-layout='row'] .padKey {
+  align-self: center;
+  margin-top: 0;
+  min-width: 16px;
+  height: 16px;
+  font-size: var(--fs-xs);
+  line-height: 14px;
+  color: var(--ink-2);
+}
+
+/* Narrow keys (under ~54 px): a size smaller and less padding, so "Cowbell" or "Closed" stays whole. */
+@container kitrow (max-width: 900px) {
+  .keyboard[data-layout='row'] .pad {
+    padding-inline: 1px;
+  }
+  .keyboard[data-layout='row'] .padName {
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-medium);
+    letter-spacing: -0.02em;
+  }
+}
+
+/* Two rows of eight (narrow strips): the name from the top, the letter in the bottom-right corner. */
+.keyboard[data-layout='row'][data-rows='2'] .bed {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  row-gap: 3px;
+}
+.keyboard[data-layout='row'][data-rows='2'] .pad {
+  justify-content: flex-start;
+  padding: 3px 3px 2px;
+}
+.keyboard[data-layout='row'][data-rows='2'] .padName {
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  line-height: 11px;
+  text-align: left;
+  padding-right: 2px;
+}
+.keyboard[data-layout='row'][data-rows='2'] .padKey {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  min-width: 14px;
+  height: 14px;
+  font-size: var(--fs-2xs);
+  line-height: 12px;
 }

@@ -38,10 +38,15 @@ describe('Omni Song: the name people see', () => {
     expect(cfg).not.toMatch(/SWITCHBOARD|Switchboard/);
   });
 
-  it('the package is omni-song 2.0.0', () => {
+  it('the package is omni-song, with one version in package.json and the lockfile', () => {
+    // The version is read from package.json everywhere it shows (Welcome, Help › About, the launcher's
+    // meta tag), so a release bump edits package.json, the lockfile and Help's notes (WHATS_NEW) only.
     const pkg = JSON.parse(read('package.json'));
+    const lock = JSON.parse(read('package-lock.json'));
     expect(pkg.name).toBe('omni-song');
-    expect(pkg.version).toBe('2.0.0');
+    expect(pkg.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(lock.version).toBe(pkg.version);
+    expect(lock.packages[''].version).toBe(pkg.version);
     expect(pkg.description).toMatch(/^Omni Song/);
   });
 

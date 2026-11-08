@@ -12,7 +12,7 @@
   background: transparent;
   color: var(--ink);
   font-size: var(--fs-md);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
   text-align: left;
   user-select: none;
   -webkit-user-select: none;
@@ -96,16 +96,26 @@
   transform: translateX(12px);
 }
 
+/* On, the slot fills with the switch's colour (amber; teal for Musical Assist; coral), so on and
+   off differ at a glance, not only by the lever's side, the lamp and the word. */
+.switch[data-on] .slot {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--lamp) 82%, #000) 0%, var(--lamp) 100%);
+  box-shadow:
+    inset 0 1px 2px rgba(20, 24, 28, 0.3),
+    inset 0 0 0 1px rgba(20, 24, 28, 0.12),
+    0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
 .state {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   min-width: 34px;
   color: var(--ink-3);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--fs-xs);
-  font-weight: 500;
-  letter-spacing: 0.06em;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 

@@ -10,10 +10,11 @@ import type { NoteCut, NoteEvent, Sequencer } from '../../src/time/sequencer';
 
 export type NoteSpec = [tick: number, pitch: number, duration?: number, velocity?: number];
 
-/** A project at `bpm` with every clip slot empty. */
+/** A project at `bpm` with every clip slot empty and an empty song. */
 export function makeProject(bpm = 120): Project {
   const p = createProject({ bpm, now: 0 });
   p.seed = 1234;
+  p.arrangement = { regions: [], sections: [], tailSeconds: 3 };
   return p;
 }
 

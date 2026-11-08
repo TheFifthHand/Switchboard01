@@ -33,18 +33,20 @@ export {
   type FaderChangeInfo,
 } from './Fader';
 export { Pad, velocityFromPosition, PAD_KEY_VELOCITY, PAD_STATE_TEXT, type PadProps, type PadState, type PadPressEvent } from './Pad';
+export { ClipSketch, type ClipSketchProps, type SketchNote } from './ClipSketch';
 export { Button, IconButton, type ButtonProps, type IconButtonProps, type ButtonVariant, type ButtonSize, type Tone } from './Button';
 export { Switch, Toggle, type SwitchProps, type ToggleProps } from './Toggle';
 export { SegmentedControl, type SegmentedControlProps, type SegmentOption } from './SegmentedControl';
 export { Select, type SelectProps, type SelectOption } from './Select';
 export { NumberField, type NumberFieldProps, type NumberFieldChangeInfo } from './NumberField';
 export { Led, type LedProps } from './Led';
-export { Meter, METER_CLIP_LEVEL, type MeterProps } from './Meter';
+export { Meter, meterWake, linearDbScale, METER_CLIP_LEVEL, METER_HOT_DB, type MeterProps } from './Meter';
 export { Panel, type PanelProps } from './Panel';
 export { Dialog, type DialogProps } from './Dialog';
 export { Notice, Toast, ToastProvider, useToasts, type NoticeProps, type NoticeTone, type NoticeAction, type ToastOptions, type ToastApi, type ToastProps, type ToastProviderProps } from './Toast';
 export { Tooltip, TipsProvider, useTips, TOOLTIP_DELAY_MS, type TooltipProps, type TipsProviderProps, type TipsContextValue } from './Tooltip';
-export { MiniKeyboard, noteName, BLACK_KEY_HEIGHT, type MiniKeyboardProps } from './MiniKeyboard';
+export { MiniKeyboard, noteName, BLACK_KEY_HEIGHT, NOTE_RAIL_PX, KIT_KEYS, type MiniKeyboardProps } from './MiniKeyboard';
+export { TOUCH_HOLD_MS, TOUCH_SLOP_PX, TOUCH_HIT_PX } from './touchDrag';
 export { newGestureId, parseParamInput, paramEditText, parsePlainNumber } from './valueInput';
 
 export {
@@ -63,5 +65,5 @@ export {
   type ComputerKeyboardControls,
   type KeyMapping,
 } from '../hooks/useComputerKeyboard';
-export { useRafLoop, type RafCallback } from '../hooks/useRafLoop';
+export { useRafLoop, type RafCallback, type RafLoopOptions } from '../hooks/useRafLoop';
 export { useElementSize, type ElementSize } from '../hooks/useElementSize';

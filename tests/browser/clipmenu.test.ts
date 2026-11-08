@@ -137,7 +137,8 @@ describe('Clip pad menu', () => {
 
     const empty = slotsOf('t5').empty;
     rightClick(pad('t5', empty));
-    expect(menu()!.textContent).toContain('Empty slot');
+    // r6: the empty-pad menu says "Empty pad" and "New loop" (a tap makes a loop at once).
+    expect(menu()!.textContent).toContain('Empty pad');
     click(item(/Paste/));
     const pasted = clips('t5')[empty]!;
     expect(pasted).not.toBeNull();
@@ -187,23 +188,25 @@ describe('Clip pad menu', () => {
     // Clearing again is not offered.
     rightClick(pad('t2', full));
     expect(item('Clear notes').getAttribute('aria-disabled')).toBe('true');
-    click(item('Delete clip'));
+    click(item('Delete loop'));
     expect(clips('t2')[full]).toBeNull();
     act(() => session.undo());
     act(() => session.undo());
     expect(clips('t2')[full]!.notes.length).toBeGreaterThan(0);
   });
 
-  it('New clip on an empty slot creates a clip of the chosen length', () => {
+  // r6: "New loop", named after its part ("Lead 1"), not the scene.
+  it('New loop on an empty slot creates a loop of the chosen length', () => {
     setup();
     const empty = slotsOf('t6').empty;
     rightClick(pad('t6', empty));
-    click(menu()!.querySelector<HTMLButtonElement>('[aria-label="New clip, 2 bars"]')!);
+    click(menu()!.querySelector<HTMLButtonElement>('[aria-label="New loop, 2 bars"]')!);
     const c = clips('t6')[empty]!;
     expect(c).not.toBeNull();
     expect(c.bars).toBe(2);
     expect(c.notes).toHaveLength(0);
-    expect(c.name).toBe(session.store.getState().scenes[empty].name);
+    const part = session.store.getState().tracks.find((t) => t.id === 't6')!;
+    expect(c.name).toMatch(new RegExp(`^${part.name} \\d+$`));
     expect(pad('t6', empty).getAttribute('aria-label')).toContain(c.name);
   });
 
@@ -237,9 +240,9 @@ describe('Clip pad menu', () => {
       selectTrack('t3');
       selectSlot('t3', slotsOf('t3').full);
     });
-    const more = document.querySelector<HTMLButtonElement>('button[aria-label^="Options for clip"]')!;
+    const more = document.querySelector<HTMLButtonElement>('button[aria-label^="Options for loop"]')!;
     expect(more).not.toBeNull();
-    expect(document.querySelectorAll('button[aria-label^="Options for clip"], button[aria-label^="Options for empty slot"]')).toHaveLength(1);
+    expect(document.querySelectorAll('button[aria-label^="Options for loop"], button[aria-label^="Options for empty slot"]')).toHaveLength(1);
     click(more);
     expect(menu()).not.toBeNull();
     expect(more.getAttribute('aria-expanded')).toBe('true');
@@ -267,6 +270,10 @@ describe('Clip pad menu', () => {
       key(document.activeElement!, 'keydown', { key: 'ArrowLeft' });
       expect(document.activeElement!.getAttribute('aria-label')).toBe(`Length ${bars - 1} bar${bars - 1 === 1 ? '' : 's'}`);
     }
+    key(document.activeElement!, 'keydown', { key: 'ArrowDown' });
+    expect((document.activeElement as HTMLElement).textContent).toContain('Double (repeat)');
+    key(document.activeElement!, 'keydown', { key: 'ArrowDown' });
+    expect((document.activeElement as HTMLElement).textContent).toContain('Repeat to 8 bars');
     key(document.activeElement!, 'keydown', { key: 'ArrowDown' });
     expect((document.activeElement as HTMLElement).textContent).toContain('Move…');
     key(document.activeElement!, 'keydown', { key: 'ArrowDown' });

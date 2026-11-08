@@ -9,6 +9,30 @@
   gap: 16px;
   flex-wrap: wrap;
 }
+/* A visible label over a segmented control (the group carries the same name). */
+.field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.fieldLabel {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--ink-2);
+}
+.fileField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--ink-2);
+}
 .file {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -34,11 +58,14 @@
   font-size: var(--fs-sm);
   color: var(--ink-2);
 }
+/* The progress takes the export button's place (beside Cancel export) while it runs. */
 .progress {
   position: relative;
-  height: 22px;
-  border-radius: 11px;
+  min-width: 260px;
+  height: 36px;
+  border-radius: var(--r-sm);
   background: var(--sunk);
+  border: 1px solid var(--line-strong);
   overflow: hidden;
 }
 .progressFill {
@@ -50,23 +77,88 @@
 .progressText {
   position: relative;
   display: block;
+  padding: 0 12px;
   text-align: center;
-  font-size: 11px;
-  line-height: 22px;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: 34px;
+  color: var(--ink);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.fieldGroup > :first-child {
+  align-self: stretch;
+}
+.moreToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 4px 6px;
+  margin-left: -6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+.moreToggle:hover {
+  color: var(--ink);
+  background: var(--shell-hi);
+}
+.moreToggle:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+.more,
+.moreOpen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.more {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--sunk);
+}
+.ok,
+.error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
 }
 .ok {
-  margin: 0;
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
   background: var(--teal-wash);
   color: var(--teal-ink);
-  font-size: var(--fs-sm);
 }
 .error {
-  margin: 0;
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
   background: var(--coral-wash);
   color: var(--coral-ink);
+}
+.resultText,
+.report {
+  margin: 0;
+}
+.report {
+  color: var(--ink);
   font-size: var(--fs-sm);
+}
+.link {
+  margin-left: -6px;
 }

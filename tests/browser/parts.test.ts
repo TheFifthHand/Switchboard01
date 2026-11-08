@@ -9,6 +9,7 @@
 import { act, createElement as h } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { session } from '../../src/app/instance';
+import { songBars } from '../../src/project/arrangement';
 import { patchRuntime, runtimeStore } from '../../src/app/runtime';
 import { LoopsGrid } from '../../src/app/views/LoopsGrid';
 import { PartPanel } from '../../src/app/views/PartPanel';
@@ -18,7 +19,7 @@ import { getStarter } from '../../src/content/starters';
 import { describeMacro } from '../../src/project/resolve';
 import type { Id, Instrument } from '../../src/project/types';
 import { removeMacroTarget, setArp, setBpm } from '../../src/state/commands';
-import { selectSlot, selectTrack, setPadMode, uiStore } from '../../src/state/uiStore';
+import { selectSlot, selectTrack, setPadMode, setUiMode, uiStore } from '../../src/state/uiStore';
 import { cleanup, fire, key, mount, wait } from './ui-harness';
 
 type Call = ['on', Id, number, number, string] | ['off', Id, number, string] | ['stop'];
@@ -27,6 +28,9 @@ const real = { noteOn: session.noteOn, noteOff: session.noteOff, startAudio: ses
 
 beforeEach(() => {
   calls = [];
+  // Simple (the Jam pads sheet): parts go by the picker's words ("Melody"). Pinned, so a file run before this
+  // one that left Advanced on changes nothing here.
+  act(() => setUiMode('simple'));
   // No audio device in these tests: record what previews ask the session to play.
   session.noteOn = (trackId, pitch, velocity, source) => {
     calls.push(['on', trackId, pitch, velocity, source]);
@@ -110,7 +114,7 @@ describe('Part menu', () => {
 
   it('an empty name is not accepted and Escape keeps the old one', () => {
     mountGrid();
-    const main = document.querySelector<HTMLButtonElement>('button[aria-label^="Select Lead"]')!;
+    const main = document.querySelector<HTMLButtonElement>('button[aria-label^="Select Melody"]')!;
     act(() => main.focus());
     key(main, 'keydown', { key: 'F2' });
     const input = dialog()!.querySelector('input')!;
@@ -124,13 +128,13 @@ describe('Part menu', () => {
     expect(document.activeElement).toBe(main);
   });
 
-  it('right-click on a header opens the menu; Lock toggles the part lock', () => {
+  it('right-click on a header opens the menu; Keep pattern toggles the part lock (Variation leaves it alone)', () => {
     mountGrid();
-    const header = document.querySelector<HTMLButtonElement>('button[aria-label^="Select Chords"]')!.parentElement!;
+    const header = document.querySelector<HTMLButtonElement>('button[aria-label^="Select Keys & chords"]')!.parentElement!;
     const r = header.getBoundingClientRect();
     fire(header, new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: r.left + 20, clientY: r.top + 10 }));
-    expect(menu()!.getAttribute('aria-label')).toBe('Part Chords');
-    const lock = item('Lock against Variation');
+    expect(menu()!.getAttribute('aria-label')).toBe('Part Keys & chords');
+    const lock = item('Keep pattern (no Variation)');
     expect(lock.getAttribute('aria-checked')).toBe('false');
     click(lock);
     expect(track('t4').locked).toBe(true);
@@ -139,12 +143,12 @@ describe('Part menu', () => {
 
   it('Change instrument opens the sound browser for that part; choosing a preset changes the instrument, Undo restores it', () => {
     mountGrid();
-    click(document.querySelector('button[aria-label="Options for part Chords"]')!);
+    click(document.querySelector('button[aria-label="Options for part Keys & chords"]')!);
     click(item('Change instrument'));
     expect(menu()).toBeNull();
     const d = dialog()!;
     expect(d.getAttribute('aria-labelledby')).toBeTruthy();
-    expect(d.textContent).toContain('Sound for Chords');
+    expect(d.textContent).toContain('Change instrument: Keys & chords');
     const before = track('t4').instrument;
     expect(before.kind).toBe('poly');
     // Current sound is marked and focused.
@@ -247,7 +251,7 @@ describe('Part menu', () => {
     mount(h(SoundBrowser, { open: true, trackId: 't4', onClose: () => {} }));
     const btn = [...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Preview')!;
     expect(btn.disabled).toBe(true);
-    expect(dialog()!.textContent).toMatch(/Record Notes is recording into Chords, so Preview is off/);
+    expect(dialog()!.textContent).toMatch(/Record Notes is recording into Keys & chords, so Preview is off/);
     // Choosing still works, but "Preview on choose" stays quiet.
     const target = SYNTH_PRESETS.find((p) => p.kind === 'poly' && p.id !== soundIdOf(track('t4').instrument))!;
     click(option(target.name));
@@ -308,7 +312,7 @@ describe('Part panel sound selector', () => {
     expect(btn.getAttribute('aria-label')).toContain('Bass synth');
     expect(btn.textContent).toBe('Change instrument');
     click(btn);
-    expect(dialog()!.textContent).toContain('Sound for Bass');
+    expect(dialog()!.textContent).toContain('Change instrument: Bass');
     // The Bass category is preselected for a bass part.
     expect(dialog()!.querySelector('[role="tab"][aria-selected="true"]')!.textContent).toContain('Bass');
     click([...dialog()!.querySelectorAll('button')].find((b) => b.textContent === 'Done')!);
@@ -359,7 +363,7 @@ describe('Part panel macros and Variation', () => {
     expect(notes(1)).toBe(bounce);
     const text = runtimeStore.getState().notice!.text;
     expect(text).toMatch(/^Variation on Bass · Rolling: /);
-    expect(text).toContain('Bounce is playing: launch Rolling to hear it.');
+    expect(text).toContain('Bounce is playing: tap the Rolling pad to hear it.');
     act(() => session.undo());
     expect(notes(2)).toBe(rolling);
 
@@ -384,18 +388,21 @@ describe('Part panel macros and Variation', () => {
     act(() => selectSlot('t3', 0));
     click(variation());
     expect(JSON.stringify(track('t3').clips)).toBe(before);
-    expect(runtimeStore.getState().notice).toMatchObject({ tone: 'warn', text: 'Slot 1 of Bass is empty. Select a clip with notes: Variation changes a pattern.' });
+    expect(runtimeStore.getState().notice).toMatchObject({ tone: 'warn', text: 'Slot 1 of Bass is empty. Select a loop with notes: Variation changes a pattern.' });
   });
 
-  it('with nothing selected yet, Variation changes the playing clip', () => {
+  it('a part selected with no clip chosen yet gets its playing clip: the ring, Variation and Steps all act on it', () => {
     act(() => {
-      selectTrack('t3');
+      selectTrack('t1');
       uiStore.setState((s) => {
         const { t3: _drop, ...rest } = s.selectedSlot;
         return { ...s, selectedSlot: rest };
       });
       patchRuntime({ playing: true, tracks: { ...runtimeStore.getState().tracks, t3: { playingSlot: 2, queued: null } } });
+      // Selecting the part chooses its slot (selection.ts): the clip it plays.
+      selectTrack('t3');
     });
+    expect(uiStore.getState().selectedSlot.t3).toBe(2);
     mountPanel();
     const rolling = notes(2);
     click(variation());
@@ -474,7 +481,7 @@ describe('Scene rename', () => {
     typeInto(input, 'Rise');
     click(dialog()!.querySelector('button[type="submit"]')!);
     expect(session.store.getState().scenes[2].name).toBe('Rise');
-    expect(document.querySelector('button[aria-label^="Launch scene Rise"]')).not.toBeNull();
+    expect(document.querySelector('button[aria-label^="Play row Rise"]')).not.toBeNull();
     act(() => session.undo());
     expect(session.store.getState().scenes[2].name).toBe(scene.name);
   });
@@ -482,7 +489,7 @@ describe('Scene rename', () => {
   it('F2 on a scene button opens the rename field; Shift+F10 opens the scene menu', () => {
     mountGrid();
     const scene = session.store.getState().scenes[0];
-    const btn = document.querySelector<HTMLButtonElement>(`button[aria-label^="Launch scene ${scene.name}"]`)!;
+    const btn = document.querySelector<HTMLButtonElement>(`button[aria-label^="Play row ${scene.name}"]`)!;
     act(() => btn.focus());
     key(btn, 'keydown', { key: 'F2' });
     expect(dialog()!.querySelector('input')!.value).toBe(scene.name);
@@ -493,14 +500,16 @@ describe('Scene rename', () => {
     expect(item('Add to song')).toBeTruthy();
   });
 
-  it('Add to song appends the scene to the arrangement', () => {
+  it('Add to song puts the scene at the end of the song: a loop for each of its parts, under a section named after it', () => {
     mountGrid();
-    const scene = session.store.getState().scenes[1];
-    const before = session.store.getState().arrangement.blocks.length;
+    const p = session.store.getState();
+    const scene = p.scenes[1];
+    const end = songBars(p);
+    const parts = p.tracks.filter((t) => t.clips[1]).length;
     click(document.querySelector(`button[aria-label="Options for scene ${scene.name}"]`)!);
     click(item('Add to song'));
-    const blocks = session.store.getState().arrangement.blocks;
-    expect(blocks).toHaveLength(before + 1);
-    expect(blocks[blocks.length - 1].sceneId).toBe(scene.id);
+    const after = session.store.getState().arrangement;
+    expect(after.regions.filter((r) => r.start === end)).toHaveLength(parts);
+    expect(after.sections[after.sections.length - 1]).toMatchObject({ name: scene.name, start: end });
   });
 });

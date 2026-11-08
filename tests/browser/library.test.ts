@@ -23,7 +23,7 @@ import { closeDb, deleteDb, putSample, saveProject } from '../../src/persistence
 import * as library from '../../src/persistence/library';
 import { createProject } from '../../src/project/factory';
 import { PROJECT_VERSION, type Project } from '../../src/project/types';
-import { setGuideDone, setView, uiStore } from '../../src/state/uiStore';
+import { setGuideDone, setUiMode, setView, uiStore } from '../../src/state/uiStore';
 import { cleanup, key, mount, wait } from './ui-harness';
 
 /** Make every IndexedDB write fail as if browser storage were full; returns the undo. */
@@ -52,11 +52,18 @@ beforeEach(async () => {
   loaded = [];
   closed = 0;
   guides = 0;
+  // Round 7: these cover 2.4's library flows and transport, which Advanced keeps (Simple's Project ▾: r7-shell-simple).
+  act(() => {
+    setUiMode('advanced');
+    // The view other files leave (the Song screen) changes the words of the start notice: start on Play, as 2.4.
+    setView('play');
+  });
   await deleteDb();
 });
 
 afterEach(async () => {
   cleanup();
+  act(() => setUiMode('simple'));
   await deleteDb();
 });
 
@@ -126,16 +133,20 @@ function typeInto(input: HTMLInputElement, value: string) {
 }
 
 describe('Project library', () => {
-  it('lists the eight starters and a blank project with tempo and key', async () => {
+  it('lists every starter (the eight of the brief and the five beat-maker ones) and a blank project with tempo and key', async () => {
     open('starters');
     const cards = [...dialog().querySelectorAll<HTMLButtonElement>('ul[aria-label="Starter projects"] button')];
-    expect(cards).toHaveLength(9);
+    expect(cards).toHaveLength(STARTERS.length + 1);
+    expect(STARTERS).toHaveLength(13);
     const expected = [...STARTERS, BLANK_STARTER];
     cards.forEach((card, i) => {
       const def = expected[i];
       expect(card.getAttribute('aria-label')).toContain(def === BLANK_STARTER ? 'Blank project' : def.name);
       expect(card.textContent).toContain(`${def.bpm} BPM`);
-      expect(card.textContent).toContain(def.key);
+      // r6: mood and tempo on the card ("warm, bouncy · 124 BPM"); the key's name on hover and in the card's name.
+      expect(card.querySelector<HTMLElement>('[data-feel]')!.title).toBe(`Key: ${def.key}`);
+      expect(card.getAttribute('aria-label')).toContain(def.key);
+      expect(card.querySelector('[data-feel]')!.textContent).toMatch(/^[a-z-]+, [a-z-]+ · \d+ BPM$/);
       expect(card.textContent).toContain(def.description);
     });
     // Storage is explained in the dialog.
@@ -148,38 +159,45 @@ describe('Project library', () => {
     await until(() => dialog().textContent?.includes('No saved projects yet'), 'empty project list');
   });
 
-  it('starting a starter saves the open project, loads the starter and keeps the old one in My projects', async () => {
-    const old = project('Old Song', Date.now() - 60_000);
-    await saveProject(old);
-    session.store.replace(old, { resetHistory: true });
+  // How to hear it is said in the mode's words: Advanced on Play taps a pad; Simple always plays the song (round 7).
+  for (const [mode, hear] of [
+    ['advanced', 'Tap a pad or a scene to hear it.'],
+    ['simple', 'Press Play to hear the song.'],
+  ] as const) {
+    it(`starting a starter saves the open project, loads the starter and keeps the old one in My projects (${mode})`, async () => {
+      act(() => setUiMode(mode));
+      const old = project('Old Song', Date.now() - 60_000);
+      await saveProject(old);
+      session.store.replace(old, { resetHistory: true });
 
-    const m = open('starters');
-    await until(() => dialog().textContent?.includes('Your current project “Old Song” stays in My projects'), 'intro naming the current project');
-    await click(buttonNamed(/^Start Techno/), 'Techno card');
-    await until(() => loaded.length > 0, 'onLoaded');
-    expect(loaded).toEqual(['starter']);
+      const m = open('starters');
+      await until(() => dialog().textContent?.includes('Your current project “Old Song” stays in My projects'), 'intro naming the current project');
+      await click(buttonNamed(/^Start Techno/), 'Techno card');
+      await until(() => loaded.length > 0, 'onLoaded');
+      expect(loaded).toEqual(['starter']);
 
-    const now = session.store.getState();
-    expect(now.starterId).toBe('techno');
-    expect(runtimeStore.getState().notice?.text).toBe(`Started “${now.name}”. “Old Song” is still in My projects. Tap a pad or a scene to hear it.`);
-    expect(now.id).not.toBe(old.id);
-    const stored = await library.listProjects();
-    expect(stored.map((p) => p.id).sort()).toEqual([old.id, now.id].sort());
+      const now = session.store.getState();
+      expect(now.starterId).toBe('techno');
+      expect(runtimeStore.getState().notice?.text).toBe(`Started “${now.name}”. “Old Song” is still in My projects. ${hear}`);
+      expect(now.id).not.toBe(old.id);
+      const stored = await library.listProjects();
+      expect(stored.map((p) => p.id).sort()).toEqual([old.id, now.id].sort());
 
-    m.unmount();
-    open('projects');
-    expect(document.activeElement?.textContent).toContain('My projects');
-    await until(() => rowNames('Saved projects').length === 2, 'two saved projects');
-    const names = rowNames('Saved projects');
-    expect(names[0]).toBe(now.name); // the open project comes first
-    expect(names).toContain('Old Song');
-    const openRow = dialog().querySelector('li[aria-current="true"]')!;
-    expect(openRow.textContent).toContain('Open now');
-    expect(openRow.textContent).toContain(now.name);
-    // Only projects that are not open offer Open.
-    expect(buttonNamed(`Open ${now.name}`)).toBeNull();
-    expect(buttonNamed('Open Old Song')).not.toBeNull();
-  });
+      m.unmount();
+      open('projects');
+      expect(document.activeElement?.textContent).toContain('My projects');
+      await until(() => rowNames('Saved projects').length === 2, 'two saved projects');
+      const names = rowNames('Saved projects');
+      expect(names[0]).toBe(now.name); // the open project comes first
+      expect(names).toContain('Old Song');
+      const openRow = dialog().querySelector('li[aria-current="true"]')!;
+      expect(openRow.textContent).toContain('Open now');
+      expect(openRow.textContent).toContain(now.name);
+      // Only projects that are not open offer Open.
+      expect(buttonNamed(`Open ${now.name}`)).toBeNull();
+      expect(buttonNamed('Open Old Song')).not.toBeNull();
+    });
+  }
 
   it('opens a stored project from the list', async () => {
     const a = project('Alpha', Date.now() - 1000);
@@ -714,7 +732,8 @@ describe('The first-launch preview and reopening', () => {
     expect(title.textContent).toBe('Omni Song');
     expect(card.getAttribute('aria-labelledby')).toBe('welcome-title');
     expect(card.textContent).toContain('Start with a beat. Make it yours.');
-    expect(buttonNamed('Jump In')).not.toBeNull();
+    // A returning visit offers Continue first and a new groove second (shell-02).
+    expect(buttonNamed('Start a new groove')).not.toBeNull();
     expect(buttonNamed('Continue “From Before”')).not.toBeNull();
     expect(card.querySelector('[data-testid="welcome-renamed"]')?.textContent).toBe('SWITCHBOARD / 01 is now called Omni Song. Your projects and settings are all still here.');
     first.unmount();
@@ -784,7 +803,7 @@ describe('The first-launch preview and reopening', () => {
       act(() => session.setBpm(103));
       const status = await until(() => document.querySelector<HTMLButtonElement>('button[aria-label="Autosave: Not saved"]'), 'Not saved', 5000);
       await click(status);
-      const pop = document.querySelector<HTMLElement>('[role="alertdialog"][aria-label="Saving failed"]')!;
+      const pop = document.querySelector<HTMLElement>('[role="dialog"][aria-label="Saving failed"]')!;
       // Pressed from the keyboard: the export tries to save first, and focus stays on the button meanwhile.
       const exportButton = buttonNamed('Export project file', pop)!;
       exportButton.focus();
@@ -799,7 +818,7 @@ describe('The first-launch preview and reopening', () => {
       act(() => session.store.replace({ ...session.store.getState(), samples: [meta] }));
       await session.autosaver!.flush();
       saved = null;
-      const again = await until(() => document.querySelector<HTMLElement>('[role="alertdialog"][aria-label="Saving failed"]'), 'popover');
+      const again = await until(() => document.querySelector<HTMLElement>('[role="dialog"][aria-label="Saving failed"]'), 'popover');
       await click(buttonNamed('Export project file', again));
       const notice = await until(() => (runtimeStore.getState().notice?.tone === 'error' ? runtimeStore.getState().notice : null), 'error message');
       expect(notice.text).toBe('Exporting the project file failed: The recording "Lost take" is missing from this browser\'s storage, so the project file would be incomplete.');
@@ -810,11 +829,11 @@ describe('The first-launch preview and reopening', () => {
     }
     // Storage is back: Try again writes the pending edits, the popover goes and focus returns to the save status.
     await putSample({ id: 'smp_missing', name: 'Lost take', mime: 'audio/wav', byteLength: 3, duration: 0.1, sampleRate: 44100, channels: 1 }, new Blob([new Uint8Array([1, 2, 3])]));
-    const tryAgain = buttonNamed('Try again', document.querySelector<HTMLElement>('[role="alertdialog"][aria-label="Saving failed"]')!)!;
+    const tryAgain = buttonNamed('Try again', document.querySelector<HTMLElement>('[role="dialog"][aria-label="Saving failed"]')!)!;
     tryAgain.focus();
     await click(tryAgain);
     await until(() => saveStatus() === 'Autosave: Saved', 'Saved', 5000);
-    expect(document.querySelector('[role="alertdialog"][aria-label="Saving failed"]')).toBeNull();
+    expect(document.querySelector('[role="dialog"][aria-label="Saving failed"]')).toBeNull();
     expect(document.activeElement?.getAttribute('aria-label')).toBe('Autosave: Saved');
   });
 });

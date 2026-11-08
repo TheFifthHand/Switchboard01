@@ -1,0 +1,14 @@
+/* "Try a ready-made loop…": rows of ▶ and the loop (BeatPicker's look, with a hear key in front). */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.row > button:last-child {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.empty {
+  margin: 0;
+  padding: 4px 10px 10px;
+}

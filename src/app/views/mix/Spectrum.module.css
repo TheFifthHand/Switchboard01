@@ -11,7 +11,7 @@
 
 .regions {
   position: relative;
-  height: 32px;
+  height: 28px;
   flex: none;
 }
 
@@ -31,6 +31,7 @@
 
 .regionName {
   font-size: var(--fs-sm);
+  line-height: 14px;
   font-weight: 650;
   color: var(--ink);
 }

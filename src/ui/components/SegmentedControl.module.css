@@ -35,7 +35,7 @@
   background: transparent;
   color: var(--ink-2);
   font-size: var(--fs-md);
-  font-weight: 560;
+  font-weight: var(--fw-medium);
   white-space: nowrap;
   user-select: none;
   -webkit-user-select: none;
@@ -57,7 +57,7 @@
   height: 40px;
   padding: 0 14px 0 11px;
   font-size: var(--fs-lg);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 /* Without lamps the keys are evenly padded; the engaged one is raised and bold. */
@@ -68,7 +68,7 @@
   padding: 0 10px;
 }
 .group[data-lamp='off'] .segment[data-selected] {
-  font-weight: 650;
+  font-weight: var(--fw-semibold);
 }
 
 .segment:hover:not(:disabled):not([data-selected]) {

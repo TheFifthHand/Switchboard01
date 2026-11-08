@@ -66,7 +66,8 @@ function dragGrip(g: HTMLElement, to: { clientX: number; clientY: number }, opts
 }
 
 beforeEach(async () => {
-  await page.viewport(1366, 768);
+  // Tall enough for the three Advanced columns side by side (shorter windows show them as tabs: r4-shape-layout).
+  await page.viewport(1366, 900);
   window.scrollTo(0, 0);
   runtimeStore.setState((s) => ({ ...s, notice: null }));
 });
@@ -282,6 +283,7 @@ function checkLayout(root: HTMLElement, label: string) {
     for (const [, v] of byTop) expect(new Set(v).size, `${label}: values aligned in a row`).toBe(1);
     expect(tops.size).toBeGreaterThan(0);
   }
+  if (!root.querySelector('#shape-col-effects')) return;
   for (const h3 of ['In this part’s chain', 'Channel', 'Shared effects', 'Movement (LFOs)']) {
     expect([...root.querySelectorAll('h3')].some((x) => x.textContent?.startsWith(h3)), `${label}: heading ${h3}`).toBe(true);
   }
@@ -298,20 +300,31 @@ describe('Advanced Shape layout', () => {
       await document.fonts.ready;
       const { m } = setup('t4', { width: w, height: w < 1024 ? 'auto' : hgt - 158, effects: ['eq', 'compressor', 'tape', 'widener'] });
       await actFrame();
-      checkLayout(m.container, `${w}`);
+      // A short window shows the columns as tabs: check each one.
+      const tabs = [...m.container.querySelectorAll<HTMLElement>('[role="tab"]')];
+      expect(tabs.length > 0, `${w} × ${hgt}: tabs`).toBe(hgt < 850 && w >= 1024);
+      if (tabs.length) {
+        for (const t of tabs) {
+          act(() => t.click());
+          await actFrame();
+          checkLayout(m.container, `${w} ${t.textContent}`);
+        }
+      } else checkLayout(m.container, `${w}`);
       cleanup();
     }
   });
 
-  it('opening the cable panel keeps the dock below the header, strip and columns', async () => {
+  it('opening the cable panel lays it over the columns, below the header and part strip, inside the view', async () => {
     const { m } = setup('t4', { height: 610 });
+    const strip = m.container.querySelector<HTMLElement>('[role="radiogroup"][aria-label="Part to shape"]')!.getBoundingClientRect();
     act(() => setCablesOpen(true));
     await actFrame();
     const split = m.container.querySelector<HTMLElement>('[role="separator"][aria-label="Resize cable panel"]')!;
-    const max = Number(split.getAttribute('aria-valuemax'));
-    // Header (40) + strip (44) + three gaps + splitter leave at least 170 px for the columns.
-    expect(max).toBeLessThanOrEqual(610 - 20 - (40 + 44 + 30 + 10) - 170);
     const dock = m.container.querySelector<HTMLElement>('[aria-label="Cable panel"]')!.getBoundingClientRect();
+    // Full height at first: from under the part strip to the bottom of the view.
+    expect(dock.top).toBeGreaterThanOrEqual(strip.bottom);
+    expect(dock.top).toBeLessThan(strip.bottom + 20);
     expect(dock.bottom).toBeLessThanOrEqual(m.container.getBoundingClientRect().bottom + 1);
+    expect(Number(split.getAttribute('aria-valuenow'))).toBe(Number(split.getAttribute('aria-valuemax')));
   });
 });

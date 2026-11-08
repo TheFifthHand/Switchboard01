@@ -19,3 +19,29 @@
   white-space: nowrap;
   flex: none;
 }
+
+/* The More menu's last line: the state in words, not a menu row (never focused, never cut off). */
+.menuStatus {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 280px;
+  padding: 4px 10px 4px 6px;
+  color: var(--ink-3);
+  font-size: var(--fs-sm);
+}
+.menuStatus .icon,
+.menuStatus > svg {
+  margin: 2px 2px 0;
+}
+.menuWords {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.menuText {
+  color: var(--ink-2);
+}
+.menuHint {
+  white-space: normal;
+}

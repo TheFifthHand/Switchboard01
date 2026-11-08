@@ -4,10 +4,13 @@
 # then opens your default browser. Nothing is uploaded anywhere.
 #
 # The browser keeps projects per address, and the port is part of the address,
-# so the launcher stays on one port: if Omni Song (or SWITCHBOARD / 01, its name
-# before 2.0) already runs there it opens that copy and exits; if another program
-# holds the port it explains what that means for saved projects before using the
-# next free port.
+# so the launcher stays on one port. If Omni Song already runs there, the version
+# its page names decides: the same version as this one is opened and this window
+# closes; another version (or SWITCHBOARD / 01, the app's name before 2.0) is
+# named, and this window waits until that copy's window is closed, then starts
+# this version at the same address. If another program holds the port it explains
+# what that means for saved projects before using the next free port.
+# serve.mjs (the Node launcher) behaves and words this the same way.
 #
 # Stop: close this window, or press Ctrl+C.
 param(
@@ -41,15 +44,32 @@ function Start-Listener([int]$p) {
   } catch { return $null }
 }
 
+# The version a page names (its omni-song-version meta, see vite.config.ts), or ''
+# (built before 2.3, or not ours).
+function Get-PageVersion([string]$html) {
+  $tag = [regex]::Match($html, '<meta\b[^>]*\bname=["'']?omni-song-version\b[^>]*>', 'IgnoreCase')
+  if (-not $tag.Success) { return '' }
+  $m = [regex]::Match($tag.Value, '\bcontent=["'']?([^"''\s>]+)', 'IgnoreCase')
+  if ($m.Success) { return $m.Groups[1].Value }
+  return ''
+}
+
+function Get-VersionName([string]$v) {
+  if ($v) { return "version $v" }
+  return 'an older version'
+}
+
 # Which copy of the app answers on port $p (another launcher window, or any server of the app):
-# 'current' (Omni Song), 'older' (SWITCHBOARD / 01, the same app before 2.0) or '' (nothing of ours).
-# Another launcher window answers one connection at a time and gives an idle browser
-# connection up to 3 s, so wait longer than that for the page.
+# @{ App = 'current' (Omni Song) or 'older' (SWITCHBOARD / 01, the same app before 2.0);
+#    Version = the version its page names, or '' } or $null (nothing of ours).
+# Reads to the end of the page's head, where the version is. Another launcher window
+# answers one connection at a time and gives an idle browser connection up to 3 s,
+# so wait longer than that for the page.
 function Test-App([int]$p) {
   $client = New-Object System.Net.Sockets.TcpClient
   try {
     $pending = $client.BeginConnect([System.Net.IPAddress]::Loopback, $p, $null, $null)
-    if (-not $pending.AsyncWaitHandle.WaitOne(1500)) { return '' }
+    if (-not $pending.AsyncWaitHandle.WaitOne(1500)) { return $null }
     $client.EndConnect($pending)
     $client.ReceiveTimeout = 6000
     $net = $client.GetStream()
@@ -61,15 +81,23 @@ function Test-App([int]$p) {
       $n = $net.Read($buffer, 0, $buffer.Length)
       if ($n -le 0) { break }
       $text += [System.Text.Encoding]::UTF8.GetString($buffer, 0, $n)
-      if ($text.Contains('<title>Omni Song</title>')) { return 'current' }
-      if ($text.Contains('<title>SWITCHBOARD / 01</title>')) { return 'older' }
+      if ($text.IndexOf('</head>', [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { break }
     }
-    return ''
+    $app = ''
+    if ($text.Contains('<title>Omni Song</title>')) { $app = 'current' }
+    elseif ($text.Contains('<title>SWITCHBOARD / 01</title>')) { $app = 'older' }
+    if (-not $app) { return $null }
+    return @{ App = $app; Version = (Get-PageVersion $text) }
   } catch {
-    return ''
+    return $null
   } finally {
     $client.Close()
   }
+}
+
+# The window's title names the version, so two launcher windows can be told apart.
+function Set-Title([string]$t) {
+  try { $Host.UI.RawUI.WindowTitle = $t } catch { }
 }
 
 function Open-Browser([string]$u) {
@@ -77,31 +105,70 @@ function Open-Browser([string]$u) {
   try { Start-Process $u } catch { Write-Host "  Open $u in your browser." }
 }
 
+# This copy's version, named by the page it serves.
+$ownVersion = Get-PageVersion ([System.IO.File]::ReadAllText((Join-Path $Root 'index.html')))
+$titled = if ($ownVersion) { "Omni Song $ownVersion" } else { 'Omni Song' }
+
 $usual = "http://127.0.0.1:$Port/"
 $listener = $null
 for ($p = $Port; $p -le ($Port + 19); $p++) {
   $listener = Start-Listener $p
   if ($listener) { break }
   $running = Test-App $p
-  if ($running) {
+  if ($null -ne $running) {
     $url = "http://127.0.0.1:$p/"
     Write-Host ''
     $note = if ($p -ne $Port) { " (not the usual $usual)" } else { '' }
-    if ($running -eq 'older') {
-      Write-Host "  An older version of this app (SWITCHBOARD / 01) is already running at $url$note" -ForegroundColor Yellow
-      Write-Host '  To use Omni Song instead, close the window that runs the older version, then'
-      Write-Host '  start Omni Song again. Both keep projects at the same address, so nothing is lost.'
-    } else {
+    if ($running.App -eq 'current' -and $running.Version -eq $ownVersion) {
       Write-Host "  Omni Song is already running at $url$note" -ForegroundColor Yellow
+      Write-Host '  The window (or program) that started it keeps it running.'
+      if ($NoOpen) { Write-Host "  Open $url in your browser." } else { Write-Host '  Opening it in your browser.' }
+      Write-Host ''
+      Open-Browser $url
+      # Time to read this before the window closes by itself.
+      if (-not $NoOpen) { Start-Sleep -Seconds 4 }
+      exit 0
     }
-    Write-Host '  The window (or program) that started it keeps it running.'
-    if ($NoOpen) { Write-Host "  Open $url in your browser." } else { Write-Host '  Opening it in your browser.' }
-    Write-Host '  To start a different copy (for example a newer version), close the other window first.'
+    # Another version: projects belong to this address, so wait for it rather than move.
+    if ($running.App -eq 'older') {
+      $other = 'An older version of this app (SWITCHBOARD / 01)'
+      $otherWindow = 'SWITCHBOARD / 01'
+    } else {
+      $other = "Another copy of Omni Song ($(Get-VersionName $running.Version))"
+      $otherWindow = 'Omni Song'
+    }
+    $then = if ($ownVersion) { "version $ownVersion" } else { 'this version' }
+    Set-Title "$titled - waiting"
+    Write-Host "  $other is running in another window," -ForegroundColor Yellow
+    Write-Host "  at $url$note" -ForegroundColor Yellow
+    Write-Host "  This is $(Get-VersionName $ownVersion). Close the other small black $otherWindow window"
+    Write-Host "  (or press Ctrl+C in it): this window then starts $then by itself,"
+    Write-Host '  at the same address, so all your projects are there.'
+    Write-Host '  Waiting for the other copy to stop...'
+    # Every few seconds, also look at what answers: this version started there
+    # meanwhile (a second double-click, say) is opened instead.
+    $tries = 0
+    while (-not $listener) {
+      Start-Sleep -Seconds 1
+      $listener = Start-Listener $p
+      $tries++
+      if (-not $listener -and $tries % 3 -eq 0) {
+        $now = Test-App $p
+        if ($null -ne $now -and $now.App -eq 'current' -and $now.Version -eq $ownVersion) {
+          Write-Host ''
+          Write-Host "  Omni Song $(Get-VersionName $ownVersion) is now running at $url$note" -ForegroundColor Yellow
+          Write-Host '  The window (or program) that started it keeps it running.'
+          if ($NoOpen) { Write-Host "  Open $url in your browser." } else { Write-Host '  Opening it in your browser.' }
+          Write-Host ''
+          Open-Browser $url
+          if (-not $NoOpen) { Start-Sleep -Seconds 4 }
+          exit 0
+        }
+      }
+    }
     Write-Host ''
-    Open-Browser $url
-    # Time to read this before the window closes by itself.
-    if (-not $NoOpen) { Start-Sleep -Seconds 4 }
-    exit 0
+    Write-Host '  The other copy has stopped.'
+    break
   }
   if ($p -eq $Port) {
     Write-Host ''
@@ -127,6 +194,7 @@ $preferred = $Port
 $Port = $p
 
 $url = "http://127.0.0.1:$Port/"
+Set-Title $titled
 Write-Host ''
 Write-Host '  Omni Song' -ForegroundColor Yellow
 if ($Port -eq $preferred) {

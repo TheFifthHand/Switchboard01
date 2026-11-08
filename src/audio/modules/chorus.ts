@@ -8,8 +8,11 @@
  *   lfoL (sin) ─ depthL ─> lineL.delayTime
  *   lfoR (cos) ─ depthR ─> lineR.delayTime
  *
- * Depth 1 swings each line by ±3 ms (6 ms peak to peak). Mix modulation
- * crossfades dry and wet (wet = clamp(mix + mod, 0, 1)).
+ * Depth 1 swings each line by ±3 ms (6 ms peak to peak). Mix (plus its
+ * modulation, clamped to 0..1) crossfades dry and wet with an equal-power
+ * law (dry cos, wet sin): the swept lines are decorrelated from the dry
+ * sound, so switching the chorus in keeps the part's energy (a linear 50/50
+ * blend lost about 3 dB).
  */
 import { CHORUS_PARAMS, readParam } from '../../project/params';
 import type { Id, ParamValues } from '../../project/types';
@@ -37,7 +40,7 @@ export class ChorusModule extends EffectModule {
     sum.connect(this.bypass.processed);
     this.ctl = new ControlBus(ctx, mix, 1, this.own);
     this.registerMod('mix', this.ctl.modInput);
-    const { dry, wet } = this.ctl.blend();
+    const { dry, wet } = this.ctl.blendEqualPower();
     this.bypass.input.connect(dry);
     dry.connect(sum);
     wet.connect(sum);

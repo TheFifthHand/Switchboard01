@@ -1,7 +1,9 @@
 /**
  * Held notes never get stuck: they stop on key release, window blur, pointer
  * cancel, Stop and Mute All, also when the part, the octave or the
- * arpeggiator changes while a key is down.
+ * arpeggiator changes while a key is down. These use 2.4's part panel,
+ * keyboard strip and Mute All, so they run in Advanced (⋯ › Show every
+ * control); Simple's own check: Stop and ⋯ › Mute all sound release a held key.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { jumpIn, openFresh, pageErrors } from './helpers';
@@ -14,8 +16,9 @@ async function selectChords(page: Page) {
   await expect(page.getByRole('heading', { name: 'Chords' })).toBeVisible();
 }
 
-test.beforeEach(async ({ page }) => {
-  await openFresh(page);
+test.beforeEach(async ({ page }, info) => {
+  if (info.title.startsWith('Simple')) return;
+  await openFresh(page, { mode: 'advanced' });
   await jumpIn(page);
   // Stop the groove so only our live notes sound.
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
@@ -81,8 +84,6 @@ test('a key held while the part or the octave changes stops when it is let go', 
 
 test('switching the arpeggiator on while a key is held does not leave the note sounding', async ({ page }) => {
   // The arpeggiator strip is an Advanced control.
-  await page.getByRole('radio', { name: 'Advanced', exact: true }).click();
-  await page.locator('body').focus();
   await page.keyboard.down('KeyA');
   await expect.poll(() => held(page)).toBe(1);
   await page.getByRole('switch', { name: 'Arp', exact: true }).click();
@@ -117,5 +118,40 @@ test('Stop and Mute All silence held notes and effect tails', async ({ page }) =
   await page.keyboard.up('KeyS');
   await page.getByRole('button', { name: 'MUTED' }).click();
   await expect(page.getByRole('button', { name: 'Mute All' })).toBeVisible();
+  expect(pageErrors(page)).toEqual([]);
+});
+
+test('Simple: Stop and ⋯ › Mute all sound release a held key and silence the song', async ({ page }) => {
+  await openFresh(page);
+  await jumpIn(page);
+  await page.locator('body').click({ position: { x: 700, y: 5 } }).catch(() => undefined);
+  const track = await page.evaluate(() => (window as any).__switchboard.ui.getState().selectedTrackId as string);
+  await page.keyboard.down('KeyA');
+  await expect.poll(() => held(page, track)).toBe(1);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect.poll(() => held(page, track)).toBe(0);
+  await page.keyboard.up('KeyA');
+
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await page.locator('body').click({ position: { x: 700, y: 5 } }).catch(() => undefined);
+  await page.keyboard.down('KeyS');
+  await expect.poll(() => held(page, track)).toBe(1);
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  await page.getByRole('menuitemcheckbox', { name: /^Mute all sound/ }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().muteAll)).toBe(true);
+  await expect.poll(() => held(page, track)).toBe(0);
+  await expect
+    .poll(async () => {
+      const m = await page.evaluate(() => (window as any).__switchboard.meters());
+      return Math.max(m.masterPeakL, m.masterPeakR);
+    }, { timeout: 3000 })
+    .toBeLessThan(1e-4);
+  await page.keyboard.up('KeyS');
+  // ⋯ says it is on; pressing it again brings the sound back.
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  const item = page.getByRole('menuitemcheckbox', { name: /^Mute all sound/ });
+  await expect(item).toHaveAttribute('aria-checked', 'true');
+  await item.click();
+  await expect.poll(() => page.evaluate(() => (window as any).__switchboard.runtime.getState().muteAll)).toBe(false);
   expect(pageErrors(page)).toEqual([]);
 });

@@ -9,13 +9,31 @@
   min-width: 0;
 }
 
+/* The left block, one width for a kit and a melodic part, so the keys start at the same place. */
 .octave {
   display: grid;
   grid-template-columns: auto auto auto;
-  grid-template-rows: auto auto;
+  grid-template-rows: auto auto auto;
   align-items: center;
   gap: 2px 6px;
   flex: none;
+  width: 128px;
+}
+/* "Keys play Bass": the part the keys play, the selected part's name in teal (selection). */
+.part {
+  grid-column: 1 / 4;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 16px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.part strong {
+  color: var(--teal-ink);
+  font-weight: 650;
 }
 .octLabel {
   display: flex;
@@ -37,19 +55,31 @@
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--shell-hi);
-  font-size: 11px;
+  font-size: var(--fs-sm);
   color: var(--ink-2);
 }
-/* A drum part has no octave to reset. */
-.reset:disabled {
-  opacity: 0.5;
-  cursor: default;
+.reset:hover {
+  background: #fbfaf7;
+}
+.reset:active {
+  box-shadow: var(--shadow-pressed);
+}
+.reset > span {
+  font-size: var(--fs-md);
 }
 
+/* A kit has no octave: under the part's name a box says what the keys are. */
+.octave[data-kit] {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
+/* The keys take the strip's free width; MiniKeyboard (fit) widens them up to their largest. */
 .keys {
   flex: 1;
   min-width: 320px;
-  max-width: 760px;
 }
 
 .assist {
@@ -126,4 +156,53 @@
 .keySummary strong {
   color: var(--ink);
   font-weight: 650;
+}
+
+/* ---------- key change: move the song too? ---------- */
+.movePopover {
+  width: min(360px, calc(100vw - 32px));
+}
+.move {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+}
+.moveText {
+  margin: 0;
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  color: var(--ink);
+}
+.moveSamplers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.moveLegend {
+  margin-bottom: 4px;
+  padding: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-2);
+}
+.moveCheck {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  font-size: var(--fs-sm);
+  color: var(--ink);
+}
+.moveCheck input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--teal);
+}
+.moveActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }

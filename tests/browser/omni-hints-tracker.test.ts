@@ -20,8 +20,9 @@ import type { KeyValueStorage } from '../../src/state/uiStore';
 
 function runtime(): RuntimeState {
   return {
-    audio: 'running', audioMessage: null, playing: true, paused: false, mode: 'live', replayId: null, songBlock: null,
+    audio: 'running', audioMessage: null, playing: true, paused: false, mode: 'live', replayId: null, songCursor: 0, songLoop: null, songLooping: false,
     tracks: {}, recording: 'off', recordTarget: null, countingIn: false, stalled: null, muteAll: false, preview: false, held: {}, notice: null,
+    recordStartsAtTick: null, recordTargetAudible: true, starterReplaced: null,
   };
 }
 
@@ -95,11 +96,10 @@ describe('what counts as doing a step', () => {
     expect(seen).toEqual(['master']);
   });
 
-  it('recording: a performance take started and stopped; recording notes does not count', () => {
+  // r6: the step is the transport's ● Record (notes); a performance (Advanced) counts too.
+  it('recording: a recording started and stopped (notes, or a performance)', () => {
     const { rt, seen } = setup();
     rt.setState((s) => ({ ...s, recording: 'notes' }));
-    rt.setState((s) => ({ ...s, recording: 'off' }));
-    rt.setState((s) => ({ ...s, recording: 'performance' }));
     expect(seen).toEqual([]);
     rt.setState((s) => ({ ...s, recording: 'off' }));
     expect(seen).toEqual(['record']);
@@ -168,7 +168,7 @@ describe('remembered hint state', () => {
     // A new page load reads the same.
     expect(createHintsStore(storage).getState()).toEqual(s.getState());
     showHintsAgain(s);
-    expect(s.getState()).toEqual({ started: true, hidden: false, done: [], finished: false });
+    expect(s.getState()).toEqual({ started: true, hidden: false, done: [], finished: false, song: false });
   });
 
   it('ignores damaged or unknown stored values', () => {
@@ -176,7 +176,7 @@ describe('remembered hint state', () => {
     storage.setItem(HINTS_STORAGE_KEY, '{not json');
     expect(readHints(storage)).toEqual(INITIAL_HINTS);
     storage.setItem(HINTS_STORAGE_KEY, JSON.stringify({ started: 'yes', hidden: true, done: ['pad', 'fly', 3], finished: 1 }));
-    expect(readHints(storage)).toEqual({ started: false, hidden: true, done: ['pad'], finished: false });
+    expect(readHints(storage)).toEqual({ started: false, hidden: true, done: ['pad'], finished: false, song: false });
     expect(readHints(null)).toEqual(INITIAL_HINTS);
     // Storage that throws: hints still work, they are just not remembered.
     const broken: KeyValueStorage = {

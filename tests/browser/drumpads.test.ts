@@ -17,6 +17,7 @@ import { changeInstrumentSound, setSolo } from '../../src/state/commands';
 import { drumVoiceFor, selectDrumVoice, selectTrack, setPadMode, uiStore } from '../../src/state/uiStore';
 import { PAD_KEY_VELOCITY } from '../../src/ui/components';
 import { actFrame, cleanup, fire, key, mount, pointer, pointIn } from './ui-harness';
+import { simpleDrumName } from '../../src/app/labels';
 
 type Call = ['on', Id, number, number, string] | ['off', Id, number, string];
 
@@ -78,7 +79,8 @@ function kitOf(trackId: Id): string {
 describe('Drums pad mode', () => {
   it('lays out the 16 kit sounds with pad 0 bottom-left, rows bottom-to-top, key hints and the kit name', () => {
     const { m, pad } = setup();
-    const names = getKitVoiceNames(kitOf('t1'));
+    // Simple's plain words (round 7: "Closed hi-hat" for the kit's "Closed Hat").
+    const names = getKitVoiceNames(kitOf('t1')).map(simpleDrumName);
     const pads = [...m.container.querySelectorAll<HTMLButtonElement>('button[id^="drum-pad-"]')];
     expect(pads).toHaveLength(16);
     // Screen order: top row 12..15 first, bottom row 0..3 last.
