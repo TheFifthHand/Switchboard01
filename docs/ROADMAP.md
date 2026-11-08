@@ -16,8 +16,14 @@ The rules that hold today keep holding: Omni Song runs on your own device, needs
 nothing anywhere and ships its sounds with the app. Any later feature that needs more (a local AI
 model, a camera, a headset) is optional, stays on your machine and is off until you turn it on.
 
-## What exists now (2.4)
+## What exists now (3.0)
 
+- **New in 3.0:** one song screen. In Simple (the default) the song is the only home: a row per
+  instrument, a loop library on the side, click a loop to change it underneath, click an
+  instrument's name for its sound, Play always plays the song, Make it longer / shorter, + Add
+  instrument, Share (a music file or the project), and a tip line that says what to try next. Every
+  other view opens from it as a sheet with "← Back to my song"; Advanced (⋯ › Show every control) is
+  2.4 as it was.
 - **New in 2.4:** loops of the song's own (record straight into the song, drag in a library of 164
   original loops in your key, Make this one different), Make a beat from scratch with 52 ready beats,
   five more starters (Trap, Lo-fi Hip Hop, Pop, Afrobeats, Boom Bap), a loop editor under the song,
@@ -119,9 +125,15 @@ Round 6 (2.4) left these for later:
 
 - **Undo after reopening** a project (the history is not saved).
 - **Hear a starter before opening it.**
-- **One transport** for the pads and the song (today the Song view says which one plays).
+- **One transport** for the pads and the song in Advanced (in Simple, Play is always the song).
 - **A click only while recording**, more than 8 parts, automation lanes, and guitar, piano and vocal
   sounds.
+
+Round 7 (3.0) left these for later:
+
+- In Simple, a toast can cover the tip line for a few seconds, and its button says "Export project
+  file" rather than "Save a copy to my computer".
+- Simple words for Solo ("solo" / "not soloed") and for the last refusals that say "pad".
 
 ## How plans become features
 

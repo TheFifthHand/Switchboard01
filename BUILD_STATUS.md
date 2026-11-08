@@ -218,11 +218,12 @@ that wrapped `window.scrollTo` in `act()`, which left React's act queue open (`3
 - A loud export renders twice when the song is not at the target yet.
 - MIDI files leave out arpeggiator output; parts files skip the mastering (the limiter stays).
 
-## Omni Song 3.0 "one song screen" (round 7, in progress)
+## Omni Song 3.0 "one song screen" (round 7)
 
 Asked for after 2.4: "make navigation simpler and make it so an idiot could use it." Design Option A:
 in Simple (the default) the Song screen is the one home; the other 2.4 views open from it as sheets
-("← Back to my song"); Advanced (⋯ › Show every control) keeps 2.4 exactly. Built in slices on `r7-int`.
+("← Back to my song"); Advanced (⋯ › Show every control) keeps 2.4 exactly. Built in slices on `r7-int`;
+this round ships as **version 3.0.0**.
 
 | Slice | Commit | What it delivered |
 |------|------|------|
@@ -231,17 +232,33 @@ in Simple (the default) the Song screen is the one home; the other 2.4 views ope
 | editsound | `ba64e09`, `b792ce5` | Editor under the song: Draw \| Play, Record into this loop, Try a ready-made beat / loop…, Shorter / Longer, Make it different, "Plays 2 places · Just here"; the Sound panel (Change sound…, Volume, Mute, Hear it alone, six big knobs, Every setting ▸) |
 | songhome | `36d26ad`, `38837cd` | Song screen as the home: "Your song · 2:19", Repeat this part, Make it longer (plain unique part names), + Add instrument, rows only for instruments with music, single click opens a loop, the tip line |
 | shell | `f588039` | Simple top bar (Project ▾, Play/Pause, Stop, Record, Undo/Redo, Share, ⋯), sheets with Esc/Back, Project ▾ Speed / Mood / Rename, Jump In repeating the starter's main part, Make a beat opening its empty loop |
-| intfix | (this commit) | Merge fixes: the tip line asks for sounds in an empty loop before suggesting a bass; Simple's home shows only the tip line (no floating "Try this" chip as well); tests re-aimed where the slices' assumptions collided (Simple vs Advanced test helpers) |
+| intfix | `f7fb4b4` | Merge fixes: the tip line asks for sounds in an empty loop before suggesting a bass; Simple's home shows only the tip line (no floating "Try this" chip as well); tests re-aimed where the slices' assumptions collided (Simple vs Advanced test helpers) |
 | fix1 | `dce9de2` | Beginner re-test fixes: Repeat this part follows the music an edit moves (edits report their time shifts; Undo/Redo too) or goes off with a word; Make it longer builds around the main part (most music per bar), names unsectioned music, fills a 1-bar beat to 8 bars, new parts in order before the ending (3 presses ≈ 1 min); a ready-made loop/beat plays through in the song and names the block; no cross-view buttons or "Try this" chip in Simple's sheets; tip line beat → bass → chords → longer → share (≥ 45 s, 3 instruments), "Click a loop to change it" on an untouched starter; + Add instrument over the main parts; editor and Sound panel follow the instrument |
-| fix2a | (this commit) | Review + third beginner test, behaviour: a single click opens a loop only after the double-click time (a double-click never edits it; the pane ignores the second press); editor Longer makes the song play the whole loop; Make it longer turns repeat off and moves the playhead to what it added (playing now / next Play, said), offers an intro or ending only while there is none, a second intro reads left to right; Make it shorter (the last section / the one playing); Stop goes to the song's start in Simple; Undo brings back a repeat an edit turned off; a stretch inside a moved section follows it; LOOPS drops snap to section starts (Alt: the bar); + Add instrument unmutes, says a solo, leaves a repeat that hides it, refused while recording; tip line: hear the whole song after Jump In, no dead-end steps, Loops closed said, ideas after Share, What next? with tips hidden, memory per project; Share offers no silent file; Help names E |
+| fix2a | `f54f78d`, `490c884` | Review + third beginner test, behaviour: a single click opens a loop only after the double-click time (a double-click never edits it; the pane ignores the second press); editor Longer makes the song play the whole loop; Make it longer turns repeat off and moves the playhead to what it added (playing now / next Play, said), offers an intro or ending only while there is none, a second intro reads left to right; Make it shorter (the last section / the one playing); Stop goes to the song's start in Simple; Undo brings back a repeat an edit turned off; a stretch inside a moved section follows it; LOOPS drops snap to section starts (Alt: the bar); + Add instrument unmutes, says a solo, leaves a repeat that hides it, refused while recording; tip line: hear the whole song after Jump In, no dead-end steps, Loops closed said, ideas after Share, What next? with tips hidden, memory per project; Share offers no silent file; Help names E |
 | words | `e0cc467`, `96bae32` | Plain words in Simple: times not bars, "section" not "part", instrument names from the picker, mood words, no note names; Help "How it works" and Simple's keys; the tip line is the guide (the "Try this" chip is Advanced's); GUIDE, README and START HERE for 3.0 |
-| merge2 | (this commit) | fix1 merged into the words slice: fix1's behaviour in the words' vocabulary (tip steps "press + Add instrument, then Bass", "Add a section after Verse", repeat names "Verse to Chorus" / "the marked stretch", "What you were repeating is gone…") |
-| e2e | (this commit) | Playwright specs for 3.0 (57 → 79 tests, all pass against the production build): journey.spec is Simple's beginner journey (Make a beat → squares heard → + Add instrument Bass → Make it longer → Share a WAV, the file checked; Share leaves the song alone; Stop goes to the start); 2.4's pads journey is advanced.spec; the a11y spec tours Simple's home keyboard-only and audits the song screen, editor, Sound panel, Share and sheets with axe, keeping the Advanced checks; persistence, two tabs, toasts, first keys, renders, stall and resilience run in both modes where both apply. App fixes: Enter on a button inside the song timeline (an instrument's name, Mute, Add a section) pressed nothing and moved the playhead home; it now presses the button. A recording imported in Simple, and a loop moved between pads, are said with the instrument's Simple name ("Keys & chords · Intro", as the sampler editor shows it). Browser tests left on 2.4 names by fix 2b pinned to their mode (notespads, samplerui, parts: Simple; r4-core-import-clip: Advanced) |
+| merge2 | `5e17895` | fix1 merged into the words slice: fix1's behaviour in the words' vocabulary (tip steps "press + Add instrument, then Bass", "Add a section after Verse", repeat names "Verse to Chorus" / "the marked stretch", "What you were repeating is gone…") |
+| e2e | `11b29dc` | Playwright specs for 3.0 (57 → 79 tests, all pass against the production build): journey.spec is Simple's beginner journey (Make a beat → squares heard → + Add instrument Bass → Make it longer → Share a WAV, the file checked; Share leaves the song alone; Stop goes to the start); 2.4's pads journey is advanced.spec; the a11y spec tours Simple's home keyboard-only and audits the song screen, editor, Sound panel, Share and sheets with axe, keeping the Advanced checks; persistence, two tabs, toasts, first keys, renders, stall and resilience run in both modes where both apply. App fixes: Enter on a button inside the song timeline (an instrument's name, Mute, Add a section) pressed nothing and moved the playhead home; it now presses the button. A recording imported in Simple, and a loop moved between pads, are said with the instrument's Simple name ("Keys & chords · Intro", as the sampler editor shows it). Browser tests left on 2.4 names by fix 2b pinned to their mode (notespads, samplerui, parts: Simple; r4-core-import-clip: Advanced) |
+| fix2b | `7e905cf`, `105c5da` | Review + third beginner test, words: instrument names everywhere in Simple (a renamed instrument keeps its name), plain refusals, version 3.0.0 (What's new, README, START HERE) |
+| badge | `d268974` | A loop used in several places says "3 places" on the song (the longer "Plays 3 places" was cut off on short loops); the editor still says "Plays 3 places" |
+
+**How it was checked.** A person new to music software was simulated three times against real
+builds (mouse and keyboard, 1366 × 768): on 2.4 they gave up at the second task (about 82 clicks,
+10 confusing moments); on the first 3.0 build they finished every task in about 27 clicks with one
+confusing moment; on the third, the from-scratch path took about 23 clicks and none. A code review
+(4 major, 14 minor) ran on the merged build. Every finding from those runs was fixed in fix1,
+fix2a and fix2b, with tests.
+
+**Not done, or worth knowing:**
+- In Simple a toast covers the tip line for a few seconds; that toast's button still says
+  "Export project file" where Simple's own word is "Save a copy to my computer".
+- Simple row labels for Solo read "solo" / "not soloed".
+- A few refusals still say "pad" or a stored part name (for example "No empty pad on Sampler…").
+- 2.4's remaining items (above) still hold in Advanced.
 
 ## State at handoff
 
-- Release package: `npm run package` builds `release/omni-song-<version>.zip` (2.4.0: production
-  build in `app/`, `Start Omni Song.bat`, `START HERE.txt`, `launcher/`, `ASSETS.md`, and the
+- Release package: `npm run package` builds `release/omni-song-<version>.zip` (production
+  build in `app/` (3.0.0 now), `Start Omni Song.bat`, `START HERE.txt`, `launcher/`, `ASSETS.md`, and the
   repository source in `source/`). `release/omni-song-2.2.0.zip` is in the repository (the update
   e2e opens it as the real older version); older zips stay in git history (2.0 is on `main`).
 - Evidence: `TEST_REPORT.md` (results and measurements), `docs/ACCEPTANCE.md` (every requirement of
@@ -257,9 +274,9 @@ in Simple (the default) the Song screen is the one home; the other 2.4 views ope
 
 ## Next action
 
-For local verification: extract `release/omni-song-2.4.0.zip` on Windows, double-click `Start Omni
-Song.bat` (with a 2.3 window still open, it should name it and wait), press Make a beat from scratch,
-then open Song, drag loops in from the Library and press ● Record, with a mouse or trackpad. Possible next steps are in
+For local verification: extract `release/omni-song-3.0.0.zip` on Windows, double-click `Start Omni
+Song.bat` (with a 2.4 window still open, it should name it and wait), press Jump In or Make a beat,
+click a loop to change it, press + Add instrument and Make it longer, then Share, with a mouse or trackpad. Possible next steps are in
 `docs/ROADMAP.md` (local music-generator bridge, webcam movement control, WebXR, and the items
 rounds 4 and 5 deferred).
 

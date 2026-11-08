@@ -1,6 +1,8 @@
-# TEST REPORT — Omni Song 2.4
+# TEST REPORT — Omni Song 3.0
 
-_Formerly SWITCHBOARD / 01. Test results and evidence for the 2.4 build: loops of the song's own
+_Formerly SWITCHBOARD / 01. Test results and evidence for the 3.0 build: one song screen in Simple
+(the song as the only home, the other views as sheets, the editor and Sound panel under the song,
+Share, Make it longer / shorter, the tip line, plain words), with Advanced keeping 2.4 as it was. 2.4 added loops of the song's own
 (schema v5), recording into the song, a loop library, beat presets, five new starters, the loop
 editor under the song, part volume and pan in Song, new export formats and simpler first steps, on
 top of 2.3 (the GarageBand-style song, schema v4). Every requirement of the original brief
@@ -20,6 +22,25 @@ npm run package                       # build, then release/omni-song-<version>.
 ```
 
 ## Results
+
+### 3.0 (round 7, `r7-int`)
+
+Run on the merged tree after every round-7 slice, both fix rounds, the e2e migration and the
+version bump.
+
+| Suite | Files | Tests | Result |
+|-------|-------|-------|--------|
+| Typecheck (`tsc --noEmit`, app + tests) | — | — | clean |
+| Unit (`tests/unit`, Node) | 117 | 1844 | **1842 passed, 2 skipped** (the 2 need PowerShell) |
+| Browser (`tests/browser`, real Chromium) | 212 | 1860 | **1854 passed, 6 failed**, run one file at a time (55.9 min). The 6 are real-mouse hover tests in `r5-pads-play-stop` (3), `r5-pads-pad-action` (2) and `r5-shell-fix` (1); those files pass alone (29/29, twice). The same hover files failed this way in the 2.3 and 2.4 full runs. Two full runs with files in parallel stalled in `omni-play-layout` (no test ended for over 10 minutes); that file passes alone (9/9), and the one-file-at-a-time run above completed it |
+| End-to-end (`e2e`, production build) | 22 | 79 | **79 passed**, one worker, 13.7 min. The specs now drive 3.0: `journey.spec` is Simple's beginner journey (Make a beat → squares heard → + Add instrument › Bass → Make it longer → Share a WAV, the file's format, length and peaks checked, the project unchanged), `advanced.spec` keeps 2.4's pads journey, `a11y.spec` tours Simple's home by keyboard alone and audits the song screen, editor, Sound panel, Share and sheets with axe |
+
+Beginner tests: a person new to music software was simulated on real builds (mouse and keyboard,
+1366 × 768). On 2.4 they gave up at the second task (about 82 clicks, 10 confusing moments); on
+the first 3.0 build they finished every task (about 27 clicks, 1 confusing moment); on the third
+build, making a song from scratch took about 23 clicks with none. A code review (4 major, 14
+minor) ran on the merged build; every finding from these runs has a regression test
+(`tests/{unit,browser}/r7-*`).
 
 ### 2.4 (round 6, `r6-int`)
 
